@@ -415,55 +415,8 @@ fn test_single_mutant_isolated(
         return MutantTestResult { mutant, result: MutationResult::Invalid };
     }
 
-    // Create a config for the temp directory, preserving relative paths
     let temp_path = temp_dir.path().to_path_buf();
-    let src_rel = workspace::relative_to_root(&config.root, &config.src);
-    let test_rel = workspace::relative_to_root(&config.root, &config.test);
-    let script_rel = workspace::relative_to_root(&config.root, &config.script);
-
-    let mut temp_config = Config::load_with_root(&temp_path).unwrap_or_else(|_| {
-        let mut c = Config::clone(config.as_ref());
-        c.root = temp_path.clone();
-        c.src = temp_path.join(&src_rel);
-        c.test = temp_path.join(&test_rel);
-        c.script = temp_path.join(&script_rel);
-        c.out = temp_path.join("out");
-        c.cache_path = temp_path.join("cache");
-        c
-    });
-    temp_config.root = temp_path.clone();
-    temp_config.src = temp_path.join(&src_rel);
-    temp_config.test = temp_path.join(&test_rel);
-    temp_config.script = temp_path.join(&script_rel);
-    temp_config.out = temp_path.join("out");
-    temp_config.cache_path = temp_path.join("cache");
-
-    // Update libs paths to point to temp directory
-    temp_config.libs = config
-        .libs
-        .iter()
-        .map(|lib| {
-            let lib_rel = workspace::relative_to_root(&config.root, lib);
-            temp_path.join(lib_rel)
-        })
-        .collect();
-
-    // Propagate the per-mutant timeout into the inner fuzz/invariant harness
-    // so the hot test loop itself bails out at the deadline. Without this the
-    // outer `recv_timeout` would only stop *waiting* — the leaked worker
-    // thread would keep running expensive fuzz/invariant runs and starve the
-    // pool. We never raise an existing user-configured value.
-    if let Some(mutation_timeout) = config.mutation.timeout {
-        temp_config.fuzz.timeout = Some(match temp_config.fuzz.timeout {
-            Some(existing) => existing.min(mutation_timeout),
-            None => mutation_timeout,
-        });
-        temp_config.invariant.timeout = Some(match temp_config.invariant.timeout {
-            Some(existing) => existing.min(mutation_timeout),
-            None => mutation_timeout,
-        });
-    }
-
+    let temp_config = temp_config_for_mutation(config, &temp_path);
     let temp_config = Arc::new(temp_config);
 
     // Compile and test, optionally bounded by a wall-clock timeout.
@@ -640,6 +593,58 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
     Ok(())
 }
 
+/// Build the config used inside a per-mutant temp workspace.
+///
+/// Start from the already materialized baseline config instead of reloading
+/// `foundry.toml`, so CLI overrides and runtime normalization stay identical
+/// between the baseline run and every mutant run.
+fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
+    let mut temp_config = config.clone();
+    temp_config.root = temp_path.to_path_buf();
+    temp_config.src = rebase_project_path(&config.root, temp_path, &config.src);
+    temp_config.test = rebase_project_path(&config.root, temp_path, &config.test);
+    temp_config.script = rebase_project_path(&config.root, temp_path, &config.script);
+    temp_config.out = rebase_project_path(&config.root, temp_path, &config.out);
+    temp_config.cache_path = rebase_project_path(&config.root, temp_path, &config.cache_path);
+    temp_config.snapshots = rebase_project_path(&config.root, temp_path, &config.snapshots);
+    temp_config.broadcast = rebase_project_path(&config.root, temp_path, &config.broadcast);
+    temp_config.mutation_dir = rebase_project_path(&config.root, temp_path, &config.mutation_dir);
+    temp_config.libs =
+        config.libs.iter().map(|lib| rebase_project_path(&config.root, temp_path, lib)).collect();
+
+    if let Some(path) = &config.fuzz.failure_persist_dir {
+        temp_config.fuzz.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    if let Some(path) = &config.invariant.failure_persist_dir {
+        temp_config.invariant.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+
+    // Propagate the per-mutant timeout into the inner fuzz/invariant harness
+    // so the hot test loop itself bails out at the deadline. Without this the
+    // outer `recv_timeout` would only stop *waiting* — the leaked worker
+    // thread would keep running expensive fuzz/invariant runs and starve the
+    // pool. We never raise an existing user-configured value.
+    if let Some(mutation_timeout) = config.mutation.timeout {
+        temp_config.fuzz.timeout = Some(match temp_config.fuzz.timeout {
+            Some(existing) => existing.min(mutation_timeout),
+            None => mutation_timeout,
+        });
+        temp_config.invariant.timeout = Some(match temp_config.invariant.timeout {
+            Some(existing) => existing.min(mutation_timeout),
+            None => mutation_timeout,
+        });
+    }
+
+    temp_config
+}
+
+fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    let rel = workspace::relative_to_root(root, path);
+    if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
+}
+
 /// Compile the project and run tests, returning true if any test failed (mutant killed).
 ///
 /// Dispatches to the correct network type based on `evm_opts.networks`.
@@ -742,7 +747,8 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
 #[cfg(test)]
 mod tests {
-    use super::SharedMutationState;
+    use super::*;
+    use alloy_primitives::U256;
 
     #[test]
     fn park_timed_out_worker_bounds_pending_handles() {
@@ -759,5 +765,60 @@ mod tests {
         for handle in pending {
             handle.join().unwrap();
         }
+    }
+
+    #[test]
+    fn temp_config_preserves_materialized_overrides_and_rebases_paths() {
+        let project = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let root = project.path();
+
+        let mut config = Config {
+            root: root.to_path_buf(),
+            src: root.join("contracts"),
+            test: root.join("checks"),
+            script: root.join("deploy"),
+            out: root.join("custom-out"),
+            cache_path: root.join("custom-cache"),
+            snapshots: root.join("custom-snapshots"),
+            broadcast: root.join("custom-broadcast"),
+            mutation_dir: root.join("custom-cache/mutation"),
+            libs: vec![root.join("vendor")],
+            dynamic_test_linking: true,
+            cache: true,
+            ..Default::default()
+        };
+        config.fuzz.seed = Some(U256::from(42));
+        config.fuzz.timeout = Some(90);
+        config.invariant.timeout = Some(80);
+        config.fuzz.failure_persist_dir = Some(root.join("custom-cache/fuzz"));
+        config.invariant.failure_persist_dir = Some(root.join("custom-cache/invariant"));
+        config.mutation.timeout = Some(5);
+
+        let temp_config = temp_config_for_mutation(&config, temp.path());
+
+        assert_eq!(temp_config.root, temp.path());
+        assert_eq!(temp_config.src, temp.path().join("contracts"));
+        assert_eq!(temp_config.test, temp.path().join("checks"));
+        assert_eq!(temp_config.script, temp.path().join("deploy"));
+        assert_eq!(temp_config.out, temp.path().join("custom-out"));
+        assert_eq!(temp_config.cache_path, temp.path().join("custom-cache"));
+        assert_eq!(temp_config.snapshots, temp.path().join("custom-snapshots"));
+        assert_eq!(temp_config.broadcast, temp.path().join("custom-broadcast"));
+        assert_eq!(temp_config.mutation_dir, temp.path().join("custom-cache/mutation"));
+        assert_eq!(temp_config.libs, vec![temp.path().join("vendor")]);
+        assert_eq!(
+            temp_config.fuzz.failure_persist_dir,
+            Some(temp.path().join("custom-cache/fuzz"))
+        );
+        assert_eq!(
+            temp_config.invariant.failure_persist_dir,
+            Some(temp.path().join("custom-cache/invariant"))
+        );
+        assert!(temp_config.dynamic_test_linking);
+        assert!(temp_config.cache);
+        assert_eq!(temp_config.fuzz.seed, Some(U256::from(42)));
+        assert_eq!(temp_config.fuzz.timeout, Some(5));
+        assert_eq!(temp_config.invariant.timeout, Some(5));
     }
 }
