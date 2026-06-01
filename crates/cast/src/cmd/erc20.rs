@@ -524,7 +524,7 @@ impl Erc20Subcommand {
                 if shell::is_json() {
                     print_json_success(balance.to_string())?;
                 } else {
-                    sh_println!("{}", format_uint_exp(balance))?;
+                    sh_println!("{balance}")?;
                 }
             }
             Self::Name { token, block, .. } => {
