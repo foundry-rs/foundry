@@ -213,6 +213,7 @@ impl GasSnapshotConfig {
         let mut tests = outcome
             .into_tests()
             .filter(|test| self.is_in_gas_range(test.gas_used()))
+            .flat_map(expand_invariant_snapshot_entries)
             .collect::<Vec<_>>();
 
         if self.asc {
@@ -223,6 +224,23 @@ impl GasSnapshotConfig {
 
         tests
     }
+}
+
+/// Expands merged invariant campaigns into per-predicate gas snapshot rows.
+fn expand_invariant_snapshot_entries(test: SuiteTestResult) -> Vec<SuiteTestResult> {
+    if !test.result.kind.is_invariant() || test.result.invariant_predicate_results.len() <= 1 {
+        return vec![test];
+    }
+
+    test.result
+        .invariant_predicate_results
+        .iter()
+        .map(|predicate| {
+            let mut expanded = test.clone();
+            expanded.signature = format!("{}()", predicate.name);
+            expanded
+        })
+        .collect()
 }
 
 /// A general entry in a gas snapshot file

@@ -134,6 +134,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = TempoEvmHandler::new();
+        let reservoir = frame.reservoir();
 
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
@@ -142,7 +143,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
         let mut frame_result =
             handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_tempo_error)?;
 
-        handler.last_frame_result(self, &mut frame_result).map_err(map_tempo_error)?;
+        handler.last_frame_result(self, reservoir, &mut frame_result).map_err(map_tempo_error)?;
 
         Ok(frame_result)
     }

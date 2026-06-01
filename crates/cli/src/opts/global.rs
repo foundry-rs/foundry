@@ -92,13 +92,14 @@ impl GlobalArgs {
     }
 
     /// Like [`check_introspect`](Self::check_introspect) but uses an explicit
-    /// [`Command`](clap::Command) and [`CommandRegistry`](crate::introspect::CommandRegistry).
+    /// [`CommandRegistry`](crate::introspect::CommandRegistry). The clap command
+    /// is built lazily so normal startup pays nothing when `--introspect` is absent.
     pub fn check_introspect_with(
-        command: clap::Command,
+        make_command: impl FnOnce() -> clap::Command,
         registry: &crate::introspect::CommandRegistry,
     ) {
         if pre_parse_flag_present("--introspect") {
-            emit_introspect_and_exit(command, registry);
+            emit_introspect_and_exit(make_command(), registry);
         }
     }
 
@@ -139,7 +140,9 @@ impl GlobalArgs {
 
     /// Create a new shell instance.
     pub fn shell(&self) -> Shell {
-        let mode = match self.quiet {
+        // `--machine` forces Quiet; structured output goes through
+        // `print_json` / `print_stream_record`, which bypass the quiet check.
+        let mode = match self.quiet || self.machine {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,
         };

@@ -1,4 +1,4 @@
-use super::ReentrancyUnlimitedGas;
+use super::ReentrancyEth;
 use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
@@ -11,13 +11,13 @@ use solar::{
 use std::collections::{BTreeSet, HashSet};
 
 declare_forge_lint!(
-    REENTRANCY_UNLIMITED_GAS,
+    REENTRANCY_ETH,
     Severity::High,
-    "reentrancy-unlimited-gas",
-    "state read before uncapped ETH transfer is written after the transfer"
+    "reentrancy-eth",
+    "state read before ETH transfer is written after the transfer"
 );
 
-impl<'hir> LateLintPass<'hir> for ReentrancyUnlimitedGas {
+impl<'hir> LateLintPass<'hir> for ReentrancyEth {
     fn check_function(
         &mut self,
         ctx: &LintContext,
@@ -295,7 +295,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for func_id in resolved_function_ids(callee) {
                     self.analyze_internal_call(func_id, state);
                 }
-                if is_uncapped_value_call(callee, *opts) {
+                if is_uncapped_value_call(self.hir, callee, *opts) {
                     state.push_call(expr.span);
                 }
             }
@@ -416,7 +416,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     .map(|name| name.as_str().to_string())
                     .unwrap_or_else(|| "state".to_string());
                 self.ctx.emit_with_msg(
-                    &REENTRANCY_UNLIMITED_GAS,
+                    &REENTRANCY_ETH,
                     call.span,
                     format!("uncapped ETH transfer can be reentered before `{name}` is updated"),
                 );
@@ -446,7 +446,11 @@ impl FlowState {
     }
 }
 
-fn is_uncapped_value_call(callee: &hir::Expr<'_>, opts: Option<&[hir::NamedArg<'_>]>) -> bool {
+fn is_uncapped_value_call(
+    hir: &hir::Hir<'_>,
+    callee: &hir::Expr<'_>,
+    opts: Option<&[hir::NamedArg<'_>]>,
+) -> bool {
     let Some(opts) = opts else { return false };
     let ExprKind::Member(_, member) = &callee.kind else { return false };
     if member.name != kw::Call {
@@ -463,14 +467,52 @@ fn is_uncapped_value_call(callee: &hir::Expr<'_>, opts: Option<&[hir::NamedArg<'
         }
     }
 
-    value.is_some_and(|value| !is_zero_literal(value)) && gas.is_none_or(gas_option_forwards_all)
+    value.is_some_and(|value| !is_zero_value(hir, value)) && gas.is_none_or(gas_option_forwards_all)
 }
 
-fn is_zero_literal(expr: &hir::Expr<'_>) -> bool {
-    matches!(
-        &expr.peel_parens().kind,
-        ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Number(value) if value.is_zero())
-    )
+fn is_zero_value(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+    let mut seen = BTreeSet::new();
+    is_zero_value_inner(hir, expr, &mut seen)
+}
+
+fn is_zero_value_inner(
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+    seen: &mut BTreeSet<VariableId>,
+) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(lit) => matches!(lit.kind, LitKind::Number(value) if value.is_zero()),
+        ExprKind::Ident(reses) => {
+            let mut saw_variable = false;
+            reses.iter().all(|res| match res {
+                Res::Item(ItemId::Variable(var_id)) => {
+                    saw_variable = true;
+                    constant_var_is_zero(hir, *var_id, seen)
+                }
+                _ => false,
+            }) && saw_variable
+        }
+        ExprKind::Call(callee, args, opts)
+            if opts.is_none()
+                && matches!(callee.peel_parens().kind, ExprKind::Type(_))
+                && args.exprs().count() == 1 =>
+        {
+            args.exprs().next().is_some_and(|arg| is_zero_value_inner(hir, arg, seen))
+        }
+        _ => false,
+    }
+}
+
+fn constant_var_is_zero(
+    hir: &hir::Hir<'_>,
+    var_id: VariableId,
+    seen: &mut BTreeSet<VariableId>,
+) -> bool {
+    let var = hir.variable(var_id);
+    if !var.is_constant() || !seen.insert(var_id) {
+        return false;
+    }
+    var.initializer.is_some_and(|init| is_zero_value_inner(hir, init, seen))
 }
 
 fn gas_option_forwards_all(expr: &hir::Expr<'_>) -> bool {

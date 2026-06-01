@@ -43,6 +43,10 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
 const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test|Issue14212Test";
 
+// Issue14212Test depends on Base transaction lookups that are not reliably served by the public
+// Base RPC endpoint used in CI.
+const FLAKY_TESTDATA_RUN_CONTRACTS: &str = "Issue4640Test";
+
 // Run `forge test` on `/testdata`.
 forgetest!(testdata, |_prj, cmd| {
     setup_testdata_cmd(&mut cmd);
@@ -85,7 +89,7 @@ forgetest!(testdata, |_prj, cmd| {
 // Picked up by the nightly `test-flaky` workflow via `cargo nextest run --profile flaky`.
 forgetest!(flaky_testdata, |_prj, cmd| {
     setup_testdata_cmd(&mut cmd);
-    let mc = format!("--mc=({FLAKY_TESTDATA_CONTRACTS})");
+    let mc = format!("--mc=({FLAKY_TESTDATA_RUN_CONTRACTS})");
     cmd.args(["test", &mc]).assert_success();
 });
 
@@ -2134,8 +2138,11 @@ forgetest_init!(skip_output, |prj, cmd| {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
 Ran 6 tests for src/Counter.t.sol:Skips
-[SKIP] invariant_skipInvariant() (runs: 1, calls: 1, reverts: 1)
-[SKIP: invariant] invariant_skipInvariantReason() (runs: 1, calls: 1, reverts: 1)
+[SKIP]
+Skips invariants:
+[SKIP] invariant_skipInvariant
+[SKIP: invariant] invariant_skipInvariantReason
+ Skips invariants (runs: 1, calls: 1, reverts: 1)
 [SKIP] test_skipFuzz(uint256) (runs: 0, [AVG_GAS])
 [SKIP: fuzz] test_skipFuzzReason(uint256) (runs: 0, [AVG_GAS])
 [SKIP] test_skipUnit() ([GAS])
@@ -3492,16 +3499,19 @@ Error: No contract name provided.
     );
 
     // Upload single CounterV2.
-    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
-        r#"
-...
-Uploading selectors for CounterV2...
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "CounterV2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 Selectors successfully uploaded to OpenChain
 ...
 
-"#
-    ]]);
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for CounterV2...
+
+"#]]);
 
     // Upload CounterV1 with path.
     cmd.forge_fuse()
@@ -3509,10 +3519,12 @@ Selectors successfully uploaded to OpenChain
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Uploading selectors for Counter...
-...
 Selectors successfully uploaded to OpenChain
 ...
+
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for Counter...
 
 "#]]);
 
@@ -3522,10 +3534,12 @@ Selectors successfully uploaded to OpenChain
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Uploading selectors for Counter...
-...
 Selectors successfully uploaded to OpenChain
 ...
+
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for Counter...
 
 "#]]);
 });
@@ -3567,8 +3581,9 @@ contract CounterV2 {
    ",
     );
 
-    cmd.args(["selectors", "list"]).assert_success().stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
+    cmd.args(["selectors", "list"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Counter
 
 ╭----------+----------------------+--------------------------------------------------------------------╮
@@ -3597,13 +3612,16 @@ CounterV2
 | Function | setNumberV2(uint256) | 0xb525b68c |
 ╰----------+----------------------+------------╯
 
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["selectors", "list", "--no-group"])
         .assert_success()
         .stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
 
 ╭----------+----------------------+--------------------------------------------------------------------+-----------╮
 | Type     | Signature            | Selector                                                           | Contract  |
@@ -3624,6 +3642,10 @@ Listing selectors for contracts in the project...
 |----------+----------------------+--------------------------------------------------------------------+-----------|
 | Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
 ╰----------+----------------------+--------------------------------------------------------------------+-----------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
 
 "#]]);
 });
@@ -3665,8 +3687,9 @@ contract CounterV2 {
    ",
     );
 
-    cmd.args(["selectors", "list", "--md"]).assert_success().stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
+    cmd.args(["selectors", "list", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Counter
 
 | Type     | Signature            | Selector                                                           |
@@ -3685,13 +3708,16 @@ CounterV2
 | Function | number()             | 0x8381f58a |
 | Function | setNumberV2(uint256) | 0xb525b68c |
 
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["selectors", "list", "--no-group", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
 
 | Type     | Signature            | Selector                                                           | Contract  |
 |----------|----------------------|--------------------------------------------------------------------|-----------|
@@ -3703,6 +3729,10 @@ Listing selectors for contracts in the project...
 | Function | incrementV2()        | 0x49365a69                                                         | CounterV2 |
 | Function | number()             | 0x8381f58a                                                         | CounterV2 |
 | Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
+
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
 
 "#]]);
 });

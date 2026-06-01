@@ -129,10 +129,12 @@ pub mod compiler {
 
 /// Network / RPC diagnostic codes.
 pub mod network {
+    /// Generic RPC failure (transport, JSON-RPC error, connectivity).
+    pub const RPC_ERROR: &str = "network.rpc.error";
     pub const RPC_TIMEOUT: &str = "network.rpc.timeout";
     pub const RPC_UNAUTHORIZED: &str = "network.rpc.unauthorized";
 
-    pub(crate) const ALL: &[&str] = &[RPC_TIMEOUT, RPC_UNAUTHORIZED];
+    pub(crate) const ALL: &[&str] = &[RPC_ERROR, RPC_TIMEOUT, RPC_UNAUTHORIZED];
 }
 
 /// `foundry-wallets` diagnostic codes.
@@ -147,8 +149,10 @@ pub mod wallet {
 pub mod test {
     pub const FAILED: &str = "test.failed";
     pub const SETUP_FAILED: &str = "test.setup_failed";
+    /// Non-fatal advisory surfaced by a test suite.
+    pub const WARNING: &str = "test.warning";
 
-    pub(crate) const ALL: &[&str] = &[FAILED, SETUP_FAILED];
+    pub(crate) const ALL: &[&str] = &[FAILED, SETUP_FAILED, WARNING];
 }
 
 /// `forge script` diagnostic codes.

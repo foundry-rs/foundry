@@ -56,7 +56,6 @@ use revm::{
     context::{Cfg, ContextTr, Host, JournalTr, Transaction, TransactionType, result::EVMError},
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
-    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
@@ -900,6 +899,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
                     });
                 }
             };
@@ -920,6 +920,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
+                    charged_new_account_state_gas: false,
                 }),
                 Err(err) => Some(CallOutcome {
                     result: InterpreterResult {
@@ -930,6 +931,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: false,
                     precompile_call_logs: vec![],
+                    charged_new_account_state_gas: false,
                 }),
             };
         }
@@ -1053,6 +1055,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
+                                charged_new_account_state_gas: false,
                             });
                         }
                     }
@@ -1072,6 +1075,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
+                    charged_new_account_state_gas: false,
                 });
             }
         }
@@ -1112,6 +1116,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             memory_offset: call.return_memory_offset.clone(),
                             was_precompile_called: false,
                             precompile_call_logs: vec![],
+                            charged_new_account_state_gas: false,
                         });
                     }
 
@@ -1147,6 +1152,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
+                                charged_new_account_state_gas: false,
                             });
                         }
                         tx_req.set_blob_sidecar(blob_sidecar);
@@ -1192,6 +1198,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
                     });
                 }
             }
@@ -2234,19 +2241,24 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
 impl<FEN: FoundryEvmNetwork> InspectorExt for Cheatcodes<FEN> {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
-        if let CreateScheme::Create2 { .. } = inputs.scheme() {
-            let target_depth = if let Some(prank) = &self.get_prank(depth) {
-                prank.depth
-            } else if let Some(broadcast) = &self.broadcast {
-                broadcast.depth
-            } else {
-                1
-            };
-
-            depth == target_depth
-                && (self.broadcast.is_some() || self.config.always_use_create_2_factory)
+        let target_depth = if let Some(prank) = &self.get_prank(depth) {
+            prank.depth
+        } else if let Some(broadcast) = &self.broadcast {
+            broadcast.depth
         } else {
-            false
+            1
+        };
+
+        if depth != target_depth {
+            return false;
+        }
+
+        match inputs.scheme() {
+            CreateScheme::Create2 { .. } => {
+                self.broadcast.is_some() || self.config.always_use_create_2_factory
+            }
+            CreateScheme::Create => self.config.batch_rewrite_creates && self.broadcast.is_some(),
+            _ => false,
         }
     }
 
@@ -2310,7 +2322,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     #[cold]
-    fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
+    const fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
         let mut gas = Gas::new(interpreter.gas.limit());
         gas.memory_mut().words_num = interpreter.gas.memory().words_num;
         gas.memory_mut().expansion_cost = interpreter.gas.memory().expansion_cost;
@@ -2987,8 +2999,52 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 const fn will_exit(action: &InterpreterAction) -> bool {
     match action {
         InterpreterAction::Return(result) => {
-            result.result.is_ok_or_revert() || result.result.is_error()
+            result.result.is_ok_or_revert() || result.result.is_halt()
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cheats(flag: bool, broadcast: Option<Broadcast>) -> Cheatcodes {
+        let config = CheatsConfig { batch_rewrite_creates: flag, ..Default::default() };
+        let mut cheats = Cheatcodes::new(Arc::new(config));
+        cheats.broadcast = broadcast;
+        cheats
+    }
+
+    fn create_inputs() -> CreateInputs {
+        CreateInputs::new(Address::ZERO, CreateScheme::Create, U256::ZERO, Bytes::new(), 100_000, 0)
+    }
+
+    fn broadcast_at(depth: usize) -> Broadcast {
+        Broadcast { depth, ..Default::default() }
+    }
+
+    #[test]
+    fn flag_off_with_broadcast_returns_false() {
+        let mut cheats = cheats(false, Some(broadcast_at(1)));
+        assert!(!cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn flag_on_without_broadcast_returns_false() {
+        let mut cheats = cheats(true, None);
+        assert!(!cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn flag_on_with_broadcast_depth_mismatch_returns_false() {
+        let mut cheats = cheats(true, Some(broadcast_at(2)));
+        assert!(!cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn flag_on_with_broadcast_depth_match_returns_true() {
+        let mut cheats = cheats(true, Some(broadcast_at(1)));
+        assert!(cheats.should_use_create2_factory(1, &create_inputs()));
     }
 }

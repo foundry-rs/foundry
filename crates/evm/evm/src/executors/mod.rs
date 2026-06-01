@@ -1301,7 +1301,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         result,
         gas_used,
         gas_refunded,
-        stipend: gas.initial_total_gas,
+        stipend: gas.initial_total_gas(),
         logs,
         labels,
         traces,
@@ -1505,8 +1505,14 @@ mod tests {
     ///    `sync_tx_after_env_override_restore` must restore `tx.blob_hashes = original`.
     #[test]
     fn pre_override_blob_hashes_restored_on_revert_to_state() {
-        let cheats_config =
-            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, None));
+        let cheats_config = Arc::new(CheatsConfig::new(
+            &Config::default(),
+            EvmOpts::default(),
+            None,
+            None,
+            None,
+            false,
+        ));
 
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default()

@@ -12,10 +12,7 @@ use foundry_evm_core::{constants::DEFAULT_CREATE2_DEPLOYER, evm::FoundryEvmNetwo
 use foundry_evm_fuzz::strategies::BoundMutator;
 use proptest::prelude::Strategy;
 use rand::{Rng, RngCore, seq::SliceRandom};
-use revm::{
-    context::{ContextTr, JournalTr},
-    inspector::JournalExt,
-};
+use revm::context::{ContextTr, JournalTr};
 use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
