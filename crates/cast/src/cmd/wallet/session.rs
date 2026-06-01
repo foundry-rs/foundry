@@ -71,10 +71,10 @@ pub enum SessionSubcommands {
         local: bool,
 
         #[command(flatten)]
-        tx: TransactionOpts,
+        tx: Box<TransactionOpts>,
 
         #[command(flatten)]
-        send_tx: SendTxOpts,
+        send_tx: Box<SendTxOpts>,
     },
 }
 
@@ -85,7 +85,7 @@ impl SessionSubcommands {
                 run_create(root_account, chain_id, expires, scope, spend_limits, *wallet).await
             }
             Self::Revoke { session_id, local, tx, send_tx } => {
-                run_revoke(session_id, local, tx, send_tx).await
+                run_revoke(session_id, local, *tx, *send_tx).await
             }
         }
     }
