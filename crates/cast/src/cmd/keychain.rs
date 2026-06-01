@@ -318,7 +318,7 @@ pub enum KeyAuthSubcommand {
         authorization: KeyAuthArgs,
 
         #[command(flatten)]
-        wallet: WalletOpts,
+        wallet: Box<WalletOpts>,
     },
 }
 
@@ -616,6 +616,7 @@ fn parse_auth_scopes_json_wrapped(s: &str) -> Result<AuthScopesJson, String> {
 }
 
 impl KeychainSubcommand {
+    #[allow(clippy::large_stack_frames)]
     pub async fn run(self) -> Result<()> {
         match self {
             Self::List => run_list(),
@@ -706,7 +707,7 @@ impl KeyAuthSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::Encode { authorization } => run_key_auth_encode(authorization),
-            Self::Sign { authorization, wallet } => run_key_auth_sign(authorization, wallet).await,
+            Self::Sign { authorization, wallet } => run_key_auth_sign(authorization, *wallet).await,
         }
     }
 }
