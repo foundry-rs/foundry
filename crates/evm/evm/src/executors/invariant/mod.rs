@@ -1,6 +1,7 @@
 use crate::{
     executors::{
-        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
+        RawCallResult,
         corpus::{DynamicTargetCtx, WorkerCorpus},
     },
     inspectors::Fuzzer,
@@ -532,8 +533,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let setup_contracts = self.setup_contracts;
         let project_contracts = self.project_contracts;
         let base_executor = self.executor.clone();
-        let campaign_state =
-            Arc::new(InvariantCampaignState::new(self.config.timeout, early_exit.clone()));
+        let campaign_state = Arc::new(InvariantCampaignState::new(early_exit.clone()));
 
         let worker_outputs = if run_in_parallel {
             let worker_jobs = worker_plans
@@ -648,14 +648,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut corpus_entries = Vec::new();
 
         // Start timer for this invariant test.
+        let timer = FuzzTestTimer::new(config.timeout);
+        let is_timed_campaign = timer.is_enabled();
         let mut runs = 0;
         let mut last_metrics_report = Instant::now();
         let campaign_start = Instant::now();
         let mut throughput = InvariantThroughputMetrics::default();
         let mut failure_metrics = InvariantFailureMetrics::default();
         let continue_campaign = |runs: u32| {
-            campaign_state.should_continue()
-                && (campaign_state.is_timed_campaign() || runs < plan.runs)
+            !campaign_state.should_stop()
+                && !timer.is_timed_out()
+                && (is_timed_campaign || runs < plan.runs)
         };
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
@@ -688,7 +691,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             while current_run.depth < config.depth {
                 // Check if the timeout has been reached.
-                if !campaign_state.should_continue() {
+                if campaign_state.should_stop() || timer.is_timed_out() {
                     // Since we never record a revert here the test is still considered
                     // successful even though it timed out. We *want*
                     // this behavior for now, so that's ok, but
@@ -1034,7 +1037,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             runs += 1;
             let total_runs = campaign_state.increment_runs();
             debug_assert!(
-                campaign_state.is_timed_campaign() || total_runs <= config.runs,
+                is_timed_campaign || total_runs <= config.runs,
                 "worker runs were not distributed correctly"
             );
             if let Some(progress) = progress {
@@ -1064,7 +1067,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        let reported_plan = if campaign_state.is_timed_campaign() {
+        let reported_plan = if is_timed_campaign {
             debug_assert_eq!(plan.worker_id, 0);
             debug_assert_eq!(plan.first_global_run, 0);
             InvariantWorkerPlan { runs: reported_runs, ..plan }

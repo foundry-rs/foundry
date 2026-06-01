@@ -1,5 +1,5 @@
 use super::{InvariantFuzzError, InvariantFuzzTestResult, InvariantMetrics};
-use crate::executors::{EarlyExit, FuzzTestTimer, corpus::CampaignCorpusEntry};
+use crate::executors::{EarlyExit, corpus::CampaignCorpusEntry};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
@@ -68,28 +68,19 @@ pub struct InvariantWorkerPlan {
 pub struct InvariantCampaignState {
     total_runs: AtomicU32,
     global_early_exit: EarlyExit,
-    timer: FuzzTestTimer,
 }
 
 impl InvariantCampaignState {
-    pub fn new(timeout: Option<u32>, early_exit: EarlyExit) -> Self {
-        Self {
-            total_runs: AtomicU32::new(0),
-            global_early_exit: early_exit,
-            timer: FuzzTestTimer::new(timeout),
-        }
+    pub fn new(early_exit: EarlyExit) -> Self {
+        Self { total_runs: AtomicU32::new(0), global_early_exit: early_exit }
     }
 
     pub fn increment_runs(&self) -> u32 {
         self.total_runs.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    pub fn should_continue(&self) -> bool {
-        !(self.global_early_exit.should_stop() || self.timer.is_timed_out())
-    }
-
-    pub const fn is_timed_campaign(&self) -> bool {
-        self.timer.is_enabled()
+    pub fn should_stop(&self) -> bool {
+        self.global_early_exit.should_stop()
     }
 }
 
@@ -485,12 +476,6 @@ mod tests {
 
         let err = InvariantCampaignSpec::new(0).worker_plans(0).unwrap_err();
         assert!(err.to_string().contains("requires at least one worker"));
-    }
-
-    #[test]
-    fn campaign_state_reports_timed_campaigns() {
-        assert!(!InvariantCampaignState::new(None, EarlyExit::new(false)).is_timed_campaign());
-        assert!(InvariantCampaignState::new(Some(1), EarlyExit::new(false)).is_timed_campaign());
     }
 
     #[test]

@@ -397,10 +397,7 @@ impl WorkerCorpus {
         let mut optimization_best_value = None;
         let mut optimization_best_sequence = vec![];
 
-        if id == 0
-            && let Some(corpus_dir) = &config.corpus_dir
-        {
-            // Load persisted optimization state if it exists.
+        if let Some(corpus_dir) = &config.corpus_dir {
             let opt_path = corpus_dir.join(OPTIMIZATION_BEST_FILE);
             if opt_path.is_file() {
                 match foundry_common::fs::read_json_file::<OptimizationState>(&opt_path) {
@@ -422,7 +419,11 @@ impl WorkerCorpus {
                     }
                 }
             }
+        }
 
+        if id == 0
+            && let Some(corpus_dir) = &config.corpus_dir
+        {
             // Seed in-memory corpus with the persisted optimization best sequence
             // so the mutation engine can build on it in future runs.
             if !optimization_best_sequence.is_empty() {
@@ -1671,6 +1672,49 @@ mod tests {
         assert_eq!(state.best_sequence[0].sender, sequence[0].sender);
         assert_eq!(state.best_sequence[0].call_details.target, sequence[0].call_details.target);
         assert_eq!(state.best_sequence[0].call_details.calldata, sequence[0].call_details.calldata);
+    }
+
+    #[test]
+    fn non_master_campaign_worker_uses_persisted_optimization_baseline() {
+        let corpus_root = temp_corpus_dir();
+        let persisted_sequence = vec![basic_tx()];
+        let persisted_state = OptimizationState {
+            best_value: I256::try_from(100).unwrap(),
+            best_sequence: persisted_sequence,
+        };
+        foundry_common::fs::write_json_file(
+            &corpus_root.join(OPTIMIZATION_BEST_FILE),
+            &persisted_state,
+        )
+        .unwrap();
+        let mut manager = WorkerCorpus::new::<foundry_evm_core::evm::EthEvmNetwork>(
+            1,
+            corpus_config(corpus_root),
+            Just(basic_tx()).boxed(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let worse_sequence = vec![basic_tx()];
+        let worse = manager.process_inputs_for_campaign(
+            &worse_sequence,
+            &[],
+            false,
+            Some((I256::try_from(50).unwrap(), worse_sequence.clone())),
+        );
+        assert!(worse.is_none());
+
+        let better_sequence = vec![basic_tx()];
+        let better = manager.process_inputs_for_campaign(
+            &better_sequence,
+            &[],
+            false,
+            Some((I256::try_from(150).unwrap(), better_sequence.clone())),
+        );
+        assert!(better.is_some());
     }
 
     #[test]
