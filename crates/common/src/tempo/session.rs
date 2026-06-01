@@ -36,6 +36,11 @@ impl SessionStatus {
         matches!(self, Self::Revoked | Self::Expired | Self::Failed)
     }
 
+    /// Returns `true` if entering this status must erase local key material.
+    pub const fn clears_key_material(self) -> bool {
+        matches!(self, Self::Revoking | Self::Revoked | Self::Expired | Self::Failed)
+    }
+
     /// Returns `true` if the session is still in-flight or usable.
     pub const fn is_live(self) -> bool {
         !self.is_terminal()
@@ -171,7 +176,7 @@ impl SessionRecord {
         self.get(session_id).filter(|session| session.has_live_key_at(now))
     }
 
-    /// Update a session status by id. Terminal statuses clear local key material.
+    /// Update a session status by id. Revoking and terminal statuses clear local key material.
     ///
     /// Returns `true` when the record changed. Missing sessions and idempotent
     /// updates return `false`.
@@ -182,13 +187,14 @@ impl SessionRecord {
             return false;
         };
 
-        let changed = session.status != status || status.is_terminal() && session.key.is_some();
+        let changed =
+            session.status != status || status.clears_key_material() && session.key.is_some();
         if !changed {
             return false;
         }
 
         session.status = status;
-        if status.is_terminal() {
+        if status.clears_key_material() {
             session.key = None;
         }
         true
@@ -200,7 +206,7 @@ impl SessionRecord {
         for session in &mut self.sessions {
             let should_expire = session.status.is_live() && session.is_expired_at(now);
             let should_clear_key =
-                session.key.is_some() && (should_expire || session.status.is_terminal());
+                session.key.is_some() && (should_expire || session.status.clears_key_material());
 
             if should_expire {
                 session.status = SessionStatus::Expired;
@@ -247,6 +253,14 @@ pub fn read_session_record() -> Option<SessionRecord> {
 /// Read a live session-scoped key entry by session id.
 pub fn read_live_session_key(session_id: B256, now: u64) -> Option<SessionEntry> {
     read_session_record()?.live_key(session_id, now).cloned()
+}
+
+/// Read a session entry by id, returning parse/read errors to the caller.
+pub fn read_session_entry(session_id: B256) -> eyre::Result<Option<SessionEntry>> {
+    let path =
+        session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
+    Ok(read_toml_file::<SessionRecord>(&path, "tempo sessions")?
+        .and_then(|record| record.get(session_id).cloned()))
 }
 
 /// Resolve a live session key into a signer and access-key configuration.
@@ -777,7 +791,7 @@ mod tests {
         assert_eq!(record.get(active_id).unwrap().status, SessionStatus::Active);
         assert!(record.get(active_id).unwrap().key.is_some());
         assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
-        assert!(record.get(revoking_id).unwrap().key.is_some());
+        assert!(record.get(revoking_id).unwrap().key.is_none());
         assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
         assert!(record.get(revoked_id).unwrap().key.is_none());
         assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
@@ -1203,7 +1217,7 @@ key = "0x1111"
             let record = read_session_record().unwrap();
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Revoking);
-            assert!(session.key.is_some());
+            assert!(session.key.is_none());
 
             assert!(update_session_status(session_id, SessionStatus::Revoked).unwrap());
             let record = read_session_record().unwrap();

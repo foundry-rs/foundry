@@ -1,7 +1,9 @@
 //! CLI tests for `cast keychain` subcommands.
 
+use alloy_primitives::Address;
 use anvil::NodeConfig;
 use foundry_test_utils::util::OutputExt;
+use std::fs;
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
@@ -73,4 +75,97 @@ casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
         .unwrap_or_else(|| panic!("expected 'sponsor_hash' key in JSON output, got: {output}"));
     assert!(hash.starts_with("0x"), "sponsor_hash should be 0x-prefixed, got: {hash}");
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
+});
+
+casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let create_output = cmd
+        .args([
+            "--json",
+            "wallet",
+            "session",
+            "create",
+            "--root",
+            accounts::ADDR1,
+            "--chain-id",
+            "31337",
+            "--expires",
+            "10m",
+            "--scope",
+            accounts::TOKEN,
+            "--private-key",
+            accounts::PK1,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let created: serde_json::Value =
+        serde_json::from_str(create_output.trim()).expect("session create emits JSON");
+    let session_id = created["session_id"].as_str().expect("session_id");
+    let key_address = created["key_address"].as_str().expect("key_address");
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            key_address,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.args([
+        "wallet",
+        "session",
+        "revoke",
+        session_id,
+        "--private-key",
+        accounts::PK1,
+        "--rpc-url",
+        &rpc,
+    ])
+    .assert_success();
+
+    let check_output = cmd
+        .cast_fuse()
+        .args(["keychain", "check", accounts::ADDR1, key_address, "--rpc-url", &rpc, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let checked: serde_json::Value =
+        serde_json::from_str(check_output.trim()).expect("keychain check emits JSON");
+    assert_eq!(checked["provisioned"], false);
+    assert_eq!(checked["is_revoked"], true);
+
+    let session_file = tempo_home.path().join("wallet/sessions.toml");
+    let contents = fs::read_to_string(&session_file).expect("sessions.toml exists");
+    assert!(contents.contains("status = \"revoked\""), "unexpected sessions.toml:\n{contents}");
+    assert!(
+        !contents.contains("key = \"0x"),
+        "revoked session must not retain private key material:\n{contents}"
+    );
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let local_revoke_output = cmd
+        .args(["--json", "wallet", "session", "revoke", session_id, "--local"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let local_revoke: serde_json::Value =
+        serde_json::from_str(local_revoke_output.trim()).expect("local revoke emits JSON");
+    assert_eq!(local_revoke["status"], "revoked");
+    assert_eq!(local_revoke["reason"], "local");
+
+    let _: Address = key_address.parse().expect("key_address is an address");
 });

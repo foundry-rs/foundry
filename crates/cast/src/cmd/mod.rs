@@ -6,6 +6,7 @@
 //! [`foundry_config::Config`].
 
 pub mod access_list;
+pub(crate) mod account_keychain;
 pub mod artifact;
 pub mod b2e_payload;
 pub mod batch_mktx;
