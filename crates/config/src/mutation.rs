@@ -57,7 +57,8 @@ pub struct MutationConfig {
     /// Note: enforcement is best-effort. Background work for a timed-out
     /// mutant may continue briefly until the underlying compile / test loop
     /// reaches a checkpoint, but the worker slot is freed immediately so
-    /// other mutants can proceed.
+    /// other mutants can proceed. Cleanup backlog is bounded by the configured
+    /// mutation worker count.
     pub timeout: Option<u32>,
 }
 
