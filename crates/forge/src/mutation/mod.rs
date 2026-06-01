@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -16,6 +16,7 @@ pub use crate::mutation::{
     runner::run_mutations_parallel_with_progress,
 };
 use eyre::eyre;
+use foundry_common::sh_warn;
 use serde::{Deserialize, Serialize};
 use solar::{
     ast::{
@@ -25,6 +26,10 @@ use solar::{
     },
     parse::Parser,
 };
+
+fn failed_to_parse(path: &Path) -> eyre::Report {
+    eyre!("failed to parse {}", path.display())
+}
 
 #[derive(Clone, Copy)]
 enum CacheKind<'a> {
@@ -475,11 +480,11 @@ impl MutationHandler {
                 Parser::from_lazy_source_code(&sess, &arena, FileName::from(path.clone()), || {
                     Ok((*target_content).clone())
                 })
-                .map_err(|_e| eyre!("failed to parse {}", path.display()))?;
+                .map_err(|_e| failed_to_parse(path))?;
 
             let ast = parser.parse_file().map_err(|e| {
                 e.emit();
-                eyre!("failed to parse {}", path.display())
+                failed_to_parse(path)
             })?;
 
             let operators = self.config.mutation.enabled_operators();
@@ -492,8 +497,8 @@ impl MutationHandler {
             }
             let _ = mutant_visitor.visit_source_unit(&ast);
 
-            if let Some(err) = mutant_visitor.errors.into_iter().next() {
-                return Err(err);
+            for err in mutant_visitor.take_errors() {
+                let _ = sh_warn!("{err:?}");
             }
 
             Ok(mutant_visitor.mutation_to_conduct)

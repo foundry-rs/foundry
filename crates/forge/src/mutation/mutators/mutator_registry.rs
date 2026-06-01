@@ -1,5 +1,5 @@
 use crate::mutation::mutant::Mutant;
-use eyre::Result;
+use eyre::Report;
 use foundry_config::MutatorType;
 
 use super::{
@@ -10,6 +10,11 @@ use super::{
 /// Registry of all available mutators (ie implementing the Mutator trait)
 pub struct MutatorRegistry {
     mutators: Vec<Box<dyn Mutator>>,
+}
+
+pub struct MutationGenerationResult {
+    pub mutations: Vec<Mutant>,
+    pub errors: Vec<Report>,
 }
 
 impl MutatorRegistry {
@@ -58,18 +63,23 @@ impl MutatorRegistry {
     }
 
     /// Find all applicable mutators for a given context and return the corresponding mutations
-    pub fn generate_mutations(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
+    /// and any mutator errors encountered while generating them.
+    pub fn generate_mutations(&self, context: &MutationContext<'_>) -> MutationGenerationResult {
         let mut mutations = Vec::new();
+        let mut errors = Vec::new();
         for mutator in self.mutators.iter().filter(|mutator| mutator.is_applicable(context)) {
-            mutations.extend(mutator.generate_mutants(context)?);
+            match mutator.generate_mutants(context) {
+                Ok(generated) => mutations.extend(generated),
+                Err(err) => errors.push(err),
+            }
         }
-        Ok(mutations)
+        MutationGenerationResult { mutations, errors }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use eyre::eyre;
+    use eyre::{Result, eyre};
     use solar::ast::Span;
 
     use super::*;
@@ -87,7 +97,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_mutations_surfaces_mutator_errors() {
+    fn generate_mutations_collects_mutator_errors() {
         let registry = MutatorRegistry::new_with_mutators(vec![Box::new(FailingMutator)]);
         let context = MutationContext::builder()
             .with_path("test.sol".into())
@@ -95,7 +105,9 @@ mod tests {
             .build()
             .unwrap();
 
-        let err = registry.generate_mutations(&context).unwrap_err();
+        let result = registry.generate_mutations(&context);
+        assert!(result.mutations.is_empty());
+        let err = result.errors.into_iter().next().unwrap();
         assert!(err.to_string().contains("synthetic mutator failure"));
     }
 }

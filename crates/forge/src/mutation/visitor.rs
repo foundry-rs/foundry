@@ -21,7 +21,7 @@ pub enum AssignVarTypes {
 #[allow(clippy::type_complexity)]
 pub struct MutantVisitor<'src> {
     pub mutation_to_conduct: Vec<Mutant>,
-    pub errors: Vec<Report>,
+    errors: Vec<Report>,
     pub mutator_registry: MutatorRegistry,
     pub path: PathBuf,
     pub source: Option<&'src str>,
@@ -93,17 +93,21 @@ impl<'src> MutantVisitor<'src> {
         self
     }
 
+    pub fn take_errors(&mut self) -> Vec<Report> {
+        std::mem::take(&mut self.errors)
+    }
+
     fn collect_mutations(&mut self, context: &MutationContext<'_>) {
-        match self.mutator_registry.generate_mutations(context) {
-            Ok(mutations) => self.mutation_to_conduct.extend(mutations),
-            Err(err) => {
-                self.errors.push(
-                    err.wrap_err(format!(
-                        "failed to generate mutations for {}",
-                        self.path.display()
-                    )),
-                );
-            }
+        let result = self.mutator_registry.generate_mutations(context);
+        self.mutation_to_conduct.extend(result.mutations);
+
+        for err in result.errors {
+            self.errors.push(err.wrap_err(format!(
+                "failed to generate mutations for {}:{}:{}",
+                self.path.display(),
+                context.line_number(),
+                context.column_number()
+            )));
         }
     }
 }
@@ -198,5 +202,89 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
 
         self.collect_mutations(&context);
         self.walk_yul_expr(expr)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use eyre::{Result, eyre};
+    use solar::{
+        ast::{Arena, interface::source_map::FileName},
+        parse::Parser,
+    };
+
+    use super::*;
+    use crate::mutation::{Session, mutant::MutationType};
+
+    struct FailingExprMutator;
+
+    impl Mutator for FailingExprMutator {
+        fn generate_mutants(&self, _ctxt: &MutationContext<'_>) -> Result<Vec<Mutant>> {
+            Err(eyre!("synthetic visitor failure"))
+        }
+
+        fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
+            ctxt.expr.is_some()
+        }
+    }
+
+    struct PassingExprMutator;
+
+    impl Mutator for PassingExprMutator {
+        fn generate_mutants(&self, ctxt: &MutationContext<'_>) -> Result<Vec<Mutant>> {
+            Ok(vec![Mutant {
+                path: ctxt.path.clone(),
+                span: ctxt.span,
+                mutation: MutationType::DeleteExpression,
+                original: ctxt.original_text(),
+                source_line: ctxt.source_line(),
+                line_number: ctxt.line_number(),
+                column_number: ctxt.column_number(),
+            }])
+        }
+
+        fn is_applicable(&self, ctxt: &MutationContext<'_>) -> bool {
+            ctxt.expr.is_some()
+        }
+    }
+
+    #[test]
+    fn visitor_collects_mutations_and_surfaces_mutator_errors() {
+        let source = "\
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+contract Test {
+    function test() public {
+        uint256 x = 1 + 2;
+    }
+}
+";
+        let path = PathBuf::from("test.sol");
+        let sess = Session::builder().with_silent_emitter(None).build();
+
+        sess.enter(|| {
+            let arena = Arena::new();
+            let mut parser =
+                Parser::from_lazy_source_code(&sess, &arena, FileName::Real(path.clone()), || {
+                    Ok(source.to_string())
+                })
+                .unwrap();
+            let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+            let mut visitor = MutantVisitor::new_with_mutators(
+                path,
+                vec![Box::new(FailingExprMutator), Box::new(PassingExprMutator)],
+            )
+            .with_source(source);
+
+            let _ = visitor.visit_source_unit(&ast);
+            let errors = visitor.take_errors();
+
+            assert!(!visitor.mutation_to_conduct.is_empty());
+            assert!(!errors.is_empty());
+
+            let err = format!("{:?}", errors[0]);
+            assert!(err.contains("failed to generate mutations for test.sol:"));
+            assert!(err.contains("synthetic visitor failure"));
+        });
     }
 }
