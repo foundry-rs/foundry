@@ -17,9 +17,15 @@ use foundry_cli::{
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
 use foundry_config::{
-    Chain, Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast,
+    Chain, Config, SolcReq,
+    figment::{
+        Error, Metadata, Profile, Provider as FigmentProvider,
+        value::{Dict, Map, Value},
+    },
+    impl_figment_convert, impl_figment_convert_cast,
 };
 use itertools::Itertools;
+use reqwest::{Client, StatusCode, Url};
 use semver::BuildMetadata;
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
@@ -50,7 +56,7 @@ fn verifier_credential_probe_query(api_key: Option<&str>) -> Vec<(&'static str, 
 }
 
 fn classify_verifier_credential_response(
-    status: reqwest::StatusCode,
+    status: StatusCode,
     body: &str,
 ) -> VerifierCredentialProbe {
     let lower = body.to_lowercase();
@@ -65,7 +71,7 @@ fn classify_verifier_credential_response(
         return VerifierCredentialProbe::Accepted;
     }
 
-    if status == reqwest::StatusCode::UNAUTHORIZED {
+    if status == StatusCode::UNAUTHORIZED {
         return VerifierCredentialProbe::InvalidApiKey;
     }
 
@@ -101,8 +107,8 @@ fn classify_verifier_credential_response(
     }
 }
 
-fn parse_http_verifier_url(url: &str, label: &str) -> Result<reqwest::Url> {
-    let url = reqwest::Url::parse(url).wrap_err_with(|| format!("invalid {label} URL `{url}`"))?;
+fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
+    let url = Url::parse(url).wrap_err_with(|| format!("invalid {label} URL `{url}`"))?;
     if !matches!(url.scheme(), "http" | "https") {
         eyre::bail!("invalid {label} URL `{url}`: URL scheme must be http or https");
     }
@@ -110,10 +116,10 @@ fn parse_http_verifier_url(url: &str, label: &str) -> Result<reqwest::Url> {
 }
 
 async fn probe_verifier_credentials(
-    url: reqwest::Url,
+    url: Url,
     api_key: Option<&str>,
 ) -> Result<VerifierCredentialProbe, reqwest::Error> {
-    let resp = reqwest::Client::new()
+    let resp = Client::new()
         .get(url)
         .query(&verifier_credential_probe_query(api_key))
         .timeout(Duration::from_secs(10))
@@ -237,7 +243,7 @@ impl VerifierArgs {
                 // Only probe custom URLs; the default public endpoint is assumed reachable.
                 if let Some(url) = &self.verifier_url {
                     let url = parse_http_verifier_url(url, "Sourcify")?;
-                    match reqwest::Client::new()
+                    match Client::new()
                         .get(url.clone())
                         .timeout(Duration::from_secs(10))
                         .send()
@@ -250,7 +256,7 @@ impl VerifierArgs {
                         }
                         Ok(resp) => {
                             let status = resp.status();
-                            if !status.is_success() && status != reqwest::StatusCode::NOT_FOUND {
+                            if !status.is_success() && status != StatusCode::NOT_FOUND {
                                 sh_warn!(
                                     "Sourcify URL `{url}` returned HTTP {status}, proceeding anyway"
                                 )?;
@@ -418,48 +424,43 @@ pub struct VerifyArgs {
 
 impl_figment_convert!(VerifyArgs);
 
-impl figment::Provider for VerifyArgs {
-    fn metadata(&self) -> figment::Metadata {
-        figment::Metadata::named("Verify Provider")
+impl FigmentProvider for VerifyArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Verify Provider")
     }
 
-    fn data(
-        &self,
-    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = self.etherscan.dict();
         dict.extend(self.rpc.dict());
 
         if let Some(root) = self.root.as_ref() {
-            dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
+            dict.insert("root".to_string(), Value::serialize(root)?);
         }
         if let Some(optimizer_runs) = self.num_of_optimizations {
-            dict.insert("optimizer".to_string(), figment::value::Value::serialize(true)?);
-            dict.insert(
-                "optimizer_runs".to_string(),
-                figment::value::Value::serialize(optimizer_runs)?,
-            );
+            dict.insert("optimizer".to_string(), Value::serialize(true)?);
+            dict.insert("optimizer_runs".to_string(), Value::serialize(optimizer_runs)?);
         }
         if let Some(evm_version) = self.evm_version {
-            dict.insert("evm_version".to_string(), figment::value::Value::serialize(evm_version)?);
+            dict.insert("evm_version".to_string(), Value::serialize(evm_version)?);
         }
         if self.via_ir {
-            dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);
+            dict.insert("via_ir".to_string(), Value::serialize(self.via_ir)?);
         }
 
         if self.no_auto_detect {
-            dict.insert("auto_detect_solc".to_string(), figment::value::Value::serialize(false)?);
+            dict.insert("auto_detect_solc".to_string(), Value::serialize(false)?);
         }
 
         if let Some(ref solc) = self.use_solc {
             let solc = solc.trim_start_matches("solc:");
-            dict.insert("solc".to_string(), figment::value::Value::serialize(solc)?);
+            dict.insert("solc".to_string(), Value::serialize(solc)?);
         }
 
         if let Some(api_key) = &self.verifier.verifier_api_key {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
-        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -773,20 +774,18 @@ impl VerifyCheckArgs {
     }
 }
 
-impl figment::Provider for VerifyCheckArgs {
-    fn metadata(&self) -> figment::Metadata {
-        figment::Metadata::named("Verify Check Provider")
+impl FigmentProvider for VerifyCheckArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Verify Check Provider")
     }
 
-    fn data(
-        &self,
-    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = self.etherscan.dict();
         if let Some(api_key) = &self.etherscan.key {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
-        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -842,7 +841,7 @@ mod tests {
         let body =
             r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#;
         assert_eq!(
-            classify_verifier_credential_response(reqwest::StatusCode::OK, body),
+            classify_verifier_credential_response(StatusCode::OK, body),
             VerifierCredentialProbe::Accepted,
         );
     }
@@ -851,11 +850,11 @@ mod tests {
     fn classify_verifier_probe_rejects_invalid_api_key() {
         let body = r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#;
         assert_eq!(
-            classify_verifier_credential_response(reqwest::StatusCode::OK, body),
+            classify_verifier_credential_response(StatusCode::OK, body),
             VerifierCredentialProbe::InvalidApiKey,
         );
         assert_eq!(
-            classify_verifier_credential_response(reqwest::StatusCode::UNAUTHORIZED, ""),
+            classify_verifier_credential_response(StatusCode::UNAUTHORIZED, ""),
             VerifierCredentialProbe::InvalidApiKey,
         );
     }
@@ -864,25 +863,25 @@ mod tests {
     fn classify_verifier_probe_treats_transient_errors_as_inconclusive() {
         let body = r#"{"status":"0","message":"NOTOK","result":"Max rate limit reached"}"#;
         assert_eq!(
-            classify_verifier_credential_response(reqwest::StatusCode::OK, body),
+            classify_verifier_credential_response(StatusCode::OK, body),
             VerifierCredentialProbe::Inconclusive,
         );
         assert_eq!(
             classify_verifier_credential_response(
-                reqwest::StatusCode::OK,
+                StatusCode::OK,
                 "Checking if the site connection is secure",
             ),
             VerifierCredentialProbe::Inconclusive,
         );
         assert_eq!(
             classify_verifier_credential_response(
-                reqwest::StatusCode::FORBIDDEN,
+                StatusCode::FORBIDDEN,
                 "Sorry, you have been blocked",
             ),
             VerifierCredentialProbe::Inconclusive,
         );
         assert_eq!(
-            classify_verifier_credential_response(reqwest::StatusCode::FORBIDDEN, ""),
+            classify_verifier_credential_response(StatusCode::FORBIDDEN, ""),
             VerifierCredentialProbe::Inconclusive,
         );
     }
