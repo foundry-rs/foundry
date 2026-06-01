@@ -35,6 +35,7 @@ impl Mutator for AssignmentMutator {
                     line_number,
                     column_number,
                 }]),
+                OwnedLiteral::Number(val) if *val == U256::ZERO => Ok(vec![]),
                 OwnedLiteral::Number(val) => Ok(vec![
                     Mutant {
                         span: replacement_span,

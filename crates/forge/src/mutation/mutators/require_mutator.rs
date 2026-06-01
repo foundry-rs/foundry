@@ -77,43 +77,32 @@ impl Mutator for RequireMutator {
         };
 
         let mut mutants = Vec::new();
-
-        // Mutation 1: require(x) -> require(true)
-        // This is security-critical: if tests pass, the condition was never actually needed
-        let mutated_true = format!("{func_name}(true{rest_args})");
-        mutants.push(Mutant {
-            span: expr.span,
-            mutation: MutationType::RequireCondition { mutated_call: mutated_true },
-            path: context.path.clone(),
-            original: original.clone(),
-            source_line: source_line.clone(),
-            line_number,
-            column_number,
-        });
-
-        let mutated_false = format!("{func_name}(false{rest_args})");
-        mutants.push(Mutant {
-            span: expr.span,
-            mutation: MutationType::RequireCondition { mutated_call: mutated_false },
-            path: context.path.clone(),
-            original: original.clone(),
-            source_line: source_line.clone(),
-            line_number,
-            column_number,
-        });
-
-        if !condition_text.trim().starts_with('!') {
-            let mutated_inverted = format!("{func_name}(!({condition_text}){rest_args})");
+        let mut push_mutant = |mutated_call: String, original: String, source_line: String| {
+            if mutated_call.trim() == original.trim() {
+                return;
+            }
             mutants.push(Mutant {
                 span: expr.span,
-                mutation: MutationType::RequireCondition { mutated_call: mutated_inverted },
+                mutation: MutationType::RequireCondition { mutated_call },
                 path: context.path.clone(),
                 original,
                 source_line,
                 line_number,
                 column_number,
             });
-        }
+        };
+
+        // Mutation 1: require(x) -> require(true)
+        // This is security-critical: if tests pass, the condition was never actually needed
+        let mutated_true = format!("{func_name}(true{rest_args})");
+        push_mutant(mutated_true, original.clone(), source_line.clone());
+
+        let mutated_false = format!("{func_name}(false{rest_args})");
+        push_mutant(mutated_false, original.clone(), source_line.clone());
+
+        let inverted_condition = invert_condition_text(&condition_text);
+        let mutated_inverted = format!("{func_name}({inverted_condition}{rest_args})");
+        push_mutant(mutated_inverted, original, source_line);
 
         Ok(mutants)
     }
@@ -144,4 +133,13 @@ fn extract_span_text(source: &str, span: solar::ast::Span) -> String {
     let lo = span.lo().0 as usize;
     let hi = span.hi().0 as usize;
     source.get(lo..hi).map(|s| s.to_string()).unwrap_or_default()
+}
+
+fn invert_condition_text(condition: &str) -> String {
+    let condition = condition.trim();
+    if let Some(stripped) = condition.strip_prefix('!') {
+        stripped.trim().to_string()
+    } else {
+        format!("!({condition})")
+    }
 }
