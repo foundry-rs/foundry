@@ -1972,6 +1972,38 @@ casttest!(logs_chunked_large_range, |_prj, cmd| {
     .assert_success();
 });
 
+// tests that `cast create2` writes `address\tsalt` to stdout and prose to stderr
+casttest!(create2_output_channels, |_prj, cmd| {
+    cmd.args([
+        "create2",
+        "--starts-with",
+        "cc",
+        "--init-code-hash",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]	0x[..]
+
+"#]]);
+});
+
+// tests that `cast create2 --salt` writes `address\tsalt` to stdout
+casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
+    cmd.args([
+        "create2",
+        "--salt",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--init-code-hash",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]	0x0000000000000000000000000000000000000000000000000000000000000001
+
+"#]]);
+});
+
 casttest!(mktx, |_prj, cmd| {
     cmd.args([
         "mktx",

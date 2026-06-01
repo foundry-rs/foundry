@@ -100,13 +100,14 @@ Each row's status is one of:
 | `cast estimate`        | Gas estimate (decimal)                               | JSON `{ "gas": "…" }`                                          | migrated |
 | `cast rpc`             | RPC result (JSON)                                    | JSON                                                           | migrated |
 | `cast storage`         | Single slot value                                    | JSON of layout                                                 | migrated |
-| `cast logs`            | One log per line                                     | JSON array                                                     | todo   |
+| `cast logs`            | Pretty-printed logs                                  | JSON array                                                     | migrated |
 | `cast run`             | Trace / decoded output                               | JSON                                                           | migrated |
 | `cast trace`           | Trace                                                | JSON trace                                                     | migrated |
 | `cast wallet new`      | One record per wallet: `address` (keystore) or `address\tprivate_key` (no keystore) | JSON array of `{ address, public_key, path }` (keystore) or `{ address, public_key, private_key }` (no keystore) | migrated |
 | `cast wallet sign`     | Signature                                            | JSON                                                           | migrated |
 | `cast wallet sign-auth`| Signed authorization RLP                             | JSON                                                           | migrated |
-| `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | todo   |
+| `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | migrated |
+| `cast create2`         | `address\tsalt` (tab-separated)                      | n/a                                                            | migrated |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast da-estimate`     | Gas estimate                                         | JSON                                                           | migrated |
 | `cast find-block`      | Block number                                         | JSON                                                           | migrated |
