@@ -15,7 +15,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::LoadConfig,
+    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -27,7 +27,7 @@ use foundry_common::{
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
-use foundry_wallets::WalletOpts;
+use foundry_wallets::{WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner};
 use serde::Deserialize;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
@@ -50,7 +50,6 @@ use crate::cmd::tempo_policy_args::{
     SelectorArg, parse_period, parse_policy_token, parse_scope, parse_selector_arg,
     parse_selector_bytes,
 };
-use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
 
 use crate::{
     cmd::send::cast_send,
@@ -2687,7 +2686,8 @@ async fn run_authorize(
         .abi_encode()
     };
 
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 fn run_key_auth_encode(args: KeyAuthArgs) -> Result<()> {
@@ -2713,7 +2713,18 @@ async fn run_key_auth_sign(args: KeyAuthArgs, wallet: WalletOpts) -> Result<()> 
     let authorization = args.into_authorization()?;
     let authorized_key_type = auth_signature_type_name(&authorization.key_type);
     let signature_hash = authorization.signature_hash();
-    let signer = wallet.signer().await?;
+    let (signer, tempo_access_key) = wallet.maybe_signer().await?;
+    if tempo_access_key.is_some() {
+        eyre::bail!(
+            "Tempo access keys cannot sign key authorizations; use a persistent root signer"
+        );
+    }
+    let signer = signer.ok_or_else(|| {
+        eyre::eyre!(
+            "a persistent root signer is required to sign key authorizations; pass a signer with \
+             --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+        )
+    })?;
     let signer_address = signer.address();
     let signature = signer.sign_hash(&signature_hash).await?;
     let signed = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
@@ -2785,7 +2796,8 @@ async fn run_revoke(
     send_tx: SendTxOpts,
 ) -> Result<()> {
     let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain burn-witness` — burn a TIP-1053 key authorization witness.
@@ -2801,7 +2813,8 @@ async fn run_burn_witness(
     }
 
     let calldata = IAccountKeychain::burnKeyAuthorizationWitnessCall { witness }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain is-witness-burned` — check TIP-1053 witness burn state.
@@ -2876,7 +2889,8 @@ async fn run_update_limit(
         newLimit: new_limit,
     }
     .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain ss` — set allowed call scopes.
@@ -2888,7 +2902,8 @@ async fn run_set_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain rs` — remove call scope for a target.
@@ -2900,7 +2915,8 @@ async fn run_remove_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
@@ -2962,7 +2978,8 @@ async fn run_policy_add_call(
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
             .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain policy set-limit` — update a spending limit amount.
@@ -2985,13 +3002,81 @@ async fn run_policy_set_limit(
     run_update_limit(key_address, token, amount, tx_opts, send_tx).await
 }
 
-/// Shared helper to send a keychain precompile transaction.
-async fn send_keychain_tx(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeychainTxOutcome {
+    Submitted,
+    PrintedSponsorHash,
+}
+
+pub(crate) enum KeychainRootSigner {
+    Browser(BrowserSigner<TempoNetwork>),
+    Wallet(Box<WalletSigner>),
+}
+
+impl KeychainRootSigner {
+    fn address(&self) -> Address {
+        match self {
+            Self::Browser(browser) => browser.address(),
+            Self::Wallet(signer) => signer.address(),
+        }
+    }
+}
+
+/// Resolve the root-authorized signer used for AccountKeychain policy changes.
+pub(crate) async fn resolve_keychain_root_signer(
+    send_tx: &SendTxOpts,
+    expected_from: Option<Address>,
+    print_sponsor_hash: bool,
+) -> Result<KeychainRootSigner> {
+    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
+        ensure_root_sender(browser.address(), expected_from)?;
+        return Ok(KeychainRootSigner::Browser(browser));
+    }
+
+    if tempo_access_key.is_some() {
+        eyre::bail!(
+            "keychain policy changes must be signed by the root account; the selected `--from` \
+             resolved to a Tempo access key. Use `--browser` for passkey roots, or pass a root \
+             account signer with `--private-key`, `--keystore`, Ledger, Trezor, AWS, GCP, or Turnkey."
+        );
+    }
+
+    let signer = match signer {
+        Some(s) => s,
+        None if print_sponsor_hash => {
+            eyre::bail!(
+                "--tempo.print-sponsor-hash requires a root account signer, such as \
+                 --browser, --private-key, or --keystore"
+            );
+        }
+        None => send_tx.eth.wallet.signer().await?,
+    };
+    ensure_root_sender(signer.address(), expected_from)?;
+    Ok(KeychainRootSigner::Wallet(Box::new(signer)))
+}
+
+/// Send calldata to the Tempo AccountKeychain precompile as a root-authorized transaction.
+pub(crate) async fn send_keychain_tx(
+    calldata: Vec<u8>,
+    tx_opts: TransactionOpts,
+    send_tx: &SendTxOpts,
+    expected_from: Option<Address>,
+) -> Result<KeychainTxOutcome> {
+    let root_signer =
+        resolve_keychain_root_signer(send_tx, expected_from, tx_opts.tempo.print_sponsor_hash)
+            .await?;
+    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, || Ok(())).await
+}
+
+/// Send AccountKeychain calldata with an already-resolved root signer.
+pub(crate) async fn send_keychain_tx_with_root_signer(
     calldata: Vec<u8>,
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
-) -> Result<()> {
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    root_signer: KeychainRootSigner,
+    before_submit: impl FnOnce() -> Result<()>,
+) -> Result<KeychainTxOutcome> {
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let expires_at = tx_opts.tempo.resolve_expires();
     let tempo_sponsor =
@@ -3016,25 +3101,8 @@ async fn send_keychain_tx(
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
 
-    // Keychain management calls are authorized by the root account. Access keys can use their
-    // permissions, but cannot mutate their own key policy.
-    let browser = send_tx.browser.run::<TempoNetwork>().await?;
-
     if print_sponsor_hash {
-        let from = if let Some(ref browser) = browser {
-            browser.address()
-        } else {
-            signer
-                .as_ref()
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "--tempo.print-sponsor-hash requires a root account signer, such as \
-                         --browser, --private-key, or --keystore"
-                    )
-                })?
-                .address()
-        };
-
+        let from = root_signer.address();
         let (tx, _) = builder.build(from).await?;
         let hash = tx
             .compute_sponsor_hash(from)
@@ -3044,54 +3112,68 @@ async fn send_keychain_tx(
         } else {
             sh_println!("{hash:?}")?;
         }
-        return Ok(());
+        return Ok(KeychainTxOutcome::PrintedSponsorHash);
     }
 
     crate::tempo::print_expires(expires_at)?;
 
-    if let Some(browser) = browser {
-        let chain = builder.chain();
-        let (mut tx, _) = builder.build(browser.address()).await?;
-        if chain.is_tempo()
-            && let Some(gas) = tx.gas_limit()
-        {
-            tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
-        }
-        if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
-        }
+    match root_signer {
+        KeychainRootSigner::Browser(browser) => {
+            let chain = builder.chain();
+            let (mut tx, _) = builder.build(browser.address()).await?;
+            if chain.is_tempo()
+                && let Some(gas) = tx.gas_limit()
+            {
+                tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
+            }
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
+            }
 
-        let tx_hash = browser.send_transaction_via_browser(tx).await?;
-        CastTxSender::new(&provider)
-            .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+            before_submit()?;
+            let tx_hash = browser.send_transaction_via_browser(tx).await?;
+            CastTxSender::new(&provider)
+                .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+                .await?;
+        }
+        KeychainRootSigner::Wallet(signer) => {
+            let from = signer.address();
+            let (mut tx, _) = builder.build(from).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
+            }
+
+            before_submit()?;
+            let wallet = EthereumWallet::from(*signer);
+            let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
+                .wallet(wallet)
+                .connect_provider(&provider);
+
+            cast_send(
+                provider,
+                tx,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+            )
             .await?;
-    } else if tempo_access_key.is_some() {
-        eyre::bail!(
-            "keychain policy changes must be signed by the root account; the selected `--from` \
-             resolved to a Tempo access key. Use `--browser` for passkey roots, or pass a root \
-             account signer with `--private-key`, `--keystore`, Ledger, Trezor, AWS, GCP, or Turnkey."
-        );
-    } else {
-        let signer = match signer {
-            Some(s) => s,
-            None => send_tx.eth.wallet.signer().await?,
-        };
-        let from = signer.address();
-        let (mut tx, _) = builder.build(from).await?;
-        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-        if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
         }
-
-        let wallet = EthereumWallet::from(signer);
-        let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
-            .wallet(wallet)
-            .connect_provider(&provider);
-
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
-            .await?;
     }
 
+    Ok(KeychainTxOutcome::Submitted)
+}
+
+/// Ensures AccountKeychain calls with a known root account use that root as the signer.
+fn ensure_root_sender(actual: Address, expected: Option<Address>) -> Result<()> {
+    if let Some(expected) = expected
+        && actual != expected
+    {
+        eyre::bail!(
+            "AccountKeychain transaction must be signed by root account {expected}; resolved signer is {actual}"
+        );
+    }
     Ok(())
 }
 

@@ -1198,6 +1198,10 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
+    fn test_client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
     #[tokio::test]
     async fn test_mpp_transport_no_402() {
         let app = axum::Router::new().route(
@@ -1213,7 +1217,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1275,7 +1279,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1296,7 +1300,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1330,7 +1334,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             InsufficientBalanceProvider,
         );
@@ -1382,7 +1386,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1436,7 +1440,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
