@@ -212,7 +212,7 @@ echo "$KC_INFO" | grep -q "secp256k1"
 
 echo -e "\n=== CAST KEYCHAIN: KEY-INFO --json ==="
 KC_INFO_JSON=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL" --json)
-echo "$KC_INFO_JSON" | jq -e '.signatureType == "secp256k1"'
+echo "$KC_INFO_JSON" | jq -e '.data.signatureType == "secp256k1"'
 
 echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH LIMIT ==="
 kc_limited_json="$(cast wallet new --json)"
