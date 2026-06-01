@@ -1,12 +1,14 @@
 use super::ReentrancyEth;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::interface::receiver_contract_id},
 };
 use solar::{
     ast::{LitKind, StateMutability, UnOpKind, Visibility},
     interface::{Span, kw, sym},
-    sema::hir::{self, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
+    sema::hir::{
+        self, CallArgs, ExprKind, FunctionId, ItemId, Res, StmtKind, TypeKind, VariableId,
+    },
 };
 use std::collections::{BTreeSet, HashSet};
 
@@ -15,6 +17,13 @@ declare_forge_lint!(
     Severity::High,
     "reentrancy-eth",
     "state read before ETH transfer is written after the transfer"
+);
+
+declare_forge_lint!(
+    REENTRANCY_NO_ETH,
+    Severity::Med,
+    "reentrancy-no-eth",
+    "state read before external call is written after the call"
 );
 
 impl<'hir> LateLintPass<'hir> for ReentrancyEth {
@@ -52,13 +61,20 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
 #[derive(Clone, Debug, Default)]
 struct FlowState {
     state_reads: BTreeSet<VariableId>,
-    pending_value_calls: Vec<PendingValueCall>,
+    pending_calls: Vec<PendingCall>,
 }
 
 #[derive(Clone, Debug)]
-struct PendingValueCall {
+struct PendingCall {
     span: Span,
+    kind: ReentrantCallKind,
     state_reads: BTreeSet<VariableId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReentrantCallKind {
+    Eth,
+    NoEth,
 }
 
 impl FlowState {
@@ -66,16 +82,21 @@ impl FlowState {
         self.state_reads.insert(var_id);
     }
 
-    fn push_call(&mut self, span: Span) {
+    fn push_call(&mut self, span: Span, kind: ReentrantCallKind) {
         if self.state_reads.is_empty() {
             return;
         }
 
-        if let Some(existing) = self.pending_value_calls.iter_mut().find(|call| call.span == span) {
+        if let Some(existing) =
+            self.pending_calls.iter_mut().find(|call| call.span == span && call.kind == kind)
+        {
             existing.state_reads.extend(self.state_reads.iter().copied());
         } else {
-            self.pending_value_calls
-                .push(PendingValueCall { span, state_reads: self.state_reads.clone() });
+            self.pending_calls.push(PendingCall {
+                span,
+                kind,
+                state_reads: self.state_reads.clone(),
+            });
         }
     }
 }
@@ -295,8 +316,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for func_id in resolved_function_ids(callee) {
                     self.analyze_internal_call(func_id, state);
                 }
-                if is_uncapped_value_call(self.hir, callee, *opts) {
-                    state.push_call(expr.span);
+                if let Some(kind) = reentrant_call_kind(self.hir, callee, args, *opts) {
+                    state.push_call(expr.span, kind);
                 }
             }
             ExprKind::Binary(lhs, _, rhs) => {
@@ -401,8 +422,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     fn emit_pending_calls(&mut self, state: &FlowState, written_vars: &[VariableId]) {
-        for call in &state.pending_value_calls {
-            if self.emitted.contains(&call.span) {
+        for call in &state.pending_calls {
+            let (lint, msg_prefix) = match call.kind {
+                ReentrantCallKind::Eth => {
+                    (&REENTRANCY_ETH, "uncapped ETH transfer can be reentered before")
+                }
+                ReentrantCallKind::NoEth => {
+                    (&REENTRANCY_NO_ETH, "external call can be reentered before")
+                }
+            };
+            if !self.ctx.is_lint_enabled(lint.id) || self.emitted.contains(&call.span) {
                 continue;
             }
 
@@ -416,9 +445,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     .map(|name| name.as_str().to_string())
                     .unwrap_or_else(|| "state".to_string());
                 self.ctx.emit_with_msg(
-                    &REENTRANCY_ETH,
+                    lint,
                     call.span,
-                    format!("uncapped ETH transfer can be reentered before `{name}` is updated"),
+                    format!("{msg_prefix} `{name}` is updated"),
                 );
                 self.emitted.insert(call.span);
             }
@@ -429,21 +458,35 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 impl FlowState {
     fn clear(&mut self) {
         self.state_reads.clear();
-        self.pending_value_calls.clear();
+        self.pending_calls.clear();
     }
 
     fn merge(&mut self, other: &Self) {
         self.state_reads.extend(other.state_reads.iter().copied());
-        for call in &other.pending_value_calls {
-            if let Some(existing) =
-                self.pending_value_calls.iter_mut().find(|existing| existing.span == call.span)
+        for call in &other.pending_calls {
+            if let Some(existing) = self
+                .pending_calls
+                .iter_mut()
+                .find(|existing| existing.span == call.span && existing.kind == call.kind)
             {
                 existing.state_reads.extend(call.state_reads.iter().copied());
             } else {
-                self.pending_value_calls.push(call.clone());
+                self.pending_calls.push(call.clone());
             }
         }
     }
+}
+
+fn reentrant_call_kind(
+    hir: &hir::Hir<'_>,
+    callee: &hir::Expr<'_>,
+    args: &CallArgs<'_>,
+    opts: Option<&[hir::NamedArg<'_>]>,
+) -> Option<ReentrantCallKind> {
+    if is_uncapped_value_call(hir, callee, opts) {
+        return Some(ReentrantCallKind::Eth);
+    }
+    is_no_eth_reentrant_call(hir, callee, args, opts).then_some(ReentrantCallKind::NoEth)
 }
 
 fn is_uncapped_value_call(
@@ -468,6 +511,74 @@ fn is_uncapped_value_call(
     }
 
     value.is_some_and(|value| !is_zero_value(hir, value)) && gas.is_none_or(gas_option_forwards_all)
+}
+
+fn is_no_eth_reentrant_call(
+    hir: &hir::Hir<'_>,
+    callee: &hir::Expr<'_>,
+    args: &CallArgs<'_>,
+    opts: Option<&[hir::NamedArg<'_>]>,
+) -> bool {
+    if call_sends_eth(hir, opts) {
+        return false;
+    }
+
+    match &callee.peel_parens().kind {
+        ExprKind::Member(receiver, member) => match member.name {
+            kw::Call | kw::Callcode | kw::Delegatecall => true,
+            kw::Staticcall => false,
+            _ => external_member_call_can_reenter(hir, receiver, member.name, args.len()),
+        },
+        _ => external_function_pointer_can_reenter(hir, callee),
+    }
+}
+
+fn call_sends_eth(hir: &hir::Hir<'_>, opts: Option<&[hir::NamedArg<'_>]>) -> bool {
+    opts.is_some_and(|opts| {
+        opts.iter().any(|opt| opt.name.name == sym::value && !is_zero_value(hir, &opt.value))
+    })
+}
+
+fn external_member_call_can_reenter(
+    hir: &hir::Hir<'_>,
+    receiver: &hir::Expr<'_>,
+    member: solar::interface::Symbol,
+    arity: usize,
+) -> bool {
+    let Some(contract_id) = receiver_contract_id(hir, receiver) else { return false };
+    hir.contract_item_ids(contract_id).any(|item| {
+        let Some(func_id) = item.as_function() else { return false };
+        let func = hir.function(func_id);
+        func.name.is_some_and(|name| name.name == member)
+            && func.kind.is_function()
+            && func.parameters.len() == arity
+            && is_externally_callable(func)
+            && func.mutates_state()
+    })
+}
+
+fn external_function_pointer_can_reenter(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
+    let Some(ty) = expr_type(hir, callee) else { return false };
+    let TypeKind::Function(function) = ty.kind else { return false };
+    function.visibility == Visibility::External
+        && !matches!(function.state_mutability, StateMutability::Pure | StateMutability::View)
+}
+
+const fn is_externally_callable(func: &hir::Function<'_>) -> bool {
+    matches!(func.visibility, Visibility::Public | Visibility::External)
+}
+
+fn expr_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &hir::Expr<'hir>,
+) -> Option<&'hir hir::Type<'hir>> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
+            let var_id = res.as_variable()?;
+            Some(&hir.variable(var_id).ty)
+        }),
+        _ => None,
+    }
 }
 
 fn is_zero_value(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
