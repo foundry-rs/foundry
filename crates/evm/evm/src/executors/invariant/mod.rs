@@ -585,14 +585,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         };
 
         // Timeout-driven campaigns can execute beyond the initial configured run count. Preserve
-        // the existing single-worker `planned_runs` behavior by rebuilding the logical spec
-        // from the worker's final plan.
-        let total_planned_runs =
+        // the existing single-worker reported run behavior by rebuilding the logical spec from the
+        // worker's final reported plan.
+        let total_reported_runs =
             worker_outputs.iter().map(|output| output.plan.runs).try_fold(0u32, |acc, runs| {
                 acc.checked_add(runs).ok_or_else(|| eyre!("invariant worker run range overflows"))
             })?;
         let mut aggregator =
-            InvariantCampaignAggregator::new(InvariantCampaignSpec::new(total_planned_runs));
+            InvariantCampaignAggregator::new(InvariantCampaignSpec::new(total_reported_runs));
         for worker_output in worker_outputs {
             aggregator.push(worker_output);
         }
@@ -616,7 +616,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
-        mut plan: InvariantWorkerPlan,
+        plan: InvariantWorkerPlan,
         invariant_contract: InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
@@ -628,7 +628,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
 
-        let mut planned_runs = plan.runs;
+        // Runs reported to the campaign aggregator as this worker's logical range length.
+        // In normal sharded campaigns this stays equal to the assigned plan length; timed
+        // single-worker campaigns may grow it beyond the initially configured run count.
+        let mut reported_runs = plan.runs;
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -659,7 +662,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
 
         'stop: while continue_campaign(runs) {
-            planned_runs = planned_runs.max(runs.saturating_add(1));
+            reported_runs = reported_runs.max(runs.saturating_add(1));
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
@@ -1061,8 +1064,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        plan.runs = planned_runs;
-        Ok(InvariantWorkerOutput { plan, result: worker_result, corpus_entries })
+        let reported_plan = if campaign_state.is_timed_campaign() {
+            debug_assert_eq!(plan.worker_id, 0);
+            debug_assert_eq!(plan.first_global_run, 0);
+            InvariantWorkerPlan { runs: reported_runs, ..plan }
+        } else {
+            // Sharded campaigns must report the original assigned range. Early worker exit changes
+            // the number of executed runs, but it must not shrink `plan.runs`: following workers'
+            // `first_global_run` offsets were computed from the original partition.
+            debug_assert_eq!(reported_runs, plan.runs);
+            plan
+        };
+        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result, corpus_entries })
     }
 
     fn shrink_handler_failures(
