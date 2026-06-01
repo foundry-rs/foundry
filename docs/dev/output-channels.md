@@ -137,7 +137,7 @@ Each row's status is one of:
 | `forge eip712`         | (empty)                                              | JSON of types                              | migrated |
 | `forge geiger`         | Findings                                             | JSON                                       | migrated |
 | `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | migrated |
-| `forge snapshot`       | Snapshot file content / diff                         | JSON                                       | todo   |
+| `forge snapshot`       | Per-test diff lines (`--diff`); table (`--format table`); (empty) otherwise | n/a               | migrated |
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | migrated |
 | `forge doc`            | (empty)                                              | n/a                                        | migrated |

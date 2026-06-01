@@ -1583,6 +1583,77 @@ contract InvariantSnapshotTest {
     assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_not_max()"));
 });
 
+// tests that `forge snapshot --diff` keeps per-test diff rows on stdout but moves summary to stderr
+forgetest!(snapshot_diff_summary_on_stderr, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
+import "./test.sol";
+contract ATest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+    );
+
+    // Baseline snapshot.
+    cmd.args(["snapshot"]).assert_success();
+
+    // Re-run with --diff so the per-test diff row is emitted.
+    let assert = cmd.forge_fuse().args(["snapshot", "--diff"]).assert_success();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stdout.contains("ATest::testExample()"),
+        "expected diff row on stdout, got stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains("Total tests:") && stderr.contains("Overall gas change:"),
+        "expected summary on stderr, got stderr: {stderr}"
+    );
+    assert!(
+        !stdout.contains("Total tests:") && !stdout.contains("Overall gas change:"),
+        "summary leaked to stdout: {stdout}"
+    );
+});
+
+// tests that `forge snapshot --check` reports mismatches on stderr
+forgetest!(snapshot_check_writes_diff_to_stderr, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "ATest.t.sol",
+        r#"
+import "./test.sol";
+contract ATest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+    );
+
+    // Pre-seed an empty snapshot so `--check` triggers the "No matching snapshot entry" path.
+    fs::write(prj.root().join(".gas-snapshot"), "").unwrap();
+
+    let assert = cmd.args(["snapshot", "--check"]).assert_failure();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("No matching snapshot entry found for \"ATest::testExample()\""),
+        "expected diff on stderr, got stderr: {stderr}\nstdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("No matching snapshot entry"),
+        "diff prose leaked to stdout: {stdout}"
+    );
+});
+
 forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
     prj.insert_ds_test();
 
