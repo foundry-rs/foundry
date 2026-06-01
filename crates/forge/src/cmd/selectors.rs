@@ -88,11 +88,11 @@ impl SelectorsSubcommands {
         match self {
             Self::Cache { project_paths, extra_abis_path } => {
                 if let Some(extra_abis_path) = extra_abis_path {
-                    sh_println!("Caching selectors for ABIs at {extra_abis_path}")?;
+                    sh_status!("Caching selectors for ABIs at {extra_abis_path}")?;
                     cache_signatures_from_abis(extra_abis_path)?;
                 }
 
-                sh_println!("Caching selectors for contracts in the project...")?;
+                sh_status!("Caching selectors for contracts in the project...")?;
                 let build_args = BuildOpts {
                     project_paths,
                     compiler: CompilerOpts {
@@ -169,7 +169,7 @@ impl SelectorsSubcommands {
                         continue;
                     }
 
-                    sh_println!("Uploading selectors for {contract}...")?;
+                    sh_status!("Uploading selectors for {contract}...")?;
 
                     // upload abi to selector database
                     import_selectors(SelectorImportData::Abi(vec![abi])).await?.describe();
@@ -241,7 +241,7 @@ impl SelectorsSubcommands {
                 }
             }
             Self::List { contract, project_paths, no_group } => {
-                sh_println!("Listing selectors for contracts in the project...")?;
+                sh_status!("Listing selectors for contracts in the project...")?;
                 let build_args = BuildOpts {
                     project_paths,
                     compiler: CompilerOpts {
@@ -385,7 +385,7 @@ impl SelectorsSubcommands {
             }
 
             Self::Find { selector, project_paths } => {
-                sh_println!("Searching for selector {selector:?} in the project...")?;
+                sh_status!("Searching for selector {selector:?} in the project...")?;
 
                 let build_args = BuildOpts {
                     project_paths,
@@ -457,7 +457,7 @@ impl SelectorsSubcommands {
                 }
 
                 if table.row_count() > 0 {
-                    sh_println!("\nFound {} instance(s)...", table.row_count())?;
+                    sh_status!("Found {} instance(s)...", table.row_count())?;
                     sh_println!("\n{table}\n")?;
                 } else {
                     return Err(eyre::eyre!("\nSelector not found in the project."));
