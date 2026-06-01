@@ -1538,6 +1538,51 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest!(snapshot_expands_invariant_campaign_predicates, |prj, cmd| {
+    prj.add_test(
+        "InvariantSnapshot.t.sol",
+        r#"
+contract InvariantSnapshotHandler {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract InvariantSnapshotTest {
+    InvariantSnapshotHandler internal handler;
+
+    function setUp() public {
+        handler = new InvariantSnapshotHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_non_negative() public view {
+        require(handler.count() >= 0);
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_not_max() public view {
+        require(handler.count() != type(uint256).max);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["snapshot"]).assert_success();
+
+    let snapshot = read_string(prj.root().join(".gas-snapshot"));
+    assert_eq!(
+        snapshot.lines().filter(|line| line.starts_with("InvariantSnapshotTest:")).count(),
+        2
+    );
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_non_negative()"));
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_not_max()"));
+});
+
 forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
     prj.insert_ds_test();
 

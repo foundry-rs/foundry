@@ -571,6 +571,11 @@ impl<N: Network> Backend<N> {
         TempoHardfork::from(self.hardfork())
     }
 
+    /// Returns whether a Tempo hardfork is active on this backend.
+    pub fn is_tempo_hardfork_active(&self, hardfork: TempoHardfork) -> bool {
+        self.is_tempo() && self.tempo_hardfork() >= hardfork
+    }
+
     /// Returns the precompiles for the current spec.
     pub fn precompiles(&self) -> BTreeMap<String, Address> {
         let spec_id = self.spec_id();
@@ -4420,8 +4425,10 @@ where
             return Err(InvalidTransactionError::TempoNativeValueTransfer);
         }
 
-        // Tempo AA: cap authorization list size
-        if let FoundryTxEnvelope::Tempo(aa_tx) = tx.as_ref() {
+        // Tempo AA T5: cap authorization list size
+        if self.is_tempo_hardfork_active(TempoHardfork::T5)
+            && let FoundryTxEnvelope::Tempo(aa_tx) = tx.as_ref()
+        {
             const MAX_TEMPO_AUTHORIZATIONS: usize = 16;
             let auth_count = aa_tx.tx().tempo_authorization_list.len();
             if auth_count > MAX_TEMPO_AUTHORIZATIONS {
