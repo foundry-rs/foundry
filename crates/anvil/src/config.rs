@@ -582,6 +582,14 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
+        if self.networks.is_tempo()
+            && let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
+                self.get_chain_id(),
+                self.get_genesis_timestamp(),
+            )
+        {
+            return hardfork;
+        }
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
             return foundry_evm::hardforks::OpHardfork::default().into();
