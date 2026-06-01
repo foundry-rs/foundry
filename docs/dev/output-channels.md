@@ -105,7 +105,7 @@ Each row's status is one of:
 | `cast trace`           | Trace                                                | JSON trace                                                     | migrated |
 | `cast wallet new`      | Address                                              | JSON `{ "address": "…", "private_key": "…" (only with explicit flag) }` | todo |
 | `cast wallet sign`     | Signature                                            | JSON                                                           | todo   |
-| `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | todo   |
+| `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | migrated |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast da-estimate`     | Gas estimate                                         | JSON                                                           | todo   |
 | `cast find-block`      | Block number                                         | JSON                                                           | migrated |
@@ -138,11 +138,11 @@ Each row's status is one of:
 | `forge snapshot`       | Snapshot file content / diff                         | JSON                                       | todo   |
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | migrated |
-| `forge doc`            | (empty)                                              | n/a                                        | todo   |
+| `forge doc`            | (empty)                                              | n/a                                        | migrated |
 | `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
-| `forge compiler`       | Compiler info                                        | JSON                                       | todo   |
+| `forge compiler`       | Compiler info                                        | JSON                                       | migrated |
 | `forge verify-contract`| Verification GUID / URL                              | JSON                                       | todo   |
 
 ### `anvil`, `chisel`, `script`
