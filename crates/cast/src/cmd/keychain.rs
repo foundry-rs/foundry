@@ -332,7 +332,8 @@ pub struct KeyAuthArgs {
     /// Key address to authorize.
     key_address: Address,
 
-    /// Signature type: secp256k1, p256, or webauthn.
+    /// Type of access key being authorized: secp256k1, p256, or webauthn.
+    /// The authorization itself is signed with the configured Ethereum (secp256k1) wallet.
     #[arg(long, default_value = "secp256k1", value_parser = parse_auth_signature_type)]
     key_type: AuthSignatureType,
 
@@ -344,7 +345,7 @@ pub struct KeyAuthArgs {
     #[arg(long)]
     enforce_limits: bool,
 
-    /// Spending limit in TOKEN:AMOUNT[:PERIOD] format. Can be specified multiple times.
+    /// Spending limit in `TOKEN:AMOUNT[:PERIOD]` format. Can be specified multiple times.
     #[arg(long = "limit", value_parser = parse_auth_limit)]
     limits: Vec<AuthTokenLimit>,
 
@@ -2514,6 +2515,14 @@ const fn auth_signature_type_label(t: &AuthSignatureType) -> &'static str {
     }
 }
 
+const fn auth_signature_type_name(t: &AuthSignatureType) -> &'static str {
+    match t {
+        AuthSignatureType::Secp256k1 => "secp256k1",
+        AuthSignatureType::P256 => "p256",
+        AuthSignatureType::WebAuthn => "webauthn",
+    }
+}
+
 fn format_authorization_limits(limits: &[AuthTokenLimit], fee_token: Address) -> String {
     let mut lines: Vec<String> = limits
         .iter()
@@ -2682,7 +2691,7 @@ async fn run_authorize(
 }
 
 fn run_key_auth_encode(args: KeyAuthArgs) -> Result<()> {
-    let authorization = args.into_authorization();
+    let authorization = args.into_authorization()?;
     let encoded = encode_key_authorization(&authorization);
 
     if shell::is_json() {
@@ -2701,7 +2710,8 @@ fn run_key_auth_encode(args: KeyAuthArgs) -> Result<()> {
 }
 
 async fn run_key_auth_sign(args: KeyAuthArgs, wallet: WalletOpts) -> Result<()> {
-    let authorization = args.into_authorization();
+    let authorization = args.into_authorization()?;
+    let authorized_key_type = auth_signature_type_name(&authorization.key_type);
     let signature_hash = authorization.signature_hash();
     let signer = wallet.signer().await?;
     let signer_address = signer.address();
@@ -2715,6 +2725,8 @@ async fn run_key_auth_sign(args: KeyAuthArgs, wallet: WalletOpts) -> Result<()> 
             "signature_hash": signature_hash.to_string(),
             "rlp_length": encoded.len(),
             "signer": signer_address.to_string(),
+            "authorized_key_type": authorized_key_type,
+            "signature_type": "secp256k1",
             "witness": signed.authorization.witness().map(|witness| witness.to_string()),
         });
         sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
@@ -2732,14 +2744,21 @@ fn encode_key_authorization<T: Encodable>(authorization: &T) -> Vec<u8> {
 }
 
 impl KeyAuthArgs {
-    fn into_authorization(self) -> KeyAuthorization {
-        let scopes =
-            self.scopes_json.map(|AuthScopesJson(json_scopes)| json_scopes).unwrap_or(self.scope);
+    fn into_authorization(self) -> Result<KeyAuthorization> {
+        let (scopes, explicit_scopes_json) =
+            if let Some(AuthScopesJson(json_scopes)) = self.scopes_json {
+                (json_scopes, true)
+            } else {
+                (self.scope, false)
+            };
 
         let mut authorization =
             KeyAuthorization::unrestricted(self.chain_id, self.key_type, self.key_address);
 
         if let Some(expiry) = self.expiry {
+            if expiry == 0 {
+                eyre::bail!("--expiry must be greater than zero");
+            }
             authorization = authorization.with_expiry(expiry);
         }
 
@@ -2747,7 +2766,7 @@ impl KeyAuthArgs {
             authorization = authorization.with_limits(self.limits);
         }
 
-        if !scopes.is_empty() {
+        if explicit_scopes_json || !scopes.is_empty() {
             authorization = authorization.with_allowed_calls(scopes);
         }
 
@@ -2755,7 +2774,7 @@ impl KeyAuthArgs {
             authorization = authorization.with_witness(witness);
         }
 
-        authorization
+        Ok(authorization)
     }
 }
 
@@ -2775,6 +2794,12 @@ async fn run_burn_witness(
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("burn-witness requires a Tempo T5-capable AccountKeychain RPC");
+    }
+
     let calldata = IAccountKeychain::burnKeyAuthorizationWitnessCall { witness }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
@@ -2783,6 +2808,10 @@ async fn run_burn_witness(
 async fn run_is_witness_burned(account: Address, witness: B256, rpc: RpcOpts) -> Result<()> {
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("is-witness-burned requires a Tempo T5-capable AccountKeychain RPC");
+    }
+
     let burned = provider
         .account_keychain()
         .isKeyAuthorizationWitnessBurned(account, witness)
@@ -3713,8 +3742,8 @@ mod tests {
     fn test_key_auth_encode_distinguishes_absent_and_zero_witness() {
         use alloy_rlp::Decodable;
 
-        let absent = key_auth_args(None).into_authorization();
-        let zero = key_auth_args(Some(B256::ZERO)).into_authorization();
+        let absent = key_auth_args(None).into_authorization().unwrap();
+        let zero = key_auth_args(Some(B256::ZERO)).into_authorization().unwrap();
 
         assert_eq!(absent.witness(), None);
         assert_eq!(zero.witness(), Some(B256::ZERO));
@@ -3738,6 +3767,7 @@ mod tests {
         let witness = B256::repeat_byte(0x53);
         let signed = key_auth_args(Some(witness))
             .into_authorization()
+            .unwrap()
             .into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
         let encoded = encode_key_authorization(&signed);
         let hex = hex::encode_prefixed(&encoded);
@@ -3748,6 +3778,30 @@ mod tests {
         let entry = tempo::KeyEntry { key_authorization: Some(hex), ..Default::default() };
         let json = key_entry_to_json(&entry);
         assert_eq!(json["authorization_witness"], witness.to_string());
+    }
+
+    #[test]
+    fn test_key_auth_encode_preserves_explicit_empty_scopes_json() {
+        let absent = key_auth_args(None).into_authorization().unwrap();
+        let mut args = key_auth_args(None);
+        args.scopes_json = Some(AuthScopesJson(vec![]));
+        let deny_all = args.into_authorization().unwrap();
+
+        assert_eq!(absent.allowed_calls, None);
+        assert_eq!(deny_all.allowed_calls, Some(vec![]));
+        assert_ne!(absent.signature_hash(), deny_all.signature_hash());
+        assert_ne!(encode_key_authorization(&absent), encode_key_authorization(&deny_all));
+    }
+
+    #[test]
+    fn test_key_auth_encode_rejects_zero_expiry() {
+        let mut args = key_auth_args(None);
+        args.expiry = Some(0);
+        let err = args.into_authorization().unwrap_err();
+        assert!(
+            err.to_string().contains("--expiry must be greater than zero"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
