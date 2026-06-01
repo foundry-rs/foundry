@@ -183,7 +183,7 @@ edition = "2021"
             let path = src.join(format!("{name}.rs"));
             let file = syn::parse2(contents.clone())
                 .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
-            let contents = prettyplease::unparse(&file);
+            let contents = qualify_shadowed_sibling_module_paths(prettyplease::unparse(&file));
             if single_file {
                 write!(&mut lib_contents, "{contents}")?;
             } else {
@@ -251,7 +251,7 @@ edition = "2021"
                 write!(contents, "{}", instance.expansion.as_ref().unwrap())?;
                 let file = syn::parse_file(&contents)?;
 
-                let contents = prettyplease::unparse(&file);
+                let contents = qualify_shadowed_sibling_module_paths(prettyplease::unparse(&file));
                 fs::write(bindings_path.join(format!("{name}.rs")), contents)
                     .wrap_err("Failed to write file")?;
             }
@@ -259,7 +259,7 @@ edition = "2021"
 
         let mod_path = bindings_path.join("mod.rs");
         let mod_file = syn::parse_file(&mod_contents)?;
-        let mod_contents = prettyplease::unparse(&mod_file);
+        let mod_contents = qualify_shadowed_sibling_module_paths(prettyplease::unparse(&mod_file));
 
         fs::write(mod_path, mod_contents).wrap_err("Failed to write mod.rs")?;
 
@@ -397,4 +397,34 @@ fn write_mod_name(contents: &mut String, name: &str) -> Result<()> {
         write!(contents, "pub mod r#{name};")?;
     }
     Ok(())
+}
+
+/// Qualifies paths to sibling binding modules when a generated item in the current module shadows
+/// that module name.
+///
+/// Alloy names the event enum for a contract module by appending `Events` to the contract name. If
+/// the ABI also contains a sibling contract/interface with that exact name, inherited event
+/// parameter types such as `IExampleContractEvents::SomeEventData` resolve to the local event enum
+/// instead of the sibling module that owns `SomeEventData`. Qualifying those paths with `super::`
+/// keeps the generated binding compiling without changing the upstream `sol!` expansion.
+fn qualify_shadowed_sibling_module_paths(mut contents: String) -> String {
+    let module_names = top_level_module_names(&contents);
+
+    for module_name in module_names {
+        if contents.contains(&format!("pub enum {module_name}")) {
+            contents =
+                contents.replace(&format!("{module_name}::"), &format!("super::{module_name}::"));
+        }
+    }
+
+    contents
+}
+
+fn top_level_module_names(contents: &str) -> Vec<String> {
+    contents
+        .split("pub mod ")
+        .skip(1)
+        .filter_map(|rest| rest.split_whitespace().next())
+        .map(|name| name.trim_start_matches("r#").to_string())
+        .collect()
 }
