@@ -166,10 +166,10 @@ impl InspectArgs {
                 if shell::is_json() {
                     return print_json(&all_libs);
                 }
-                sh_println!(
-                    "Dynamically linked libraries:\n{}",
-                    all_libs.iter().map(|v| format!("  {v}")).collect::<Vec<String>>().join("\n")
-                )?;
+                sh_status!("Dynamically linked libraries:")?;
+                for lib in &all_libs {
+                    sh_println!("{lib}")?;
+                }
             }
             ContractArtifactField::Linearization => {
                 print_linearization(
@@ -732,7 +732,17 @@ fn print_json(obj: &impl serde::Serialize) -> Result<()> {
 }
 
 fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
-    sh_println!("{}", get_json_str(obj, key)?)?;
+    let value = serde_json::to_value(obj)?;
+    let value = key.and_then(|k| value.get(k)).unwrap_or(&value);
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string_pretty(value)?)?;
+    } else {
+        let s = match value.as_str() {
+            Some(s) => s.to_string(),
+            None => format!("{value:#}"),
+        };
+        sh_println!("{s}")?;
+    }
     Ok(())
 }
 
@@ -744,28 +754,19 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     static YUL_COMMENTS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*?\*/)").unwrap());
 
-    if strip_comments {
-        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
+    let out = if strip_comments {
+        YUL_COMMENTS.replace_all(yul, "").into_owned()
     } else {
-        sh_println!("{yul}")?;
+        yul.to_string()
+    };
+
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string(&out)?)?;
+    } else {
+        sh_println!("{out}")?;
     }
 
     Ok(())
-}
-
-fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
-    let value = serde_json::to_value(obj)?;
-    let value = if let Some(key) = key
-        && let Some(value) = value.get(key)
-    {
-        value
-    } else {
-        &value
-    };
-    Ok(match value.as_str() {
-        Some(s) => s.to_string(),
-        None => format!("{value:#}"),
-    })
 }
 
 fn is_solidity_source(path: &Path) -> bool {

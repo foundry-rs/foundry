@@ -1393,6 +1393,15 @@ contract Foo {
 
 "#
     ]]);
+
+    // `--json` wraps the bytecode hex as a JSON string
+    cmd.forge_fuse()
+        .args(["inspect", contract_name, "bytecode", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+"0x60806040[..]"
+
+"#]]);
 });
 
 forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
@@ -3506,6 +3515,19 @@ object "Counter_21" {
         if callvalue() { revert_error_ca66f745a3ce8ff40e2ccaf1ad45db7774001b90d25810abd9040049be7bf4bb() }
 ...
 "#]]);
+
+    // `--json` wraps the IR source as a JSON string (one quoted line)
+    let json_out = cmd
+        .forge_fuse()
+        .args(["inspect", TEMPLATE_CONTRACT, "ir", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let json_out = json_out.trim();
+    assert!(json_out.starts_with('"'), "expected quoted JSON string, got {json_out:?}");
+    assert!(json_out.ends_with('"'), "expected quoted JSON string, got {json_out:?}");
+    let _: String =
+        serde_json::from_str(json_out).expect("ir --json stdout should be a valid JSON string");
 });
 
 // checks forge bind works correctly on the default project
@@ -4144,12 +4166,27 @@ forgetest_init!(can_inspect_libraries, |prj, cmd| {
     "#,
     );
 
-    cmd.args(["inspect", "Source", "libraries"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["inspect", "Source", "libraries"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+src/Lib.sol:Lib
+src/Source.sol:Lib2
+
+"#]])
+        .stderr_eq(str![[r#"
 Dynamically linked libraries:
-  src/Lib.sol:Lib
-  src/Source.sol:Lib2
 
 "#]]);
+
+    cmd.forge_fuse().args(["inspect", "Source", "libraries", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  "src/Lib.sol:Lib",
+  "src/Source.sol:Lib2"
+]
+
+"#]],
+    );
 });
 
 // checks that `clean` also works with the "out" value set in Config
