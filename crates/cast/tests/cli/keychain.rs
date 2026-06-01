@@ -294,7 +294,7 @@ casttest!(wallet_session_revoke_local_cleans_key_without_rpc, async |_prj, cmd| 
     assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
 
-casttest!(wallet_session_revoke_failure_marks_failed_and_clears_key, async |_prj, cmd| {
+casttest!(wallet_session_revoke_wrong_chain_preserves_local_key, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -314,5 +314,5 @@ casttest!(wallet_session_revoke_failure_marks_failed_and_clears_key, async |_prj
     ])
     .assert_failure();
 
-    assert_session_file_status_without_key(tempo_home.path(), "failed");
+    assert_session_file_status_with_key(tempo_home.path(), "active");
 });

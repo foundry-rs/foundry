@@ -486,6 +486,37 @@ mod tests {
     }
 
     #[test]
+    fn revoke_submit_error_marks_revoking_session_failed() {
+        with_tempo_home(|| {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let session_id = B256::from([0xd3; 32]);
+                let entry = sample_session_entry(session_id, SessionStatus::Active);
+                upsert_session_entry(entry.clone()).unwrap();
+                assert!(
+                    update_session_status_if(
+                        session_id,
+                        SessionStatus::Active,
+                        SessionStatus::Revoking,
+                    )
+                    .unwrap()
+                );
+
+                let mut send_tx = empty_send_tx_opts();
+                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
+                let config = send_tx.eth.load_config().unwrap();
+                let provider =
+                    ProviderBuilder::<TempoNetwork>::from_config(&config).unwrap().build().unwrap();
+                handle_revoke_error(&provider, session_id, &entry).await;
+
+                let session = read_session_entry(session_id).unwrap().unwrap();
+                assert_eq!(session.status, SessionStatus::Failed);
+                assert!(session.key.is_none());
+            });
+        });
+    }
+
+    #[test]
     fn revoke_retry_preflight_error_does_not_downgrade_revoked_status() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
