@@ -70,6 +70,9 @@ pub struct SharedMutationState {
     ///   1. The `TempDir` is *not* dropped while the worker is still touching it.
     ///   2. We can join the threads at the end of the run and surface leaks.
     pub pending_workers: Mutex<Vec<JoinHandle<()>>>,
+    /// Maximum number of timed-out worker handles to keep pending at once.
+    /// Older handles are joined before parking more, bounding cleanup backlog.
+    max_pending_workers: AtomicUsize,
 }
 
 impl SharedMutationState {
@@ -82,6 +85,7 @@ impl SharedMutationState {
             progress: None,
             silent: false,
             pending_workers: Mutex::new(Vec::new()),
+            max_pending_workers: AtomicUsize::new(usize::MAX),
         }
     }
 
@@ -94,6 +98,7 @@ impl SharedMutationState {
             progress: None,
             silent: true,
             pending_workers: Mutex::new(Vec::new()),
+            max_pending_workers: AtomicUsize::new(usize::MAX),
         }
     }
 
@@ -106,6 +111,7 @@ impl SharedMutationState {
             progress: Some(progress),
             silent: false,
             pending_workers: Mutex::new(Vec::new()),
+            max_pending_workers: AtomicUsize::new(usize::MAX),
         }
     }
 
@@ -135,6 +141,36 @@ impl SharedMutationState {
     pub fn increment_completed(&self) -> usize {
         self.completed.fetch_add(1, Ordering::SeqCst) + 1
     }
+
+    pub fn set_max_pending_workers(&self, max: usize) {
+        self.max_pending_workers.store(max.max(1), Ordering::SeqCst);
+    }
+
+    fn park_timed_out_worker(&self, handle: JoinHandle<()>) {
+        let mut pending = match self.pending_workers.lock() {
+            Ok(pending) => pending,
+            Err(_) => {
+                let _ = handle.join();
+                return;
+            }
+        };
+
+        let max_pending = self.max_pending_workers.load(Ordering::SeqCst).max(1);
+        while pending.len() >= max_pending {
+            let old_handle = pending.remove(0);
+            drop(pending);
+            let _ = old_handle.join();
+            pending = match self.pending_workers.lock() {
+                Ok(pending) => pending,
+                Err(_) => {
+                    let _ = handle.join();
+                    return;
+                }
+            };
+        }
+
+        pending.push(handle);
+    }
 }
 
 /// Run mutation tests in parallel with optional progress display.
@@ -157,6 +193,13 @@ pub fn run_mutations_parallel_with_progress(
         return Ok(vec![]);
     }
 
+    // Default to available parallelism if num_workers is 0
+    let num_workers = if num_workers == 0 {
+        std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
+    } else {
+        num_workers
+    };
+
     let shared_state = Arc::new(if let Some(p) = progress {
         SharedMutationState::with_progress(p)
     } else if silent {
@@ -165,6 +208,7 @@ pub fn run_mutations_parallel_with_progress(
         SharedMutationState::new()
     });
     shared_state.total.store(total, Ordering::SeqCst);
+    shared_state.set_max_pending_workers(num_workers);
 
     // Only print if no progress bar and not silent
     if shared_state.progress.is_none() && !shared_state.silent {
@@ -188,13 +232,6 @@ pub fn run_mutations_parallel_with_progress(
         .to_path_buf();
 
     workspace::ensure_safe_relative_path(&source_relative, "source", &source_abs)?;
-
-    // Default to available parallelism if num_workers is 0
-    let num_workers = if num_workers == 0 {
-        std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
-    } else {
-        num_workers
-    };
 
     // Set up Ctrl+C handler using a background thread with tokio signal
     // This replaces ctrlc crate with tokio's built-in signal handling
@@ -554,9 +591,7 @@ fn run_compile_and_test_with_timeout(
             // Timeout fired. The worker is still running and still owns the
             // TempDir; park the handle so we can join (and reclaim cleanup)
             // at the end of the parallel run instead of leaking it.
-            if let Ok(mut pending) = shared_state.pending_workers.lock() {
-                pending.push(handle);
-            }
+            shared_state.park_timed_out_worker(handle);
             MutationResult::TimedOut
         }
     }
@@ -698,4 +733,26 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     let killed = results.values().any(|suite| suite.failed() > 0);
 
     Ok(killed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SharedMutationState;
+
+    #[test]
+    fn park_timed_out_worker_bounds_pending_handles() {
+        let state = SharedMutationState::new();
+        state.set_max_pending_workers(1);
+
+        state.park_timed_out_worker(std::thread::spawn(|| {}));
+        assert_eq!(state.pending_workers.lock().unwrap().len(), 1);
+
+        state.park_timed_out_worker(std::thread::spawn(|| {}));
+        assert_eq!(state.pending_workers.lock().unwrap().len(), 1);
+
+        let pending = std::mem::take(&mut *state.pending_workers.lock().unwrap());
+        for handle in pending {
+            handle.join().unwrap();
+        }
+    }
 }

@@ -321,8 +321,9 @@ pub struct TestArgs {
     #[arg(long, value_name = "JOBS", requires = "mutate")]
     pub mutation_jobs: Option<usize>,
 
-    /// Per-mutant wall-clock timeout in seconds. Mutants that exceed it are
-    /// recorded as "timed out" and the worker proceeds to the next mutant.
+    /// Best-effort per-mutant wall-clock timeout in seconds. Mutants that
+    /// exceed it are recorded as "timed out" and cleanup continues in the
+    /// background with bounded pending workers.
     ///
     /// Analogous to `--invariant-timeout` for invariant campaigns.
     #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
