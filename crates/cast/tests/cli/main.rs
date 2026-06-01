@@ -237,7 +237,13 @@ casttest!(finds_block, |_prj, cmd| {
 
 // tests that we can create a new wallet
 casttest!(new_wallet, |_prj, cmd| {
-    cmd.args(["wallet", "new"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["wallet", "new"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]	0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Successfully created new keypair.
 [ADDRESS]
 [PRIVATE_KEY]
@@ -247,7 +253,13 @@ Successfully created new keypair.
 
 // tests that we can create a new wallet (verbose variant)
 casttest!(new_wallet_verbose, |_prj, cmd| {
-    cmd.args(["wallet", "new", "-v"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["wallet", "new", "-v"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]	0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Successfully created new keypair.
 [ADDRESS]
 [PUBLIC_KEY]
@@ -263,6 +275,7 @@ casttest!(new_wallet_json, |_prj, cmd| {
 [
   {
     "address": "{...}",
+    "public_key": "{...}",
     "private_key": "{...}"
   }
 ]
@@ -272,7 +285,7 @@ casttest!(new_wallet_json, |_prj, cmd| {
     );
 });
 
-// tests that we can create a new wallet with json output (verbose variant)
+// tests that `--json -v` does not alter stdout (verbosity is stderr-only)
 casttest!(new_wallet_json_verbose, |_prj, cmd| {
     cmd.args(["wallet", "new", "--json", "-v"]).assert_success().stdout_eq(
         str![[r#"
@@ -289,11 +302,53 @@ casttest!(new_wallet_json_verbose, |_prj, cmd| {
     );
 });
 
+// tests that keystore `--json` output includes address, public_key, path
+casttest!(new_wallet_keystore_json, |_prj, cmd| {
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "address": "{...}",
+    "public_key": "{...}",
+    "path": "{...}"
+  }
+]
+
+"#]]
+            .is_json(),
+        );
+});
+
+// tests that keystore `--json -v` does not alter stdout (verbosity is stderr-only)
+casttest!(new_wallet_keystore_json_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--json", "-v"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "address": "{...}",
+    "public_key": "{...}",
+    "path": "{...}"
+  }
+]
+
+"#]]
+            .is_json(),
+        );
+});
+
 // tests that we can create a new wallet with keystore
 casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 
@@ -305,6 +360,10 @@ casttest!(new_wallet_keystore_with_password_verbose, |_prj, cmd| {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-v"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 [PUBLIC_KEY]
@@ -323,10 +382,12 @@ casttest!(new_wallet_keystore_overwrite_protection, |prj, cmd| {
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
         .stdin("n\n")
         .assert_failure()
+        .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 The following keystore file(s) already exist:
    - test-account
-Error: Operation cancelled. No keystores were modified.
+
+Do you want to overwrite all 1 file(s)? [y/N]: Error: Operation cancelled. No keystores were modified.
 
 "#]]);
 });
@@ -342,6 +403,10 @@ casttest!(new_wallet_keystore_overwrite_force, |prj, cmd| {
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--force"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 
@@ -360,24 +425,30 @@ casttest!(new_wallet_keystore_overwrite_protection_multiple, |prj, cmd| {
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
         .stdin("n\n")
         .assert_failure()
+        .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 The following keystore file(s) already exist:
    - test-account_1
    - test-account_2
-Error: Operation cancelled. No keystores were modified.
+
+Do you want to overwrite all 2 file(s)? [y/N]: Error: Operation cancelled. No keystores were modified.
 
 "#]]);
 });
 
 // tests that we can create a new wallet with default keystore location
 casttest!(new_wallet_default_keystore, |_prj, cmd| {
-    cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.args(["wallet", "new", "--unsafe-password", "test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 
-"#
-    ]]);
+"#]]);
 
     // Verify the default keystore directory was created
     let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");
@@ -387,7 +458,14 @@ Created new encrypted keystore file: [..]
 
 // tests that we can outputting multiple keys without a keystore path
 casttest!(new_wallet_multiple_keys, |_prj, cmd| {
-    cmd.args(["wallet", "new", "-n", "2"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["wallet", "new", "-n", "2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]	0x[..]
+0x[..]	0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Successfully created new keypair.
 [ADDRESS]
 [PRIVATE_KEY]
@@ -829,6 +907,19 @@ casttest!(wallet_list_local_accounts, |prj, cmd| {
         .args(["wallet", "new", "keystore", "-n", "10", "--unsafe-password", "test"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 Created new encrypted keystore file: [..]
