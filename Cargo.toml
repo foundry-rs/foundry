@@ -408,7 +408,7 @@ op-alloy-rpc-types = "0.24.0"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.35.1"
+alloy-evm = "0.36.0"
 alloy-op-evm = "0.32.0"
 
 # revm
@@ -515,17 +515,17 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "8d008eefacacf608b6ceb
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc", default-features = false, features = [
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee", default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -589,19 +589,19 @@ idna_adapter = "=1.1.0"
 ## op-revm / op-alloy / alloy-op-evm
 ## Pinned to foundry-rs forks until upstream optimism bumps to revm 40.
 op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "4201f16a746f2da2df38f1eac477500d492eaed5" }
-alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
-op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
-op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
-op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
-alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
+alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "alloy-2.0" }
 
 ## foundry-fork-db
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "8027e5ccdfe55e562a1111495d2c9acb6e27a930" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "8b80b16023ae8ceb70a6b860c58d747e118448bc" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "cae2a3c992755abc69eb05a259fe3a34a2bc92ee" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
