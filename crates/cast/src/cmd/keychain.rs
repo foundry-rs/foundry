@@ -2628,7 +2628,7 @@ async fn run_policy_add_call(
                 serde_json::json!({ "status": "already_present", "target": target.to_string() })
             )?;
         } else {
-            sh_println!("Allowed call already present for {}", address_label_with_address(target))?;
+            sh_status!("Allowed call already present for {}", address_label_with_address(target))?;
         }
         return Ok(());
     }
