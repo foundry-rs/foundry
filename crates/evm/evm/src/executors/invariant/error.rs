@@ -327,6 +327,15 @@ impl InvariantFailures {
         self.handler_count
     }
 
+    pub fn handler_failures_mut(
+        &mut self,
+    ) -> impl Iterator<Item = ((Address, Selector), &mut InvariantFuzzError)> {
+        self.failures.iter_mut().filter_map(|(key, error)| match key {
+            FailureKey::Handler(addr, selector) => Some(((*addr, *selector), error)),
+            FailureKey::Invariant(_) => None,
+        })
+    }
+
     /// Records a handler-side assertion bug. Deduped by `(reverter, selector)` site;
     /// shortest sequence wins on collision.
     pub fn record_handler_failure(&mut self, failure: HandlerAssertionFailure) {

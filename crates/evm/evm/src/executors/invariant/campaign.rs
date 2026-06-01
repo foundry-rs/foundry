@@ -6,7 +6,7 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
 use std::{
     collections::{HashMap, HashSet},
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 /// Immutable plan-level description for an invariant campaign.
@@ -67,12 +67,17 @@ pub struct InvariantWorkerPlan {
 /// Shared state used only to coordinate invariant worker execution.
 pub struct InvariantCampaignState {
     total_runs: AtomicU32,
+    terminal_stop: AtomicBool,
     global_early_exit: EarlyExit,
 }
 
 impl InvariantCampaignState {
     pub const fn new(early_exit: EarlyExit) -> Self {
-        Self { total_runs: AtomicU32::new(0), global_early_exit: early_exit }
+        Self {
+            total_runs: AtomicU32::new(0),
+            terminal_stop: AtomicBool::new(false),
+            global_early_exit: early_exit,
+        }
     }
 
     pub fn increment_runs(&self) -> u32 {
@@ -80,7 +85,15 @@ impl InvariantCampaignState {
     }
 
     pub fn should_stop(&self) -> bool {
-        self.global_early_exit.should_stop()
+        self.global_early_exit.should_stop() || self.terminal_stop.load(Ordering::Relaxed)
+    }
+
+    pub fn request_terminal_stop(&self) {
+        self.terminal_stop.store(true, Ordering::Relaxed);
+    }
+
+    pub const fn early_exit(&self) -> &EarlyExit {
+        &self.global_early_exit
     }
 }
 
@@ -476,6 +489,16 @@ mod tests {
 
         let err = InvariantCampaignSpec::new(0).worker_plans(0).unwrap_err();
         assert!(err.to_string().contains("requires at least one worker"));
+    }
+
+    #[test]
+    fn campaign_state_stops_after_terminal_request() {
+        let state = InvariantCampaignState::new(EarlyExit::new(false));
+        assert!(!state.should_stop());
+
+        state.request_terminal_stop();
+
+        assert!(state.should_stop());
     }
 
     #[test]

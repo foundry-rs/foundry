@@ -192,6 +192,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
+    /// Number of workers to use for invariant test campaigns.
+    #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
+    pub invariant_workers: Option<usize>,
+
     /// Run only the fuzz case at the given 1-based run index.
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
     pub fuzz_run: Option<u32>,
@@ -406,6 +410,9 @@ impl TestArgs {
     ) -> Result<TestOutcome> {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
+        }
+        if config.invariant.workers == 0 {
+            bail!("`invariant.workers` must be greater than 0");
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -700,6 +707,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         let fuzz_seed = config.fuzz.seed;
+        let invariant_workers = config.invariant.workers;
         if self.list {
             return list(runner, filter);
         }
@@ -777,14 +785,18 @@ impl TestArgs {
             }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
-            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
+            let mut outcome = TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed);
+            outcome.invariant_workers = invariant_workers;
+            return Ok(outcome);
         }
 
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
-            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
+            let mut outcome = TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed);
+            outcome.invariant_workers = invariant_workers;
+            return Ok(outcome);
         }
 
         let remote_chain =
@@ -848,6 +860,7 @@ impl TestArgs {
 
         let mut outcome = TestOutcome::empty(None, self.allow_failure);
         outcome.fuzz_seed = fuzz_seed;
+        outcome.invariant_workers = invariant_workers;
 
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
@@ -1213,6 +1226,14 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
+        let mut invariant_dict = Dict::default();
+        if let Some(invariant_workers) = self.invariant_workers {
+            invariant_dict.insert("workers".to_string(), invariant_workers.into());
+        }
+        if !invariant_dict.is_empty() {
+            dict.insert("invariant".to_string(), invariant_dict.into());
+        }
+
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
@@ -1536,6 +1557,15 @@ mod tests {
             TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
         assert_eq!(args.fuzz_run, Some(10));
         assert_eq!(args.fuzz_worker, Some(2));
+    }
+
+    #[test]
+    fn invariant_workers() {
+        let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "4"]);
+        assert_eq!(args.invariant_workers, Some(4));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<usize>("invariant.workers").unwrap(), 4);
     }
 
     #[test]
