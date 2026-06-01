@@ -2673,7 +2673,7 @@ pub(crate) enum KeychainTxOutcome {
 
 pub(crate) enum KeychainRootSigner {
     Browser(BrowserSigner<TempoNetwork>),
-    Wallet(WalletSigner),
+    Wallet(Box<WalletSigner>),
 }
 
 impl KeychainRootSigner {
@@ -2716,7 +2716,7 @@ pub(crate) async fn resolve_keychain_root_signer(
         None => send_tx.eth.wallet.signer().await?,
     };
     ensure_root_sender(signer.address(), expected_from)?;
-    Ok(KeychainRootSigner::Wallet(signer))
+    Ok(KeychainRootSigner::Wallet(Box::new(signer)))
 }
 
 /// Send calldata to the Tempo AccountKeychain precompile as a root-authorized transaction.
@@ -2808,7 +2808,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             }
 
             before_submit()?;
-            let wallet = EthereumWallet::from(signer);
+            let wallet = EthereumWallet::from(*signer);
             let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
                 .wallet(wallet)
                 .connect_provider(&provider);
