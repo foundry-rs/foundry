@@ -423,7 +423,7 @@ impl Erc20Subcommand {
                         $send_tx.confirmations,
                         timeout,
                     )
-                    .await?
+                    .await?;
                 } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
                     let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
                     if let Some(interval) = $send_tx.poll_interval {
@@ -485,7 +485,7 @@ impl Erc20Subcommand {
                         $send_tx.confirmations,
                         timeout,
                     )
-                    .await?
+                    .await?;
                 }
             }};
         }

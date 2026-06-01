@@ -5479,6 +5479,40 @@ mod vaddr_e2e {
             .unwrap_or_else(|| panic!("could not parse vaddr from create output:\n{out}"))
     }
 
+    casttest!(vaddr_create_register_json_includes_tx_hash, async |_prj, cmd| {
+        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+        let rpc = handle.http_endpoint();
+        let owner = handle.dev_wallets().next().unwrap();
+        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+        let owner_addr = format!("{:#x}", owner.address());
+
+        let out = cmd
+            .cast_fuse()
+            .args([
+                "--json",
+                "vaddr",
+                "create",
+                "--owner",
+                &owner_addr,
+                "--private-key",
+                &owner_pk,
+                "-j",
+                &mining_threads(),
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+
+        let envelope: serde_json::Value =
+            serde_json::from_str(out.trim()).expect("create --json output is valid JSON");
+        let tx_hash = envelope["data"]["registration_tx_hash"]
+            .as_str()
+            .expect("registration_tx_hash is a string");
+        B256::from_str(tx_hash).expect("registration_tx_hash is a valid tx hash");
+    });
+
     // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,
     // and `cast vaddr resolve` returns the registered owner.
     casttest!(vaddr_create_register_and_resolve, async |_prj, cmd| {
