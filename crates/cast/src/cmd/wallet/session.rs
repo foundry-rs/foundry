@@ -127,9 +127,9 @@ fn run_revoke(session_id: B256) -> Result<()> {
             }))?
         )?;
     } else if removed {
-        sh_println!("Revoked Tempo session {}", session_id)?;
+        sh_status!("Revoked Tempo session {}", session_id)?;
     } else {
-        sh_println!("Tempo session {} was not found.", session_id)?;
+        sh_status!("Tempo session {} was not found.", session_id)?;
     }
 
     Ok(())

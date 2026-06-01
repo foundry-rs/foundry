@@ -2224,7 +2224,7 @@ impl SimpleCast {
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, flattened)?;
-            sh_println!("Flattened file written at {}", path.display())?
+            sh_status!("Flattened file written at {}", path.display())?
         } else {
             sh_println!("{flattened}")?
         }
