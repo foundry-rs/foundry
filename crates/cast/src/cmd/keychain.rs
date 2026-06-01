@@ -3373,10 +3373,7 @@ mod tests {
         let mut authorization =
             KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42));
         authorization.limits = limits;
-        SignedKeyAuthorization {
-            authorization,
-            signature: PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap(),
-        }
+        authorization.into_signed(PrimitiveSignature::default())
     }
 
     #[test]
