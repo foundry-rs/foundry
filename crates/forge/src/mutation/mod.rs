@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -15,6 +15,8 @@ pub use crate::mutation::{
     reporter::MutationReporter,
     runner::run_mutations_parallel_with_progress,
 };
+use eyre::eyre;
+use foundry_common::sh_warn;
 use serde::{Deserialize, Serialize};
 use solar::{
     ast::{
@@ -24,6 +26,10 @@ use solar::{
     },
     parse::Parser,
 };
+
+fn failed_to_parse(path: &Path) -> eyre::Report {
+    eyre!("failed to parse {}", path.display())
+}
 
 #[derive(Clone, Copy)]
 enum CacheKind<'a> {
@@ -468,14 +474,18 @@ impl MutationHandler {
 
         let contract_filter = self.contract_filter.clone();
 
-        let result = sess.enter(|| -> solar::interface::Result<Vec<Mutant>> {
+        let result = sess.enter(|| -> eyre::Result<Vec<Mutant>> {
             let arena = solar::ast::Arena::new();
             let mut parser =
                 Parser::from_lazy_source_code(&sess, &arena, FileName::from(path.clone()), || {
                     Ok((*target_content).clone())
-                })?;
+                })
+                .map_err(|_e| failed_to_parse(path))?;
 
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
+            let ast = parser.parse_file().map_err(|e| {
+                e.emit();
+                failed_to_parse(path)
+            })?;
 
             let operators = self.config.mutation.enabled_operators();
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
@@ -487,6 +497,10 @@ impl MutationHandler {
             }
             let _ = mutant_visitor.visit_source_unit(&ast);
 
+            for err in mutant_visitor.take_errors() {
+                let _ = sh_warn!("{err:?}");
+            }
+
             Ok(mutant_visitor.mutation_to_conduct)
         });
 
@@ -495,9 +509,7 @@ impl MutationHandler {
                 self.mutations.extend(mutations);
                 Ok(())
             }
-            Err(_) => {
-                eyre::bail!("failed to parse {}", path.display());
-            }
+            Err(err) => Err(err),
         }
     }
 
