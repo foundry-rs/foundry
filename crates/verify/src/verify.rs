@@ -53,10 +53,6 @@ fn classify_verifier_credential_response(
     status: reqwest::StatusCode,
     body: &str,
 ) -> VerifierCredentialProbe {
-    if matches!(status, reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN) {
-        return VerifierCredentialProbe::InvalidApiKey;
-    }
-
     let lower = body.to_lowercase();
     if lower.contains("invalid api key") || lower.contains("invalid_api_key") {
         return VerifierCredentialProbe::InvalidApiKey;
@@ -67,6 +63,10 @@ fn classify_verifier_credential_response(
         || lower.contains("contract was not found")
     {
         return VerifierCredentialProbe::Accepted;
+    }
+
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return VerifierCredentialProbe::InvalidApiKey;
     }
 
     if !status.is_success()
@@ -99,6 +99,14 @@ fn classify_verifier_credential_response(
             .unwrap_or(VerifierCredentialProbe::Inconclusive),
         Err(_) => VerifierCredentialProbe::Inconclusive,
     }
+}
+
+fn parse_http_verifier_url(url: &str, label: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(url).wrap_err_with(|| format!("invalid {label} URL `{url}`"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        eyre::bail!("invalid {label} URL `{url}`: URL scheme must be http or https");
+    }
+    Ok(url)
 }
 
 async fn probe_verifier_credentials(
@@ -210,8 +218,7 @@ impl VerifierArgs {
                 // Custom verifiers may return Etherscan-shaped responses (HTTP 200 with a JSON
                 // body) or standard HTTP auth errors (401/403). Check both.
                 if let Some(url) = &self.verifier_url {
-                    let url = reqwest::Url::parse(url)
-                        .wrap_err_with(|| format!("invalid verifier URL `{url}`"))?;
+                    let url = parse_http_verifier_url(url, "verifier")?;
                     match probe_verifier_credentials(url, api_key).await {
                         Err(_) => {
                             sh_warn!("verifier credential check failed, proceeding anyway")?;
@@ -229,8 +236,7 @@ impl VerifierArgs {
             VerificationProviderType::Sourcify => {
                 // Only probe custom URLs; the default public endpoint is assumed reachable.
                 if let Some(url) = &self.verifier_url {
-                    let url = reqwest::Url::parse(url)
-                        .wrap_err_with(|| format!("invalid Sourcify URL `{url}`"))?;
+                    let url = parse_http_verifier_url(url, "Sourcify")?;
                     match reqwest::Client::new()
                         .get(url.clone())
                         .timeout(Duration::from_secs(10))
@@ -857,6 +863,29 @@ mod tests {
                 "Checking if the site connection is secure",
             ),
             VerifierCredentialProbe::Inconclusive,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(
+                reqwest::StatusCode::FORBIDDEN,
+                "Sorry, you have been blocked",
+            ),
+            VerifierCredentialProbe::Inconclusive,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(reqwest::StatusCode::FORBIDDEN, ""),
+            VerifierCredentialProbe::Inconclusive,
+        );
+    }
+
+    #[test]
+    fn parse_http_verifier_url_rejects_unsupported_schemes() {
+        assert!(parse_http_verifier_url("https://example.com/api", "verifier").is_ok());
+        assert!(parse_http_verifier_url("http://example.com/api", "verifier").is_ok());
+
+        let err = parse_http_verifier_url("gopher://example.com/api", "verifier").unwrap_err();
+        assert!(
+            err.to_string().contains("URL scheme must be http or https"),
+            "unexpected error: {err:?}"
         );
     }
 
