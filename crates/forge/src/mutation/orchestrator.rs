@@ -703,16 +703,20 @@ mod tests {
             MutationHandler::new(PathBuf::from("src/Counter.sol"), Arc::new(Config::default()));
         handler.mark_span_survived(Span::new(BytePos(10), BytePos(20)));
 
-        let skipped = mutant(10, 20);
-        let tested = mutant(30, 40);
-        let (mutants_to_test, skipped_results) =
-            partition_adaptively_skipped_mutants(&mut handler, &[skipped.clone(), tested.clone()]);
+        let exact_survivor = mutant(10, 20);
+        let skipped_child = mutant(12, 18);
+        let unrelated = mutant(30, 40);
+        let (mutants_to_test, skipped_results) = partition_adaptively_skipped_mutants(
+            &mut handler,
+            &[exact_survivor.clone(), skipped_child.clone(), unrelated.clone()],
+        );
 
-        assert_eq!(mutants_to_test.len(), 1);
-        assert_eq!(mutants_to_test[0].span, tested.span);
+        assert_eq!(mutants_to_test.len(), 2);
+        assert_eq!(mutants_to_test[0].span, exact_survivor.span);
+        assert_eq!(mutants_to_test[1].span, unrelated.span);
         assert_eq!(skipped_results.len(), 1);
         assert!(matches!(skipped_results[0].1, MutationResult::Skipped));
-        assert_eq!(skipped_results[0].0.span, skipped.span);
+        assert_eq!(skipped_results[0].0.span, skipped_child.span);
         assert_eq!(handler.get_report().total_skipped(), 1);
         assert_eq!(handler.get_report().total_mutants(), 1);
     }

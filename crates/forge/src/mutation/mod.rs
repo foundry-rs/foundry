@@ -250,23 +250,18 @@ impl SurvivedSpans {
         self.spans.insert((span.lo().0, span.hi().0));
     }
 
-    /// Check if this span or any parent span has a surviving mutation
+    /// Check if any survived parent span contains this span.
+    ///
+    /// Exact span matches are not skipped: a persisted survived-span cache only
+    /// records byte ranges, not which mutant at that range survived. Re-testing
+    /// exact spans after an interrupted run keeps known survivors from being
+    /// converted into `Skipped` results in the next complete cache.
     pub fn should_skip(&self, span: Span) -> bool {
         let (lo, hi) = (span.lo().0, span.hi().0);
 
-        // Check if this exact span has survived
-        if self.spans.contains(&(lo, hi)) {
-            return true;
-        }
-
-        // Check if any parent span (that contains this span) has survived
-        for &(parent_lo, parent_hi) in &self.spans {
-            if parent_lo <= lo && hi <= parent_hi && (parent_lo != lo || parent_hi != hi) {
-                return true;
-            }
-        }
-
-        false
+        self.spans.iter().any(|&(parent_lo, parent_hi)| {
+            parent_lo <= lo && hi <= parent_hi && (parent_lo != lo || parent_hi != hi)
+        })
     }
 
     /// Serialize to a list of (lo, hi) pairs for caching
