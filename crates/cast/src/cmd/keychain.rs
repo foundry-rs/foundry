@@ -2772,6 +2772,7 @@ pub(crate) async fn send_keychain_tx(
     Ok(())
 }
 
+/// Ensures AccountKeychain calls with a known root account use that root as the signer.
 fn ensure_root_sender(actual: Address, expected: Option<Address>) -> Result<()> {
     if let Some(expected) = expected
         && actual != expected
