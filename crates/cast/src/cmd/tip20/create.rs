@@ -75,7 +75,7 @@ pub(super) async fn run(
         sh_warn!("{}", super::iso4217_warning_message(&currency))?;
         let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
         if !matches!(response.trim(), "y" | "Y") {
-            sh_println!("Aborted.")?;
+            sh_status!("Aborted.")?;
             return Ok(());
         }
     }

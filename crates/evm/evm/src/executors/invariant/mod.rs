@@ -954,7 +954,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let worker_plan = campaign_spec.worker_plans(1)?.pop().expect("one worker plan requested");
         let worker_output = InvariantWorkerOutput::new(worker_plan, worker_result);
         let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
-        aggregator.push(worker_output)?;
+        aggregator.push(worker_output);
         aggregator.finish()
     }
 

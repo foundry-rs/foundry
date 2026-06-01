@@ -13,6 +13,7 @@ use std::sync::Arc;
 mod keystore;
 mod registry;
 mod session;
+mod session_policy;
 #[cfg(test)]
 mod test_utils;
 
@@ -20,6 +21,10 @@ pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use keystore::*;
 pub use session::*;
+pub use session_policy::{
+    GeneratedSessionKey, PreparedSessionAuthorization, SessionAuthorizationRequest,
+    SessionSpendLimit,
+};
 
 #[cfg(test)]
 pub(crate) use test_utils::{test_env_mutex, with_tempo_home};

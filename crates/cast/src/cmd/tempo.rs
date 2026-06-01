@@ -32,7 +32,7 @@ impl TempoSubcommand {
                     cfg.no_browser = true;
                 }
                 let outcome = ensure_access_key(cfg).await?;
-                let _ = foundry_common::sh_println!(
+                let _ = foundry_common::sh_status!(
                     "Authorized key {} for wallet {} on chain {}",
                     outcome.key_address,
                     outcome.wallet_address,

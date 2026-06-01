@@ -3514,16 +3514,19 @@ Error: No contract name provided.
     );
 
     // Upload single CounterV2.
-    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
-        r#"
-...
-Uploading selectors for CounterV2...
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "CounterV2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 Selectors successfully uploaded to OpenChain
 ...
 
-"#
-    ]]);
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for CounterV2...
+
+"#]]);
 
     // Upload CounterV1 with path.
     cmd.forge_fuse()
@@ -3531,10 +3534,12 @@ Selectors successfully uploaded to OpenChain
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Uploading selectors for Counter...
-...
 Selectors successfully uploaded to OpenChain
 ...
+
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for Counter...
 
 "#]]);
 
@@ -3544,10 +3549,12 @@ Selectors successfully uploaded to OpenChain
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Uploading selectors for Counter...
-...
 Selectors successfully uploaded to OpenChain
 ...
+
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for Counter...
 
 "#]]);
 });
@@ -3589,8 +3596,9 @@ contract CounterV2 {
    ",
     );
 
-    cmd.args(["selectors", "list"]).assert_success().stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
+    cmd.args(["selectors", "list"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Counter
 
 ╭----------+----------------------+--------------------------------------------------------------------╮
@@ -3619,13 +3627,16 @@ CounterV2
 | Function | setNumberV2(uint256) | 0xb525b68c |
 ╰----------+----------------------+------------╯
 
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["selectors", "list", "--no-group"])
         .assert_success()
         .stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
 
 ╭----------+----------------------+--------------------------------------------------------------------+-----------╮
 | Type     | Signature            | Selector                                                           | Contract  |
@@ -3646,6 +3657,10 @@ Listing selectors for contracts in the project...
 |----------+----------------------+--------------------------------------------------------------------+-----------|
 | Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
 ╰----------+----------------------+--------------------------------------------------------------------+-----------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
 
 "#]]);
 });
@@ -3687,8 +3702,9 @@ contract CounterV2 {
    ",
     );
 
-    cmd.args(["selectors", "list", "--md"]).assert_success().stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
+    cmd.args(["selectors", "list", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Counter
 
 | Type     | Signature            | Selector                                                           |
@@ -3707,13 +3723,16 @@ CounterV2
 | Function | number()             | 0x8381f58a |
 | Function | setNumberV2(uint256) | 0xb525b68c |
 
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["selectors", "list", "--no-group", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
 
 | Type     | Signature            | Selector                                                           | Contract  |
 |----------|----------------------|--------------------------------------------------------------------|-----------|
@@ -3725,6 +3744,10 @@ Listing selectors for contracts in the project...
 | Function | incrementV2()        | 0x49365a69                                                         | CounterV2 |
 | Function | number()             | 0x8381f58a                                                         | CounterV2 |
 | Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
+
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
 
 "#]]);
 });
