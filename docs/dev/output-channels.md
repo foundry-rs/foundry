@@ -103,7 +103,7 @@ Each row's status is one of:
 | `cast logs`            | One log per line                                     | JSON array                                                     | todo   |
 | `cast run`             | Trace / decoded output                               | JSON                                                           | migrated |
 | `cast trace`           | Trace                                                | JSON trace                                                     | migrated |
-| `cast wallet new`      | Address                                              | JSON `{ "address": "…", "private_key": "…" (only with explicit flag) }` | todo |
+| `cast wallet new`      | One record per wallet: `address` (keystore) or `address\tprivate_key` (no keystore) | JSON array of `{ address, public_key, path }` (keystore) or `{ address, public_key, private_key }` (no keystore) | migrated |
 | `cast wallet sign`     | Signature                                            | JSON                                                           | migrated |
 | `cast wallet sign-auth`| Signed authorization RLP                             | JSON                                                           | migrated |
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | todo   |

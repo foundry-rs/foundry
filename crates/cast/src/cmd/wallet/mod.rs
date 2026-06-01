@@ -381,11 +381,11 @@ impl WalletSubcommands {
                                 for file in &existing_files {
                                     sh_eprintln!("   - {file}")?;
                                 }
-                                sh_print!(
+                                sh_eprint!(
                                     "\nDo you want to overwrite all {} file(s)? [y/N]: ",
                                     existing_files.len()
                                 )?;
-                                std::io::stdout().flush()?;
+                                std::io::stderr().flush()?;
 
                                 let mut input = String::new();
                                 std::io::stdin().read_line(&mut input)?;
@@ -411,30 +411,24 @@ impl WalletSubcommands {
                             let identifier = account_name_ref.as_deref().unwrap_or(&uuid);
 
                             if let Some(json) = json_values.as_mut() {
-                                json.push(if shell::verbosity() > 0 {
-                                json!({
+                                json.push(json!({
                                     "address": wallet.address().to_checksum(None),
                                     "public_key": format!("0x{}", hex::encode(wallet.public_key())),
                                     "path": format!("{}", path.join(identifier).display()),
-                                })
+                                }));
                             } else {
-                                json!({
-                                    "address": wallet.address().to_checksum(None),
-                                    "path": format!("{}", path.join(identifier).display()),
-                                })
-                            });
-                            } else {
-                                sh_println!(
+                                sh_status!(
                                     "Created new encrypted keystore file: {}",
                                     path.join(identifier).display()
                                 )?;
-                                sh_println!("Address:    {}", wallet.address().to_checksum(None))?;
+                                sh_status!("Address:    {}", wallet.address().to_checksum(None))?;
                                 if shell::verbosity() > 0 {
-                                    sh_println!(
+                                    sh_status!(
                                         "Public key: 0x{}",
                                         hex::encode(wallet.public_key())
                                     )?;
                                 }
+                                sh_println!("{}", wallet.address().to_checksum(None))?;
                             }
                         }
                     }
@@ -443,29 +437,27 @@ impl WalletSubcommands {
                             let wallet = PrivateKeySigner::random_with(&mut rng);
 
                             if let Some(json) = json_values.as_mut() {
-                                json.push(if shell::verbosity() > 0 {
-                                json!({
+                                json.push(json!({
                                     "address": wallet.address().to_checksum(None),
                                     "public_key": format!("0x{}", hex::encode(wallet.public_key())),
                                     "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
-                                })
+                                }));
                             } else {
-                                json!({
-                                    "address": wallet.address().to_checksum(None),
-                                    "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
-                                })
-                            });
-                            } else {
-                                sh_println!("Successfully created new keypair.")?;
-                                sh_println!("Address:     {}", wallet.address().to_checksum(None))?;
+                                sh_status!("Successfully created new keypair.")?;
+                                sh_status!("Address:     {}", wallet.address().to_checksum(None))?;
                                 if shell::verbosity() > 0 {
-                                    sh_println!(
+                                    sh_status!(
                                         "Public key:  0x{}",
                                         hex::encode(wallet.public_key())
                                     )?;
                                 }
-                                sh_println!(
+                                sh_status!(
                                     "Private key: 0x{}",
+                                    hex::encode(wallet.credential().to_bytes())
+                                )?;
+                                sh_println!(
+                                    "{}\t0x{}",
+                                    wallet.address().to_checksum(None),
                                     hex::encode(wallet.credential().to_bytes())
                                 )?;
                             }
