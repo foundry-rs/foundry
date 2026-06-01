@@ -116,7 +116,7 @@ impl Create2Args {
         if let Some(salt) = salt {
             let salt = hex::FromHex::from_hex(salt)?;
             let address = deployer.create2(salt, init_code_hash);
-            sh_println!("{address}")?;
+            sh_println!("{address}\t{salt}")?;
             return Ok(Create2Output { address, salt });
         }
 
@@ -211,8 +211,9 @@ impl Create2Args {
         })
         .ok_or_else(|| eyre::eyre!("create2 salt mining failed: all threads panicked"))?;
         sh_status!("Successfully found contract address in {:?}", timer.elapsed())?;
-        sh_println!("Address: {address}")?;
-        sh_println!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
+        sh_status!("Address: {address}")?;
+        sh_status!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
+        sh_println!("{address}\t{salt}")?;
 
         Ok(Create2Output { address, salt })
     }
