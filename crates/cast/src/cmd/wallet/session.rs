@@ -238,19 +238,19 @@ fn print_revoke_status(
 
     match status {
         SessionRevokeStatus::NotFound => {
-            sh_println!("Tempo session {} was not found.", session_id)?;
+            sh_status!("Tempo session {} was not found.", session_id)?;
         }
         SessionRevokeStatus::Local => {
-            sh_println!("Revoked local Tempo session {}", session_id)?;
+            sh_status!("Revoked local Tempo session {}", session_id)?;
         }
         SessionRevokeStatus::NotProvisioned => {
-            sh_println!(
+            sh_status!(
                 "Revoked Tempo session {} locally; key was not provisioned on-chain",
                 session_id
             )?;
         }
         SessionRevokeStatus::AlreadyRevoked => {
-            sh_println!(
+            sh_status!(
                 "Revoked Tempo session {} locally; key was already revoked on-chain",
                 session_id
             )?;
