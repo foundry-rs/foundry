@@ -3,8 +3,9 @@ use alloy_ens::NameOrAddress;
 use std::time::Duration;
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, B256, U256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_rlp::Encodable;
 use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -15,7 +16,7 @@ use eyre::Result;
 use foundry_cli::{
     json::print_json_object,
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::LoadConfig,
+    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -27,6 +28,7 @@ use foundry_common::{
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
+use foundry_wallets::{WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner};
 use serde::Deserialize;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
@@ -36,10 +38,12 @@ use tempo_contracts::precompiles::{
         TokenLimit,
     },
     ITIP20, PATH_USD_ADDRESS,
-    account_keychain::{authorizeKeyCall, legacyAuthorizeKeyCall},
+    account_keychain::{authorizeKeyCall, authorizeKeyWithWitnessCall, legacyAuthorizeKeyCall},
 };
 use tempo_primitives::transaction::{
-    SignatureType as AuthSignatureType, SignedKeyAuthorization, TokenLimit as AuthTokenLimit,
+    CallScope as AuthCallScope, KeyAuthorization, PrimitiveSignature,
+    SelectorRule as AuthSelectorRule, SignatureType as AuthSignatureType, SignedKeyAuthorization,
+    TokenLimit as AuthTokenLimit,
 };
 use yansi::Paint;
 
@@ -47,7 +51,6 @@ use crate::cmd::tempo_policy_args::{
     SelectorArg, parse_period, parse_policy_token, parse_scope, parse_selector_arg,
     parse_selector_bytes,
 };
-use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
 
 use crate::{
     cmd::send::cast_send,
@@ -173,6 +176,12 @@ pub enum KeychainSubcommand {
         #[arg(long = "scopes", value_parser = parse_scopes_json_wrapped, conflicts_with = "scope")]
         scopes_json: Option<ScopesJson>,
 
+        /// Optional TIP-1053 witness to bind to this on-chain authorization.
+        ///
+        /// `0x000...000` is a valid present witness and is distinct from omitting the flag.
+        #[arg(long)]
+        witness: Option<B256>,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -191,6 +200,32 @@ pub enum KeychainSubcommand {
 
         #[command(flatten)]
         send_tx: SendTxOpts,
+    },
+
+    /// Burn a TIP-1053 key-authorization witness for the signing account.
+    #[command(name = "burn-witness")]
+    BurnWitness {
+        /// Witness to burn. `bytes32(0)` is valid.
+        witness: B256,
+
+        #[command(flatten)]
+        tx: TransactionOpts,
+
+        #[command(flatten)]
+        send_tx: SendTxOpts,
+    },
+
+    /// Check whether a TIP-1053 key-authorization witness has been burned.
+    #[command(name = "is-witness-burned")]
+    IsWitnessBurned {
+        /// Account whose witness burn set should be checked.
+        account: Address,
+
+        /// Witness to check. `bytes32(0)` is valid.
+        witness: B256,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
     },
 
     /// Query the remaining spending limit for a key on a specific token.
@@ -266,6 +301,68 @@ pub enum KeychainSubcommand {
         #[command(subcommand)]
         command: KeychainPolicySubcommand,
     },
+}
+
+/// Tempo signed key-authorization helpers.
+#[derive(Debug, Parser)]
+pub enum KeyAuthSubcommand {
+    /// RLP-encode an unsigned Tempo key authorization.
+    Encode {
+        #[command(flatten)]
+        authorization: KeyAuthArgs,
+    },
+
+    /// Sign and RLP-encode a Tempo key authorization.
+    Sign {
+        #[command(flatten)]
+        authorization: KeyAuthArgs,
+
+        #[command(flatten)]
+        wallet: Box<WalletOpts>,
+    },
+}
+
+/// Common fields for `cast key-auth encode` and `cast key-auth sign`.
+#[derive(Debug, Parser)]
+pub struct KeyAuthArgs {
+    /// Chain ID for replay protection.
+    #[arg(long)]
+    chain_id: u64,
+
+    /// Key address to authorize.
+    key_address: Address,
+
+    /// Type of access key being authorized: secp256k1, p256, or webauthn.
+    /// The authorization itself is signed with the configured Ethereum (secp256k1) wallet.
+    #[arg(long, default_value = "secp256k1", value_parser = parse_auth_signature_type)]
+    key_type: AuthSignatureType,
+
+    /// Expiry timestamp (unix seconds). Omit for no expiry.
+    #[arg(long)]
+    expiry: Option<u64>,
+
+    /// Enforce spending limits for this key. With no --limit entries, this means no spending.
+    #[arg(long)]
+    enforce_limits: bool,
+
+    /// Spending limit in `TOKEN:AMOUNT[:PERIOD]` format. Can be specified multiple times.
+    #[arg(long = "limit", value_parser = parse_auth_limit)]
+    limits: Vec<AuthTokenLimit>,
+
+    /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+    /// TARGET alone allows all calls to that target.
+    #[arg(long = "scope", value_parser = parse_auth_scope)]
+    scope: Vec<AuthCallScope>,
+
+    /// Call scope restrictions as a JSON array.
+    #[arg(long = "scopes", value_parser = parse_auth_scopes_json_wrapped, conflicts_with = "scope")]
+    scopes_json: Option<AuthScopesJson>,
+
+    /// Optional TIP-1053 witness to include in the authorization signing hash.
+    ///
+    /// `0x000...000` is a valid present witness and is distinct from omitting the flag.
+    #[arg(long)]
+    witness: Option<B256>,
 }
 
 /// Higher-level access-key policy editing commands.
@@ -352,6 +449,15 @@ fn parse_signature_type(s: &str) -> Result<SignatureType, String> {
     }
 }
 
+fn parse_auth_signature_type(s: &str) -> Result<AuthSignatureType, String> {
+    match s.to_lowercase().as_str() {
+        "secp256k1" => Ok(AuthSignatureType::Secp256k1),
+        "p256" => Ok(AuthSignatureType::P256),
+        "webauthn" => Ok(AuthSignatureType::WebAuthn),
+        _ => Err(format!("unknown signature type: {s} (expected secp256k1, p256, or webauthn)")),
+    }
+}
+
 const fn signature_type_name(t: &SignatureType) -> &'static str {
     match t {
         SignatureType::Secp256k1 => "secp256k1",
@@ -405,6 +511,40 @@ fn parse_limit(s: &str) -> Result<TokenLimit, String> {
     Ok(TokenLimit { token, amount, period: 0 })
 }
 
+/// Parse a key-authorization `--limit TOKEN:AMOUNT[:PERIOD]` flag value.
+fn parse_auth_limit(s: &str) -> Result<AuthTokenLimit, String> {
+    let parts: Vec<_> = s.split(':').collect();
+    let (token_str, amount_str, period_str) = match parts.as_slice() {
+        [token_str, amount_str] => (*token_str, *amount_str, None),
+        [token_str, amount_str, period_str] => (*token_str, *amount_str, Some(*period_str)),
+        _ => return Err(format!("invalid limit format: {s} (expected TOKEN:AMOUNT[:PERIOD])")),
+    };
+    let token: Address =
+        token_str.parse().map_err(|e| format!("invalid token address '{token_str}': {e}"))?;
+    let limit: U256 =
+        amount_str.parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
+    let period = if let Some(period_str) = period_str { parse_period(period_str)? } else { 0 };
+    Ok(AuthTokenLimit { token, limit, period })
+}
+
+fn parse_auth_scope(s: &str) -> Result<AuthCallScope, String> {
+    parse_scope(s).map(abi_scope_to_auth_scope)
+}
+
+fn abi_scope_to_auth_scope(scope: CallScope) -> AuthCallScope {
+    AuthCallScope {
+        target: scope.target,
+        selector_rules: scope
+            .selectorRules
+            .into_iter()
+            .map(|rule| {
+                let mut selector = [0u8; 4];
+                selector.copy_from_slice(rule.selector.as_slice());
+                AuthSelectorRule { selector, recipients: rule.recipients }
+            })
+            .collect(),
+    }
+}
 /// Represents a single scope entry in JSON format for `--scopes`.
 #[derive(serde::Deserialize)]
 struct JsonCallScope {
@@ -467,7 +607,17 @@ fn parse_scopes_json_wrapped(s: &str) -> Result<ScopesJson, String> {
     parse_scopes_json(s).map(ScopesJson)
 }
 
+/// Newtype wrapper for parsed key-authorization `--scopes` JSON.
+#[derive(Debug, Clone)]
+pub struct AuthScopesJson(Vec<AuthCallScope>);
+
+fn parse_auth_scopes_json_wrapped(s: &str) -> Result<AuthScopesJson, String> {
+    parse_scopes_json(s)
+        .map(|scopes| AuthScopesJson(scopes.into_iter().map(abi_scope_to_auth_scope).collect()))
+}
+
 impl KeychainSubcommand {
+    #[allow(clippy::large_stack_frames)]
     pub async fn run(self) -> Result<()> {
         match self {
             Self::List => run_list(),
@@ -508,6 +658,7 @@ impl KeychainSubcommand {
                 limits,
                 scope,
                 scopes_json,
+                witness,
                 tx,
                 send_tx,
             } => {
@@ -523,12 +674,19 @@ impl KeychainSubcommand {
                     enforce_limits,
                     limits,
                     all_scopes,
+                    witness,
                     tx,
                     send_tx,
                 )
                 .await
             }
             Self::Revoke { key_address, tx, send_tx } => run_revoke(key_address, tx, send_tx).await,
+            Self::BurnWitness { witness, tx, send_tx } => {
+                run_burn_witness(witness, tx, send_tx).await
+            }
+            Self::IsWitnessBurned { account, witness, rpc } => {
+                run_is_witness_burned(account, witness, rpc).await
+            }
             Self::RemainingLimit { wallet_address, key_address, token, rpc } => {
                 run_remaining_limit(wallet_address, key_address, token, rpc).await
             }
@@ -542,6 +700,15 @@ impl KeychainSubcommand {
                 run_remove_scope(key_address, target, tx, send_tx).await
             }
             Self::Policy { command } => command.run().await,
+        }
+    }
+}
+
+impl KeyAuthSubcommand {
+    pub async fn run(self) -> Result<()> {
+        match self {
+            Self::Encode { authorization } => run_key_auth_encode(authorization),
+            Self::Sign { authorization, wallet } => run_key_auth_sign(authorization, *wallet).await,
         }
     }
 }
@@ -1558,10 +1725,12 @@ fn validate_pending_key_authorization(
             format!("{} ({})", relative, format_timestamp_iso(expiry.get()))
         })
         .unwrap_or_else(|| "never expires".to_string());
+    let witness = auth.witness().map(|witness| format!(", witness {witness}")).unwrap_or_default();
     let detail = format!(
-        "not on-chain; local key_authorization can provision atomically, type {}, expiry {}",
+        "not on-chain; local key_authorization can provision atomically, type {}, expiry {}{}",
         auth_signature_type_label(&auth.key_type),
-        expiry
+        expiry,
+        witness
     );
 
     Ok(ValidKeyAuthorization { signed, detail })
@@ -2346,6 +2515,14 @@ const fn auth_signature_type_label(t: &AuthSignatureType) -> &'static str {
     }
 }
 
+const fn auth_signature_type_name(t: &AuthSignatureType) -> &'static str {
+    match t {
+        AuthSignatureType::Secp256k1 => "secp256k1",
+        AuthSignatureType::P256 => "p256",
+        AuthSignatureType::WebAuthn => "webauthn",
+    }
+}
+
 fn format_authorization_limits(limits: &[AuthTokenLimit], fee_token: Address) -> String {
     let mut lines: Vec<String> = limits
         .iter()
@@ -2457,6 +2634,7 @@ async fn run_authorize(
     enforce_limits: bool,
     limits: Vec<TokenLimit>,
     allowed_calls: Vec<CallScope>,
+    witness: Option<B256>,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
@@ -2465,7 +2643,12 @@ async fn run_authorize(
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
-    let calldata = if is_tempo_hardfork_active(&provider, TempoHardfork::T3).await? {
+    let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await?;
+    if witness.is_some() && !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("--witness requires a Tempo T5-capable AccountKeychain RPC");
+    }
+
+    let calldata = if is_t3 {
         // T3+ authorizeKey(address,SignatureType,KeyRestrictions)
         let restrictions = KeyRestrictions {
             expiry,
@@ -2474,8 +2657,18 @@ async fn run_authorize(
             allowAnyCalls: allowed_calls.is_empty(),
             allowedCalls: allowed_calls,
         };
-        authorizeKeyCall { keyId: key_address, signatureType: key_type, config: restrictions }
+        if let Some(witness) = witness {
+            authorizeKeyWithWitnessCall {
+                keyId: key_address,
+                signatureType: key_type,
+                config: restrictions,
+                witness,
+            }
             .abi_encode()
+        } else {
+            authorizeKeyCall { keyId: key_address, signatureType: key_type, config: restrictions }
+                .abi_encode()
+        }
     } else {
         // Legacy (pre-T3) authorizeKey(address,SignatureType,uint64,bool,LegacyTokenLimit[])
         let legacy_limits: Vec<LegacyTokenLimit> = limits
@@ -2492,7 +2685,107 @@ async fn run_authorize(
         .abi_encode()
     };
 
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
+}
+
+fn run_key_auth_encode(args: KeyAuthArgs) -> Result<()> {
+    let authorization = args.into_authorization()?;
+    let encoded = encode_key_authorization(&authorization);
+
+    if shell::is_json() {
+        let json = serde_json::json!({
+            "key_authorization": hex::encode_prefixed(&encoded),
+            "signature_hash": authorization.signature_hash().to_string(),
+            "rlp_length": encoded.len(),
+            "witness": authorization.witness().map(|witness| witness.to_string()),
+        });
+        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+    } else {
+        sh_println!("{}", hex::encode_prefixed(&encoded))?;
+    }
+
+    Ok(())
+}
+
+async fn run_key_auth_sign(args: KeyAuthArgs, wallet: WalletOpts) -> Result<()> {
+    let authorization = args.into_authorization()?;
+    let authorized_key_type = auth_signature_type_name(&authorization.key_type);
+    let signature_hash = authorization.signature_hash();
+    let (signer, tempo_access_key) = wallet.maybe_signer().await?;
+    if tempo_access_key.is_some() {
+        eyre::bail!(
+            "Tempo access keys cannot sign key authorizations; use a persistent root signer"
+        );
+    }
+    let signer = signer.ok_or_else(|| {
+        eyre::eyre!(
+            "a persistent root signer is required to sign key authorizations; pass a signer with \
+             --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+        )
+    })?;
+    let signer_address = signer.address();
+    let signature = signer.sign_hash(&signature_hash).await?;
+    let signed = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
+    let encoded = encode_key_authorization(&signed);
+
+    if shell::is_json() {
+        let json = serde_json::json!({
+            "signed_key_authorization": hex::encode_prefixed(&encoded),
+            "signature_hash": signature_hash.to_string(),
+            "rlp_length": encoded.len(),
+            "signer": signer_address.to_string(),
+            "authorized_key_type": authorized_key_type,
+            "signature_type": "secp256k1",
+            "witness": signed.authorization.witness().map(|witness| witness.to_string()),
+        });
+        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+    } else {
+        sh_println!("{}", hex::encode_prefixed(&encoded))?;
+    }
+
+    Ok(())
+}
+
+fn encode_key_authorization<T: Encodable>(authorization: &T) -> Vec<u8> {
+    let mut out = Vec::new();
+    authorization.encode(&mut out);
+    out
+}
+
+impl KeyAuthArgs {
+    fn into_authorization(self) -> Result<KeyAuthorization> {
+        let (scopes, explicit_scopes_json) =
+            if let Some(AuthScopesJson(json_scopes)) = self.scopes_json {
+                (json_scopes, true)
+            } else {
+                (self.scope, false)
+            };
+
+        let mut authorization =
+            KeyAuthorization::unrestricted(self.chain_id, self.key_type, self.key_address);
+
+        if let Some(expiry) = self.expiry {
+            if expiry == 0 {
+                eyre::bail!("--expiry must be greater than zero");
+            }
+            authorization = authorization.with_expiry(expiry);
+        }
+
+        if self.enforce_limits || !self.limits.is_empty() {
+            authorization = authorization.with_limits(self.limits);
+        }
+
+        if explicit_scopes_json || !scopes.is_empty() {
+            authorization = authorization.with_allowed_calls(scopes);
+        }
+
+        if let Some(witness) = self.witness {
+            authorization = authorization.with_witness(witness);
+        }
+
+        Ok(authorization)
+    }
 }
 
 /// `cast keychain revoke` / `cast keychain rev` — revoke a key on-chain.
@@ -2502,7 +2795,53 @@ async fn run_revoke(
     send_tx: SendTxOpts,
 ) -> Result<()> {
     let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
+}
+
+/// `cast keychain burn-witness` — burn a TIP-1053 key authorization witness.
+async fn run_burn_witness(
+    witness: B256,
+    tx_opts: TransactionOpts,
+    send_tx: SendTxOpts,
+) -> Result<()> {
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("burn-witness requires a Tempo T5-capable AccountKeychain RPC");
+    }
+
+    let calldata = IAccountKeychain::burnKeyAuthorizationWitnessCall { witness }.abi_encode();
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
+}
+
+/// `cast keychain is-witness-burned` — check TIP-1053 witness burn state.
+async fn run_is_witness_burned(account: Address, witness: B256, rpc: RpcOpts) -> Result<()> {
+    let config = rpc.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
+        eyre::bail!("is-witness-burned requires a Tempo T5-capable AccountKeychain RPC");
+    }
+
+    let burned = provider
+        .account_keychain()
+        .isKeyAuthorizationWitnessBurned(account, witness)
+        .call()
+        .await?;
+
+    if shell::is_json() {
+        let json = serde_json::json!({
+            "account": account.to_string(),
+            "witness": witness.to_string(),
+            "burned": burned,
+        });
+        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+    } else {
+        sh_println!("{burned}")?;
+    }
+
+    Ok(())
 }
 
 /// `cast keychain rl` — query remaining spending limit.
@@ -2549,7 +2888,8 @@ async fn run_update_limit(
         newLimit: new_limit,
     }
     .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain ss` — set allowed call scopes.
@@ -2561,7 +2901,8 @@ async fn run_set_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain rs` — remove call scope for a target.
@@ -2573,7 +2914,8 @@ async fn run_remove_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
@@ -2635,7 +2977,8 @@ async fn run_policy_add_call(
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
             .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain policy set-limit` — update a spending limit amount.
@@ -2658,13 +3001,81 @@ async fn run_policy_set_limit(
     run_update_limit(key_address, token, amount, tx_opts, send_tx).await
 }
 
-/// Shared helper to send a keychain precompile transaction.
-async fn send_keychain_tx(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeychainTxOutcome {
+    Submitted,
+    PrintedSponsorHash,
+}
+
+pub(crate) enum KeychainRootSigner {
+    Browser(BrowserSigner<TempoNetwork>),
+    Wallet(Box<WalletSigner>),
+}
+
+impl KeychainRootSigner {
+    fn address(&self) -> Address {
+        match self {
+            Self::Browser(browser) => browser.address(),
+            Self::Wallet(signer) => signer.address(),
+        }
+    }
+}
+
+/// Resolve the root-authorized signer used for AccountKeychain policy changes.
+pub(crate) async fn resolve_keychain_root_signer(
+    send_tx: &SendTxOpts,
+    expected_from: Option<Address>,
+    print_sponsor_hash: bool,
+) -> Result<KeychainRootSigner> {
+    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
+        ensure_root_sender(browser.address(), expected_from)?;
+        return Ok(KeychainRootSigner::Browser(browser));
+    }
+
+    if tempo_access_key.is_some() {
+        eyre::bail!(
+            "keychain policy changes must be signed by the root account; the selected `--from` \
+             resolved to a Tempo access key. Use `--browser` for passkey roots, or pass a root \
+             account signer with `--private-key`, `--keystore`, Ledger, Trezor, AWS, GCP, or Turnkey."
+        );
+    }
+
+    let signer = match signer {
+        Some(s) => s,
+        None if print_sponsor_hash => {
+            eyre::bail!(
+                "--tempo.print-sponsor-hash requires a root account signer, such as \
+                 --browser, --private-key, or --keystore"
+            );
+        }
+        None => send_tx.eth.wallet.signer().await?,
+    };
+    ensure_root_sender(signer.address(), expected_from)?;
+    Ok(KeychainRootSigner::Wallet(Box::new(signer)))
+}
+
+/// Send calldata to the Tempo AccountKeychain precompile as a root-authorized transaction.
+pub(crate) async fn send_keychain_tx(
+    calldata: Vec<u8>,
+    tx_opts: TransactionOpts,
+    send_tx: &SendTxOpts,
+    expected_from: Option<Address>,
+) -> Result<KeychainTxOutcome> {
+    let root_signer =
+        resolve_keychain_root_signer(send_tx, expected_from, tx_opts.tempo.print_sponsor_hash)
+            .await?;
+    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, || Ok(())).await
+}
+
+/// Send AccountKeychain calldata with an already-resolved root signer.
+pub(crate) async fn send_keychain_tx_with_root_signer(
     calldata: Vec<u8>,
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
-) -> Result<()> {
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    root_signer: KeychainRootSigner,
+    before_submit: impl FnOnce() -> Result<()>,
+) -> Result<KeychainTxOutcome> {
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let expires_at = tx_opts.tempo.resolve_expires();
     let tempo_sponsor =
@@ -2689,25 +3100,8 @@ async fn send_keychain_tx(
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
 
-    // Keychain management calls are authorized by the root account. Access keys can use their
-    // permissions, but cannot mutate their own key policy.
-    let browser = send_tx.browser.run::<TempoNetwork>().await?;
-
     if print_sponsor_hash {
-        let from = if let Some(ref browser) = browser {
-            browser.address()
-        } else {
-            signer
-                .as_ref()
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "--tempo.print-sponsor-hash requires a root account signer, such as \
-                         --browser, --private-key, or --keystore"
-                    )
-                })?
-                .address()
-        };
-
+        let from = root_signer.address();
         let (tx, _) = builder.build(from).await?;
         let hash = tx
             .compute_sponsor_hash(from)
@@ -2717,54 +3111,68 @@ async fn send_keychain_tx(
         } else {
             sh_println!("{hash:?}")?;
         }
-        return Ok(());
+        return Ok(KeychainTxOutcome::PrintedSponsorHash);
     }
 
     crate::tempo::print_expires(expires_at)?;
 
-    if let Some(browser) = browser {
-        let chain = builder.chain();
-        let (mut tx, _) = builder.build(browser.address()).await?;
-        if chain.is_tempo()
-            && let Some(gas) = tx.gas_limit()
-        {
-            tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
-        }
-        if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
-        }
+    match root_signer {
+        KeychainRootSigner::Browser(browser) => {
+            let chain = builder.chain();
+            let (mut tx, _) = builder.build(browser.address()).await?;
+            if chain.is_tempo()
+                && let Some(gas) = tx.gas_limit()
+            {
+                tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
+            }
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
+            }
 
-        let tx_hash = browser.send_transaction_via_browser(tx).await?;
-        CastTxSender::new(&provider)
-            .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+            before_submit()?;
+            let tx_hash = browser.send_transaction_via_browser(tx).await?;
+            CastTxSender::new(&provider)
+                .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+                .await?;
+        }
+        KeychainRootSigner::Wallet(signer) => {
+            let from = signer.address();
+            let (mut tx, _) = builder.build(from).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
+            }
+
+            before_submit()?;
+            let wallet = EthereumWallet::from(*signer);
+            let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
+                .wallet(wallet)
+                .connect_provider(&provider);
+
+            cast_send(
+                provider,
+                tx,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+            )
             .await?;
-    } else if tempo_access_key.is_some() {
-        eyre::bail!(
-            "keychain policy changes must be signed by the root account; the selected `--from` \
-             resolved to a Tempo access key. Use `--browser` for passkey roots, or pass a root \
-             account signer with `--private-key`, `--keystore`, Ledger, Trezor, AWS, GCP, or Turnkey."
-        );
-    } else {
-        let signer = match signer {
-            Some(s) => s,
-            None => send_tx.eth.wallet.signer().await?,
-        };
-        let from = signer.address();
-        let (mut tx, _) = builder.build(from).await?;
-        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-        if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
         }
-
-        let wallet = EthereumWallet::from(signer);
-        let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
-            .wallet(wallet)
-            .connect_provider(&provider);
-
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
-            .await?;
     }
 
+    Ok(KeychainTxOutcome::Submitted)
+}
+
+/// Ensures AccountKeychain calls with a known root account use that root as the signer.
+fn ensure_root_sender(actual: Address, expected: Option<Address>) -> Result<()> {
+    if let Some(expected) = expected
+        && actual != expected
+    {
+        eyre::bail!(
+            "AccountKeychain transaction must be signed by root account {expected}; resolved signer is {actual}"
+        );
+    }
     Ok(())
 }
 
@@ -3178,6 +3586,14 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
 
     sh_println!("Has Key:      {}", entry.has_inline_key())?;
     sh_println!("Has Auth:     {}", entry.key_authorization.is_some())?;
+    if let Some(signed) = decoded_entry_key_authorization(entry) {
+        let witness = signed
+            .authorization
+            .witness()
+            .map(|witness| witness.to_string())
+            .unwrap_or_else(|| "(none)".to_string());
+        sh_println!("Auth Witness: {witness}")?;
+    }
 
     if !entry.limits.is_empty() {
         sh_println!("Limits:")?;
@@ -3191,6 +3607,9 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
 
 fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
     let is_direct = entry.key_address.is_none_or(|key_address| key_address == entry.wallet_address);
+    let authorization_witness = decoded_entry_key_authorization(entry)
+        .and_then(|signed| signed.authorization.witness())
+        .map(|witness| witness.to_string());
 
     let limits: Vec<_> = entry
         .limits
@@ -3214,8 +3633,17 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
         "expiry_human": entry.expiry.map(format_expiry),
         "has_key": entry.has_inline_key(),
         "has_authorization": entry.key_authorization.is_some(),
+        "authorization_witness": authorization_witness,
         "limits": limits,
     })
+}
+
+fn decoded_entry_key_authorization(entry: &tempo::KeyEntry) -> Option<SignedKeyAuthorization> {
+    let raw = entry.key_authorization.as_deref()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    tempo::decode_key_authorization(raw).ok()
 }
 
 #[cfg(test)]
@@ -3223,7 +3651,6 @@ mod tests {
     use super::*;
     use alloy_json_rpc::ErrorPayload;
     use std::str::FromStr;
-    use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
 
     #[test]
     fn test_parse_scopes_json_plain() {
@@ -3372,10 +3799,87 @@ mod tests {
         let mut authorization =
             KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42));
         authorization.limits = limits;
-        SignedKeyAuthorization {
-            authorization,
-            signature: PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap(),
+        authorization.into_signed(PrimitiveSignature::default())
+    }
+
+    fn key_auth_args(witness: Option<B256>) -> KeyAuthArgs {
+        KeyAuthArgs {
+            chain_id: 31337,
+            key_address: target_addr(0x42),
+            key_type: AuthSignatureType::Secp256k1,
+            expiry: None,
+            enforce_limits: false,
+            limits: vec![],
+            scope: vec![],
+            scopes_json: None,
+            witness,
         }
+    }
+
+    #[test]
+    fn test_key_auth_encode_distinguishes_absent_and_zero_witness() {
+        use alloy_rlp::Decodable;
+
+        let absent = key_auth_args(None).into_authorization().unwrap();
+        let zero = key_auth_args(Some(B256::ZERO)).into_authorization().unwrap();
+
+        assert_eq!(absent.witness(), None);
+        assert_eq!(zero.witness(), Some(B256::ZERO));
+        assert_ne!(absent.signature_hash(), zero.signature_hash());
+
+        let absent_encoded = encode_key_authorization(&absent);
+        let zero_encoded = encode_key_authorization(&zero);
+        assert_ne!(absent_encoded, zero_encoded);
+
+        let decoded_absent = KeyAuthorization::decode(&mut absent_encoded.as_slice()).unwrap();
+        let decoded_zero = KeyAuthorization::decode(&mut zero_encoded.as_slice()).unwrap();
+
+        assert_eq!(decoded_absent.witness(), None);
+        assert_eq!(decoded_zero.witness(), Some(B256::ZERO));
+    }
+
+    #[test]
+    fn test_signed_key_authorization_witness_roundtrip_and_json_exposure() {
+        use alloy_rlp::Decodable;
+
+        let witness = B256::repeat_byte(0x53);
+        let signed = key_auth_args(Some(witness))
+            .into_authorization()
+            .unwrap()
+            .into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
+        let encoded = encode_key_authorization(&signed);
+        let hex = hex::encode_prefixed(&encoded);
+
+        let decoded = SignedKeyAuthorization::decode(&mut encoded.as_slice()).unwrap();
+        assert_eq!(decoded.authorization.witness(), Some(witness));
+
+        let entry = tempo::KeyEntry { key_authorization: Some(hex), ..Default::default() };
+        let json = key_entry_to_json(&entry);
+        assert_eq!(json["authorization_witness"], witness.to_string());
+    }
+
+    #[test]
+    fn test_key_auth_encode_preserves_explicit_empty_scopes_json() {
+        let absent = key_auth_args(None).into_authorization().unwrap();
+        let mut args = key_auth_args(None);
+        args.scopes_json = Some(AuthScopesJson(vec![]));
+        let deny_all = args.into_authorization().unwrap();
+
+        assert_eq!(absent.allowed_calls, None);
+        assert_eq!(deny_all.allowed_calls, Some(vec![]));
+        assert_ne!(absent.signature_hash(), deny_all.signature_hash());
+        assert_ne!(encode_key_authorization(&absent), encode_key_authorization(&deny_all));
+    }
+
+    #[test]
+    fn test_key_auth_encode_rejects_zero_expiry() {
+        let mut args = key_auth_args(None);
+        args.expiry = Some(0);
+        let err = args.into_authorization().unwrap_err();
+        assert!(
+            err.to_string().contains("--expiry must be greater than zero"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
