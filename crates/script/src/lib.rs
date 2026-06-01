@@ -136,13 +136,6 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub batch: bool,
 
-    /// Number of calls per Tempo batch transaction.
-    ///
-    /// When `--batch` is enabled, splits the collected calls into multiple batch
-    /// transactions of at most this many calls each.
-    #[arg(long, requires = "batch", default_value = "100")]
-    pub batch_size: usize,
-
     /// Tempo transaction options.
     #[command(flatten)]
     pub tempo: TempoOpts,
@@ -332,7 +325,10 @@ impl ScriptArgs {
                 Some(bundled) => bundled,
                 None => return Ok(()),
             };
-            let bundled = bundled.wait_for_pending().await?;
+            // batch mode owns its own pending recovery inside broadcast_batch(); running the
+            // generic wait_for_pending() first would race with that and could double-process
+            // an already-confirmed batch hash.
+            let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
             let broadcasted =
                 if batch { bundled.broadcast_batch().await? } else { bundled.broadcast().await? };
             if broadcasted.args.verify {
@@ -842,6 +838,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             Some(known_contracts),
                             Some(target),
                             self.tempo.fee_token,
+                            self.batch,
                         )
                         .into(),
                     )
