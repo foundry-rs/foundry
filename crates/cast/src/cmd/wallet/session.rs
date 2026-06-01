@@ -10,7 +10,8 @@ use foundry_common::{
     sh_println, shell,
     tempo::{
         GeneratedSessionKey, SessionAuthorizationRequest, SessionEntry, SessionSpendLimit,
-        SessionStatus, read_session_entry, update_session_status, upsert_session_entry,
+        SessionStatus, read_session_entry, update_session_status, update_session_status_if,
+        upsert_session_entry,
     },
 };
 use foundry_wallets::{WalletOpts, WalletSigner};
@@ -25,7 +26,9 @@ use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule}
 
 use crate::{
     cmd::{
-        keychain::{KeychainTxOutcome, send_keychain_tx},
+        keychain::{
+            KeychainTxOutcome, resolve_keychain_root_signer, send_keychain_tx_with_root_signer,
+        },
         tempo_policy_args::{parse_period, parse_policy_token, parse_scope as parse_policy_scope},
     },
     tx::SendTxOpts,
@@ -160,47 +163,78 @@ async fn run_revoke(
         eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
     }
 
-    update_session_status(session_id, SessionStatus::Revoking)?;
-    let status = async {
-        let config = send_tx.eth.load_config()?;
-        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-        let rpc_chain_id = provider.get_chain_id().await?;
-        if rpc_chain_id != entry.chain_id {
-            eyre::bail!(
-                "session {} was created for chain {}, but the RPC is connected to chain {}",
-                entry.session_id,
-                entry.chain_id,
-                rpc_chain_id
-            );
-        }
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let rpc_chain_id = provider.get_chain_id().await?;
+    if rpc_chain_id != entry.chain_id {
+        eyre::bail!(
+            "session {} was created for chain {}, but the RPC is connected to chain {}",
+            entry.session_id,
+            entry.chain_id,
+            rpc_chain_id
+        );
+    }
 
-        let info = provider.get_keychain_key(entry.root_account, entry.key_address).await?;
-        if info.isRevoked {
-            return Ok(Some(SessionRevokeStatus::AlreadyRevoked));
-        }
-        if info.keyId == Address::ZERO {
-            return Ok(Some(SessionRevokeStatus::NotProvisioned));
-        }
+    let info = provider.get_keychain_key(entry.root_account, entry.key_address).await?;
+    if info.isRevoked {
+        update_session_status(session_id, SessionStatus::Revoked)?;
+        print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::AlreadyRevoked)?;
+        return Ok(());
+    }
+    if info.keyId == Address::ZERO {
+        update_session_status(session_id, SessionStatus::Revoked)?;
+        print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::NotProvisioned)?;
+        return Ok(());
+    }
 
+    let root_signer =
+        resolve_keychain_root_signer(&send_tx, Some(entry.root_account), false).await?;
+    let revoke_result = async {
         let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
-        match send_keychain_tx(calldata, tx, &send_tx, Some(entry.root_account)).await? {
+        let before_submit = || {
+            if entry.status != SessionStatus::Revoked {
+                update_session_status_if(session_id, entry.status, SessionStatus::Revoking)?;
+            }
+            Ok(())
+        };
+        match send_keychain_tx_with_root_signer(calldata, tx, &send_tx, root_signer, before_submit)
+            .await?
+        {
             KeychainTxOutcome::Submitted => {}
             KeychainTxOutcome::PrintedSponsorHash => eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR),
         }
-        Ok(None)
+        Ok(())
     }
-    .await
-    .map_err(|err: eyre::Report| {
-        let _ = update_session_status(session_id, SessionStatus::Failed);
-        err.wrap_err("failed to revoke Tempo session key on-chain")
-    })?;
+    .await;
+    if let Err(err) = revoke_result {
+        handle_revoke_error(&provider, session_id, &entry).await;
+        return Err(err.wrap_err("failed to revoke Tempo session key on-chain"));
+    }
 
     update_session_status(session_id, SessionStatus::Revoked)?;
-    if let Some(status) = status {
-        print_revoke_status(session_id, Some(&entry), status)?;
-    }
 
     Ok(())
+}
+
+async fn handle_revoke_error(
+    provider: &impl Provider<TempoNetwork>,
+    session_id: B256,
+    entry: &SessionEntry,
+) {
+    if provider
+        .get_keychain_key(entry.root_account, entry.key_address)
+        .await
+        .map(|info| info.isRevoked)
+        .unwrap_or(false)
+    {
+        let _ = update_session_status(session_id, SessionStatus::Revoked);
+    } else if !matches!(
+        read_session_entry(session_id).ok().flatten().map(|entry| entry.status),
+        Some(SessionStatus::Revoked)
+    ) {
+        let _ =
+            update_session_status_if(session_id, SessionStatus::Revoking, SessionStatus::Failed);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -364,6 +398,7 @@ fn now_unix_timestamp() -> Result<u64> {
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use foundry_cli::opts::EthereumOpts;
     use std::sync::Mutex;
     use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
@@ -395,6 +430,83 @@ mod tests {
         let limit = parse_spend_limit("PathUSD=0").unwrap();
         assert_eq!(limit.token, PATH_USD_ADDRESS);
         assert_eq!(limit.amount, U256::ZERO);
+    }
+
+    #[test]
+    fn revoke_preflight_error_preserves_local_key_material() {
+        with_tempo_home(|| {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let session_id = B256::from([0xd0; 32]);
+                let entry = sample_session_entry(session_id, SessionStatus::Active);
+                upsert_session_entry(entry).unwrap();
+
+                let mut send_tx = empty_send_tx_opts();
+                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
+                let err =
+                    run_revoke(session_id, false, TransactionOpts::parse_from(["cast"]), send_tx)
+                        .await
+                        .unwrap_err();
+
+                let session = read_session_entry(session_id).unwrap().unwrap();
+                assert_eq!(session.status, SessionStatus::Active, "{err:#}");
+                assert!(session.key.is_some());
+            });
+        });
+    }
+
+    #[test]
+    fn revoke_error_does_not_downgrade_existing_revoked_status() {
+        with_tempo_home(|| {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let session_id = B256::from([0xd1; 32]);
+                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Revoking))
+                    .unwrap();
+                update_session_status(session_id, SessionStatus::Revoked).unwrap();
+
+                let mut send_tx = empty_send_tx_opts();
+                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
+                let config = send_tx.eth.load_config().unwrap();
+                let provider =
+                    ProviderBuilder::<TempoNetwork>::from_config(&config).unwrap().build().unwrap();
+                handle_revoke_error(
+                    &provider,
+                    session_id,
+                    &sample_session_entry(session_id, SessionStatus::Revoking),
+                )
+                .await;
+
+                assert_eq!(
+                    read_session_entry(session_id).unwrap().unwrap().status,
+                    SessionStatus::Revoked
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn revoke_retry_preflight_error_does_not_downgrade_revoked_status() {
+        with_tempo_home(|| {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let session_id = B256::from([0xd2; 32]);
+                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Revoked))
+                    .unwrap();
+
+                let mut send_tx = empty_send_tx_opts();
+                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
+                let _ =
+                    run_revoke(session_id, false, TransactionOpts::parse_from(["cast"]), send_tx)
+                        .await
+                        .unwrap_err();
+
+                assert_eq!(
+                    read_session_entry(session_id).unwrap().unwrap().status,
+                    SessionStatus::Revoked
+                );
+            });
+        });
     }
 
     #[test]
@@ -443,5 +555,43 @@ mod tests {
                 assert!(session.key.is_none());
             });
         });
+    }
+
+    fn empty_send_tx_opts() -> SendTxOpts {
+        SendTxOpts {
+            cast_async: false,
+            sync: false,
+            confirmations: 1,
+            timeout: None,
+            poll_interval: None,
+            eth: EthereumOpts::default(),
+            browser: Default::default(),
+        }
+    }
+
+    fn sample_session_entry(session_id: B256, status: SessionStatus) -> SessionEntry {
+        let key = match status {
+            SessionStatus::Revoking
+            | SessionStatus::Revoked
+            | SessionStatus::Expired
+            | SessionStatus::Failed => None,
+            _ => Some(foundry_common::tempo::SessionKeyMaterial {
+                key_type: foundry_common::tempo::KeyType::Secp256k1,
+                key: ROOT_PRIVATE_KEY.to_string(),
+                key_authorization: None,
+            }),
+        };
+
+        SessionEntry {
+            session_id,
+            root_account: address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+            chain_id: 4217,
+            key_address: address!("0x00000000000000000000000000000000000000bb"),
+            expiry: 200,
+            scope: None,
+            limits: None,
+            status,
+            key,
+        }
     }
 }
