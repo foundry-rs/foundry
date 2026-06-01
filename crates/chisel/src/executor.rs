@@ -584,7 +584,7 @@ fn expr_to_dyn(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType
         // Assignments: type of the lhs.
         ExprKind::Assign(lhs, _, _) => expr_to_dyn(gcx, lhs, lookup),
 
-        ExprKind::Err(_) => None,
+        ExprKind::YulMember(..) | ExprKind::Err(_) => None,
     }
 }
 
@@ -1111,7 +1111,7 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         // representation of the pointer itself. This is intentional: chisel inspects values, so
         // the interesting type is the returned value.  A zero-return function pointer has no
         // inspectable value, so we return `None`.
-        TyKind::FnPtr(f) => match f.returns.len() {
+        TyKind::Fn(f) => match f.returns.len() {
             0 => None,
             1 => solar_ty_to_dyn(gcx, f.returns[0]),
             _ => Some(DynSolType::Tuple(
@@ -1120,7 +1120,7 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         },
         TyKind::Type(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::Meta(inner) => solar_ty_to_dyn(gcx, inner),
-        TyKind::IntLiteral(neg, size) => {
+        TyKind::IntLiteral(neg, size, _) => {
             let bits = (size.bits() as usize).max(8);
             // Round up to the nearest multiple of 8 bits, capped at 256.
             let bits = bits.div_ceil(8) * 8;

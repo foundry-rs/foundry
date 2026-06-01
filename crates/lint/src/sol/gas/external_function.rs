@@ -309,7 +309,7 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
                     }
                 }
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         if expr_root_is_param(&opt.value, self.params) {
                             return ControlFlow::Break(());
                         }

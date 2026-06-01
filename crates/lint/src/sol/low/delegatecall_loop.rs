@@ -393,7 +393,7 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
         ExprKind::Call(callee, args, _) => {
             let callee_ty = expr_ty(gcx, hir, callee)?;
             match callee_ty.kind {
-                TyKind::FnPtr(func) => fn_call_return_type(gcx, func.returns),
+                TyKind::Fn(func) => fn_call_return_type(gcx, func.returns),
                 TyKind::Type(to) => Some(explicit_cast_ty(gcx, to, args)),
                 _ => None,
             }
@@ -468,9 +468,11 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
             Some(gcx.mk_ty(TyKind::Type(ty)))
         }
         ExprKind::Unary(_, inner) => expr_ty(gcx, hir, inner),
-        ExprKind::Assign(..) | ExprKind::Binary(..) | ExprKind::Delete(..) | ExprKind::Err(_) => {
-            None
-        }
+        ExprKind::Assign(..)
+        | ExprKind::Binary(..)
+        | ExprKind::Delete(..)
+        | ExprKind::YulMember(..)
+        | ExprKind::Err(_) => None,
     }
 }
 
@@ -530,7 +532,6 @@ fn member_ty<'gcx>(
 
     unique(
         gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-            .iter()
             .filter(|member| member.name == member_name)
             .map(|member| member.ty),
     )
@@ -556,7 +557,7 @@ fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
 fn variable_data_location(hir: &Hir<'_>, var_id: VariableId) -> Option<DataLocation> {
     let var = hir.variable(var_id);
     var.data_location.or_else(|| {
-        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
+        (var.parent.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
     })
 }
 

@@ -96,9 +96,9 @@ fn is_external_function(func: &hir::Function<'_>) -> bool {
         && !func.is_special()
 }
 
-fn vars_used_in_unprotected_arithmetic(
-    hir: &hir::Hir<'_>,
-    contract: &hir::Contract<'_>,
+fn vars_used_in_unprotected_arithmetic<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    contract: &hir::Contract<'hir>,
     candidate_vars: &HashSet<VariableId>,
 ) -> HashSet<VariableId> {
     let mut used = HashSet::new();
@@ -331,9 +331,12 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                 }
                 WriteFlow::returned(state)
             }
-            StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {
-                WriteFlow::fallthrough(state)
-            }
+            StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => WriteFlow::fallthrough(state),
         }
     }
 
@@ -360,7 +363,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, state);
                     }
                 }
@@ -427,7 +430,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -641,7 +644,12 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                     self.analyze_expr(expr);
                 }
             }
-            StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {}
+            StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => {}
         }
     }
 
@@ -669,7 +677,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value);
                     }
                 }
@@ -716,7 +724,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -778,7 +786,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.collect_call_return_sources(callee, out);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.collect_call_return_sources(&opt.value, out);
                     }
                 }
@@ -829,7 +837,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -918,6 +926,8 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
             | StmtKind::Err(_) => {}
         }
     }
@@ -988,7 +998,7 @@ fn collect_write_taint_sources_into(
         ExprKind::Call(callee, args, opts) => {
             collect_write_taint_sources_into(hir, taint, callee, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_write_taint_sources_into(hir, taint, &opt.value, out);
                 }
             }
@@ -1012,7 +1022,7 @@ fn collect_write_taint_sources_into(
             }
         }
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::Err(_) => {}
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
     }
 }
 
@@ -1067,7 +1077,7 @@ fn expr_has_dynamic_value(
             .flatten()
             .any(|expr| expr_has_dynamic_value(hir, taint, dynamic_taint, expr)),
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => false,
-        ExprKind::Lit(_) | ExprKind::Err(_) => false,
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => false,
     }
 }
 
@@ -1140,7 +1150,7 @@ fn collect_state_sources_into(
         ExprKind::Call(callee, args, opts) => {
             collect_state_sources_into(hir, targets, taint, callee, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_state_sources_into(hir, targets, taint, &opt.value, out);
                 }
             }
@@ -1164,7 +1174,7 @@ fn collect_state_sources_into(
             }
         }
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::Err(_) => {}
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
     }
 }
 
@@ -1302,6 +1312,8 @@ fn stmt_is_access_guard(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => false,
     }
 }
@@ -1449,7 +1461,7 @@ fn expr_reads_state_variable(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
         ExprKind::Call(callee, args, opts) => {
             expr_reads_state_variable(hir, callee)
                 || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_reads_state_variable(hir, &opt.value))
+                    opts.args.iter().any(|opt| expr_reads_state_variable(hir, &opt.value))
                 })
                 || args.exprs().any(|arg| expr_reads_state_variable(hir, arg))
         }
@@ -1475,7 +1487,7 @@ fn expr_calls_non_sender_user_function(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>)
                     .is_some_and(|name| !name_looks_like_sender_accessor(name.as_str()))
             }) || expr_calls_non_sender_user_function(hir, callee)
                 || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_calls_non_sender_user_function(hir, &opt.value))
+                    opts.args.iter().any(|opt| expr_calls_non_sender_user_function(hir, &opt.value))
                 })
                 || args.exprs().any(|arg| expr_calls_non_sender_user_function(hir, arg))
         }
@@ -1532,7 +1544,7 @@ fn expr_reads_sender(
 
             expr_reads_sender(hir, callee, seen)
                 || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_reads_sender(hir, &opt.value, seen))
+                    opts.args.iter().any(|opt| expr_reads_sender(hir, &opt.value, seen))
                 })
                 || args.exprs().any(|arg| expr_reads_sender(hir, arg, seen))
         }
@@ -1612,6 +1624,8 @@ fn stmt_reads_sender(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => false,
     }
 }

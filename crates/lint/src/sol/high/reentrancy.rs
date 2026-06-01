@@ -242,7 +242,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     true
                 }
             }
-            StmtKind::Err(_) => true,
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
         }
     }
 
@@ -284,7 +284,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, state);
                     }
                 }
@@ -354,7 +354,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     }
                 }
             }
-            ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -449,7 +449,7 @@ impl FlowState {
 fn is_uncapped_value_call(
     hir: &hir::Hir<'_>,
     callee: &hir::Expr<'_>,
-    opts: Option<&[hir::NamedArg<'_>]>,
+    opts: Option<&hir::CallOptions<'_>>,
 ) -> bool {
     let Some(opts) = opts else { return false };
     let ExprKind::Member(_, member) = &callee.kind else { return false };
@@ -459,7 +459,7 @@ fn is_uncapped_value_call(
 
     let mut value = None;
     let mut gas = None;
-    for opt in opts {
+    for opt in opts.args {
         if opt.name.name == sym::value {
             value = Some(&opt.value);
         } else if opt.name.name == kw::Gas {

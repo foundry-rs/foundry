@@ -692,10 +692,10 @@ fn match_permit_call(expr: &hir::Expr<'_>) -> Option<PermitRecord> {
 
 /// Hoists `require(modParam == msg.sender)` style guards from the modifier prefix (statements
 /// before its single top-level `_;`), mapping modifier params back to caller args.
-fn collect_modifier_safety(
-    hir: &hir::Hir<'_>,
+fn collect_modifier_safety<'hir>(
+    hir: &'hir hir::Hir<'hir>,
     has_solady_lib: bool,
-    invocation: &hir::Modifier<'_>,
+    invocation: &hir::Modifier<'hir>,
     out_safe: &mut HashSet<hir::VariableId>,
 ) {
     let ItemId::Function(fid) = invocation.id else { return };

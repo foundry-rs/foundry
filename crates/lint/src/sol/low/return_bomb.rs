@@ -33,20 +33,23 @@ impl<'hir> LateLintPass<'hir> for ReturnBomb {
 }
 
 /// Returns true for gas-limited calls that return dynamic data.
-fn call_with_gas_returns_dynamic_data(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn call_with_gas_returns_dynamic_data<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+) -> bool {
     is_call_with_gas_limit(expr) && call_returns_dynamic_data(hir, expr)
 }
 /// Returns true if a call resolves to functions that return dynamic data.
-fn call_returns_dynamic_data(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn call_returns_dynamic_data<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
     matching_functions_for_callee(hir, callee, args)
         .is_some_and(|functions| functions_return_dynamic_data(hir, &functions))
 }
 
 /// Returns true for gas-limited low-level calls that copy unbounded returndata.
-fn low_level_call_with_gas_consumes_unbounded_return_data(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
+fn low_level_call_with_gas_consumes_unbounded_return_data<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
 ) -> bool {
     if !is_call_with_gas_limit(expr) {
         return false;
@@ -84,7 +87,7 @@ fn matching_functions_for_callee<'hir>(
 fn function_pointer_candidates_for_callee<'hir>(
     hir: &'hir hir::Hir<'hir>,
     callee: &hir::Expr<'hir>,
-    args: &CallArgs<'_>,
+    args: &CallArgs<'hir>,
 ) -> Option<FunctionCandidates<'hir>> {
     expr_type(hir, callee)
         .and_then(|ty| function_type_returns_for_args(hir, ty, args))
@@ -133,7 +136,10 @@ fn select_functions_for_args<'hir>(
     }
 }
 /// Returns true if a gas-limited call can return dynamic data.
-fn functions_return_dynamic_data(hir: &hir::Hir<'_>, functions: &FunctionCandidates<'_>) -> bool {
+fn functions_return_dynamic_data<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    functions: &FunctionCandidates<'hir>,
+) -> bool {
     match functions {
         FunctionCandidates::Exact(functions) => match functions.as_slice() {
             [] => false,
@@ -189,16 +195,20 @@ enum ArgMatch {
     No,
 }
 /// Returns how well call arguments match a candidate function signature.
-fn function_arg_match(hir: &hir::Hir<'_>, id: hir::FunctionId, args: &CallArgs<'_>) -> ArgMatch {
+fn function_arg_match<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    id: hir::FunctionId,
+    args: &CallArgs<'hir>,
+) -> ArgMatch {
     let function = hir.function(id);
     params_arg_match(hir, function.parameters, args)
 }
 
 /// Returns how well call arguments match the expected parameter types.
-fn params_arg_match(
-    hir: &hir::Hir<'_>,
+fn params_arg_match<'hir>(
+    hir: &'hir hir::Hir<'hir>,
     parameters: &[hir::VariableId],
-    args: &CallArgs<'_>,
+    args: &CallArgs<'hir>,
 ) -> ArgMatch {
     if args.len() != parameters.len() {
         return ArgMatch::No;
@@ -228,7 +238,7 @@ fn params_arg_match(
 }
 /// Returns how well positional arguments match their expected parameter types.
 fn params_match_args<'hir>(
-    hir: &hir::Hir<'hir>,
+    hir: &'hir hir::Hir<'hir>,
     params_and_args: impl Iterator<Item = (hir::VariableId, &'hir hir::Expr<'hir>)>,
 ) -> ArgMatch {
     let mut maybe = false;
@@ -242,7 +252,10 @@ fn params_match_args<'hir>(
     if maybe { ArgMatch::Maybe } else { ArgMatch::Exact }
 }
 /// Returns the contract id for expressions known to be contract-typed.
-fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
+fn expr_contract_id<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+) -> Option<hir::ContractId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) if is_this(reses) => enclosing_contract(hir, expr),
         ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
@@ -290,7 +303,7 @@ const fn type_contract_id(ty: &hir::Type<'_>) -> Option<hir::ContractId> {
     Some(id)
 }
 /// Returns true if an expression is known to have an address type.
-fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn expr_is_address<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Lit(lit) => matches!(lit.kind, LitKind::Address(_)),
         ExprKind::Payable(_) => true,
@@ -328,7 +341,11 @@ fn member_is_builtin_address(base: &hir::Expr<'_>, member: Symbol) -> bool {
 }
 
 /// Returns whether an expression can match the expected type, if known.
-fn expr_matches_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, ty: &hir::Type<'_>) -> Option<bool> {
+fn expr_matches_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+    ty: &hir::Type<'hir>,
+) -> Option<bool> {
     if let Some(matches) = bool_expr_matches_type(expr, ty) {
         return Some(matches);
     }
@@ -456,9 +473,9 @@ fn single_return_type<'hir>(
 
 /// Returns external function-type return variables when the arguments can match.
 fn function_type_returns_for_args<'hir>(
-    hir: &hir::Hir<'_>,
+    hir: &'hir hir::Hir<'hir>,
     ty: &'hir hir::Type<'hir>,
-    args: &CallArgs<'_>,
+    args: &CallArgs<'hir>,
 ) -> Option<&'hir [hir::VariableId]> {
     let TypeKind::Function(function) = ty.kind else { return None };
     if function.visibility != hir::Visibility::External {

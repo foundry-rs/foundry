@@ -47,7 +47,7 @@ fn is_abi_builtin(expr: &Expr<'_>) -> bool {
     is_builtin_named(expr, sym::abi)
 }
 
-fn is_dynamic_arg(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn is_dynamic_arg<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> bool {
     let expr = expr.peel_parens();
     match &expr.kind {
         // String literals (and multi-line/hex string sequences) are always dynamic `string` type.
@@ -234,7 +234,7 @@ fn call_return_type<'hir>(
     }
 }
 
-fn contract_id_of(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
+fn contract_id_of<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<ContractId> {
     match &expr.peel_parens().kind {
         // Bare identifier resolved to a contract variable or contract type.
         ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {

@@ -371,7 +371,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     Exits::fallthrough(entry)
                 }
             }
-            StmtKind::Err(_) => {
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
                 // Inline assembly lowers to `StmtKind::Err`; it can perform external
                 // interactions (call/delegatecall/create, logs). Conservatively taint.
                 entry.external_call_seen = true;
@@ -385,7 +385,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, state);
                     }
                 }
@@ -505,6 +505,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             | ExprKind::New(_)
             | ExprKind::TypeCall(_)
             | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
             | ExprKind::Err(_) => {}
         }
     }

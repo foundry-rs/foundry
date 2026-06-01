@@ -148,7 +148,7 @@ fn check_stmt<'hir>(
         }
         // Inline assembly or parse errors: we can't reason about what is read or
         // written, so clear conservatively (same approach as unprotected_initializer).
-        StmtKind::Err(_) => {
+        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
             pending.clear();
         }
     }
@@ -327,7 +327,7 @@ fn collect_reads<'hir>(
             process_expr(ctx, hir, expr.peel_parens(), pending);
         }
         ExprKind::Lit(_) | ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Err(_) => {
+        ExprKind::YulMember(..) | ExprKind::Err(_) => {
             pending.clear();
         }
     }
@@ -337,11 +337,11 @@ fn collect_reads<'hir>(
 fn walk_named_args<'hir>(
     ctx: &LintContext,
     hir: &'hir Hir<'hir>,
-    named_args: &Option<&'hir [solar::sema::hir::NamedArg<'hir>]>,
+    named_args: &Option<&'hir solar::sema::hir::CallOptions<'hir>>,
     pending: &mut HashMap<VariableId, Span>,
 ) {
     if let Some(named) = named_args {
-        for na in *named {
+        for na in named.args {
             collect_reads(ctx, hir, &na.value, pending);
         }
     }

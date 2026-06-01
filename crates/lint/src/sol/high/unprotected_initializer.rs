@@ -74,16 +74,19 @@ fn is_public_initializer(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
         && has_initializer_modifier(hir, func)
 }
 
-fn initializers_disabled_in_constructor(hir: &hir::Hir<'_>, contract: &hir::Contract<'_>) -> bool {
+fn initializers_disabled_in_constructor<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    contract: &hir::Contract<'hir>,
+) -> bool {
     contract.linearized_bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor_id| {
         let ctor = hir.function(ctor_id);
         function_calls_named(hir, ctor, contract.linearized_bases, "_disableInitializers")
     })
 }
 
-fn has_destructive_entrypoint(
-    hir: &hir::Hir<'_>,
-    contract: &hir::Contract<'_>,
+fn has_destructive_entrypoint<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    contract: &hir::Contract<'hir>,
     runtime_entries: &[FunctionId],
 ) -> bool {
     runtime_entries.iter().copied().any(|fid| {
@@ -189,6 +192,8 @@ impl<'hir> DestructiveSinkFinder<'hir> {
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
             | StmtKind::Err(_) => false,
         }
     }
@@ -202,7 +207,7 @@ impl<'hir> DestructiveSinkFinder<'hir> {
 
                 if self.expr_has_destructive_sink(callee)
                     || opts.is_some_and(|opts| {
-                        opts.iter().any(|opt| self.expr_has_destructive_sink(&opt.value))
+                        opts.args.iter().any(|opt| self.expr_has_destructive_sink(&opt.value))
                     })
                     || args.exprs().any(|arg| self.expr_has_destructive_sink(arg))
                 {
@@ -243,6 +248,7 @@ impl<'hir> DestructiveSinkFinder<'hir> {
             | ExprKind::New(_)
             | ExprKind::TypeCall(_)
             | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
             | ExprKind::Err(_) => false,
         }
     }
@@ -287,10 +293,10 @@ fn modifier_name_is(hir: &hir::Hir<'_>, modifier: &hir::Modifier<'_>, name: &str
     }
 }
 
-fn function_calls_named(
-    hir: &hir::Hir<'_>,
-    func: &hir::Function<'_>,
-    bases: &[ContractId],
+fn function_calls_named<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    func: &hir::Function<'hir>,
+    bases: &'hir [ContractId],
     name: &str,
 ) -> bool {
     let Some(body) = func.body else { return false };
@@ -338,6 +344,8 @@ impl<'hir> CallNameFinder<'_, 'hir> {
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
             | StmtKind::Err(_) => false,
         }
     }
@@ -355,7 +363,7 @@ impl<'hir> CallNameFinder<'_, 'hir> {
                 }
 
                 if let Some(opts) = opts
-                    && opts.iter().any(|opt| self.expr_calls_named(&opt.value))
+                    && opts.args.iter().any(|opt| self.expr_calls_named(&opt.value))
                 {
                     return true;
                 }
@@ -403,6 +411,7 @@ impl<'hir> CallNameFinder<'_, 'hir> {
             | ExprKind::New(_)
             | ExprKind::TypeCall(_)
             | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
             | ExprKind::Err(_) => false,
         }
     }
@@ -472,6 +481,8 @@ impl<'hir> StateWriteAnalyzer<'hir> {
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
             | StmtKind::Err(_) => false,
         }
     }
@@ -497,7 +508,7 @@ impl<'hir> StateWriteAnalyzer<'hir> {
 
                 if self.expr_writes_state(callee)
                     || opts.is_some_and(|opts| {
-                        opts.iter().any(|opt| self.expr_writes_state(&opt.value))
+                        opts.args.iter().any(|opt| self.expr_writes_state(&opt.value))
                     })
                     || args.exprs().any(|arg| self.expr_writes_state(arg))
                 {
@@ -535,6 +546,7 @@ impl<'hir> StateWriteAnalyzer<'hir> {
             | ExprKind::New(_)
             | ExprKind::TypeCall(_)
             | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
             | ExprKind::Err(_) => false,
         }
     }

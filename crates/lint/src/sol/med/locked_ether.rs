@@ -189,7 +189,7 @@ fn is_unconditional_revert_call(expr: &hir::Expr<'_>) -> bool {
     let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
     reses.iter().any(|r| match r {
         Res::Builtin(Builtin::Revert | Builtin::RevertMsg) => true,
-        Res::Builtin(Builtin::Require | Builtin::RequireMsg | Builtin::Assert) => {
+        Res::Builtin(Builtin::Require | Builtin::Assert) => {
             args.exprs().next().is_some_and(is_literal_false)
         }
         _ => false,
@@ -301,9 +301,9 @@ impl<'hir> SendChecker<'_, 'hir> {
     /// Queues the overload of `member` actually invoked on `receiver`.
     fn queue_member_callee(
         &mut self,
-        receiver: &hir::Expr<'_>,
+        receiver: &hir::Expr<'hir>,
         member: solar::interface::Ident,
-        args: &CallArgs<'_>,
+        args: &CallArgs<'hir>,
     ) {
         let ExprKind::Ident(reses) = &receiver.peel_parens().kind else { return };
         for res in *reses {
@@ -333,7 +333,7 @@ impl<'hir> SendChecker<'_, 'hir> {
     /// most-derived override of the same `(name, parameter signature)`. If `fid` is not
     /// inheritable from the linted contract (free function, library helper, private,
     /// constructor/modifier), it is returned as-is.
-    fn resolve_virtual(&self, fid: FunctionId, args: &CallArgs<'_>) -> FunctionId {
+    fn resolve_virtual(&self, fid: FunctionId, args: &CallArgs<'hir>) -> FunctionId {
         let func = self.hir.function(fid);
         let Some(origin) = func.contract else { return fid };
         if !self.bases.contains(&origin)
@@ -364,7 +364,7 @@ impl<'hir> SendChecker<'_, 'hir> {
         &mut self,
         contracts: &[hir::ContractId],
         name: solar::interface::Symbol,
-        args: &CallArgs<'_>,
+        args: &CallArgs<'hir>,
     ) {
         for &cid in contracts {
             let mut found = false;
@@ -639,7 +639,7 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
 /// call option, `.transfer`/`.send` with a non-zero amount, low-level `.delegatecall`/`.callcode`
 /// (drainable via `selfdestruct`), or the `selfdestruct` builtin. Only literal `0` is treated as
 /// a zero amount; any other expression is assumed non-zero.
-fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn expr_sends_ether<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     let ExprKind::Call(callee, args, named_args) = &expr.kind else {
         return false;
     };
@@ -648,7 +648,7 @@ fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     // `foo{value: x}(...)` / `new C{value: x}(...)` with `x != 0`. Targeting `self`
     // keeps the ETH in this contract, so it is not an exit.
     if let Some(opts) = named_args
-        && opts.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
+        && opts.args.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
     {
         let self_call =
             matches!(&callee.kind, ExprKind::Member(receiver, _) if is_self_address(receiver));
@@ -728,7 +728,7 @@ fn is_type_cast_callee(callee: &hir::Expr<'_>) -> bool {
 /// Returns `true` if `expr` is statically typed as `address`/`address payable`. Contract-typed
 /// receivers are intentionally rejected: `.transfer` / `.send` on them dispatch to a user-defined
 /// member, not the EVM opcode.
-fn receiver_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn receiver_is_address<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     matches!(expr_type(hir, expr), Some(TypeKind::Elementary(ElementaryType::Address(_))))
 }
 

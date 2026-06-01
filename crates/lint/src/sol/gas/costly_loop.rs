@@ -108,7 +108,7 @@ fn check_expr_for_writes<'hir>(ctx: &LintContext, hir: &'hir Hir<'hir>, expr: &'
                 check_expr_for_writes(ctx, hir, arg);
             }
             if let Some(named_args) = named_args {
-                for arg in *named_args {
+                for arg in named_args.args {
                     check_expr_for_writes(ctx, hir, &arg.value);
                 }
             }
@@ -146,6 +146,7 @@ fn check_expr_for_writes<'hir>(ctx: &LintContext, hir: &'hir Hir<'hir>, expr: &'
         | ExprKind::New(_)
         | ExprKind::TypeCall(_)
         | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => {}
     }
 }

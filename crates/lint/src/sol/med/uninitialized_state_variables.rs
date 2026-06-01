@@ -172,7 +172,7 @@ fn collect_stmt_writes_checked<'hir>(
 ) -> Result<(), ()> {
     match &stmt.kind {
         // Assembly is lowered to StmtKind::Err; bail conservatively.
-        StmtKind::Err(_) => return Err(()),
+        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return Err(()),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
             collect_block_writes_checked(hir, *block, candidates, writes, bases)?;
         }
@@ -261,7 +261,7 @@ fn collect_expr_writes_checked<'hir>(
                 collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
             }
             if let Some(named_args) = named_args {
-                for arg in *named_args {
+                for arg in named_args.args {
                     collect_expr_writes_checked(hir, &arg.value, candidates, writes, bases)?;
                 }
             }
@@ -299,6 +299,7 @@ fn collect_expr_writes_checked<'hir>(
         | ExprKind::New(_)
         | ExprKind::TypeCall(_)
         | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => {}
     }
     Ok(())

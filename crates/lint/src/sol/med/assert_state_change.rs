@@ -75,7 +75,7 @@ fn is_assert(callee: &Expr<'_>) -> bool {
 /// Recursively searches `expr` for the first sub-expression that modifies state.
 /// Returns its span so the diagnostic points at exactly where the mutation occurs.
 fn find_state_change<'hir>(
-    hir: &Hir<'hir>,
+    hir: &'hir Hir<'hir>,
     current_contract: Option<ContractId>,
     expr: &'hir Expr<'hir>,
 ) -> Option<Span> {
@@ -186,7 +186,7 @@ fn find_state_change<'hir>(
                 .or_else(|| {
                     named_args
                         .iter()
-                        .flat_map(|na| na.iter())
+                        .flat_map(|opts| opts.args.iter())
                         .find_map(|na| find_state_change(hir, current_contract, &na.value))
                 })
         }
@@ -217,6 +217,7 @@ fn find_state_change<'hir>(
         | ExprKind::New(_)
         | ExprKind::TypeCall(_)
         | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => None,
     }
 }
@@ -225,7 +226,7 @@ fn find_state_change<'hir>(
 /// Matching by arity narrows overload candidates; the caller flags the call if any candidate
 /// mutates state, since Solar does not resolve which specific overload was selected.
 fn resolve_member_overloads<'hir>(
-    hir: &Hir<'hir>,
+    hir: &'hir Hir<'hir>,
     current_contract: Option<ContractId>,
     callee: &'hir Expr<'hir>,
     arg_count: usize,
@@ -244,7 +245,7 @@ fn resolve_member_overloads<'hir>(
 
 /// Extracts the contract ID from an expression whose static type is a contract or interface.
 fn contract_id_of<'hir>(
-    hir: &Hir<'hir>,
+    hir: &'hir Hir<'hir>,
     current_contract: Option<ContractId>,
     expr: &'hir Expr<'hir>,
 ) -> Option<ContractId> {
@@ -428,10 +429,10 @@ fn types_compatible(a: &Type<'_>, b: &Type<'_>) -> bool {
 }
 
 /// Returns `true` when `expr` is a dynamic array or `bytes`
-fn is_dynamic_array_or_bytes(
-    hir: &Hir<'_>,
+fn is_dynamic_array_or_bytes<'hir>(
+    hir: &'hir Hir<'hir>,
     current_contract: Option<ContractId>,
-    expr: &Expr<'_>,
+    expr: &'hir Expr<'hir>,
 ) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => matches!(
@@ -457,7 +458,7 @@ fn is_dynamic_array_or_bytes(
 ///   * builtin address members (`msg.sender`, `tx.origin`, `block.coinbase`);
 ///   * a single-element tuple wrapping an address-like expression.
 fn is_address_like<'hir>(
-    hir: &Hir<'hir>,
+    hir: &'hir Hir<'hir>,
     current_contract: Option<ContractId>,
     expr: &'hir Expr<'hir>,
 ) -> bool {

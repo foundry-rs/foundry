@@ -136,7 +136,7 @@ fn collect_length_reads<'hir>(
                 collect_length_reads(hir, arg, reads);
             }
             if let Some(named_args) = named_args {
-                for arg in *named_args {
+                for arg in named_args.args {
                     collect_length_reads(hir, &arg.value, reads);
                 }
             }
@@ -175,6 +175,7 @@ fn collect_length_reads<'hir>(
         | ExprKind::New(_)
         | ExprKind::TypeCall(_)
         | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => {}
     }
 }
@@ -219,7 +220,12 @@ fn collect_stmt_facts<'hir>(
                 }
             }
         }
-        StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {}
+        StmtKind::Break
+        | StmtKind::Continue
+        | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
+        | StmtKind::Err(_) => {}
     }
 }
 
@@ -257,7 +263,7 @@ fn collect_expr_facts<'hir>(
                 collect_expr_facts(hir, arg, facts);
             }
             if let Some(named_args) = named_args {
-                for arg in *named_args {
+                for arg in named_args.args {
                     collect_expr_facts(hir, &arg.value, facts);
                 }
             }
@@ -304,6 +310,7 @@ fn collect_expr_facts<'hir>(
         | ExprKind::New(_)
         | ExprKind::TypeCall(_)
         | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => {}
     }
 }
@@ -342,7 +349,7 @@ fn array_length_mutated<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'
     }
 }
 
-fn call_may_mutate_state(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
+fn call_may_mutate_state<'hir>(hir: &'hir hir::Hir<'hir>, callee: &'hir hir::Expr<'hir>) -> bool {
     match &callee.peel_parens().kind {
         ExprKind::Type(_) => false,
         ExprKind::Ident(resolutions) => resolutions
@@ -369,9 +376,9 @@ fn call_may_mutate_state(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
     }
 }
 
-fn expr_is_loop_invariant(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
+fn expr_is_loop_invariant<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
     written_vars: &[VariableId],
 ) -> bool {
     match &expr.peel_parens().kind {
@@ -392,6 +399,7 @@ fn expr_is_loop_invariant(
                 && args.exprs().all(|arg| expr_is_loop_invariant(hir, arg, written_vars))
                 && named_args.is_none_or(|named_args| {
                     named_args
+                        .args
                         .iter()
                         .all(|arg| expr_is_loop_invariant(hir, &arg.value, written_vars))
                 })
@@ -419,13 +427,15 @@ fn expr_is_loop_invariant(
         ExprKind::Unary(op, inner) => {
             !op.kind.has_side_effects() && expr_is_loop_invariant(hir, inner, written_vars)
         }
-        ExprKind::Assign(_, _, _) | ExprKind::Delete(_) | ExprKind::New(_) | ExprKind::Err(_) => {
-            false
-        }
+        ExprKind::Assign(_, _, _)
+        | ExprKind::Delete(_)
+        | ExprKind::New(_)
+        | ExprKind::YulMember(..)
+        | ExprKind::Err(_) => false,
     }
 }
 
-fn call_is_safe_to_cache(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
+fn call_is_safe_to_cache<'hir>(hir: &'hir hir::Hir<'hir>, callee: &'hir hir::Expr<'hir>) -> bool {
     match &callee.peel_parens().kind {
         ExprKind::Type(_) => true,
         ExprKind::Ident(resolutions) => resolutions
@@ -459,7 +469,7 @@ const fn is_comparison(op: BinOpKind) -> bool {
     )
 }
 
-fn is_array_like(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn is_array_like<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     let Some(ty) = expr_type(hir, expr) else { return false };
     match &ty.kind {
         TypeKind::Array(array) => array.size.is_none(),

@@ -88,7 +88,9 @@ impl UnwrappedModifierLogic {
                 }
                 // HIR doesn't support assembly yet:
                 // <https://github.com/paradigmxyz/solar/blob/d25bf38a5accd11409318e023f701313d98b9e1e/crates/sema/src/hir/mod.rs#L977-L982>
-                hir::StmtKind::Err(_) => return false,
+                hir::StmtKind::AssemblyBlock(_)
+                | hir::StmtKind::Switch(_)
+                | hir::StmtKind::Err(_) => return false,
                 _ => res = true,
             }
         }

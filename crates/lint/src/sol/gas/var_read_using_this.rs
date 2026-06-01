@@ -120,7 +120,7 @@ fn walk_stmt<'hir>(
                     walk_expr(ctx, e, callable);
                 }
                 if let Some(nargs) = named_args {
-                    for arg in *nargs {
+                    for arg in nargs.args {
                         walk_expr(ctx, &arg.value, callable);
                     }
                 }
@@ -145,6 +145,8 @@ fn walk_stmt<'hir>(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => {}
     }
 }
@@ -176,7 +178,7 @@ fn walk_expr<'hir>(
                 walk_expr(ctx, e, callable);
             }
             if let Some(nargs) = named_args {
-                for arg in *nargs {
+                for arg in nargs.args {
                     walk_expr(ctx, &arg.value, callable);
                 }
             }
@@ -215,6 +217,7 @@ fn walk_expr<'hir>(
         | ExprKind::New(_)
         | ExprKind::TypeCall(_)
         | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => {}
     }
 }

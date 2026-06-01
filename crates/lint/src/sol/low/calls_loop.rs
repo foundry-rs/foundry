@@ -150,7 +150,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.analyze_modifier_chain(modifiers, index, body, loop_depth);
                 }
             }
-            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Err(_) => {}
+            StmtKind::Return(None)
+            | StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => {}
         }
     }
 
@@ -159,7 +164,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, loop_depth);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, loop_depth);
                     }
                 }
@@ -219,6 +224,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             | ExprKind::New(_)
             | ExprKind::TypeCall(_)
             | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
             | ExprKind::Err(_) => {}
         }
     }
@@ -248,7 +254,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
 pub(super) fn is_external_call<'gcx>(
     gcx: Gcx<'gcx>,
-    hir: &Hir<'gcx>,
+    hir: &'gcx Hir<'gcx>,
     callee: &Expr<'gcx>,
     explicit_arg_count: usize,
 ) -> bool {
@@ -292,7 +298,7 @@ pub(super) fn is_external_call<'gcx>(
 /// observable state: `staticcall` and high-level `view`/`pure` callees (including `this.*`).
 pub(super) fn is_state_mutating_external_call<'gcx>(
     gcx: Gcx<'gcx>,
-    hir: &Hir<'gcx>,
+    hir: &'gcx Hir<'gcx>,
     callee: &Expr<'gcx>,
     explicit_arg_count: usize,
     enclosing_contract: Option<ContractId>,
@@ -404,11 +410,10 @@ fn member_function_ids<'gcx>(
     let Some(base_ty) = semantic_expr_ty(gcx, hir, base) else { return Vec::new() };
 
     gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-        .iter()
         .filter(|member| member.name == member_name)
         .filter_map(|member| match (member.res, member.ty.kind) {
             (Some(Res::Item(ItemId::Function(func_id))), _) => Some(func_id),
-            (_, TyKind::FnPtr(func)) => func.function_id,
+            (_, TyKind::Fn(func)) => func.function_id,
             _ => None,
         })
         .collect()
@@ -429,16 +434,16 @@ fn external_member_signatures<'gcx>(
     // (visibility, state_mutability, arity) for every matching callable member.
     let all: Vec<(Visibility, StateMutability, usize)> = gcx
         .members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-        .iter()
         .filter(|member| member.name == member_name)
         .filter_map(|member| match (member.res, member.ty.kind) {
             (Some(Res::Item(ItemId::Function(func_id))), _) => {
                 let f = hir.function(func_id);
                 Some((f.visibility, f.state_mutability, f.parameters.len()))
             }
-            (_, TyKind::FnPtr(func)) => {
-                Some((func.visibility, func.state_mutability, func.parameters.len()))
-            }
+            (_, TyKind::Fn(func)) => func.function_id.map(|func_id| {
+                let f = hir.function(func_id);
+                (f.visibility, f.state_mutability, func.parameters.len())
+            }),
             _ => None,
         })
         .collect();
@@ -528,7 +533,7 @@ fn is_super(expr: &Expr<'_>) -> bool {
     )
 }
 
-fn is_address_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn is_address_like<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Payable(_) => true,
         ExprKind::Call(callee, _, _) if is_address_type_expr(callee) => true,
@@ -565,7 +570,7 @@ const fn type_is_address_like(ty: &hir::Type<'_>) -> bool {
     matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
 
-fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &Expr<'hir>) -> Option<&'hir hir::Type<'hir>> {
+fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir hir::Type<'hir>> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => reses.iter().find_map(|res| {
             let var_id = res.as_variable()?;
@@ -597,7 +602,7 @@ fn single_return_type<'hir>(
 
 fn member_return_type<'hir>(
     hir: &'hir Hir<'hir>,
-    base: &Expr<'hir>,
+    base: &'hir Expr<'hir>,
     member: solar::interface::Ident,
     arity: usize,
 ) -> Option<&'hir hir::Type<'hir>> {
@@ -617,7 +622,7 @@ fn member_return_type<'hir>(
     ret
 }
 
-fn receiver_contract_id(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
+fn receiver_contract_id<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<ContractId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
             Res::Item(ItemId::Contract(id)) => Some(*id),
@@ -633,7 +638,7 @@ fn receiver_contract_id(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
 
 fn indexed_element_type<'hir>(
     hir: &'hir Hir<'hir>,
-    expr: &Expr<'hir>,
+    expr: &'hir Expr<'hir>,
 ) -> Option<&'hir hir::Type<'hir>> {
     expr_type(hir, expr).and_then(|ty| match &ty.kind {
         TypeKind::Array(array) => Some(&array.element),
@@ -644,7 +649,7 @@ fn indexed_element_type<'hir>(
 
 fn member_type<'hir>(
     hir: &'hir Hir<'hir>,
-    expr: &Expr<'hir>,
+    expr: &'hir Expr<'hir>,
     member: solar::interface::Ident,
 ) -> Option<&'hir hir::Type<'hir>> {
     expr_type(hir, expr).and_then(|ty| match ty.kind {
@@ -680,7 +685,7 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
         ExprKind::Call(callee, _, _) => {
             let callee_ty = semantic_expr_ty(gcx, hir, callee)?;
             match callee_ty.kind {
-                TyKind::FnPtr(func) => semantic_fn_call_return_ty(gcx, func.returns),
+                TyKind::Fn(func) => semantic_fn_call_return_ty(gcx, func.returns),
                 TyKind::Type(to) => Some(to),
                 _ => None,
             }
@@ -719,7 +724,6 @@ fn semantic_member_ty<'gcx>(
     let base_ty = semantic_expr_ty(gcx, hir, base)?;
     unique(
         gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-            .iter()
             .filter(|member| member.name == member_name)
             .map(|member| member.ty),
     )
@@ -753,7 +757,7 @@ fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
 fn variable_data_location(hir: &Hir<'_>, var_id: hir::VariableId) -> Option<DataLocation> {
     let var = hir.variable(var_id);
     var.data_location.or_else(|| {
-        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
+        (var.parent.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
     })
 }
 
