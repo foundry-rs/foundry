@@ -21,7 +21,9 @@ use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
+use foundry_common::{
+    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
+};
 use foundry_compilers::{
     ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
@@ -368,6 +370,20 @@ impl TestArgs {
         if test_filter.is_empty() {
             return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
                 .chain(source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS))
+                .collect());
+        }
+
+        let filter_args = test_filter.args();
+        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+            || filter_args.test_pattern_inverse.is_some()
+            || filter_args.contract_pattern.is_some()
+            || filter_args.contract_pattern_inverse.is_some();
+        if !has_contract_or_test_filter {
+            return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(
+                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                        .filter(|path| test_filter.matches_path(path)),
+                )
                 .collect());
         }
 
@@ -853,6 +869,13 @@ impl TestArgs {
             }
 
             let json_output = shell::is_json();
+            let selected_sources_relative = self
+                .get_sources_to_compile(&config_for_mutation, filter)?
+                .into_iter()
+                .filter_map(|path| {
+                    path.strip_prefix(&config_for_mutation.root).ok().map(PathBuf::from)
+                })
+                .collect::<Vec<_>>();
 
             let mutation_config = MutationRunConfig {
                 mutate_paths: mutate.clone(),
@@ -872,6 +895,7 @@ impl TestArgs {
                 // into `test_pattern`. Using `self.filter.clone()` would lose
                 // those and let mutant runs silently diverge from baseline.
                 filter_args: filter.args().clone(),
+                selected_sources_relative,
                 isolate: evm_opts_for_mutation.isolate,
             };
 

@@ -582,6 +582,91 @@ contract StrongTest {
     );
 });
 
+forgetest_init!(mutation_honors_match_path_at_compile_time, |prj, cmd| {
+    prj.add_source(
+        "Foo.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Foo {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "FooSelected.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Foo.sol";
+
+contract FooSelectedTest {
+    Foo internal foo;
+
+    function setUp() public {
+        foo = new Foo();
+    }
+
+    function test_Add() public view {
+        assert(foo.add(2, 3) == 5);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "FooBroken.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Foo.sol";
+
+contract FooBrokenTest {
+    function test_Broken() public pure {
+        NonExistent x = NonExistent(0);
+        x.doSomething();
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "--match-path", "test/FooSelected.t.sol"]).assert_success();
+
+    cmd.forge_fuse().args([
+        "test",
+        "--mutate",
+        "src/Foo.sol",
+        "--match-path",
+        "test/FooSelected.t.sol",
+        "--mutation-jobs",
+        "1",
+        "--json",
+    ]);
+
+    let out = cmd.assert_success().get_output().stdout_lossy();
+    let summary = mutation_summary(&out);
+
+    let total = summary["total"].as_u64().unwrap_or(0);
+    let invalid = summary["invalid"].as_u64().unwrap_or(u64::MAX);
+    let killed = summary["killed"].as_u64().unwrap_or(0);
+    let survived = summary["survived"].as_u64().unwrap_or(0);
+
+    assert!(
+        invalid < total,
+        "filtered-out FooBroken.t.sol must not make every mutant Invalid; summary={summary}"
+    );
+    assert!(
+        killed + survived >= 1,
+        "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
+    );
+});
+
 // Test require/assert mutation for security-critical patterns
 forgetest_init!(mutation_testing_require_mutator, |prj, cmd| {
     // A contract with security-critical require checks (access control, input validation)

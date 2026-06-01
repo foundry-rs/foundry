@@ -149,6 +149,7 @@ pub fn run_mutations_parallel_with_progress(
     progress: Option<MutationProgress>,
     silent: bool,
     filter_args: FilterArgs,
+    selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> Result<Vec<MutantTestResult>> {
     let total = mutants.len();
@@ -243,6 +244,7 @@ pub fn run_mutations_parallel_with_progress(
                     &evm_opts,
                     &shared_state,
                     &filter_args,
+                    &selected_sources_relative,
                     isolate,
                 )
             }));
@@ -321,6 +323,7 @@ fn test_single_mutant_isolated(
     evm_opts: &EvmOpts,
     shared_state: &Arc<SharedMutationState>,
     filter_args: &Arc<FilterArgs>,
+    selected_sources_relative: &Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> MutantTestResult {
     // Check if we should skip this mutant based on adaptive span tracking
@@ -444,10 +447,17 @@ fn test_single_mutant_isolated(
             temp_dir,
             shared_state,
             filter_args.clone(),
+            selected_sources_relative.clone(),
             isolate,
         ),
         None => {
-            let res = match compile_and_test(&temp_config, evm_opts, filter_args, isolate) {
+            let res = match compile_and_test(
+                &temp_config,
+                evm_opts,
+                filter_args,
+                selected_sources_relative,
+                isolate,
+            ) {
                 Ok(true) => MutationResult::Dead,
                 Ok(false) => MutationResult::Alive,
                 Err(_) => MutationResult::Invalid,
@@ -487,6 +497,7 @@ fn run_compile_and_test_with_timeout(
     temp_dir: TempDir,
     shared_state: &Arc<SharedMutationState>,
     filter_args: Arc<FilterArgs>,
+    selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
 ) -> MutationResult {
     let (tx, rx) = mpsc::channel::<Result<bool>>();
@@ -496,13 +507,20 @@ fn run_compile_and_test_with_timeout(
     // function on timeout.
     let cfg = Arc::clone(&config);
     let filter_for_worker = Arc::clone(&filter_args);
+    let selected_sources_for_worker = Arc::clone(&selected_sources_relative);
 
     let spawn_result = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .name("mutation-worker".to_string())
         .spawn(move || {
             let res = panic::catch_unwind(AssertUnwindSafe(|| {
-                compile_and_test(&cfg, &opts, &filter_for_worker, isolate)
+                compile_and_test(
+                    &cfg,
+                    &opts,
+                    &filter_for_worker,
+                    &selected_sources_for_worker,
+                    isolate,
+                )
             }))
             .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
             let _ = tx.send(res);
@@ -589,16 +607,35 @@ fn compile_and_test(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
+    selected_sources_relative: &[PathBuf],
     isolate: bool,
 ) -> Result<bool> {
     if evm_opts.networks.is_tempo() {
-        compile_and_test_inner::<TempoEvmNetwork>(config, evm_opts, filter_args, isolate)
+        compile_and_test_inner::<TempoEvmNetwork>(
+            config,
+            evm_opts,
+            filter_args,
+            selected_sources_relative,
+            isolate,
+        )
     } else {
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return compile_and_test_inner::<OpEvmNetwork>(config, evm_opts, filter_args, isolate);
+            return compile_and_test_inner::<OpEvmNetwork>(
+                config,
+                evm_opts,
+                filter_args,
+                selected_sources_relative,
+                isolate,
+            );
         }
-        compile_and_test_inner::<EthEvmNetwork>(config, evm_opts, filter_args, isolate)
+        compile_and_test_inner::<EthEvmNetwork>(
+            config,
+            evm_opts,
+            filter_args,
+            selected_sources_relative,
+            isolate,
+        )
     }
 }
 
@@ -606,11 +643,19 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
+    selected_sources_relative: &[PathBuf],
     isolate: bool,
 ) -> Result<bool> {
     // Compile
-    let compiler =
-        ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true);
+    let files = selected_sources_relative
+        .iter()
+        .map(|path| config.root.join(path))
+        .filter(|path| path.exists())
+        .collect::<Vec<_>>();
+    let compiler = ProjectCompiler::new()
+        .dynamic_test_linking(config.dynamic_test_linking)
+        .quiet(true)
+        .files(files);
 
     let compile_output = compiler.compile(&config.project()?)?;
 

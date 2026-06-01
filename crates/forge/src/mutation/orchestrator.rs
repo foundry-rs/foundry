@@ -76,6 +76,10 @@ pub struct MutationRunConfig {
     /// applied identically to baseline and every mutant run so they exercise
     /// the same test set.
     pub filter_args: FilterArgs,
+    /// Project-relative source files selected for the baseline compile.
+    /// Re-rooted into each per-mutant workspace so compilation and execution
+    /// honor the same filtered test universe.
+    pub selected_sources_relative: Vec<PathBuf>,
     /// EVM isolation flag — mirrors the canonical `forge test` runner so
     /// baseline and mutant runs use the same execution model.
     pub isolate: bool,
@@ -124,6 +128,14 @@ pub async fn run_mutation_testing(
     let execution_cache_output = ProjectCompiler::new()
         .dynamic_test_linking(config.dynamic_test_linking)
         .quiet(json_output)
+        .files(
+            mutation_config
+                .selected_sources_relative
+                .iter()
+                .map(|path| config.root.join(path))
+                .filter(|path| path.exists())
+                .collect::<Vec<_>>(),
+        )
         .compile(&config.project()?)?;
     let execution_cache_key = mutation_execution_cache_key(
         &config,
@@ -247,6 +259,7 @@ pub async fn run_mutation_testing(
             progress.clone(),
             json_output,
             mutation_config.filter_args.clone(),
+            Arc::new(mutation_config.selected_sources_relative.clone()),
             mutation_config.isolate,
         )?;
 
@@ -329,10 +342,9 @@ pub async fn run_mutation_testing(
 /// settings. Hashing the full serialized config intentionally includes fuzz /
 /// invariant settings, test filters, fs permissions, sender/balance/env values,
 /// and future config fields unless explicitly skipped by `Config` itself. The
-/// artifact fingerprint covers the unfiltered source and test build IDs, so
-/// changing a test file invalidates result caches even when the outer test run
-/// was filtered. Worker count is included because adaptive span skipping is
-/// concurrency-sensitive.
+/// artifact fingerprint covers the same filter-selected source and test build
+/// IDs that baseline and mutant runs compile. Worker count is included because
+/// adaptive span skipping is concurrency-sensitive.
 fn mutation_execution_cache_key(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
