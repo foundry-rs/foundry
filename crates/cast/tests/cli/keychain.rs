@@ -56,6 +56,19 @@ fn assert_session_file_status_without_key(tempo_home: &Path, status: &str) {
     );
 }
 
+fn assert_session_file_status_with_key(tempo_home: &Path, status: &str) {
+    let session_file = tempo_home.join("wallet/sessions.toml");
+    let contents = fs::read_to_string(&session_file).expect("sessions.toml exists");
+    assert!(
+        contents.contains(&format!("status = \"{status}\"")),
+        "unexpected sessions.toml:\n{contents}"
+    );
+    assert!(
+        contents.contains("key = \"0x"),
+        "{status} session should retain private key material:\n{contents}"
+    );
+}
+
 // `cast keychain rl --json` must emit `{"remaining":"<value>"}`, not a bare string.
 casttest!(keychain_rl_json_is_object, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
@@ -164,6 +177,60 @@ casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, c
     assert_eq!(checked["is_revoked"], true);
 
     assert_session_file_status_without_key(tempo_home.path(), "revoked");
+});
+
+casttest!(wallet_session_revoke_sponsor_hash_does_not_mark_revoked, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let (session_id, key_address) = create_session(&mut cmd, tempo_home.path(), "31337");
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            &key_address,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let output = cmd
+        .args([
+            "wallet",
+            "session",
+            "revoke",
+            &session_id,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+            "--tempo.print-sponsor-hash",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(
+        output.contains("--tempo.print-sponsor-hash only prints a sponsor hash"),
+        "unexpected stderr:\n{output}"
+    );
+
+    let check_output = cmd
+        .cast_fuse()
+        .args(["keychain", "check", accounts::ADDR1, &key_address, "--rpc-url", &rpc, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let checked: serde_json::Value =
+        serde_json::from_str(check_output.trim()).expect("keychain check emits JSON");
+    assert_eq!(checked["provisioned"], true);
+    assert_eq!(checked["is_revoked"], false);
+
+    assert_session_file_status_with_key(tempo_home.path(), "active");
 });
 
 casttest!(wallet_session_revoke_marks_unprovisioned_key_revoked_locally, async |_prj, cmd| {

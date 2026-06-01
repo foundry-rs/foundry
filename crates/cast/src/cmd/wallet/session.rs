@@ -25,11 +25,13 @@ use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule}
 
 use crate::{
     cmd::{
-        keychain::send_keychain_tx,
+        keychain::{KeychainTxOutcome, send_keychain_tx},
         tempo_policy_args::{parse_period, parse_policy_token, parse_scope as parse_policy_scope},
     },
     tx::SendTxOpts,
 };
+
+const PRINT_SPONSOR_HASH_REVOKE_ERROR: &str = "--tempo.print-sponsor-hash only prints a sponsor hash and does not revoke the session on-chain";
 
 /// Tempo wallet session lifecycle commands.
 #[derive(Debug, Parser)]
@@ -154,6 +156,10 @@ async fn run_revoke(
         return Ok(());
     }
 
+    if tx.tempo.print_sponsor_hash {
+        eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+    }
+
     update_session_status(session_id, SessionStatus::Revoking)?;
     let status = async {
         let config = send_tx.eth.load_config()?;
@@ -177,7 +183,10 @@ async fn run_revoke(
         }
 
         let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
-        send_keychain_tx(calldata, tx, &send_tx, Some(entry.root_account)).await?;
+        match send_keychain_tx(calldata, tx, &send_tx, Some(entry.root_account)).await? {
+            KeychainTxOutcome::Submitted => {}
+            KeychainTxOutcome::PrintedSponsorHash => eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR),
+        }
         Ok(None)
     }
     .await

@@ -2492,7 +2492,8 @@ async fn run_authorize(
         .abi_encode()
     };
 
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain revoke` / `cast keychain rev` — revoke a key on-chain.
@@ -2502,7 +2503,8 @@ async fn run_revoke(
     send_tx: SendTxOpts,
 ) -> Result<()> {
     let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain rl` — query remaining spending limit.
@@ -2549,7 +2551,8 @@ async fn run_update_limit(
         newLimit: new_limit,
     }
     .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain ss` — set allowed call scopes.
@@ -2561,7 +2564,8 @@ async fn run_set_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain rs` — remove call scope for a target.
@@ -2573,7 +2577,8 @@ async fn run_remove_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
@@ -2635,7 +2640,8 @@ async fn run_policy_add_call(
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
             .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    Ok(())
 }
 
 /// `cast keychain policy set-limit` — update a spending limit amount.
@@ -2658,13 +2664,19 @@ async fn run_policy_set_limit(
     run_update_limit(key_address, token, amount, tx_opts, send_tx).await
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeychainTxOutcome {
+    Submitted,
+    PrintedSponsorHash,
+}
+
 /// Send calldata to the Tempo AccountKeychain precompile as a root-authorized transaction.
 pub(crate) async fn send_keychain_tx(
     calldata: Vec<u8>,
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
     expected_from: Option<Address>,
-) -> Result<()> {
+) -> Result<KeychainTxOutcome> {
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let expires_at = tx_opts.tempo.resolve_expires();
@@ -2719,7 +2731,7 @@ pub(crate) async fn send_keychain_tx(
         } else {
             sh_println!("{hash:?}")?;
         }
-        return Ok(());
+        return Ok(KeychainTxOutcome::PrintedSponsorHash);
     }
 
     crate::tempo::print_expires(expires_at)?;
@@ -2769,7 +2781,7 @@ pub(crate) async fn send_keychain_tx(
             .await?;
     }
 
-    Ok(())
+    Ok(KeychainTxOutcome::Submitted)
 }
 
 /// Ensures AccountKeychain calls with a known root account use that root as the signer.
