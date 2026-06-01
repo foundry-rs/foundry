@@ -14,15 +14,24 @@ fn sigint(pid: u32) {
     assert!(status.success(), "failed to deliver SIGINT to pid {pid}");
 }
 
-/// Spawns `anvil` with `--port 0` and the given extra args, waits for the
-/// "Listening on" handshake on stdout, then returns the running child.
+/// Spawns `anvil --port 0` with extra args and waits for the startup
+/// handshake before returning the running child.
 fn spawn_anvil(extra: &[&str]) -> (Child, BufReader<std::process::ChildStdout>) {
     let bin = env!("CARGO_BIN_EXE_anvil");
     let mut cmd = Command::new(bin);
     cmd.args(["--port", "0"]).args(extra).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("anvil spawn");
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let stdout = BufReader::new(child.stdout.take().unwrap());
 
+    if extra.contains(&"--machine") {
+        // `--machine` silences the "Listening on" banner and the structured
+        // `session_start` handshake is not yet implemented; fall back to a
+        // fixed grace period for bind + ctrlc-handler registration.
+        std::thread::sleep(Duration::from_secs(5));
+        return (child, stdout);
+    }
+
+    let mut stdout = stdout;
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if Instant::now() > deadline {

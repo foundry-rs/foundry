@@ -40,7 +40,7 @@ forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
 forgetest_init!(fmt_file, |prj, cmd| {
     prj.add_raw_source("FmtTest.sol", UNFORMATTED);
     cmd.arg("fmt").arg("src/FmtTest.sol");
-    cmd.assert_success().stdout_eq(str![[r#"
+    cmd.assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
 Formatted [..]/src/FmtTest.sol
 
 "#]]);
