@@ -1393,6 +1393,15 @@ contract Foo {
 
 "#
     ]]);
+
+    // `--json` wraps the bytecode hex as a JSON string
+    cmd.forge_fuse()
+        .args(["inspect", contract_name, "bytecode", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+"0x60806040[..]"
+
+"#]]);
 });
 
 forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
@@ -1527,6 +1536,51 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest!(snapshot_expands_invariant_campaign_predicates, |prj, cmd| {
+    prj.add_test(
+        "InvariantSnapshot.t.sol",
+        r#"
+contract InvariantSnapshotHandler {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract InvariantSnapshotTest {
+    InvariantSnapshotHandler internal handler;
+
+    function setUp() public {
+        handler = new InvariantSnapshotHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_non_negative() public view {
+        require(handler.count() >= 0);
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_not_max() public view {
+        require(handler.count() != type(uint256).max);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["snapshot"]).assert_success();
+
+    let snapshot = read_string(prj.root().join(".gas-snapshot"));
+    assert_eq!(
+        snapshot.lines().filter(|line| line.starts_with("InvariantSnapshotTest:")).count(),
+        2
+    );
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_non_negative()"));
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_not_max()"));
 });
 
 forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
@@ -3461,6 +3515,19 @@ object "Counter_21" {
         if callvalue() { revert_error_ca66f745a3ce8ff40e2ccaf1ad45db7774001b90d25810abd9040049be7bf4bb() }
 ...
 "#]]);
+
+    // `--json` wraps the IR source as a JSON string (one quoted line)
+    let json_out = cmd
+        .forge_fuse()
+        .args(["inspect", TEMPLATE_CONTRACT, "ir", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let json_out = json_out.trim();
+    assert!(json_out.starts_with('"'), "expected quoted JSON string, got {json_out:?}");
+    assert!(json_out.ends_with('"'), "expected quoted JSON string, got {json_out:?}");
+    let _: String =
+        serde_json::from_str(json_out).expect("ir --json stdout should be a valid JSON string");
 });
 
 // checks forge bind works correctly on the default project
@@ -3822,6 +3889,64 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(inspect_anonymous_event_has_no_selector, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event FakeEvent(uint256 indexed topic0) anonymous;
+    event NormalEvent(uint256 indexed value);
+
+    function setNumber(uint256 newNumber) public {
+        emit FakeEvent(newNumber);
+        emit NormalEvent(newNumber);
+    }
+}
+    "#,
+    );
+
+    // `abi`: anonymous event must render with an empty selector and an `anonymous` marker.
+    cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭----------+-------------------------------+--------------------------------------------------------------------╮
+| Type     | Signature                     | Selector                                                           |
++===============================================================================================================+
+| event    | FakeEvent(uint256) anonymous  |                                                                    |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| event    | NormalEvent(uint256)          | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| function | setNumber(uint256) nonpayable | 0x3fb5c1cb                                                         |
+╰----------+-------------------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events`: anonymous event must render with an empty topic.
+    cmd.forge_fuse().args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------+--------------------------------------------------------------------╮
+| Event                | Topic                                                              |
++===========================================================================================+
+| FakeEvent(uint256)   |                                                                    |
+|----------------------+--------------------------------------------------------------------|
+| NormalEvent(uint256) | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+╰----------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events --json`: anonymous event must serialize as `null`, not a fake hash.
+    cmd.forge_fuse().args(["inspect", "Counter", "events", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "FakeEvent(uint256)": null,
+  "NormalEvent(uint256)": "0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1"
+}
+
+"#]],
+    );
+});
+
 forgetest!(inspect_path_only_identifier, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -4041,12 +4166,27 @@ forgetest_init!(can_inspect_libraries, |prj, cmd| {
     "#,
     );
 
-    cmd.args(["inspect", "Source", "libraries"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["inspect", "Source", "libraries"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+src/Lib.sol:Lib
+src/Source.sol:Lib2
+
+"#]])
+        .stderr_eq(str![[r#"
 Dynamically linked libraries:
-  src/Lib.sol:Lib
-  src/Source.sol:Lib2
 
 "#]]);
+
+    cmd.forge_fuse().args(["inspect", "Source", "libraries", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  "src/Lib.sol:Lib",
+  "src/Source.sol:Lib2"
+]
+
+"#]],
+    );
 });
 
 // checks that `clean` also works with the "out" value set in Config
