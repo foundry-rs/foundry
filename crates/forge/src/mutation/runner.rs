@@ -405,6 +405,22 @@ fn test_single_mutant_isolated(
             temp_path.join(lib_rel)
         })
         .collect();
+    temp_config.include_paths = config
+        .include_paths
+        .iter()
+        .map(|path| {
+            let rel = workspace::relative_to_root(&config.root, path);
+            if rel.is_absolute() { path.clone() } else { temp_path.join(rel) }
+        })
+        .collect();
+    temp_config.allow_paths = config
+        .allow_paths
+        .iter()
+        .map(|path| {
+            let rel = workspace::relative_to_root(&config.root, path);
+            if rel.is_absolute() { path.clone() } else { temp_path.join(rel) }
+        })
+        .collect();
 
     // Propagate the per-mutant timeout into the inner fuzz/invariant harness
     // so the hot test loop itself bails out at the deadline. Without this the

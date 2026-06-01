@@ -1,6 +1,7 @@
 // CLI integration tests for mutation testing
 
 use foundry_test_utils::{str, util::OutputExt};
+use std::fs;
 
 fn mutation_summary(stdout: &str) -> serde_json::Value {
     serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
@@ -664,6 +665,77 @@ contract FooBrokenTest {
     assert!(
         killed + survived >= 1,
         "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
+    );
+});
+
+forgetest_init!(mutation_workspace_copies_include_paths, |prj, cmd| {
+    let include_dir = prj.root().join("include");
+    fs::create_dir_all(&include_dir).unwrap();
+    fs::write(
+        include_dir.join("Shared.sol"),
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+library Shared {
+    function value() internal pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    prj.update_config(|config| {
+        config.include_paths = vec![include_dir.clone()];
+    });
+
+    prj.add_source(
+        "UsesShared.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "Shared.sol";
+
+contract UsesShared {
+    function value() public pure returns (uint256) {
+        return Shared.value() + 1;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "UsesShared.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/UsesShared.sol";
+
+contract UsesSharedTest {
+    function test_Value() public {
+        UsesShared usesShared = new UsesShared();
+        assert(usesShared.value() == 2);
+    }
+}
+"#,
+    );
+
+    let out = cmd
+        .args(["test", "--mutate", "src/UsesShared.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&out);
+    let total = summary["total"].as_u64().unwrap_or(0);
+    let invalid = summary["invalid"].as_u64().unwrap_or(u64::MAX);
+
+    assert!(total > 0, "expected mutation testing to generate mutants: summary={summary}");
+    assert!(
+        invalid < total,
+        "include_paths imports should compile inside mutant workspaces: summary={summary}"
     );
 });
 

@@ -83,6 +83,10 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         copy_dir_recursive(&config.test, &temp_dir.join(&test_rel))?;
     }
 
+    for extra_path in config.include_paths.iter().chain(config.allow_paths.iter()) {
+        copy_extra_project_path(&config.root, temp_dir, extra_path)?;
+    }
+
     // Copy `script/` too when present and distinct from src/test. Many real
     // projects keep helper contracts, deployment scripts, or fixtures under
     // `script/` and reference them from tests via relative imports. Without
@@ -138,6 +142,28 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn copy_extra_project_path(root: &Path, temp_dir: &Path, path: &Path) -> Result<()> {
+    let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let rel = relative_to_root(root, &resolved);
+    ensure_safe_relative_path(&rel, "include/allow", path)?;
+    ensure_within_root(root, &resolved, "include/allow", path)?;
+
+    if !resolved.exists() {
+        return Ok(());
+    }
+
+    let target = temp_dir.join(rel);
+    if resolved.is_dir() {
+        copy_dir_recursive(&resolved, &target)
+    } else {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&resolved, target)?;
+        Ok(())
+    }
 }
 
 /// Create a symlink to a directory (cross-platform).
@@ -435,6 +461,56 @@ mod tests {
 
         copy_dir_recursive(&src, &dst).unwrap();
         assert!(!dst.exists());
+    }
+
+    #[test]
+    fn test_copy_project_copies_include_paths_under_root() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let out = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &["src/Counter.sol", "test/Counter.t.sol", "include/Shared.sol"],
+        );
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            script: root.join("script"),
+            include_paths: vec![root.join("include")],
+            ..Default::default()
+        };
+
+        copy_project(&config, &out).unwrap();
+
+        assert!(out.join("include/Shared.sol").exists());
+    }
+
+    #[test]
+    fn test_copy_project_rejects_external_include_paths() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let outside = temp.path().join("outside");
+        let out = temp.path().join("workspace");
+        create_test_dir_structure(&root, &["src/Counter.sol", "test/Counter.t.sol"]);
+        create_test_dir_structure(&outside, &["Shared.sol"]);
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            script: root.join("script"),
+            include_paths: vec![outside],
+            ..Default::default()
+        };
+
+        let err = copy_project(&config, &out).unwrap_err();
+
+        assert!(
+            err.to_string().contains("requires include/allow directory under project root"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
