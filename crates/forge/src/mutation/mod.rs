@@ -425,14 +425,11 @@ impl MutationHandler {
 
     /// Read a source string, and for each contract found, gets its ast and visit it to list
     /// all mutations to conduct.
-    ///
-    /// When `silent` is true, suppresses informational output (for JSON mode).
-    pub async fn generate_ast(&mut self, silent: bool) -> eyre::Result<()> {
+    pub async fn generate_ast(&mut self) -> eyre::Result<()> {
         let path = &self.contract_to_mutate;
         let target_content = Arc::clone(&self.src);
         let sess = Session::builder().with_silent_emitter(None).build();
 
-        let survived_spans_clone = self.survived_spans.clone();
         let contract_filter = self.contract_filter.clone();
 
         let result = sess.enter(|| -> solar::interface::Result<Vec<Mutant>> {
@@ -446,7 +443,6 @@ impl MutationHandler {
 
             let operators = self.config.mutation.enabled_operators();
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
-                .with_span_filter(move |span| survived_spans_clone.should_skip(span))
                 .with_source(&target_content);
 
             if let Some(filter) = contract_filter {
@@ -454,13 +450,6 @@ impl MutationHandler {
                     mutant_visitor.with_contract_filter(move |name| filter.is_match(name));
             }
             let _ = mutant_visitor.visit_source_unit(&ast);
-
-            if mutant_visitor.skipped_count > 0 && !silent {
-                let _ = sh_println!(
-                    "Adaptive mutation: Skipped {} mutation points (already have surviving mutations)",
-                    mutant_visitor.skipped_count
-                );
-            }
 
             Ok(mutant_visitor.mutation_to_conduct)
         });

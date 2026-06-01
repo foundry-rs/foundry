@@ -1,6 +1,6 @@
 use std::{ops::ControlFlow, path::PathBuf};
 
-use solar::ast::{Expr, ItemContract, Span, VariableDefinition, visit::Visit, yul};
+use solar::ast::{Expr, ItemContract, VariableDefinition, visit::Visit, yul};
 
 #[cfg(test)]
 use crate::mutation::mutators::Mutator;
@@ -22,8 +22,6 @@ pub struct MutantVisitor<'src> {
     pub mutation_to_conduct: Vec<Mutant>,
     pub mutator_registry: MutatorRegistry,
     pub path: PathBuf,
-    pub span_filter: Option<Box<dyn Fn(Span) -> bool>>,
-    pub skipped_count: usize,
     pub source: Option<&'src str>,
     /// Optional per-contract name filter. When `Some`, mutations are only collected
     /// from contracts whose name matches the predicate.
@@ -42,8 +40,6 @@ impl<'src> MutantVisitor<'src> {
             mutation_to_conduct: Vec::new(),
             mutator_registry: MutatorRegistry::from_enabled(operators),
             path,
-            span_filter: None,
-            skipped_count: 0,
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
@@ -57,8 +53,6 @@ impl<'src> MutantVisitor<'src> {
             mutation_to_conduct: Vec::new(),
             mutator_registry: MutatorRegistry::default(),
             path,
-            span_filter: None,
-            skipped_count: 0,
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
@@ -72,21 +66,10 @@ impl<'src> MutantVisitor<'src> {
             mutation_to_conduct: Vec::new(),
             mutator_registry: MutatorRegistry::new_with_mutators(mutators),
             path,
-            span_filter: None,
-            skipped_count: 0,
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
         }
-    }
-
-    /// Set a filter function to skip certain spans (for adaptive mutation testing)
-    pub fn with_span_filter<F>(mut self, filter: F) -> Self
-    where
-        F: Fn(Span) -> bool + 'static,
-    {
-        self.span_filter = Some(Box::new(filter));
-        self
     }
 
     /// Set the source code for extracting original text
@@ -136,14 +119,6 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
             return self.walk_variable_definition(var);
         }
 
-        // Check if we should skip this span (adaptive mutation testing)
-        if let Some(ref filter) = self.span_filter
-            && filter(var.span)
-        {
-            self.skipped_count += 1;
-            return self.walk_variable_definition(var);
-        }
-
         let mut builder = MutationContext::builder()
             .with_path(self.path.clone())
             .with_span(var.span)
@@ -167,14 +142,6 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
             return self.walk_expr(expr);
         }
 
-        // Check if we should skip this span (adaptive mutation testing)
-        if let Some(ref filter) = self.span_filter
-            && filter(expr.span)
-        {
-            self.skipped_count += 1;
-            return self.walk_expr(expr);
-        }
-
         let mut builder = MutationContext::builder()
             .with_path(self.path.clone())
             .with_span(expr.span)
@@ -194,13 +161,6 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
     fn visit_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         // Skip entirely when the surrounding contract is filtered out.
         if !self.in_allowed_contract {
-            return self.walk_yul_expr(expr);
-        }
-
-        if let Some(ref filter) = self.span_filter
-            && filter(expr.span)
-        {
-            self.skipped_count += 1;
             return self.walk_yul_expr(expr);
         }
 

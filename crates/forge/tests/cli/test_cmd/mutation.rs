@@ -400,6 +400,188 @@ contract CalculatorTest {
     );
 });
 
+forgetest_init!(mutation_result_cache_invalidates_when_match_test_changes, |prj, _cmd| {
+    prj.add_source(
+        "Calculator.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Calculator {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Calculator.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract CalculatorTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Weak() public view {
+        calculator.add(1, 2);
+    }
+
+    function test_Strong() public view {
+        assert(calculator.add(1, 2) == 3);
+    }
+}
+"#,
+    );
+
+    let mut weak_cmd = prj.forge_command();
+    let weak_stdout = weak_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-test",
+            "test_Weak",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let weak_summary = mutation_summary(&weak_stdout);
+
+    let mut strong_cmd = prj.forge_command();
+    let strong_stdout = strong_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-test",
+            "test_Strong",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let strong_summary = mutation_summary(&strong_stdout);
+
+    assert_eq!(weak_summary["total"], strong_summary["total"]);
+    assert!(
+        strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
+        "expected --match-test to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
+    );
+});
+
+forgetest_init!(mutation_result_cache_invalidates_when_match_path_changes, |prj, _cmd| {
+    prj.add_source(
+        "Calculator.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Calculator {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Weak.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract WeakTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Weak() public view {
+        calculator.add(1, 2);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Strong.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract StrongTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Strong() public view {
+        assert(calculator.add(1, 2) == 3);
+    }
+}
+"#,
+    );
+
+    let mut weak_cmd = prj.forge_command();
+    let weak_stdout = weak_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-path",
+            "test/Weak.t.sol",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let weak_summary = mutation_summary(&weak_stdout);
+
+    let mut strong_cmd = prj.forge_command();
+    let strong_stdout = strong_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-path",
+            "test/Strong.t.sol",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let strong_summary = mutation_summary(&strong_stdout);
+
+    assert_eq!(weak_summary["total"], strong_summary["total"]);
+    assert!(
+        strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
+        "expected --match-path to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
+    );
+});
+
 // Test require/assert mutation for security-critical patterns
 forgetest_init!(mutation_testing_require_mutator, |prj, cmd| {
     // A contract with security-critical require checks (access control, input validation)
