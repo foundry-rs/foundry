@@ -71,7 +71,7 @@ pub struct InvariantCampaignState {
 }
 
 impl InvariantCampaignState {
-    pub fn new(early_exit: EarlyExit) -> Self {
+    pub const fn new(early_exit: EarlyExit) -> Self {
         Self { total_runs: AtomicU32::new(0), global_early_exit: early_exit }
     }
 
