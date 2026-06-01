@@ -71,9 +71,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         }
 
         // Walk every function in the inheritance chain.
-        // Bail out conservatively if any function body contains inline assembly
-        // (lowered to StmtKind::Err by Solar), because we cannot soundly track
-        // reads or writes through it.
+        // Bail out conservatively if any function body contains inline assembly,
+        // because we cannot soundly track reads or writes through it.
         let bases = contract.linearized_bases;
 
         for &cid in bases {
@@ -171,7 +170,7 @@ fn collect_stmt_writes_checked<'hir>(
     bases: &'hir [ContractId],
 ) -> Result<(), ()> {
     match &stmt.kind {
-        // Assembly is lowered to StmtKind::Err; bail conservatively.
+        // Assembly can write storage directly; bail conservatively.
         StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return Err(()),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
             collect_block_writes_checked(hir, *block, candidates, writes, bases)?;

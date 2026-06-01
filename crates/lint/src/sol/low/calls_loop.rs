@@ -12,7 +12,7 @@ use solar::{
             self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt,
             StmtKind, TypeKind,
         },
-        ty::TyKind,
+        ty::{TyFn, TyKind},
     },
 };
 use std::collections::HashSet;
@@ -440,10 +440,7 @@ fn external_member_signatures<'gcx>(
                 let f = hir.function(func_id);
                 Some((f.visibility, f.state_mutability, f.parameters.len()))
             }
-            (_, TyKind::Fn(func)) => func.function_id.map(|func_id| {
-                let f = hir.function(func_id);
-                (f.visibility, f.state_mutability, func.parameters.len())
-            }),
+            (_, TyKind::Fn(func)) => Some(function_signature_from_ty_fn(hir, func)),
             _ => None,
         })
         .collect();
@@ -453,6 +450,20 @@ fn external_member_signatures<'gcx>(
         all.iter().filter(|(_, _, n)| *n == explicit_arg_count).copied().collect();
     let chosen = if arity_matched.is_empty() { all } else { arity_matched };
     chosen.into_iter().map(|(v, m, _)| (v, m)).collect()
+}
+
+fn function_signature_from_ty_fn(
+    hir: &Hir<'_>,
+    func: &TyFn<'_>,
+) -> (Visibility, StateMutability, usize) {
+    if let Some(func_id) = func.function_id {
+        let f = hir.function(func_id);
+        (f.visibility, f.state_mutability, f.parameters.len())
+    } else if func.is_internal() {
+        (Visibility::Internal, func.state_mutability, func.parameters.len())
+    } else {
+        (Visibility::External, func.state_mutability, func.parameters.len())
+    }
 }
 
 pub(super) fn resolved_internal_function_ids<'hir>(

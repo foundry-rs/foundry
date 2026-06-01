@@ -372,8 +372,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 }
             }
             StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
-                // Inline assembly lowers to `StmtKind::Err`; it can perform external
-                // interactions (call/delegatecall/create, logs). Conservatively taint.
+                // Inline assembly can perform external interactions
+                // (call/delegatecall/create, logs). Conservatively taint.
                 entry.external_call_seen = true;
                 Exits::fallthrough(entry)
             }

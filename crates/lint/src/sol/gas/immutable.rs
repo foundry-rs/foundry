@@ -52,7 +52,7 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
         }
         let candidate_set: HashSet<_> = candidates.iter().copied().collect();
 
-        if contract_contains_unlowered_stmt(hir, contract) {
+        if contract_contains_assembly_or_unknown_stmt(hir, contract) {
             return;
         }
 
@@ -207,34 +207,37 @@ fn is_constant_candidate_type(var: &hir::Variable<'_>) -> bool {
         )
 }
 
-fn contract_contains_unlowered_stmt<'hir>(
+fn contract_contains_assembly_or_unknown_stmt<'hir>(
     hir: &'hir hir::Hir<'hir>,
     contract: &'hir hir::Contract<'hir>,
 ) -> bool {
     contract.linearized_bases.iter().any(|&contract_id| {
         hir.contract(contract_id).all_functions().any(|function_id| {
-            hir.function(function_id).body.is_some_and(|body| block_contains_unlowered_stmt(body))
+            hir.function(function_id)
+                .body
+                .is_some_and(|body| block_contains_assembly_or_unknown_stmt(body))
         })
     })
 }
 
-fn block_contains_unlowered_stmt(block: hir::Block<'_>) -> bool {
-    block.stmts.iter().any(stmt_contains_unlowered_stmt)
+fn block_contains_assembly_or_unknown_stmt(block: hir::Block<'_>) -> bool {
+    block.stmts.iter().any(stmt_contains_assembly_or_unknown_stmt)
 }
 
-fn stmt_contains_unlowered_stmt(stmt: &hir::Stmt<'_>) -> bool {
+fn stmt_contains_assembly_or_unknown_stmt(stmt: &hir::Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            block_contains_unlowered_stmt(*block)
+            block_contains_assembly_or_unknown_stmt(*block)
         }
         StmtKind::If(_, then_stmt, else_stmt) => {
-            stmt_contains_unlowered_stmt(then_stmt)
-                || else_stmt.is_some_and(stmt_contains_unlowered_stmt)
+            stmt_contains_assembly_or_unknown_stmt(then_stmt)
+                || else_stmt.is_some_and(stmt_contains_assembly_or_unknown_stmt)
         }
-        StmtKind::Try(stmt_try) => {
-            stmt_try.clauses.iter().any(|clause| block_contains_unlowered_stmt(clause.block))
-        }
+        StmtKind::Try(stmt_try) => stmt_try
+            .clauses
+            .iter()
+            .any(|clause| block_contains_assembly_or_unknown_stmt(clause.block)),
         StmtKind::DeclSingle(_)
         | StmtKind::DeclMulti(_, _)
         | StmtKind::Emit(_)

@@ -86,8 +86,7 @@ impl UnwrappedModifierLogic {
                     }
                     has_valid_stmt = true;
                 }
-                // HIR doesn't support assembly yet:
-                // <https://github.com/paradigmxyz/solar/blob/d25bf38a5accd11409318e023f701313d98b9e1e/crates/sema/src/hir/mod.rs#L977-L982>
+                // Assembly may contain control flow or side effects this lint does not model.
                 hir::StmtKind::AssemblyBlock(_)
                 | hir::StmtKind::Switch(_)
                 | hir::StmtKind::Err(_) => return false,
