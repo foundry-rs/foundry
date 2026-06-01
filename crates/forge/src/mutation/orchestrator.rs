@@ -439,9 +439,13 @@ fn resolve_mutate_paths(
 ) -> Result<Vec<PathBuf>> {
     // 1. Base path set.
     let base: Vec<PathBuf> = if let Some(pattern) = &mutation_config.mutate_path_pattern {
-        source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+        let paths: Vec<_> = source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
             .filter(|entry| entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry))
-            .collect()
+            .collect();
+        if paths.is_empty() {
+            eyre::bail!("no source matched --mutate-path pattern `{pattern}`");
+        }
+        paths
     } else if !mutation_config.mutate_paths.is_empty() {
         let root_canon =
             config.root.canonicalize().wrap_err("failed to canonicalize project root")?;
@@ -488,8 +492,13 @@ fn resolve_mutate_paths(
             .collect();
         let paths: Vec<_> =
             base.into_iter().filter(|entry| matching_sources.contains(entry)).collect();
-        if paths.is_empty() && !mutation_config.mutate_paths.is_empty() {
-            eyre::bail!("no source matched --mutate-contract within the selected --mutate paths");
+        if paths.is_empty() {
+            if mutation_config.mutate_paths.is_empty()
+                && mutation_config.mutate_path_pattern.is_none()
+            {
+                eyre::bail!("no source matched --mutate-contract pattern `{contract_pattern}`");
+            }
+            eyre::bail!("no source matched --mutate-contract within the selected mutation paths");
         }
         paths
     } else {

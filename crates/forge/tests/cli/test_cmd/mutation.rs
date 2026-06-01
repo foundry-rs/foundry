@@ -165,6 +165,95 @@ contract CounterTest is Test {
     );
 });
 
+forgetest_init!(mutation_testing_rejects_empty_mutate_path_selection, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract CounterTest {
+    function test_Increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    );
+
+    let output =
+        cmd.args(["test", "--mutate", "--mutate-path", "src/Missing*.sol"]).assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+
+    assert!(
+        stderr.contains("no source matched --mutate-path pattern"),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
+forgetest_init!(mutation_testing_rejects_empty_mutate_contract_selection, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Counter.sol";
+
+contract CounterTest {
+    function test_Increment() public {
+        Counter counter = new Counter();
+        counter.increment();
+        assert(counter.number() == 1);
+    }
+}
+"#,
+    );
+
+    let output = cmd.args(["test", "--mutate", "--mutate-contract", "Missing"]).assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+
+    assert!(
+        stderr.contains("no source matched --mutate-contract pattern"),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
 forgetest_init!(mutation_testing_with_parallel_workers, |prj, cmd| {
     prj.add_source(
         "Simple.sol",

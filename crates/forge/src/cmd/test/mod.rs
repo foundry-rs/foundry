@@ -373,6 +373,7 @@ impl TestArgs {
             ("--list", self.list),
             ("--junit", self.junit),
             ("--show-progress", self.show_progress),
+            ("--mutate", self.mutate.is_some()),
             // `--live-logs` writes console.log straight to stdout; the
             // `live_logs = true` config equivalent is overridden in
             // `compile_and_run`.
