@@ -15,6 +15,7 @@ pub use crate::mutation::{
     reporter::MutationReporter,
     runner::run_mutations_parallel_with_progress,
 };
+use eyre::eyre;
 use serde::{Deserialize, Serialize};
 use solar::{
     ast::{
@@ -468,14 +469,18 @@ impl MutationHandler {
 
         let contract_filter = self.contract_filter.clone();
 
-        let result = sess.enter(|| -> solar::interface::Result<Vec<Mutant>> {
+        let result = sess.enter(|| -> eyre::Result<Vec<Mutant>> {
             let arena = solar::ast::Arena::new();
             let mut parser =
                 Parser::from_lazy_source_code(&sess, &arena, FileName::from(path.clone()), || {
                     Ok((*target_content).clone())
-                })?;
+                })
+                .map_err(|_e| eyre!("failed to parse {}", path.display()))?;
 
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
+            let ast = parser.parse_file().map_err(|e| {
+                e.emit();
+                eyre!("failed to parse {}", path.display())
+            })?;
 
             let operators = self.config.mutation.enabled_operators();
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
@@ -487,6 +492,10 @@ impl MutationHandler {
             }
             let _ = mutant_visitor.visit_source_unit(&ast);
 
+            if let Some(err) = mutant_visitor.errors.into_iter().next() {
+                return Err(err);
+            }
+
             Ok(mutant_visitor.mutation_to_conduct)
         });
 
@@ -495,9 +504,7 @@ impl MutationHandler {
                 self.mutations.extend(mutations);
                 Ok(())
             }
-            Err(_) => {
-                eyre::bail!("failed to parse {}", path.display());
-            }
+            Err(err) => Err(err),
         }
     }
 

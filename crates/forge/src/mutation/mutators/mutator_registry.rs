@@ -1,4 +1,5 @@
 use crate::mutation::mutant::Mutant;
+use eyre::Result;
 use foundry_config::MutatorType;
 
 use super::{
@@ -57,12 +58,44 @@ impl MutatorRegistry {
     }
 
     /// Find all applicable mutators for a given context and return the corresponding mutations
-    pub fn generate_mutations(&self, context: &MutationContext<'_>) -> Vec<Mutant> {
-        self.mutators
-            .iter()
-            .filter(|mutator| mutator.is_applicable(context))
-            .filter_map(|mutator| mutator.generate_mutants(context).ok())
-            .flatten()
-            .collect()
+    pub fn generate_mutations(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
+        let mut mutations = Vec::new();
+        for mutator in self.mutators.iter().filter(|mutator| mutator.is_applicable(context)) {
+            mutations.extend(mutator.generate_mutants(context)?);
+        }
+        Ok(mutations)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use eyre::eyre;
+    use solar::ast::Span;
+
+    use super::*;
+
+    struct FailingMutator;
+
+    impl Mutator for FailingMutator {
+        fn generate_mutants(&self, _ctxt: &MutationContext<'_>) -> Result<Vec<Mutant>> {
+            Err(eyre!("synthetic mutator failure"))
+        }
+
+        fn is_applicable(&self, _ctxt: &MutationContext<'_>) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn generate_mutations_surfaces_mutator_errors() {
+        let registry = MutatorRegistry::new_with_mutators(vec![Box::new(FailingMutator)]);
+        let context = MutationContext::builder()
+            .with_path("test.sol".into())
+            .with_span(Span::DUMMY)
+            .build()
+            .unwrap();
+
+        let err = registry.generate_mutations(&context).unwrap_err();
+        assert!(err.to_string().contains("synthetic mutator failure"));
     }
 }

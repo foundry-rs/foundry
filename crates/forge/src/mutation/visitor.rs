@@ -1,5 +1,6 @@
 use std::{ops::ControlFlow, path::PathBuf};
 
+use eyre::Report;
 use solar::ast::{Expr, ItemContract, VariableDefinition, visit::Visit, yul};
 
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub enum AssignVarTypes {
 #[allow(clippy::type_complexity)]
 pub struct MutantVisitor<'src> {
     pub mutation_to_conduct: Vec<Mutant>,
+    pub errors: Vec<Report>,
     pub mutator_registry: MutatorRegistry,
     pub path: PathBuf,
     pub source: Option<&'src str>,
@@ -38,6 +40,7 @@ impl<'src> MutantVisitor<'src> {
     pub fn with_operators(path: PathBuf, operators: &[MutatorType]) -> Self {
         Self {
             mutation_to_conduct: Vec::new(),
+            errors: Vec::new(),
             mutator_registry: MutatorRegistry::from_enabled(operators),
             path,
             source: None,
@@ -51,6 +54,7 @@ impl<'src> MutantVisitor<'src> {
     pub fn default(path: PathBuf) -> Self {
         Self {
             mutation_to_conduct: Vec::new(),
+            errors: Vec::new(),
             mutator_registry: MutatorRegistry::default(),
             path,
             source: None,
@@ -64,6 +68,7 @@ impl<'src> MutantVisitor<'src> {
     pub fn new_with_mutators(path: PathBuf, mutators: Vec<Box<dyn Mutator>>) -> Self {
         Self {
             mutation_to_conduct: Vec::new(),
+            errors: Vec::new(),
             mutator_registry: MutatorRegistry::new_with_mutators(mutators),
             path,
             source: None,
@@ -86,6 +91,20 @@ impl<'src> MutantVisitor<'src> {
     {
         self.contract_filter = Some(Box::new(filter));
         self
+    }
+
+    fn collect_mutations(&mut self, context: &MutationContext<'_>) {
+        match self.mutator_registry.generate_mutations(context) {
+            Ok(mutations) => self.mutation_to_conduct.extend(mutations),
+            Err(err) => {
+                self.errors.push(
+                    err.wrap_err(format!(
+                        "failed to generate mutations for {}",
+                        self.path.display()
+                    )),
+                );
+            }
+        }
     }
 }
 
@@ -132,7 +151,7 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
             .build()
             .expect("MutationContext requires both path and span for variable definition");
 
-        self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
+        self.collect_mutations(&context);
         self.walk_variable_definition(var)
     }
 
@@ -154,7 +173,7 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
         let context =
             builder.build().expect("MutationContext requires both path and span for expression");
 
-        self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
+        self.collect_mutations(&context);
         self.walk_expr(expr)
     }
 
@@ -177,7 +196,7 @@ impl<'ast> Visit<'ast> for MutantVisitor<'ast> {
             .build()
             .expect("MutationContext requires both path and span for yul expression");
 
-        self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
+        self.collect_mutations(&context);
         self.walk_yul_expr(expr)
     }
 }
