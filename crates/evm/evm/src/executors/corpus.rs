@@ -1593,7 +1593,7 @@ mod tests {
             id: 1,
             tx_generator: Just(basic_tx()).boxed(),
             mutation_generator: Just(MutationType::Repeat).boxed(),
-            config: corpus_config(corpus_root.clone()).into(),
+            config: corpus_config(corpus_root).into(),
             in_memory_corpus: vec![],
             current_mutated: None,
             failed_replays: 0,

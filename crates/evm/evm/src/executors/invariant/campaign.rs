@@ -106,7 +106,7 @@ pub struct InvariantWorkerOutput {
 
 impl InvariantWorkerOutput {
     #[cfg(test)]
-    pub fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
+    pub const fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
         Self { plan, result, corpus_entries: Vec::new() }
     }
 }
