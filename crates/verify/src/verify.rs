@@ -9,8 +9,7 @@ use crate::{
 use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_provider::Provider;
 use clap::{Parser, ValueEnum, ValueHint};
-use eyre::Result;
-use foundry_block_explorers::errors::EtherscanError;
+use eyre::{Context, Result};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
@@ -22,7 +21,100 @@ use foundry_config::{
 };
 use itertools::Itertools;
 use semver::BuildMetadata;
+use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VerifierCredentialProbe {
+    Accepted,
+    InvalidApiKey,
+    Inconclusive,
+}
+
+#[derive(Debug, Deserialize)]
+struct EtherscanProbeResponse {
+    status: String,
+    result: Option<serde_json::Value>,
+}
+
+fn verifier_credential_probe_query(api_key: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut query = vec![
+        ("module", "contract".to_string()),
+        ("action", "getabi".to_string()),
+        ("address", Address::ZERO.to_string()),
+    ];
+    if let Some(api_key) = api_key {
+        query.push(("apikey", api_key.to_string()));
+    }
+    query
+}
+
+fn classify_verifier_credential_response(
+    status: reqwest::StatusCode,
+    body: &str,
+) -> VerifierCredentialProbe {
+    if matches!(status, reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN) {
+        return VerifierCredentialProbe::InvalidApiKey;
+    }
+
+    let lower = body.to_lowercase();
+    if lower.contains("invalid api key") || lower.contains("invalid_api_key") {
+        return VerifierCredentialProbe::InvalidApiKey;
+    }
+
+    if lower.contains("contract source code not verified")
+        || lower.contains("contract not found")
+        || lower.contains("contract was not found")
+    {
+        return VerifierCredentialProbe::Accepted;
+    }
+
+    if !status.is_success()
+        || lower.contains("max rate limit reached")
+        || lower.contains("sorry, you have been blocked")
+        || lower.contains("checking if the site connection is secure")
+    {
+        return VerifierCredentialProbe::Inconclusive;
+    }
+
+    match serde_json::from_str::<EtherscanProbeResponse>(body) {
+        Ok(resp) if resp.status == "1" => VerifierCredentialProbe::Accepted,
+        Ok(resp) => resp
+            .result
+            .and_then(|result| result.as_str().map(str::to_lowercase))
+            .map(|result| {
+                if result.contains("invalid api key") || result.contains("invalid_api_key") {
+                    VerifierCredentialProbe::InvalidApiKey
+                } else if result.contains("max rate limit reached") {
+                    VerifierCredentialProbe::Inconclusive
+                } else if result.contains("contract source code not verified")
+                    || result.contains("contract not found")
+                    || result.contains("contract was not found")
+                {
+                    VerifierCredentialProbe::Accepted
+                } else {
+                    VerifierCredentialProbe::Inconclusive
+                }
+            })
+            .unwrap_or(VerifierCredentialProbe::Inconclusive),
+        Err(_) => VerifierCredentialProbe::Inconclusive,
+    }
+}
+
+async fn probe_verifier_credentials(
+    url: reqwest::Url,
+    api_key: Option<&str>,
+) -> Result<VerifierCredentialProbe, reqwest::Error> {
+    let resp = reqwest::Client::new()
+        .get(url)
+        .query(&verifier_credential_probe_query(api_key))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
+    let status = resp.status();
+    let body = resp.text().await?;
+    Ok(classify_verifier_credential_response(status, &body))
+}
 
 /// The programming language used for smart contract development.
 ///
@@ -95,35 +187,22 @@ impl VerifierArgs {
                 )?;
                 match tokio::time::timeout(
                     Duration::from_secs(10),
-                    client.contract_abi(Address::ZERO),
+                    probe_verifier_credentials(
+                        client.etherscan_api_url().clone(),
+                        client.api_key(),
+                    ),
                 )
                 .await
                 {
                     Err(_) => {
                         sh_warn!("verifier credential check timed out, proceeding anyway")?;
                     }
-                    Ok(
-                        Ok(_)
-                        | Err(
-                            EtherscanError::ContractCodeNotVerified(_)
-                            | EtherscanError::ContractNotFound(_),
-                        ),
-                    ) => {}
-                    Ok(Err(EtherscanError::InvalidApiKey)) => {
-                        eyre::bail!("verifier credential check failed: invalid API key")
+                    Ok(Ok(VerifierCredentialProbe::Accepted)) => {}
+                    Ok(Ok(VerifierCredentialProbe::InvalidApiKey)) => {
+                        eyre::bail!("verifier credential check failed: invalid API key");
                     }
-                    Ok(Err(
-                        // Transient CDN/rate issues: don't block the deploy.
-                        EtherscanError::BlockedByCloudflare
-                        | EtherscanError::CloudFlareSecurityChallenge
-                        | EtherscanError::RateLimitExceeded
-                        // Version mismatch is a client-library issue, not a bad key.
-                        | EtherscanError::InvalidApiVersion,
-                    )) => {
+                    Ok(Ok(VerifierCredentialProbe::Inconclusive) | Err(_)) => {
                         sh_warn!("verifier credential check inconclusive, proceeding anyway")?;
-                    }
-                    Ok(Err(_)) => {
-                        sh_warn!("verifier credential check failed, proceeding anyway")?;
                     }
                 }
             }
@@ -131,44 +210,18 @@ impl VerifierArgs {
                 // Custom verifiers may return Etherscan-shaped responses (HTTP 200 with a JSON
                 // body) or standard HTTP auth errors (401/403). Check both.
                 if let Some(url) = &self.verifier_url {
-                    let mut query = vec![
-                        ("module", "contract".to_string()),
-                        ("action", "getabi".to_string()),
-                        ("address", Address::ZERO.to_string()),
-                    ];
-                    if let Some(api_key) = api_key {
-                        query.push(("apikey", api_key.to_string()));
-                    }
-                    match reqwest::Client::new()
-                        .get(url)
-                        .query(&query)
-                        .timeout(Duration::from_secs(10))
-                        .send()
-                        .await
-                    {
+                    let url = reqwest::Url::parse(url)
+                        .wrap_err_with(|| format!("invalid verifier URL `{url}`"))?;
+                    match probe_verifier_credentials(url, api_key).await {
                         Err(_) => {
                             sh_warn!("verifier credential check failed, proceeding anyway")?;
                         }
-                        Ok(resp) => {
-                            let status = resp.status();
-                            if status == reqwest::StatusCode::UNAUTHORIZED
-                                || status == reqwest::StatusCode::FORBIDDEN
-                            {
-                                eyre::bail!(
-                                    "verifier credential check failed: \
-                                     invalid API key (HTTP {status})"
-                                )
-                            }
-                            // Also inspect the body for Etherscan-shaped auth-failure messages
-                            // returned with HTTP 200.
-                            if let Ok(body) = resp.text().await {
-                                let lower = body.to_lowercase();
-                                if lower.contains("invalid api key")
-                                    || lower.contains("invalid_api_key")
-                                {
-                                    eyre::bail!("verifier credential check failed: invalid API key")
-                                }
-                            }
+                        Ok(
+                            VerifierCredentialProbe::Accepted
+                            | VerifierCredentialProbe::Inconclusive,
+                        ) => {}
+                        Ok(VerifierCredentialProbe::InvalidApiKey) => {
+                            eyre::bail!("verifier credential check failed: invalid API key")
                         }
                     }
                 }
@@ -176,15 +229,27 @@ impl VerifierArgs {
             VerificationProviderType::Sourcify => {
                 // Only probe custom URLs; the default public endpoint is assumed reachable.
                 if let Some(url) = &self.verifier_url {
-                    let status = reqwest::Client::new()
-                        .get(url)
+                    let url = reqwest::Url::parse(url)
+                        .wrap_err_with(|| format!("invalid Sourcify URL `{url}`"))?;
+                    match reqwest::Client::new()
+                        .get(url.clone())
                         .timeout(Duration::from_secs(10))
                         .send()
                         .await
-                        .map_err(|e| eyre::eyre!("Sourcify URL `{url}` is not reachable: {e}"))?
-                        .status();
-                    if !status.is_success() && status != reqwest::StatusCode::NOT_FOUND {
-                        sh_warn!("Sourcify URL `{url}` returned HTTP {status}, proceeding anyway")?;
+                    {
+                        Err(_) => {
+                            sh_warn!(
+                                "Sourcify URL `{url}` could not be reached, proceeding anyway"
+                            )?;
+                        }
+                        Ok(resp) => {
+                            let status = resp.status();
+                            if !status.is_success() && status != reqwest::StatusCode::NOT_FOUND {
+                                sh_warn!(
+                                    "Sourcify URL `{url}` returned HTTP {status}, proceeding anyway"
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -754,6 +819,45 @@ mod tests {
         ]);
         assert!(args.no_auto_detect);
         assert_eq!(args.use_solc.as_deref(), Some("0.8.23"));
+    }
+
+    #[test]
+    fn classify_verifier_probe_accepts_not_verified_response() {
+        let body =
+            r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#;
+        assert_eq!(
+            classify_verifier_credential_response(reqwest::StatusCode::OK, body),
+            VerifierCredentialProbe::Accepted,
+        );
+    }
+
+    #[test]
+    fn classify_verifier_probe_rejects_invalid_api_key() {
+        let body = r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#;
+        assert_eq!(
+            classify_verifier_credential_response(reqwest::StatusCode::OK, body),
+            VerifierCredentialProbe::InvalidApiKey,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(reqwest::StatusCode::UNAUTHORIZED, ""),
+            VerifierCredentialProbe::InvalidApiKey,
+        );
+    }
+
+    #[test]
+    fn classify_verifier_probe_treats_transient_errors_as_inconclusive() {
+        let body = r#"{"status":"0","message":"NOTOK","result":"Max rate limit reached"}"#;
+        assert_eq!(
+            classify_verifier_credential_response(reqwest::StatusCode::OK, body),
+            VerifierCredentialProbe::Inconclusive,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(
+                reqwest::StatusCode::OK,
+                "Checking if the site connection is secure",
+            ),
+            VerifierCredentialProbe::Inconclusive,
+        );
     }
 
     #[test]
