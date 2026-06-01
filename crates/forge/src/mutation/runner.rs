@@ -52,7 +52,6 @@ pub struct MutantTestResult {
 }
 
 /// Tracks progress and adaptive span skipping across parallel workers.
-#[derive(Default)]
 pub struct SharedMutationState {
     /// Spans where mutations have survived - shared across workers for adaptive skipping.
     pub survived_spans: Mutex<SurvivedSpans>,
@@ -170,6 +169,12 @@ impl SharedMutationState {
         }
 
         pending.push(handle);
+    }
+}
+
+impl Default for SharedMutationState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
