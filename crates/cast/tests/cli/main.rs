@@ -532,6 +532,27 @@ Error: Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did
 "#]]);
 });
 
+// tests that `cast wallet sign --json` outputs JSON on stdout regardless of verbosity
+casttest!(wallet_sign_message_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--json",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "test",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "message": "test",
+  "address": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+  "signature": "fe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c"
+}
+
+"#]]);
+});
+
 // tests that `cast wallet sign message` outputs the expected signature, given a 0x-prefixed data
 casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
     cmd.args([
@@ -3197,13 +3218,18 @@ casttest!(flaky_test_non_mainnet_traces, |prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [33841] FiatTokenProxy::fallback(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8])
     ├─ [26673] FiatTokenV2_2::approve(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8]) [delegatecall]
     │   ├─ emit Approval(owner: 0x9a95Af47C51562acfb2107F44d7967DF253197df, spender: 0x111111125421cA6dc452d289314280a0f8842A65, amount: 164054805 [1.64e8])
     │   └─ ← [Return] true
     └─ ← [Return] true
+...
+
+"#]])
+    .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
 ...
 
 "#]]);
@@ -3290,9 +3316,14 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Compiling project to generate artifacts
 Nothing to compile
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 
@@ -3304,7 +3335,6 @@ Nothing to compile
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
@@ -3315,6 +3345,12 @@ Traces:
 Transaction successfully executed.
 [GAS]
 
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
+
 "#]]);
 
     // Assert cast with local artifacts can decode traces.
@@ -3322,7 +3358,6 @@ Transaction successfully executed.
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
@@ -3333,6 +3368,12 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 });
@@ -3387,7 +3428,6 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -3397,6 +3437,12 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 });
@@ -4170,7 +4216,11 @@ casttest!(
         cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
             .assert_success()
             .stdout_eq(str![[r#"
-Estimated data availability size for block 30558838 with 225 transactions: 52916546100
+52916546100
+
+"#]])
+            .stderr_eq(str![[r#"
+Estimated data availability size for block 30558838 with 225 transactions:
 
 "#]]);
     }
@@ -5027,7 +5077,6 @@ forgetest_async!(cast_send_with_data, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -5037,6 +5086,12 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 });

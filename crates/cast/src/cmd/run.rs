@@ -247,9 +247,7 @@ impl RunArgs {
 
         // Set the state to the moment right before the transaction
         if !self.quick {
-            if !shell::is_json() {
-                sh_println!("Executing previous transactions from the block.")?;
-            }
+            sh_status!("Executing previous transactions from the block.")?;
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions().len() as u64, "tx");

@@ -774,19 +774,19 @@ forgetest!(flaky_can_clone, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
     .stderr_eq(str![[r#"
+Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 
 "#]]);
 
@@ -835,19 +835,19 @@ forgetest!(flaky_can_clone_sourcify, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
         .stderr_eq(str![[r#"
+Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 
 "#]]);
 
@@ -872,19 +872,19 @@ forgetest!(flaky_can_clone_no_remappings_txt, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
     .stderr_eq(str![[r#"
+Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 
 "#]]);
 
@@ -1114,19 +1114,19 @@ forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
     .stderr_eq(str![[r#"
+Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 
 "#]]);
 });
@@ -3820,6 +3820,64 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 
 
 "#]]);
+});
+
+forgetest!(inspect_anonymous_event_has_no_selector, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event FakeEvent(uint256 indexed topic0) anonymous;
+    event NormalEvent(uint256 indexed value);
+
+    function setNumber(uint256 newNumber) public {
+        emit FakeEvent(newNumber);
+        emit NormalEvent(newNumber);
+    }
+}
+    "#,
+    );
+
+    // `abi`: anonymous event must render with an empty selector and an `anonymous` marker.
+    cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭----------+-------------------------------+--------------------------------------------------------------------╮
+| Type     | Signature                     | Selector                                                           |
++===============================================================================================================+
+| event    | FakeEvent(uint256) anonymous  |                                                                    |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| event    | NormalEvent(uint256)          | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| function | setNumber(uint256) nonpayable | 0x3fb5c1cb                                                         |
+╰----------+-------------------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events`: anonymous event must render with an empty topic.
+    cmd.forge_fuse().args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------+--------------------------------------------------------------------╮
+| Event                | Topic                                                              |
++===========================================================================================+
+| FakeEvent(uint256)   |                                                                    |
+|----------------------+--------------------------------------------------------------------|
+| NormalEvent(uint256) | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+╰----------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events --json`: anonymous event must serialize as `null`, not a fake hash.
+    cmd.forge_fuse().args(["inspect", "Counter", "events", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "FakeEvent(uint256)": null,
+  "NormalEvent(uint256)": "0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1"
+}
+
+"#]],
+    );
 });
 
 forgetest!(inspect_path_only_identifier, |prj, cmd| {

@@ -370,7 +370,7 @@ impl Erc20Subcommand {
                     if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
                 let needs_sponsor_payload = print_sponsor_hash || tempo_sponsor.is_some();
                 if let Some(ts) = expires_at {
-                    sh_println!("Transaction expires at unix timestamp {ts}")?;
+                    sh_status!("Transaction expires at unix timestamp {ts}")?;
                 }
 
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);

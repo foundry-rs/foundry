@@ -347,10 +347,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let sig = stdin::unwrap_line(sig)?;
             match optimize {
                 Some(opt) => {
-                    sh_println!("Starting to optimize signature...")?;
+                    sh_status!("Starting to optimize signature...")?;
                     let start_time = Instant::now();
                     let (selector, signature) = SimpleCast::get_selector(&sig, opt)?;
-                    sh_println!("Successfully generated in {:?}", start_time.elapsed())?;
+                    sh_status!("Successfully generated in {:?}", start_time.elapsed())?;
                     sh_println!("Selector: {selector}")?;
                     sh_println!("Optimized signature: {signature}")?;
                 }
