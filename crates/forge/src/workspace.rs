@@ -83,6 +83,18 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         copy_dir_recursive(&config.test, &temp_dir.join(&test_rel))?;
     }
 
+    // Copy `script/` too when present and distinct from src/test. Many real
+    // projects keep helper contracts, deployment scripts, or fixtures under
+    // `script/` and reference them from tests via relative imports. Without
+    // this, baselines that compile fine produce a sea of `Invalid` mutants
+    // for purely-environmental reasons.
+    if config.script.exists() && config.script != config.src && config.script != config.test {
+        let script_rel = relative_to_root(&config.root, &config.script);
+        ensure_safe_relative_path(&script_rel, "script", &config.script)?;
+        ensure_within_root(&config.root, &config.script, "script", &config.script)?;
+        copy_dir_recursive(&config.script, &temp_dir.join(&script_rel))?;
+    }
+
     for lib_path in &config.libs {
         if lib_path.exists() {
             let lib_rel = relative_to_root(&config.root, lib_path);

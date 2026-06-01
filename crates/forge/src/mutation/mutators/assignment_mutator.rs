@@ -47,10 +47,14 @@ impl Mutator for AssignmentMutator {
                         line_number,
                         column_number,
                     },
+                    // Negation of a numeric literal must be carried textually:
+                    // applying `-*val` on a `U256` wraps via two's complement
+                    // and would render as a huge unsigned literal (e.g. `1`
+                    // becomes `2^256 - 1`), producing wrong-source mutants.
                     Mutant {
                         span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
-                            OwnedLiteral::Number(-*val),
+                            OwnedLiteral::NegatedNumber(*val),
                         )),
                         path: context.path.clone(),
                         original,
@@ -63,6 +67,10 @@ impl Mutator for AssignmentMutator {
                 OwnedLiteral::Rational(_) => Ok(vec![]),
                 OwnedLiteral::Address(_) => Ok(vec![]),
                 OwnedLiteral::Err(_) => Ok(vec![]),
+                // `NegatedNumber` is only ever constructed *as* a mutant; it
+                // does not appear as an original literal in the source AST,
+                // so there is nothing to mutate here.
+                OwnedLiteral::NegatedNumber(_) => Ok(vec![]),
             },
             AssignVarTypes::Identifier(ref ident) => Ok(vec![
                 Mutant {

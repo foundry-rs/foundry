@@ -108,12 +108,20 @@ pub enum OwnedStrKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OwnedLiteral {
-    Str { kind: OwnedStrKind, text: String },
+    Str {
+        kind: OwnedStrKind,
+        text: String,
+    },
     Number(alloy_primitives::U256),
     Rational(String),
     Address(String),
     Bool(bool),
     Err(String),
+    /// Signed-negation of a numeric literal (e.g. `-123`). We cannot represent
+    /// negative values inside `Number(U256)` (the cast wraps via two's
+    /// complement and renders as a huge unsigned literal), so we carry the
+    /// negation textually and render it as `-{val}`.
+    NegatedNumber(alloy_primitives::U256),
 }
 
 impl From<&LitKind<'_>> for OwnedLiteral {
@@ -142,6 +150,7 @@ impl Display for OwnedLiteral {
         match self {
             Self::Bool(val) => write!(f, "{val}"),
             Self::Number(val) => write!(f, "{val}"),
+            Self::NegatedNumber(val) => write!(f, "-{val}"),
             Self::Rational(s) => write!(f, "{s}"),
             Self::Address(s) => write!(f, "{s}"),
             Self::Str { kind, text } => match kind {
@@ -344,7 +353,7 @@ impl Mutant {
         for (i, comp) in components.iter().enumerate() {
             if let std::path::Component::Normal(name) = comp {
                 let s = name.to_string_lossy();
-                if matches!(s.as_ref(), "src" | "test" | "lib" | "contracts") {
+                if matches!(s.as_ref(), "src" | "test" | "script" | "lib" | "contracts") {
                     let parts: Vec<_> = components[i..]
                         .iter()
                         .filter_map(|c| match c {

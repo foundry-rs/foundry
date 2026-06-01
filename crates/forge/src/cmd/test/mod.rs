@@ -1,4 +1,4 @@
-use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use super::{install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
@@ -21,7 +21,9 @@ use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
+use foundry_common::{
+    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
+};
 use foundry_compilers::{
     ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
@@ -66,7 +68,7 @@ use yansi::Paint;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
-pub use filter::FilterArgs;
+pub use filter::{FilterArgs, ProjectPathsAwareFilter};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
@@ -371,6 +373,20 @@ impl TestArgs {
                 .collect());
         }
 
+        let filter_args = test_filter.args();
+        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+            || filter_args.test_pattern_inverse.is_some()
+            || filter_args.contract_pattern.is_some()
+            || filter_args.contract_pattern_inverse.is_some();
+        if !has_contract_or_test_filter {
+            return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(
+                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                        .filter(|path| test_filter.matches_path(path)),
+                )
+                .collect());
+        }
+
         let mut project = config.create_project(true, true)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()]);
@@ -445,6 +461,45 @@ impl TestArgs {
     ) -> Result<TestOutcome> {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
+        }
+
+        // Mutation testing has bespoke orchestration (per-mutant temp
+        // workspaces, baseline + N mutants, aggregated mutation report). It is
+        // not compatible with the single-run debug / flame / list / junit
+        // modes — running them together would either mix incompatible output
+        // formats, or run the secondary mode against the baseline tests and
+        // then silently continue into mutation testing. Reject up front with a
+        // clear error rather than do the wrong thing.
+        if self.mutate.is_some() {
+            let mut conflicts = Vec::new();
+            if self.list {
+                conflicts.push("--list");
+            }
+            if self.debug {
+                conflicts.push("--debug");
+            }
+            if self.flamegraph {
+                conflicts.push("--flamegraph");
+            }
+            if self.flamechart {
+                conflicts.push("--flamechart");
+            }
+            if self.junit {
+                conflicts.push("--junit");
+            }
+            if coverage {
+                conflicts.push("coverage");
+            }
+            if self.showmap_out.is_some() {
+                conflicts.push("--showmap-out");
+            }
+            if !conflicts.is_empty() {
+                bail!(
+                    "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
+                     mutation testing.",
+                    conflicts.join(", ")
+                );
+            }
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -644,6 +699,19 @@ impl TestArgs {
                 eyre::bail!("Cannot run mutation testing with failed tests");
             }
 
+            // A green baseline that ran zero non-skipped tests is not useful:
+            // every compileable mutant would be reported as `Alive` (no test
+            // failed, so nothing killed it), which produces a wildly
+            // misleading mutation report. Hard-error so users get an actual
+            // signal that their filter / path / setup matched nothing.
+            if outcome.successes().next().is_none() {
+                eyre::bail!(
+                    "Mutation testing requires at least one passing baseline test; the current \
+                     filter/path selection matched zero non-skipped tests. Loosen `--match-test` / \
+                     `--match-contract` / `--match-path` or check the project layout."
+                );
+            }
+
             // Explicit paths on --mutate cannot be combined with the --mutate-path
             // glob filter: clap can't express this directly because --mutate takes
             // an optional list of paths.
@@ -676,9 +744,6 @@ impl TestArgs {
             // Detect both up front so users aren't surprised by races or
             // corruption of their real dependency tree.
             use foundry_config::fs_permissions::FsAccessPermission;
-            let has_broad_write = config_for_mutation.fs_permissions.permissions.iter().any(|p| {
-                matches!(p.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
-            });
             if config_for_mutation.ffi {
                 eyre::bail!(
                     "Mutation testing is unsafe with `ffi = true`: per-mutant workspaces share \
@@ -687,17 +752,130 @@ impl TestArgs {
                      Disable ffi in your foundry.toml to run mutation tests."
                 );
             }
-            if has_broad_write {
+
+            // Only refuse write-capable `fs_permissions` whose path can actually
+            // reach one of the symlinked dependency trees. Scoped writes (e.g.
+            // `./out`, `./snapshots`) are safe because they target paths that
+            // never resolve into the shared `lib`/`node_modules`/`dependencies`
+            // trees.
+            let root = &config_for_mutation.root;
+            let canonicalize_through_existing_ancestor = |path: &Path| -> PathBuf {
+                let resolved =
+                    if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+                if let Ok(canon) = dunce::canonicalize(&resolved) {
+                    return canon;
+                }
+
+                let mut missing = Vec::new();
+                let mut ancestor = resolved.as_path();
+                while !ancestor.exists() {
+                    let Some(name) = ancestor.file_name() else { break };
+                    missing.push(name.to_owned());
+                    let Some(parent) = ancestor.parent() else { break };
+                    ancestor = parent;
+                }
+
+                let mut canon = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.into());
+                for component in missing.iter().rev() {
+                    canon.push(component);
+                }
+                canon
+            };
+
+            let mut shared_dep_dirs: Vec<PathBuf> = config_for_mutation
+                .libs
+                .iter()
+                .filter(|p| p.exists())
+                .map(|p| canonicalize_through_existing_ancestor(p))
+                .collect();
+            for dep_dir in ["node_modules", "dependencies"] {
+                let dep_path = root.join(dep_dir);
+                if dep_path.exists() && dep_path.is_dir() {
+                    shared_dep_dirs.push(canonicalize_through_existing_ancestor(&dep_path));
+                }
+            }
+
+            let effective_permission = |path: &Path| -> Option<FsAccessPermission> {
+                let mut max_path_len = 0;
+                let mut highest_permission = FsAccessPermission::None;
+
+                for perm in &config_for_mutation.fs_permissions.permissions {
+                    let permission_path = canonicalize_through_existing_ancestor(&perm.path);
+                    if path.starts_with(&permission_path) {
+                        let path_len = permission_path.components().count();
+                        if path_len > max_path_len {
+                            max_path_len = path_len;
+                            highest_permission = perm.access;
+                        } else if path_len == max_path_len {
+                            highest_permission = match (highest_permission, perm.access) {
+                                (FsAccessPermission::ReadWrite, _)
+                                | (FsAccessPermission::Read, FsAccessPermission::Write)
+                                | (FsAccessPermission::Write, FsAccessPermission::Read) => {
+                                    FsAccessPermission::ReadWrite
+                                }
+                                (FsAccessPermission::None, perm) => perm,
+                                (existing_perm, _) => existing_perm,
+                            };
+                        }
+                    }
+                }
+
+                (max_path_len > 0).then_some(highest_permission)
+            };
+
+            let grants_write = |path: &Path| {
+                matches!(
+                    effective_permission(path),
+                    Some(FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+                )
+            };
+
+            let unsafe_write_paths: Vec<&Path> = config_for_mutation
+                .fs_permissions
+                .permissions
+                .iter()
+                .filter(|perm| {
+                    matches!(perm.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+                })
+                .filter(|perm| {
+                    let perm_path = canonicalize_through_existing_ancestor(&perm.path);
+                    shared_dep_dirs.iter().any(|dep| {
+                        if perm_path.starts_with(dep) {
+                            grants_write(&perm_path)
+                        } else if dep.starts_with(&perm_path) {
+                            grants_write(dep)
+                        } else {
+                            false
+                        }
+                    })
+                })
+                .map(|p| p.path.as_path())
+                .collect();
+
+            if !unsafe_write_paths.is_empty() {
+                let paths = unsafe_write_paths
+                    .iter()
+                    .map(|p| format!("  - {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 eyre::bail!(
-                    "Mutation testing is unsafe with write-capable `fs_permissions`: per-mutant \
-                     workspaces share symlinked dependency directories, and `vm.writeFile` \
-                     calls can race against or corrupt the real `lib`/`node_modules`/\
-                     `dependencies` trees. Restrict `fs_permissions` to read-only (or scope it \
-                     away from dependency paths) to run mutation tests."
+                    "Mutation testing is unsafe with write-capable `fs_permissions` that can \
+                     reach the symlinked dependency trees (`lib`/`node_modules`/`dependencies`); \
+                     per-mutant workspaces share those trees, so `vm.writeFile` calls would race \
+                     against or corrupt your real dependencies. Restrict the following \
+                     `fs_permissions` entries to read-only or scope them away from dependency \
+                     paths:\n{paths}"
                 );
             }
 
             let json_output = shell::is_json();
+            let selected_sources_relative = self
+                .get_sources_to_compile(&config_for_mutation, filter)?
+                .into_iter()
+                .filter_map(|path| {
+                    path.strip_prefix(&config_for_mutation.root).ok().map(PathBuf::from)
+                })
+                .collect::<Vec<_>>();
 
             let mutation_config = MutationRunConfig {
                 mutate_paths: mutate.clone(),
@@ -706,6 +884,19 @@ impl TestArgs {
                 num_workers: self.mutation_jobs.unwrap_or(0),
                 show_progress: self.show_progress,
                 json_output,
+                // Carry the same filter args (--match-test, --match-contract,
+                // --match-path, positional path shorthand, --rerun, ...) and
+                // isolation flag the baseline actually used, so every mutant
+                // exercises the exact same test set under the same execution
+                // model. We pull from the materialized `filter`, not the raw
+                // CLI flags on `self`, because the baseline applies extras:
+                // the positional `forge test <path>` shorthand is folded into
+                // `path_pattern`, and `--rerun` injects last-run failures
+                // into `test_pattern`. Using `self.filter.clone()` would lose
+                // those and let mutant runs silently diverge from baseline.
+                filter_args: filter.args().clone(),
+                selected_sources_relative,
+                isolate: evm_opts_for_mutation.isolate,
             };
 
             let result = run_mutation_testing(

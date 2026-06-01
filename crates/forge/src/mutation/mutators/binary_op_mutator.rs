@@ -9,7 +9,7 @@ pub struct BinaryOpMutator;
 impl Mutator for BinaryOpMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
         let expr = context.expr.ok_or_eyre("BinaryOpMutator: no expression")?;
-        let (bin_op, _op_span, lhs, rhs) = get_bin_op_parts(expr)?;
+        let (bin_op, _op_span, lhs, rhs, compound_assignment) = get_bin_op_parts(expr)?;
         let op = bin_op.kind;
 
         let operations_bools = vec![
@@ -47,8 +47,11 @@ impl Mutator for BinaryOpMutator {
         let rhs_text = extract_span_text(source, rhs.span);
         let op_str = op.to_str();
 
-        // Build original expression: "lhs op rhs"
-        let original_expr = format!("{lhs_text} {op_str} {rhs_text}");
+        let original_expr = if compound_assignment {
+            format!("{lhs_text} {op_str}= {rhs_text}")
+        } else {
+            format!("{lhs_text} {op_str} {rhs_text}")
+        };
 
         // Use the full expression span for the mutation (not just the operator span)
         let expr_span = context.span;
@@ -61,9 +64,13 @@ impl Mutator for BinaryOpMutator {
         Ok(operations
             .into_iter()
             .filter(|&kind| kind != op)
+            .filter(|&kind| !compound_assignment || is_valid_compound_assignment_op(kind))
             .map(|kind| {
-                // Build mutated expression: "lhs new_op rhs"
-                let mutated_expr = format!("{} {} {}", lhs_text, kind.to_str(), rhs_text);
+                let mutated_expr = if compound_assignment {
+                    format!("{} {}= {}", lhs_text, kind.to_str(), rhs_text)
+                } else {
+                    format!("{} {} {}", lhs_text, kind.to_str(), rhs_text)
+                };
                 Mutant {
                     span: expr_span,
                     mutation: MutationType::BinaryOpExpr { new_op: kind, mutated_expr },
@@ -82,19 +89,36 @@ impl Mutator for BinaryOpMutator {
             return false;
         }
 
-        match ctxt.expr.unwrap().kind {
-            ExprKind::Binary(_, _, _) => true,
-            ExprKind::Assign(_, bin_op, _) => bin_op.is_some(),
-            _ => false,
-        }
+        matches!(
+            ctxt.expr.unwrap().kind,
+            ExprKind::Binary(_, _, _) | ExprKind::Assign(_, Some(_), _)
+        )
     }
 }
 
+const fn is_valid_compound_assignment_op(kind: BinOpKind) -> bool {
+    matches!(
+        kind,
+        BinOpKind::BitOr
+            | BinOpKind::BitXor
+            | BinOpKind::BitAnd
+            | BinOpKind::Shl
+            | BinOpKind::Shr
+            | BinOpKind::Add
+            | BinOpKind::Sub
+            | BinOpKind::Mul
+            | BinOpKind::Div
+            | BinOpKind::Rem
+    )
+}
+
 /// Extract the binary operator, its span, and LHS/RHS expressions
-fn get_bin_op_parts<'a>(expr: &'a Expr<'a>) -> Result<(BinOp, Span, &'a Expr<'a>, &'a Expr<'a>)> {
+fn get_bin_op_parts<'a>(
+    expr: &'a Expr<'a>,
+) -> Result<(BinOp, Span, &'a Expr<'a>, &'a Expr<'a>, bool)> {
     match &expr.kind {
-        ExprKind::Assign(lhs, Some(bin_op), rhs) => Ok((*bin_op, bin_op.span, lhs, rhs)),
-        ExprKind::Binary(lhs, op, rhs) => Ok((*op, op.span, lhs, rhs)),
+        ExprKind::Assign(lhs, Some(op), rhs) => Ok((*op, op.span, lhs, rhs, true)),
+        ExprKind::Binary(lhs, op, rhs) => Ok((*op, op.span, lhs, rhs, false)),
         _ => eyre::bail!("BinaryOpMutator: unexpected expression kind"),
     }
 }

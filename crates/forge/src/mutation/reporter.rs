@@ -97,7 +97,30 @@ impl MutationReporter {
             let _ = sh_println!("{}", Paint::red("Survived mutants").bold());
             let _ = sh_println!("{}", "─".repeat(60));
 
-            for (i, mutant) in summary.get_survived().iter().enumerate() {
+            // Sort by (file, line, column, span, mutation text) so the
+            // reported order is deterministic across runs / worker counts.
+            // Workers complete in arbitrary order, so without this every run
+            // can permute the report.
+            let mut survived: Vec<&Mutant> = summary.get_survived().iter().collect();
+            survived.sort_by(|a, b| {
+                (
+                    a.relative_path(),
+                    a.line_number,
+                    a.column_number,
+                    a.span.lo().0,
+                    a.span.hi().0,
+                    a.mutation.to_string(),
+                )
+                    .cmp(&(
+                        b.relative_path(),
+                        b.line_number,
+                        b.column_number,
+                        b.span.lo().0,
+                        b.span.hi().0,
+                        b.mutation.to_string(),
+                    ))
+            });
+            for (i, mutant) in survived.iter().enumerate() {
                 self.print_survived_mutant(i + 1, mutant);
             }
         }

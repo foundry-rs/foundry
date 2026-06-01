@@ -6,7 +6,7 @@
 //! - Running mutations in parallel with caching
 //! - Aggregating results and reporting
 
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 
 use alloy_primitives::keccak256;
 use eyre::{Result, WrapErr};
@@ -20,9 +20,13 @@ use foundry_compilers::{
 use foundry_config::{Config, filter::GlobMatcher};
 use foundry_evm::opts::EvmOpts;
 
-use crate::mutation::{
-    MutationHandler, MutationProgress, MutationReporter, MutationsSummary, mutant::MutationResult,
-    runner::run_mutations_parallel_with_progress,
+use crate::{
+    cmd::test::FilterArgs,
+    mutation::{
+        MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
+        mutant::{Mutant, MutationResult},
+        runner::run_mutations_parallel_with_progress,
+    },
 };
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
@@ -39,8 +43,19 @@ struct ExecutionCacheFingerprint<'a> {
     schema: &'static str,
     config: &'a Config,
     evm_opts: &'a EvmOpts,
+    filter_args: FilterArgsFingerprint<'a>,
     num_workers: usize,
     artifacts: &'a [ArtifactCacheFingerprint],
+}
+
+#[derive(serde::Serialize)]
+struct FilterArgsFingerprint<'a> {
+    test_pattern: Option<&'a str>,
+    test_pattern_inverse: Option<&'a str>,
+    contract_pattern: Option<&'a str>,
+    contract_pattern_inverse: Option<&'a str>,
+    path_pattern: Option<&'a str>,
+    path_pattern_inverse: Option<&'a str>,
 }
 
 /// Configuration for mutation testing run.
@@ -57,6 +72,17 @@ pub struct MutationRunConfig {
     pub show_progress: bool,
     /// Whether to output JSON (suppress all other output).
     pub json_output: bool,
+    /// Test filter (`--match-test`, `--match-contract`, `--match-path`, ...)
+    /// applied identically to baseline and every mutant run so they exercise
+    /// the same test set.
+    pub filter_args: FilterArgs,
+    /// Project-relative source files selected for the baseline compile.
+    /// Re-rooted into each per-mutant workspace so compilation and execution
+    /// honor the same filtered test universe.
+    pub selected_sources_relative: Vec<PathBuf>,
+    /// EVM isolation flag — mirrors the canonical `forge test` runner so
+    /// baseline and mutant runs use the same execution model.
+    pub isolate: bool,
 }
 
 impl MutationRunConfig {
@@ -102,9 +128,22 @@ pub async fn run_mutation_testing(
     let execution_cache_output = ProjectCompiler::new()
         .dynamic_test_linking(config.dynamic_test_linking)
         .quiet(json_output)
+        .files(
+            mutation_config
+                .selected_sources_relative
+                .iter()
+                .map(|path| config.root.join(path))
+                .filter(|path| path.exists())
+                .collect::<Vec<_>>(),
+        )
         .compile(&config.project()?)?;
-    let execution_cache_key =
-        mutation_execution_cache_key(&config, &execution_cache_output, &evm_opts, num_workers)?;
+    let execution_cache_key = mutation_execution_cache_key(
+        &config,
+        &execution_cache_output,
+        &evm_opts,
+        &mutation_config.filter_args,
+        num_workers,
+    )?;
 
     if !mutation_config.show_progress && !json_output {
         sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
@@ -133,8 +172,33 @@ pub async fn run_mutation_testing(
             .find_map(|(id, _)| (id.source == path).then_some(id.build_id))
             .unwrap_or_default();
 
-        // Check for cached results
-        if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id, &execution_cache_key)
+        // Load persisted survived spans before generating/loading mutants so
+        // resumed runs can retain adaptively skipped points as Skipped results
+        // while only executing mutants whose spans still need coverage.
+        handler.retrieve_survived_spans(&build_id, &execution_cache_key);
+
+        // Generate or load cached mutants. Adaptive resume happens after the
+        // full mutant set is known so skipped points are still counted and
+        // reported as Skipped instead of disappearing from totals.
+        let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
+            ms
+        } else {
+            handler.generate_ast().await?;
+            handler.mutations.clone()
+        };
+
+        if mutants.is_empty() {
+            if !mutation_config.show_progress && !json_output {
+                sh_println!("  No mutants generated for {}", path.display())?;
+            }
+            continue;
+        }
+
+        // Check for cached results only after the current mutant set is known.
+        // The result cache carries a count/hash of that set so stale or partial
+        // caches cannot suppress newly generated mutants.
+        if let Some(prior) =
+            handler.retrieve_cached_mutant_results(&build_id, &execution_cache_key, &mutants)
         {
             if !mutation_config.show_progress && !json_output {
                 sh_println!("  Using cached results for {} mutants", prior.len())?;
@@ -152,42 +216,33 @@ pub async fn run_mutation_testing(
             continue;
         }
 
-        // Generate or load cached mutants
-        let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
-            ms
-        } else {
-            handler.generate_ast(json_output).await?;
-            handler.mutations.clone()
-        };
-
-        if mutants.is_empty() {
-            if !mutation_config.show_progress && !json_output {
-                sh_println!("  No mutants generated for {}", path.display())?;
-            }
-            continue;
-        }
-
-        // Load survived spans for adaptive mutation testing. Only loaded after
-        // we successfully obtained mutants for this build, so a stale survived
-        // cache from a different mutant set is not applied.
-        handler.retrieve_survived_spans(&build_id, &execution_cache_key);
-
         // Sort mutations by span for optimal adaptive testing
         mutants.sort_by(|a, b| {
             a.span.lo().0.cmp(&b.span.lo().0).then_with(|| b.span.hi().0.cmp(&a.span.hi().0))
         });
 
+        let (mutants_to_test, skipped_results) =
+            partition_adaptively_skipped_mutants(&mut handler, &mutants);
+
         // Create progress display if enabled (not in JSON mode)
         let progress = if mutation_config.show_progress && !json_output {
-            let p =
-                MutationProgress::with_timeout(mutants.len(), num_workers, config.mutation.timeout);
+            let p = MutationProgress::with_timeout(
+                mutants_to_test.len(),
+                num_workers,
+                config.mutation.timeout,
+            );
             // Show relative path from project root
             let display_path =
                 path.strip_prefix(&config.root).unwrap_or(&path).display().to_string();
             p.set_current_file(&display_path);
             Some(p)
         } else if !json_output {
-            sh_println!("  Generated {} mutants, testing in parallel...", mutants.len())?;
+            sh_println!(
+                "  Generated {} mutants; testing {}, adaptively skipped {}",
+                mutants.len(),
+                mutants_to_test.len(),
+                skipped_results.len()
+            )?;
             None
         } else {
             None
@@ -195,7 +250,7 @@ pub async fn run_mutation_testing(
 
         // Run mutations in parallel using isolated workspaces
         let results = run_mutations_parallel_with_progress(
-            mutants.clone(),
+            mutants_to_test.clone(),
             path.clone(),
             handler.src.clone(),
             config.clone(),
@@ -203,10 +258,14 @@ pub async fn run_mutation_testing(
             num_workers,
             progress.clone(),
             json_output,
+            mutation_config.filter_args.clone(),
+            Arc::new(mutation_config.selected_sources_relative.clone()),
+            mutation_config.isolate,
         )?;
 
         // Collect results for caching
-        let mut results_vec = Vec::with_capacity(results.len());
+        let mut results_vec = Vec::with_capacity(skipped_results.len() + results.len());
+        results_vec.extend(skipped_results);
         for result in results {
             results_vec.push((result.mutant.clone(), result.result.clone()));
             match result.result {
@@ -234,11 +293,23 @@ pub async fn run_mutation_testing(
         //   - non-cancelled-but-short result vectors indicate a bug, not a hit
         // The mutants list itself is fine to persist (it's deterministic from
         // the AST + operator set) and so are survived spans (best-effort hint).
+        //
+        // Sort the persisted result vector by mutant span so the on-disk
+        // cache is independent of rayon worker completion order; otherwise
+        // the cache file changes content-hash run-to-run even when the
+        // outcomes are identical, defeating diffing and reproducibility.
+        results_vec.sort_by(|(a, _), (b, _)| {
+            a.span.lo().0.cmp(&b.span.lo().0).then_with(|| a.span.hi().0.cmp(&b.span.hi().0))
+        });
         if !mutants.is_empty() && !build_id.is_empty() {
             let _ = handler.persist_cached_mutants(&build_id, &mutants);
             if complete_run {
-                let _ =
-                    handler.persist_cached_results(&build_id, &execution_cache_key, &results_vec);
+                let _ = handler.persist_cached_results(
+                    &build_id,
+                    &execution_cache_key,
+                    &mutants,
+                    &results_vec,
+                );
             }
             let _ = handler.persist_survived_spans(&build_id, &execution_cache_key);
         }
@@ -271,14 +342,14 @@ pub async fn run_mutation_testing(
 /// settings. Hashing the full serialized config intentionally includes fuzz /
 /// invariant settings, test filters, fs permissions, sender/balance/env values,
 /// and future config fields unless explicitly skipped by `Config` itself. The
-/// artifact fingerprint covers the unfiltered source and test build IDs, so
-/// changing a test file invalidates result caches even when the outer test run
-/// was filtered. Worker count is included because adaptive span skipping is
-/// concurrency-sensitive.
+/// artifact fingerprint covers the same filter-selected source and test build
+/// IDs that baseline and mutant runs compile. Worker count is included because
+/// adaptive span skipping is concurrency-sensitive.
 fn mutation_execution_cache_key(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: &EvmOpts,
+    filter_args: &FilterArgs,
     num_workers: usize,
 ) -> Result<String> {
     let artifacts = output
@@ -291,12 +362,13 @@ fn mutation_execution_cache_key(
             profile: id.profile,
         })
         .collect::<Vec<_>>();
-    mutation_execution_cache_key_from_parts(config, evm_opts, num_workers, artifacts)
+    mutation_execution_cache_key_from_parts(config, evm_opts, filter_args, num_workers, artifacts)
 }
 
 fn mutation_execution_cache_key_from_parts(
     config: &Config,
     evm_opts: &EvmOpts,
+    filter_args: &FilterArgs,
     num_workers: usize,
     mut artifacts: Vec<ArtifactCacheFingerprint>,
 ) -> Result<String> {
@@ -305,6 +377,7 @@ fn mutation_execution_cache_key_from_parts(
         schema: "mutation-results-v1",
         config,
         evm_opts,
+        filter_args: filter_args_fingerprint(filter_args),
         num_workers,
         artifacts: &artifacts,
     };
@@ -314,36 +387,62 @@ fn mutation_execution_cache_key_from_parts(
     Ok(keccak256(encoded).to_string())
 }
 
+fn filter_args_fingerprint(filter_args: &FilterArgs) -> FilterArgsFingerprint<'_> {
+    FilterArgsFingerprint {
+        test_pattern: filter_args.test_pattern.as_ref().map(|re| re.as_str()),
+        test_pattern_inverse: filter_args.test_pattern_inverse.as_ref().map(|re| re.as_str()),
+        contract_pattern: filter_args.contract_pattern.as_ref().map(|re| re.as_str()),
+        contract_pattern_inverse: filter_args
+            .contract_pattern_inverse
+            .as_ref()
+            .map(|re| re.as_str()),
+        path_pattern: filter_args.path_pattern.as_ref().map(|glob| glob.as_str()),
+        path_pattern_inverse: filter_args.path_pattern_inverse.as_ref().map(|glob| glob.as_str()),
+    }
+}
+
+fn partition_adaptively_skipped_mutants(
+    handler: &mut MutationHandler,
+    mutants: &[Mutant],
+) -> (Vec<Mutant>, Vec<(Mutant, MutationResult)>) {
+    let mut skipped_results = Vec::new();
+    let mutants_to_test = mutants
+        .iter()
+        .filter_map(|mutant| {
+            if handler.should_skip_span(mutant.span) {
+                handler.add_skipped_mutant(mutant.clone());
+                skipped_results.push((mutant.clone(), MutationResult::Skipped));
+                None
+            } else {
+                Some(mutant.clone())
+            }
+        })
+        .collect();
+
+    (mutants_to_test, skipped_results)
+}
+
 /// Resolve which paths to mutate based on configuration.
+///
+/// Resolution order:
+/// 1. Pick the *base* set of candidate files:
+///    - `--mutate-path <GLOB>` → all source files matching the glob, OR
+///    - explicit `--mutate PATH...` → those validated files, OR
+///    - default → every Solidity file under `config.src`.
+/// 2. If `--mutate-contract <REGEX>` is set, intersect the base set with files that contain at
+///    least one contract whose name matches the regex. The per-file contract filter still
+///    re-applies inside the handler.
 fn resolve_mutate_paths(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
     mutation_config: &MutationRunConfig,
 ) -> Result<Vec<PathBuf>> {
-    let paths = if let Some(pattern) = &mutation_config.mutate_path_pattern {
-        // If --mutate-path is provided, use it to filter paths
+    // 1. Base path set.
+    let base: Vec<PathBuf> = if let Some(pattern) = &mutation_config.mutate_path_pattern {
         source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
             .filter(|entry| entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry))
             .collect()
-    } else if let Some(contract_pattern) = &mutation_config.mutate_contract_pattern {
-        // If --mutate-contract is provided, use it to filter contracts
-        source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-            .filter(|entry| {
-                entry.is_sol()
-                    && !entry.is_sol_test()
-                    && output
-                        .artifact_ids()
-                        .filter(|(id, _)| id.source == *entry)
-                        .any(|(id, _)| contract_pattern.is_match(&id.name))
-            })
-            .collect()
-    } else if mutation_config.mutate_paths.is_empty() {
-        // If --mutate is passed without arguments, use all Solidity files
-        source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
-            .filter(|entry| entry.is_sol() && !entry.is_sol_test())
-            .collect()
-    } else {
-        // If --mutate is passed with arguments, validate and use those paths
+    } else if !mutation_config.mutate_paths.is_empty() {
         let root_canon =
             config.root.canonicalize().wrap_err("failed to canonicalize project root")?;
         let mut validated = Vec::with_capacity(mutation_config.mutate_paths.len());
@@ -373,6 +472,28 @@ fn resolve_mutate_paths(
             validated.push(canon);
         }
         validated
+    } else {
+        source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+            .filter(|entry| entry.is_sol() && !entry.is_sol_test())
+            .collect()
+    };
+
+    // 2. Intersect with `--mutate-contract` if set, so explicit `--mutate <paths>` combined with
+    //    `--mutate-contract <regex>` does the principled thing (the listed files, restricted to
+    //    those containing a matching contract) instead of silently expanding to every source file.
+    let paths = if let Some(contract_pattern) = &mutation_config.mutate_contract_pattern {
+        let matching_sources: HashSet<PathBuf> = output
+            .artifact_ids()
+            .filter_map(|(id, _)| contract_pattern.is_match(&id.name).then_some(id.source.clone()))
+            .collect();
+        let paths: Vec<_> =
+            base.into_iter().filter(|entry| matching_sources.contains(entry)).collect();
+        if paths.is_empty() && !mutation_config.mutate_paths.is_empty() {
+            eyre::bail!("no source matched --mutate-contract within the selected --mutate paths");
+        }
+        paths
+    } else {
+        base
     };
 
     Ok(paths)
@@ -381,6 +502,10 @@ fn resolve_mutate_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
+
+    use crate::mutation::mutant::MutationType;
+    use solar::{ast::Span, interface::BytePos};
 
     fn artifact(build_id: &str) -> ArtifactCacheFingerprint {
         ArtifactCacheFingerprint {
@@ -392,6 +517,30 @@ mod tests {
         }
     }
 
+    fn filter_args() -> FilterArgs {
+        FilterArgs {
+            test_pattern: None,
+            test_pattern_inverse: None,
+            contract_pattern: None,
+            contract_pattern_inverse: None,
+            path_pattern: None,
+            path_pattern_inverse: None,
+            coverage_pattern_inverse: None,
+        }
+    }
+
+    fn mutant(lo: u32, hi: u32) -> Mutant {
+        Mutant {
+            path: PathBuf::from("src/Counter.sol"),
+            span: Span::new(BytePos(lo), BytePos(hi)),
+            mutation: MutationType::DeleteExpression,
+            original: "number++".to_string(),
+            source_line: "number++;".to_string(),
+            line_number: 1,
+            column_number: 1,
+        }
+    }
+
     #[test]
     fn execution_cache_key_changes_when_fuzz_config_changes() {
         let first = Config::default();
@@ -399,13 +548,20 @@ mod tests {
         second.fuzz.runs += 1;
 
         let evm_opts = EvmOpts::default();
+        let filter_args = filter_args();
         let artifacts = vec![artifact("build-a")];
 
-        let first_key =
-            mutation_execution_cache_key_from_parts(&first, &evm_opts, 1, artifacts.clone())
-                .unwrap();
+        let first_key = mutation_execution_cache_key_from_parts(
+            &first,
+            &evm_opts,
+            &filter_args,
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
         let second_key =
-            mutation_execution_cache_key_from_parts(&second, &evm_opts, 1, artifacts).unwrap();
+            mutation_execution_cache_key_from_parts(&second, &evm_opts, &filter_args, 1, artifacts)
+                .unwrap();
 
         assert_ne!(first_key, second_key);
     }
@@ -417,12 +573,20 @@ mod tests {
         let mut second = first.clone();
         second.memory_limit = first.memory_limit + 1;
 
+        let filter_args = filter_args();
         let artifacts = vec![artifact("build-a")];
 
-        let first_key =
-            mutation_execution_cache_key_from_parts(&config, &first, 1, artifacts.clone()).unwrap();
+        let first_key = mutation_execution_cache_key_from_parts(
+            &config,
+            &first,
+            &filter_args,
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
         let second_key =
-            mutation_execution_cache_key_from_parts(&config, &second, 1, artifacts).unwrap();
+            mutation_execution_cache_key_from_parts(&config, &second, &filter_args, 1, artifacts)
+                .unwrap();
 
         assert_ne!(first_key, second_key);
     }
@@ -431,10 +595,12 @@ mod tests {
     fn execution_cache_key_changes_when_compiled_artifacts_change() {
         let config = Config::default();
         let evm_opts = EvmOpts::default();
+        let filter_args = filter_args();
 
         let first_key = mutation_execution_cache_key_from_parts(
             &config,
             &evm_opts,
+            &filter_args,
             1,
             vec![artifact("build-a")],
         )
@@ -442,6 +608,7 @@ mod tests {
         let second_key = mutation_execution_cache_key_from_parts(
             &config,
             &evm_opts,
+            &filter_args,
             1,
             vec![artifact("build-b")],
         )
@@ -454,14 +621,17 @@ mod tests {
     fn execution_cache_key_sorts_artifacts_before_hashing() {
         let config = Config::default();
         let evm_opts = EvmOpts::default();
+        let filter_args = filter_args();
 
         let first = vec![artifact("build-a"), artifact("build-b")];
         let second = vec![artifact("build-b"), artifact("build-a")];
 
         let first_key =
-            mutation_execution_cache_key_from_parts(&config, &evm_opts, 1, first).unwrap();
+            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, 1, first)
+                .unwrap();
         let second_key =
-            mutation_execution_cache_key_from_parts(&config, &evm_opts, 1, second).unwrap();
+            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, 1, second)
+                .unwrap();
 
         assert_eq!(first_key, second_key);
     }
@@ -470,14 +640,105 @@ mod tests {
     fn execution_cache_key_changes_when_worker_count_changes() {
         let config = Config::default();
         let evm_opts = EvmOpts::default();
+        let filter_args = filter_args();
         let artifacts = vec![artifact("build-a")];
 
-        let first_key =
-            mutation_execution_cache_key_from_parts(&config, &evm_opts, 1, artifacts.clone())
-                .unwrap();
+        let first_key = mutation_execution_cache_key_from_parts(
+            &config,
+            &evm_opts,
+            &filter_args,
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
         let second_key =
-            mutation_execution_cache_key_from_parts(&config, &evm_opts, 4, artifacts).unwrap();
+            mutation_execution_cache_key_from_parts(&config, &evm_opts, &filter_args, 4, artifacts)
+                .unwrap();
 
         assert_ne!(first_key, second_key);
+    }
+
+    #[test]
+    fn execution_cache_key_changes_when_match_test_filter_changes() {
+        let config = Config::default();
+        let evm_opts = EvmOpts::default();
+        let mut first_filter = filter_args();
+        let mut second_filter = filter_args();
+        first_filter.test_pattern = Some(regex::Regex::new("testA|testAlpha").unwrap());
+        second_filter.test_pattern = Some(regex::Regex::new("testB|testBeta").unwrap());
+        let artifacts = vec![artifact("build-a")];
+
+        let first_key = mutation_execution_cache_key_from_parts(
+            &config,
+            &evm_opts,
+            &first_filter,
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
+        let second_key = mutation_execution_cache_key_from_parts(
+            &config,
+            &evm_opts,
+            &second_filter,
+            1,
+            artifacts,
+        )
+        .unwrap();
+
+        assert_ne!(first_key, second_key);
+    }
+
+    #[test]
+    fn execution_cache_key_changes_when_match_path_filter_changes() {
+        let config = Config::default();
+        let evm_opts = EvmOpts::default();
+        let mut first_filter = filter_args();
+        let mut second_filter = filter_args();
+        first_filter.path_pattern = Some(GlobMatcher::from_str("test/A.t.sol").unwrap());
+        second_filter.path_pattern = Some(GlobMatcher::from_str("test/B.t.sol").unwrap());
+        let artifacts = vec![artifact("build-a")];
+
+        let first_key = mutation_execution_cache_key_from_parts(
+            &config,
+            &evm_opts,
+            &first_filter,
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
+        let second_key = mutation_execution_cache_key_from_parts(
+            &config,
+            &evm_opts,
+            &second_filter,
+            1,
+            artifacts,
+        )
+        .unwrap();
+
+        assert_ne!(first_key, second_key);
+    }
+
+    #[test]
+    fn resumed_adaptive_skips_are_reported_as_skipped_results() {
+        let mut handler =
+            MutationHandler::new(PathBuf::from("src/Counter.sol"), Arc::new(Config::default()));
+        handler.mark_span_survived(Span::new(BytePos(10), BytePos(20)));
+
+        let exact_survivor = mutant(10, 20);
+        let skipped_child = mutant(12, 18);
+        let unrelated = mutant(30, 40);
+        let (mutants_to_test, skipped_results) = partition_adaptively_skipped_mutants(
+            &mut handler,
+            &[exact_survivor.clone(), skipped_child.clone(), unrelated.clone()],
+        );
+
+        assert_eq!(mutants_to_test.len(), 2);
+        assert_eq!(mutants_to_test[0].span, exact_survivor.span);
+        assert_eq!(mutants_to_test[1].span, unrelated.span);
+        assert_eq!(skipped_results.len(), 1);
+        assert!(matches!(skipped_results[0].1, MutationResult::Skipped));
+        assert_eq!(skipped_results[0].0.span, skipped_child.span);
+        assert_eq!(handler.get_report().total_skipped(), 1);
+        assert_eq!(handler.get_report().total_mutants(), 1);
     }
 }

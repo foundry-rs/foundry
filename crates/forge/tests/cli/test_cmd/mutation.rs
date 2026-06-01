@@ -113,6 +113,57 @@ Survived mutants
 "#]]);
 });
 
+forgetest_init!(mutation_testing_rejects_all_skipped_baseline, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        vm.skip(true);
+        counter = new Counter();
+    }
+
+    function test_Increment() public {
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+}
+"#,
+    );
+
+    let output = cmd.args(["test", "--mutate", "src/Counter.sol"]).assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+
+    assert!(
+        stderr.contains("Mutation testing requires at least one passing baseline test"),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
 forgetest_init!(mutation_testing_with_parallel_workers, |prj, cmd| {
     prj.add_source(
         "Simple.sol",
@@ -349,6 +400,273 @@ contract CalculatorTest {
     );
 });
 
+forgetest_init!(mutation_result_cache_invalidates_when_match_test_changes, |prj, _cmd| {
+    prj.add_source(
+        "Calculator.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Calculator {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Calculator.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract CalculatorTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Weak() public view {
+        calculator.add(1, 2);
+    }
+
+    function test_Strong() public view {
+        assert(calculator.add(1, 2) == 3);
+    }
+}
+"#,
+    );
+
+    let mut weak_cmd = prj.forge_command();
+    let weak_stdout = weak_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-test",
+            "test_Weak",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let weak_summary = mutation_summary(&weak_stdout);
+
+    let mut strong_cmd = prj.forge_command();
+    let strong_stdout = strong_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-test",
+            "test_Strong",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let strong_summary = mutation_summary(&strong_stdout);
+
+    assert_eq!(weak_summary["total"], strong_summary["total"]);
+    assert!(
+        strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
+        "expected --match-test to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
+    );
+});
+
+forgetest_init!(mutation_result_cache_invalidates_when_match_path_changes, |prj, _cmd| {
+    prj.add_source(
+        "Calculator.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Calculator {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Weak.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract WeakTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Weak() public view {
+        calculator.add(1, 2);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Strong.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract StrongTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Strong() public view {
+        assert(calculator.add(1, 2) == 3);
+    }
+}
+"#,
+    );
+
+    let mut weak_cmd = prj.forge_command();
+    let weak_stdout = weak_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-path",
+            "test/Weak.t.sol",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let weak_summary = mutation_summary(&weak_stdout);
+
+    let mut strong_cmd = prj.forge_command();
+    let strong_stdout = strong_cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Calculator.sol",
+            "--mutation-jobs",
+            "1",
+            "--match-path",
+            "test/Strong.t.sol",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let strong_summary = mutation_summary(&strong_stdout);
+
+    assert_eq!(weak_summary["total"], strong_summary["total"]);
+    assert!(
+        strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
+        "expected --match-path to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
+    );
+});
+
+forgetest_init!(mutation_honors_match_path_at_compile_time, |prj, cmd| {
+    prj.add_source(
+        "Foo.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Foo {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "FooSelected.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Foo.sol";
+
+contract FooSelectedTest {
+    Foo internal foo;
+
+    function setUp() public {
+        foo = new Foo();
+    }
+
+    function test_Add() public view {
+        assert(foo.add(2, 3) == 5);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "FooBroken.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Foo.sol";
+
+contract FooBrokenTest {
+    function test_Broken() public pure {
+        NonExistent x = NonExistent(0);
+        x.doSomething();
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse().args(["test", "--match-path", "test/FooSelected.t.sol"]).assert_success();
+
+    cmd.forge_fuse().args([
+        "test",
+        "--mutate",
+        "src/Foo.sol",
+        "--match-path",
+        "test/FooSelected.t.sol",
+        "--mutation-jobs",
+        "1",
+        "--json",
+    ]);
+
+    let out = cmd.assert_success().get_output().stdout_lossy();
+    let summary = mutation_summary(&out);
+
+    let total = summary["total"].as_u64().unwrap_or(0);
+    let invalid = summary["invalid"].as_u64().unwrap_or(u64::MAX);
+    let killed = summary["killed"].as_u64().unwrap_or(0);
+    let survived = summary["survived"].as_u64().unwrap_or(0);
+
+    assert!(
+        invalid < total,
+        "filtered-out FooBroken.t.sol must not make every mutant Invalid; summary={summary}"
+    );
+    assert!(
+        killed + survived >= 1,
+        "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
+    );
+});
+
 // Test require/assert mutation for security-critical patterns
 forgetest_init!(mutation_testing_require_mutator, |prj, cmd| {
     // A contract with security-critical require checks (access control, input validation)
@@ -516,16 +834,16 @@ MUTATION TESTING RESULTS
 ╭──────────┬───────────┬────────────╮
 │ Status   ┆ # Mutants ┆ % of Total │
 ╞══════════╪═══════════╪════════════╡
-│ Survived ┆ 1         ┆ 1.6%       │
+│ Survived ┆ 3         ┆ 5.2%       │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Killed   ┆ 51        ┆ 82.3%      │
+│ Killed   ┆ 46        ┆ 79.3%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Invalid  ┆ 9         ┆ 14.5%      │
+│ Invalid  ┆ 7         ┆ 12.1%      │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Skipped  ┆ 1         ┆ 1.6%       │
+│ Skipped  ┆ 2         ┆ 3.4%       │
 ╰──────────┴───────────┴────────────╯
 ...
-Mutation Score: 98.1% (51/52 mutants killed); [ELAPSED]
+Mutation Score: 93.9% (46/49 mutants killed); [ELAPSED]
 ...
 "#]]);
 });

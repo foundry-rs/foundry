@@ -18,16 +18,32 @@ pub struct MutatorTestCase<'a> {
 
 pub trait MutatorTester {
     fn test_mutator<M: Mutator + 'static>(mutator: M, test_case: MutatorTestCase<'_>) {
+        // Wrap the snippet in a minimal but valid Solidity source unit so the
+        // parser/visitor actually walks into expression contexts. Bare
+        // fragments like `"x + y"` or `"a += b"` are not parseable on their
+        // own; without wrapping, the parser would emit errors that the test
+        // harness used to swallow, silently making mutator tests vacuous.
+        let wrapped = format!(
+            "// SPDX-License-Identifier: MIT\n\
+             pragma solidity ^0.8.0;\n\
+             contract __TestC {{\n\
+                 function __test() public {{\n\
+                     {input};\n\
+                 }}\n\
+             }}\n",
+            input = test_case.input,
+        );
+
         let sess = Session::builder().with_silent_emitter(None).build();
 
-        let _ = sess.enter(|| -> solar::interface::Result<()> {
+        let outcome = sess.enter(|| -> solar::interface::Result<Vec<String>> {
             let arena = Arena::new();
 
             let mut parser = Parser::from_lazy_source_code(
                 &sess,
                 &arena,
                 FileName::Real(PathBuf::from("test.sol")),
-                || Ok(test_case.input.to_string()),
+                || Ok(wrapped.clone()),
             )?;
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
@@ -36,41 +52,42 @@ pub trait MutatorTester {
                 PathBuf::from("test.sol"),
                 vec![Box::new(mutator)],
             )
-            .with_source(test_case.input);
+            .with_source(&wrapped);
 
             let _ = mutant_visitor.visit_source_unit(&ast);
 
-            let mutations = mutant_visitor.mutation_to_conduct;
-
-            if let Some(expected) = test_case.expected_mutations {
-                assert_eq!(
-                    mutations.len(),
-                    expected.len(),
-                    "Expected {} mutations, got {}: {:?}",
-                    expected.len(),
-                    mutations.len(),
-                    mutations.iter().map(|m| m.mutation.to_string()).collect::<Vec<_>>()
-                );
-
-                for mutation in &mutations {
-                    let mutation_str = mutation.mutation.to_string();
-                    assert!(
-                        expected.contains(&mutation_str.as_str()),
-                        "Unexpected mutation: {mutation_str}. Expected one of: {expected:?}",
-                    );
-                }
-            } else {
-                assert_eq!(
-                    mutations.len(),
-                    0,
-                    "Expected no mutations, got {}: {:?}",
-                    mutations.len(),
-                    mutations.iter().map(|m| m.mutation.to_string()).collect::<Vec<_>>()
-                );
-            }
-
-            Ok(())
+            Ok(mutant_visitor
+                .mutation_to_conduct
+                .into_iter()
+                .map(|m| m.mutation.to_string())
+                .collect())
         });
+
+        // Surface parse/visit errors instead of silently passing the test.
+        let mutations = outcome.unwrap_or_else(|_| {
+            panic!(
+                "mutator test input failed to parse/visit; wrapped source was:\n{wrapped}\n\
+                 raw input: {input:?}",
+                input = test_case.input,
+            )
+        });
+
+        if let Some(expected) = test_case.expected_mutations {
+            let mut actual = mutations;
+            actual.sort();
+
+            let mut expected = expected.into_iter().map(str::to_string).collect::<Vec<_>>();
+            expected.sort();
+
+            assert_eq!(actual, expected, "Unexpected mutation set for input {:?}", test_case.input);
+        } else {
+            assert!(
+                mutations.is_empty(),
+                "Expected no mutations, got {}: {:?}",
+                mutations.len(),
+                mutations,
+            );
+        }
     }
 }
 
