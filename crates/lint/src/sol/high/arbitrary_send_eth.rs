@@ -1627,11 +1627,13 @@ fn collect_modifier_safety(
 ) {
     let ItemId::Function(fid) = invocation.id else { return };
     let Some((modifier, prefix)) = modifier_prefix(hir, fid) else { return };
-    let arg_map: Vec<(hir::VariableId, hir::VariableId)> = invocation
-        .args
-        .exprs()
-        .enumerate()
-        .filter_map(|(i, arg)| Some((*modifier.parameters.get(i)?, underlying_var(arg)?)))
+    let arg_map: Vec<(hir::VariableId, hir::VariableId)> = modifier
+        .parameters
+        .iter()
+        .filter_map(|&mp| {
+            let arg = arg_for_param(hir, modifier, mp, &invocation.args)?;
+            Some((mp, underlying_var(arg)?))
+        })
         .collect();
     if arg_map.is_empty() {
         return;
