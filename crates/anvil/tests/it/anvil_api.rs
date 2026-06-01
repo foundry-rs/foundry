@@ -1257,6 +1257,21 @@ async fn can_get_node_info_tempo_t0() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_tempo_t5_from_chain_timestamp() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let timestamp = TempoHardfork::T5.mainnet_activation_timestamp().unwrap();
+    let config = NodeConfig::test_tempo()
+        .with_chain_id(Some(4217u64))
+        .with_genesis_timestamp(Some(timestamp));
+    let (api, _handle) = spawn(config).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    assert_eq!(node_info.hard_fork, "T5");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_node_info_tempo_t1() {
     use tempo_chainspec::hardfork::TempoHardfork;
 
