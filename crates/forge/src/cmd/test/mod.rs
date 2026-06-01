@@ -471,6 +471,12 @@ impl TestArgs {
             if self.junit {
                 conflicts.push("--junit");
             }
+            if coverage {
+                conflicts.push("coverage");
+            }
+            if self.showmap_out.is_some() {
+                conflicts.push("--showmap-out");
+            }
             if !conflicts.is_empty() {
                 bail!(
                     "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
@@ -737,35 +743,96 @@ impl TestArgs {
             // never resolve into the shared `lib`/`node_modules`/`dependencies`
             // trees.
             let root = &config_for_mutation.root;
-            let mut shared_dep_dirs: Vec<PathBuf> = config_for_mutation.libs.clone();
-            shared_dep_dirs.push(root.join("node_modules"));
-            shared_dep_dirs.push(root.join("dependencies"));
-            let shared_dep_dirs: Vec<PathBuf> =
-                shared_dep_dirs.into_iter().map(|p| dunce::canonicalize(&p).unwrap_or(p)).collect();
+            let canonicalize_through_existing_ancestor = |path: &Path| -> PathBuf {
+                let resolved =
+                    if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+                if let Ok(canon) = dunce::canonicalize(&resolved) {
+                    return canon;
+                }
 
-            let touches_shared_dep = |perm_path: &Path| -> bool {
-                let resolved = if perm_path.is_absolute() {
-                    perm_path.to_path_buf()
-                } else {
-                    root.join(perm_path)
-                };
-                let canon = dunce::canonicalize(&resolved).unwrap_or(resolved);
-                shared_dep_dirs.iter().any(|dep| {
-                    // Either the permission path is inside a shared dep dir
-                    // (write directly into deps), or it is an ancestor of one
-                    // (broad permission like `./` covers them transitively).
-                    canon.starts_with(dep) || dep.starts_with(&canon)
-                })
+                let mut missing = Vec::new();
+                let mut ancestor = resolved.as_path();
+                while !ancestor.exists() {
+                    let Some(name) = ancestor.file_name() else { break };
+                    missing.push(name.to_owned());
+                    let Some(parent) = ancestor.parent() else { break };
+                    ancestor = parent;
+                }
+
+                let mut canon = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.into());
+                for component in missing.iter().rev() {
+                    canon.push(component);
+                }
+                canon
+            };
+
+            let mut shared_dep_dirs: Vec<PathBuf> = config_for_mutation
+                .libs
+                .iter()
+                .filter(|p| p.exists())
+                .map(|p| canonicalize_through_existing_ancestor(p))
+                .collect();
+            for dep_dir in ["node_modules", "dependencies"] {
+                let dep_path = root.join(dep_dir);
+                if dep_path.exists() && dep_path.is_dir() {
+                    shared_dep_dirs.push(canonicalize_through_existing_ancestor(&dep_path));
+                }
+            }
+
+            let effective_permission = |path: &Path| -> Option<FsAccessPermission> {
+                let mut max_path_len = 0;
+                let mut highest_permission = FsAccessPermission::None;
+
+                for perm in &config_for_mutation.fs_permissions.permissions {
+                    let permission_path = canonicalize_through_existing_ancestor(&perm.path);
+                    if path.starts_with(&permission_path) {
+                        let path_len = permission_path.components().count();
+                        if path_len > max_path_len {
+                            max_path_len = path_len;
+                            highest_permission = perm.access;
+                        } else if path_len == max_path_len {
+                            highest_permission = match (highest_permission, perm.access) {
+                                (FsAccessPermission::ReadWrite, _)
+                                | (FsAccessPermission::Read, FsAccessPermission::Write)
+                                | (FsAccessPermission::Write, FsAccessPermission::Read) => {
+                                    FsAccessPermission::ReadWrite
+                                }
+                                (FsAccessPermission::None, perm) => perm,
+                                (existing_perm, _) => existing_perm,
+                            };
+                        }
+                    }
+                }
+
+                (max_path_len > 0).then_some(highest_permission)
+            };
+
+            let grants_write = |path: &Path| {
+                matches!(
+                    effective_permission(path),
+                    Some(FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+                )
             };
 
             let unsafe_write_paths: Vec<&Path> = config_for_mutation
                 .fs_permissions
                 .permissions
                 .iter()
-                .filter(|p| {
-                    matches!(p.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+                .filter(|perm| {
+                    matches!(perm.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
                 })
-                .filter(|p| touches_shared_dep(&p.path))
+                .filter(|perm| {
+                    let perm_path = canonicalize_through_existing_ancestor(&perm.path);
+                    shared_dep_dirs.iter().any(|dep| {
+                        if perm_path.starts_with(dep) {
+                            grants_write(&perm_path)
+                        } else if dep.starts_with(&perm_path) {
+                            grants_write(dep)
+                        } else {
+                            false
+                        }
+                    })
+                })
                 .map(|p| p.path.as_path())
                 .collect();
 

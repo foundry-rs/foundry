@@ -122,7 +122,7 @@ impl SharedMutationState {
 
     pub fn should_skip_span(&self, span: solar::ast::Span) -> bool {
         // Handle mutex poisoning gracefully - don't skip if we can't check
-        self.survived_spans.lock().map(|guard| guard.should_skip(span)).unwrap_or(false)
+        self.survived_spans.lock().map(|guard| guard.should_skip_in_live_run(span)).unwrap_or(false)
     }
 
     pub fn mark_span_survived(&self, span: solar::ast::Span) {
@@ -374,12 +374,14 @@ fn test_single_mutant_isolated(
     let temp_path = temp_dir.path().to_path_buf();
     let src_rel = workspace::relative_to_root(&config.root, &config.src);
     let test_rel = workspace::relative_to_root(&config.root, &config.test);
+    let script_rel = workspace::relative_to_root(&config.root, &config.script);
 
     let mut temp_config = Config::load_with_root(&temp_path).unwrap_or_else(|_| {
         let mut c = Config::clone(config.as_ref());
         c.root = temp_path.clone();
         c.src = temp_path.join(&src_rel);
         c.test = temp_path.join(&test_rel);
+        c.script = temp_path.join(&script_rel);
         c.out = temp_path.join("out");
         c.cache_path = temp_path.join("cache");
         c
@@ -387,6 +389,7 @@ fn test_single_mutant_isolated(
     temp_config.root = temp_path.clone();
     temp_config.src = temp_path.join(&src_rel);
     temp_config.test = temp_path.join(&test_rel);
+    temp_config.script = temp_path.join(&script_rel);
     temp_config.out = temp_path.join("out");
     temp_config.cache_path = temp_path.join("cache");
 

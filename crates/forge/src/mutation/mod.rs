@@ -1,5 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
     path::PathBuf,
     sync::Arc,
 };
@@ -14,7 +15,7 @@ pub use crate::mutation::{
     reporter::MutationReporter,
     runner::run_mutations_parallel_with_progress,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use solar::{
     ast::{
         Span,
@@ -29,6 +30,34 @@ enum CacheKind<'a> {
     Mutants,
     Results { execution_key: &'a str },
     Survived { execution_key: &'a str },
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedMutationResults {
+    mutant_count: usize,
+    mutant_hash: u64,
+    results: Vec<(Mutant, MutationResult)>,
+}
+
+fn mutant_set_hash(mutants: &[Mutant]) -> u64 {
+    let mut entries: Vec<_> = mutants
+        .iter()
+        .map(|mutant| {
+            (
+                mutant.span.lo().0,
+                mutant.span.hi().0,
+                mutant.mutation.to_string(),
+                mutant.original.clone(),
+            )
+        })
+        .collect();
+    entries.sort();
+
+    let mut hasher = DefaultHasher::new();
+    for entry in entries {
+        entry.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 pub mod mutant;
@@ -264,6 +293,16 @@ impl SurvivedSpans {
         })
     }
 
+    /// Check if any survived span contains this span, including exact matches.
+    ///
+    /// Live workers know exact same-span mutants are siblings in the current
+    /// run, so once one survives the remaining siblings can be skipped.
+    pub fn should_skip_in_live_run(&self, span: Span) -> bool {
+        let (lo, hi) = (span.lo().0, span.hi().0);
+
+        self.spans.iter().any(|&(parent_lo, parent_hi)| parent_lo <= lo && hi <= parent_hi)
+    }
+
     /// Serialize to a list of (lo, hi) pairs for caching
     fn to_vec(&self) -> Vec<(u32, u32)> {
         self.spans.iter().copied().collect()
@@ -349,10 +388,6 @@ impl MutationHandler {
     /// previously cached mutants. Result-like caches also include an execution
     /// key so stale outcomes are not reused after test/config/EVM changes.
     fn cache_file_path(&self, hash: &str, kind: CacheKind<'_>) -> PathBuf {
-        use std::{
-            collections::hash_map::DefaultHasher,
-            hash::{Hash, Hasher},
-        };
         let mut hasher = DefaultHasher::new();
         self.contract_to_mutate.hash(&mut hasher);
         let path_hash = hasher.finish();
@@ -367,7 +402,7 @@ impl MutationHandler {
         let mut mutant_cfg_hasher = DefaultHasher::new();
         // Version salt for this mutant-set cache schema. Bump this if the
         // inputs that define generated mutants change.
-        "mutant-set-v1".hash(&mut mutant_cfg_hasher);
+        "mutant-set-v2".hash(&mut mutant_cfg_hasher);
         for op in self.config.mutation.enabled_operators() {
             op.to_string().hash(&mut mutant_cfg_hasher);
         }
@@ -408,13 +443,19 @@ impl MutationHandler {
         &self,
         hash: &str,
         execution_key: &str,
+        mutants: &[Mutant],
         results: &[(Mutant, crate::mutation::mutant::MutationResult)],
     ) -> std::io::Result<()> {
         let cache_file = self.cache_file_path(hash, CacheKind::Results { execution_key });
         if let Some(dir) = cache_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let json = serde_json::to_string_pretty(results).map_err(std::io::Error::other)?;
+        let cached = CachedMutationResults {
+            mutant_count: mutants.len(),
+            mutant_hash: mutant_set_hash(mutants),
+            results: results.to_vec(),
+        };
+        let json = serde_json::to_string_pretty(&cached).map_err(std::io::Error::other)?;
         std::fs::write(cache_file, json)
     }
 
@@ -472,10 +513,13 @@ impl MutationHandler {
         &self,
         hash: &str,
         execution_key: &str,
+        mutants: &[Mutant],
     ) -> Option<Vec<(Mutant, MutationResult)>> {
         let cache_file = self.cache_file_path(hash, CacheKind::Results { execution_key });
         let data = std::fs::read_to_string(cache_file).ok()?;
-        serde_json::from_str(&data).ok()
+        let cached: CachedMutationResults = serde_json::from_str(&data).ok()?;
+        (cached.mutant_count == mutants.len() && cached.mutant_hash == mutant_set_hash(mutants))
+            .then_some(cached.results)
     }
 
     /// Mark a span as having a surviving mutation
@@ -518,6 +562,7 @@ impl MutationHandler {
 mod tests {
     use super::*;
     use foundry_config::Config;
+    use solar::ast::interface::BytePos;
     use tempfile::TempDir;
 
     fn test_handler(config: Config) -> MutationHandler {
@@ -533,6 +578,18 @@ mod tests {
             ..Default::default()
         };
         (temp, config)
+    }
+
+    fn mutant(lo: u32, hi: u32, original: &str) -> Mutant {
+        Mutant {
+            path: PathBuf::from("src/Counter.sol"),
+            span: Span::new(BytePos(lo), BytePos(hi)),
+            mutation: mutant::MutationType::DeleteExpression,
+            original: original.to_string(),
+            source_line: "number++;".to_string(),
+            line_number: 1,
+            column_number: 1,
+        }
     }
 
     #[test]
@@ -576,5 +633,22 @@ mod tests {
         let second = test_handler(second_config).cache_file_path("build", CacheKind::Mutants);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn result_cache_validates_current_mutant_set() {
+        let (_temp, config) = test_config();
+        let handler = test_handler(config);
+        let mutants = vec![mutant(10, 20, "number++")];
+        let results = vec![(mutants[0].clone(), MutationResult::Dead)];
+
+        handler.persist_cached_results("build", "exec", &mutants, &results).unwrap();
+
+        assert!(handler.retrieve_cached_mutant_results("build", "exec", &mutants).is_some());
+
+        let changed_mutants = vec![mutant(10, 20, "number--")];
+        assert!(
+            handler.retrieve_cached_mutant_results("build", "exec", &changed_mutants).is_none()
+        );
     }
 }

@@ -353,7 +353,7 @@ impl Mutant {
         for (i, comp) in components.iter().enumerate() {
             if let std::path::Component::Normal(name) = comp {
                 let s = name.to_string_lossy();
-                if matches!(s.as_ref(), "src" | "test" | "lib" | "contracts") {
+                if matches!(s.as_ref(), "src" | "test" | "script" | "lib" | "contracts") {
                     let parts: Vec<_> = components[i..]
                         .iter()
                         .filter_map(|c| match c {

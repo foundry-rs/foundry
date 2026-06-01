@@ -6,7 +6,7 @@
 //! - Running mutations in parallel with caching
 //! - Aggregating results and reporting
 
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 
 use alloy_primitives::keccak256;
 use eyre::{Result, WrapErr};
@@ -56,7 +56,6 @@ struct FilterArgsFingerprint<'a> {
     contract_pattern_inverse: Option<&'a str>,
     path_pattern: Option<&'a str>,
     path_pattern_inverse: Option<&'a str>,
-    coverage_pattern_inverse: Option<&'a str>,
 }
 
 /// Configuration for mutation testing run.
@@ -161,25 +160,6 @@ pub async fn run_mutation_testing(
             .find_map(|(id, _)| (id.source == path).then_some(id.build_id))
             .unwrap_or_default();
 
-        // Check for cached results
-        if let Some(prior) = handler.retrieve_cached_mutant_results(&build_id, &execution_cache_key)
-        {
-            if !mutation_config.show_progress && !json_output {
-                sh_println!("  Using cached results for {} mutants", prior.len())?;
-            }
-            for (mutant, status) in prior {
-                match status {
-                    MutationResult::Dead => handler.add_dead_mutant(mutant),
-                    MutationResult::Alive => handler.add_survived_mutant(mutant),
-                    MutationResult::Invalid => handler.add_invalid_mutant(mutant),
-                    MutationResult::Skipped => handler.add_skipped_mutant(mutant),
-                    MutationResult::TimedOut => handler.add_timed_out_mutant(mutant),
-                }
-            }
-            mutation_summary.merge(handler.get_report());
-            continue;
-        }
-
         // Load persisted survived spans before generating/loading mutants so
         // resumed runs can retain adaptively skipped points as Skipped results
         // while only executing mutants whose spans still need coverage.
@@ -199,6 +179,28 @@ pub async fn run_mutation_testing(
             if !mutation_config.show_progress && !json_output {
                 sh_println!("  No mutants generated for {}", path.display())?;
             }
+            continue;
+        }
+
+        // Check for cached results only after the current mutant set is known.
+        // The result cache carries a count/hash of that set so stale or partial
+        // caches cannot suppress newly generated mutants.
+        if let Some(prior) =
+            handler.retrieve_cached_mutant_results(&build_id, &execution_cache_key, &mutants)
+        {
+            if !mutation_config.show_progress && !json_output {
+                sh_println!("  Using cached results for {} mutants", prior.len())?;
+            }
+            for (mutant, status) in prior {
+                match status {
+                    MutationResult::Dead => handler.add_dead_mutant(mutant),
+                    MutationResult::Alive => handler.add_survived_mutant(mutant),
+                    MutationResult::Invalid => handler.add_invalid_mutant(mutant),
+                    MutationResult::Skipped => handler.add_skipped_mutant(mutant),
+                    MutationResult::TimedOut => handler.add_timed_out_mutant(mutant),
+                }
+            }
+            mutation_summary.merge(handler.get_report());
             continue;
         }
 
@@ -223,7 +225,12 @@ pub async fn run_mutation_testing(
             p.set_current_file(&display_path);
             Some(p)
         } else if !json_output {
-            sh_println!("  Generated {} mutants, testing in parallel...", mutants_to_test.len())?;
+            sh_println!(
+                "  Generated {} mutants; testing {}, adaptively skipped {}",
+                mutants.len(),
+                mutants_to_test.len(),
+                skipped_results.len()
+            )?;
             None
         } else {
             None
@@ -284,8 +291,12 @@ pub async fn run_mutation_testing(
         if !mutants.is_empty() && !build_id.is_empty() {
             let _ = handler.persist_cached_mutants(&build_id, &mutants);
             if complete_run {
-                let _ =
-                    handler.persist_cached_results(&build_id, &execution_cache_key, &results_vec);
+                let _ = handler.persist_cached_results(
+                    &build_id,
+                    &execution_cache_key,
+                    &mutants,
+                    &results_vec,
+                );
             }
             let _ = handler.persist_survived_spans(&build_id, &execution_cache_key);
         }
@@ -375,10 +386,6 @@ fn filter_args_fingerprint(filter_args: &FilterArgs) -> FilterArgsFingerprint<'_
             .map(|re| re.as_str()),
         path_pattern: filter_args.path_pattern.as_ref().map(|glob| glob.as_str()),
         path_pattern_inverse: filter_args.path_pattern_inverse.as_ref().map(|glob| glob.as_str()),
-        coverage_pattern_inverse: filter_args
-            .coverage_pattern_inverse
-            .as_ref()
-            .map(|re| re.as_str()),
     }
 }
 
@@ -463,14 +470,16 @@ fn resolve_mutate_paths(
     //    `--mutate-contract <regex>` does the principled thing (the listed files, restricted to
     //    those containing a matching contract) instead of silently expanding to every source file.
     let paths = if let Some(contract_pattern) = &mutation_config.mutate_contract_pattern {
-        base.into_iter()
-            .filter(|entry| {
-                output
-                    .artifact_ids()
-                    .filter(|(id, _)| id.source == *entry)
-                    .any(|(id, _)| contract_pattern.is_match(&id.name))
-            })
-            .collect()
+        let matching_sources: HashSet<PathBuf> = output
+            .artifact_ids()
+            .filter_map(|(id, _)| contract_pattern.is_match(&id.name).then_some(id.source.clone()))
+            .collect();
+        let paths: Vec<_> =
+            base.into_iter().filter(|entry| matching_sources.contains(entry)).collect();
+        if paths.is_empty() && !mutation_config.mutate_paths.is_empty() {
+            eyre::bail!("no source matched --mutate-contract within the selected --mutate paths");
+        }
+        paths
     } else {
         base
     };
