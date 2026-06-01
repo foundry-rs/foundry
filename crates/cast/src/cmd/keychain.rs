@@ -611,14 +611,14 @@ fn run_show(wallet_address: Address) -> Result<()> {
     let entries: Vec<_> =
         keys_file.keys.iter().filter(|e| e.wallet_address == wallet_address).collect();
 
-    if entries.is_empty() {
-        sh_println!("No keys found for wallet {wallet_address}.")?;
-        return Ok(());
-    }
-
     if shell::is_json() {
         let entries_json: Vec<_> = entries.iter().map(|e| key_entry_to_json(e)).collect();
         print_json_object(entries_json)?;
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        sh_println!("No keys found for wallet {wallet_address}.")?;
         return Ok(());
     }
 

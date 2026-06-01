@@ -2,6 +2,7 @@
 
 use anvil::NodeConfig;
 use foundry_test_utils::util::OutputExt;
+use std::fs;
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
@@ -94,4 +95,26 @@ casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
     let parsed: serde_json::Value = serde_json::from_str(output.trim())
         .expect("cast keychain doctor --json should emit valid JSON");
     assert_eq!(parsed["schema_version"], 1);
+});
+
+casttest!(keychain_show_json_no_match_returns_empty_array, |prj, cmd| {
+    let tempo_home = prj.root().join("tempo-home");
+    fs::create_dir_all(tempo_home.join("wallet")).expect("create Tempo wallet dir");
+    fs::write(tempo_home.join("wallet/keys.toml"), "keys = []\n").expect("write keys.toml");
+
+    cmd.env("TEMPO_HOME", &tempo_home);
+
+    let output = cmd
+        .args(["keychain", "show", accounts::ADDR1, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast keychain show --json should emit valid JSON");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(
+        parsed["data"].as_array().expect("keychain show --json data should be an array").len(),
+        0
+    );
 });
