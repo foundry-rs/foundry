@@ -151,6 +151,24 @@ contract OutOfGasScript is Script {
 }
 "#;
 
+static MULTI_DEPLOY_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract A { function ping() external pure returns (uint256) { return 1; } }
+contract B { address public a; constructor(address _a) { a = _a; } }
+contract C { bytes32 public tag; constructor(bytes32 _t) { tag = _t; } }
+
+contract MultiDeploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        A a = new A();
+        new B(address(a));
+        new C(bytes32(uint256(0x1234)));
+        vm.stopBroadcast();
+    }
+}
+"#;
+
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -1137,15 +1155,15 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1265,15 +1283,15 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1435,15 +1453,15 @@ forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1521,15 +1539,15 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1750,15 +1768,15 @@ forgetest_async!(can_decode_custom_errors, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -3687,6 +3705,113 @@ contract ArbScript is Script {
         let rpc = foundry_test_utils::rpc::next_rpc_endpoint(alloy_chains::NamedChain::Arbitrum);
 
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]).assert_success();
+    }
+);
+
+forgetest_async!(script_batch_rejects_non_tempo_network, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let script = prj.add_source(
+        "BatchOnly",
+        r#"
+import "forge-std/Script.sol";
+contract BatchOnly is Script {
+    function run() external {
+        vm.startBroadcast();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .arg(script)
+        .args([
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--broadcast",
+            "--batch",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --batch mode is only supported on Tempo networks
+
+"#]]);
+});
+
+/// Asserts that the dry-run sequence under `root` rewrote every CREATE to a unique CREATE2
+/// call targeting the Arachnid factory.
+fn assert_create2_rewrite_dry_run(root: &std::path::Path) {
+    let run_latest = foundry_common::fs::json_files(&root.join("broadcast"))
+        .find(|file| file.ends_with("dry-run/run-latest.json"))
+        .expect("no dry-run broadcast artifact found");
+
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let txs = json["transactions"].as_array().unwrap();
+    assert_eq!(txs.len(), 3, "three CREATE attempts in script");
+
+    let factory = foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_string().to_lowercase();
+    for tx in txs {
+        assert_eq!(tx["transactionType"], "CREATE2", "plain CREATE was rewritten");
+        assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+    }
+
+    let addrs: std::collections::HashSet<_> =
+        txs.iter().map(|t| t["contractAddress"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(addrs.len(), 3, "rewritten CREATE2 addresses should be unique");
+}
+
+// Dry-run against a local anvil to verify CREATE→CREATE2 rewriting.
+forgetest_async!(script_batch_rewrites_creates_to_create2, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+
+    // Tempo mode pre-deploys the Arachnid CREATE2 factory and PATH_USD fee token.
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script").arg(script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+
+    assert_create2_rewrite_dry_run(prj.root());
+});
+
+// Same dry-run assertions against the live Moderato testnet.
+forgetest_async!(
+    #[ignore]
+    script_batch_rewrites_creates_to_create2_moderato,
+    |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
+        let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+
+        cmd.arg("script").arg(script).args([
+            "--tc",
+            "MultiDeploy",
+            "--rpc-url",
+            "https://rpc.moderato.tempo.xyz",
+            "--batch",
+            "--network",
+            "tempo",
+        ]);
+        cmd.assert_success();
+
+        assert_create2_rewrite_dry_run(prj.root());
     }
 );
 

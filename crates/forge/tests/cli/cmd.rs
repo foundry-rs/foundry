@@ -147,7 +147,7 @@ forgetest!(
         fs::write(block2_file, "{}").unwrap();
         fs::create_dir_all(etherscan_cache_dir).unwrap();
 
-        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stdout_lossy();
+        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stderr_lossy();
         let output_lines = output.split('\n').collect::<Vec<_>>();
         println!("{output}");
 
@@ -311,15 +311,15 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -359,10 +359,18 @@ ignore them in the `.gitignore` file.
 forgetest!(can_init_no_git, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![[r#"
-Initializing [..]...
+    cmd.arg("init")
+        .arg(prj.root())
+        .arg("--no-git")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
     Initialized forge project
 
 "#]]);
@@ -377,10 +385,18 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 forgetest!(can_init_with_no_commit, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--no-commit").assert_success().stdout_eq(str![[r#"
-Initializing [..]...
+    cmd.arg("init")
+        .arg(prj.root())
+        .arg("--no-commit")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
     Initialized forge project
 
 "#]]);
@@ -407,8 +423,10 @@ forgetest!(can_init_with_dir, |prj, cmd| {
 forgetest!(can_init_with_dir_and_template, |prj, cmd| {
     cmd.args(["init", "foobar", "--template", "foundry-rs/forge-template"])
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -433,8 +451,10 @@ forgetest!(can_init_with_dir_and_template_and_branch, |prj, cmd| {
         "test/deployments",
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -459,15 +479,15 @@ Run with the `--force` flag to initialize regardless.
     cmd.arg("--force")
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -499,15 +519,15 @@ Run with the `--force` flag to initialize regardless.
     cmd.arg("--force")
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -541,15 +561,15 @@ Run with the `--force` flag to initialize regardless.
     cmd.arg("--force")
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -580,15 +600,22 @@ forgetest!(can_init_using_parent_repo, |prj, cmd| {
     prj.create_file(".gitignore", "not foundry .gitignore");
 
     let folder = "foundry-folder";
-    cmd.arg("init").arg(folder).arg("--force").arg("--use-parent-git").assert_success().stdout_eq(
-        str![[r#"
-Initializing [..]...
+    cmd.arg("init")
+        .arg(folder)
+        .arg("--force")
+        .arg("--use-parent-git")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
     Initialized forge project
 
-"#]],
-    );
+"#]]);
 
     assert!(root.join(folder).join("lib/forge-std").exists());
 
@@ -612,10 +639,18 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 forgetest!(can_init_vscode, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![[r#"
-Initializing [..]...
+    cmd.arg("init")
+        .arg(prj.root())
+        .arg("--vscode")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
     Initialized forge project
 
 "#]]);
@@ -644,8 +679,10 @@ forgetest!(can_init_template, |prj, cmd| {
     cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -665,8 +702,10 @@ forgetest!(can_init_template_with_branch, |prj, cmd| {
     cmd.args(["init", "--template", "foundry-rs/forge-template", "--branch", "test/deployments"])
         .arg(prj.root())
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -684,6 +723,7 @@ Initializing [..] from https://github.com/foundry-rs/forge-template...
 forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
+Initializing [..] from https://github.com/a...
 remote: Not Found
 fatal: repository 'https://github.com/a/' not found
 Error: git fetch exited with code 128
@@ -697,8 +737,10 @@ forgetest!(can_init_template_with_no_commit, |prj, cmd| {
     cmd.args(["init", "--template", "foundry-rs/forge-template"])
         .arg(prj.root())
         .assert_success()
-        .stdout_eq(str![[r#"
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Initializing [..] from https://github.com/foundry-rs/forge-template...
+...
     Initialized forge project
 
 "#]]);
@@ -732,15 +774,19 @@ forgetest!(flaky_can_clone, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+    .stderr_eq(str![[r#"
+Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
+Initializing [..]...
+...
+    Initialized forge project
+Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 
 "#]]);
 
@@ -789,15 +835,19 @@ forgetest!(flaky_can_clone_sourcify, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
+Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
+Initializing [..]...
+...
+    Initialized forge project
+Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 
 "#]]);
 
@@ -822,15 +872,19 @@ forgetest!(flaky_can_clone_no_remappings_txt, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+    .stderr_eq(str![[r#"
+Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
+Initializing [..]...
+...
+    Initialized forge project
+Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 
 "#]]);
 
@@ -881,10 +935,17 @@ forgetest!(flaky_can_clone_keep_directory_structure, |prj, cmd| {
 forgetest!(can_init_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Initializing [..]...
+    cmd.args(["init"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
     Initialized forge project
 
 "#]]);
@@ -909,10 +970,17 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 forgetest!(can_init_vyper_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
-Initializing [..]...
+    cmd.args(["init", "--vyper"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
     Initialized forge project
 
 "#]]);
@@ -938,17 +1006,22 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
 forgetest!(can_init_tempo_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success().stdout_eq(str![[
-        r#"
-Initializing [..]...
+    cmd.args(["init", "--network", "tempo"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
 Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
     Installed tempo-std[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
     Initialized forge project
 
-"#
-    ]]);
+"#]]);
 
     assert!(prj.root().join("foundry.toml").exists());
 
@@ -1041,15 +1114,19 @@ forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
-Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+    .stderr_eq(str![[r#"
+Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
+Initializing [..]...
+...
+    Initialized forge project
+Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 
 "#]]);
 });
@@ -1450,6 +1527,51 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest!(snapshot_expands_invariant_campaign_predicates, |prj, cmd| {
+    prj.add_test(
+        "InvariantSnapshot.t.sol",
+        r#"
+contract InvariantSnapshotHandler {
+    uint256 public count;
+
+    function increment() public {
+        count++;
+    }
+}
+
+contract InvariantSnapshotTest {
+    InvariantSnapshotHandler internal handler;
+
+    function setUp() public {
+        handler = new InvariantSnapshotHandler();
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_non_negative() public view {
+        require(handler.count() >= 0);
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 4
+    function invariant_count_is_not_max() public view {
+        require(handler.count() != type(uint256).max);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["snapshot"]).assert_success();
+
+    let snapshot = read_string(prj.root().join(".gas-snapshot"));
+    assert_eq!(
+        snapshot.lines().filter(|line| line.starts_with("InvariantSnapshotTest:")).count(),
+        2
+    );
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_non_negative()"));
+    assert!(snapshot.contains("InvariantSnapshotTest:invariant_count_is_not_max()"));
 });
 
 forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
@@ -3391,10 +3513,15 @@ forgetest_init!(can_bind, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
 
-    cmd.arg("bind").assert_success().stdout_eq(str![[r#"
+    cmd.arg("bind")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for [..] contracts
 Bindings have been generated to [..]
 
@@ -3738,6 +3865,64 @@ forgetest!(inspect_custom_counter_errors, |prj, cmd| {
 
 
 "#]]);
+});
+
+forgetest!(inspect_anonymous_event_has_no_selector, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    event FakeEvent(uint256 indexed topic0) anonymous;
+    event NormalEvent(uint256 indexed value);
+
+    function setNumber(uint256 newNumber) public {
+        emit FakeEvent(newNumber);
+        emit NormalEvent(newNumber);
+    }
+}
+    "#,
+    );
+
+    // `abi`: anonymous event must render with an empty selector and an `anonymous` marker.
+    cmd.args(["inspect", "Counter", "abi"]).assert_success().stdout_eq(str![[r#"
+
+╭----------+-------------------------------+--------------------------------------------------------------------╮
+| Type     | Signature                     | Selector                                                           |
++===============================================================================================================+
+| event    | FakeEvent(uint256) anonymous  |                                                                    |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| event    | NormalEvent(uint256)          | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+|----------+-------------------------------+--------------------------------------------------------------------|
+| function | setNumber(uint256) nonpayable | 0x3fb5c1cb                                                         |
+╰----------+-------------------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events`: anonymous event must render with an empty topic.
+    cmd.forge_fuse().args(["inspect", "Counter", "events"]).assert_success().stdout_eq(str![[r#"
+
+╭----------------------+--------------------------------------------------------------------╮
+| Event                | Topic                                                              |
++===========================================================================================+
+| FakeEvent(uint256)   |                                                                    |
+|----------------------+--------------------------------------------------------------------|
+| NormalEvent(uint256) | 0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1 |
+╰----------------------+--------------------------------------------------------------------╯
+
+
+"#]]);
+
+    // `events --json`: anonymous event must serialize as `null`, not a fake hash.
+    cmd.forge_fuse().args(["inspect", "Counter", "events", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "FakeEvent(uint256)": null,
+  "NormalEvent(uint256)": "0x2e58689f6eed514b3003e0a132a1284ba04042a9d59d11c5db973fdb520d10c1"
+}
+
+"#]],
+    );
 });
 
 forgetest!(inspect_path_only_identifier, |prj, cmd| {
@@ -4174,23 +4359,37 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
     }"#,
     );
 
-    cmd.args(["bind", "--select", "^Enum$"]).assert_success().stdout_eq(str![[
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind", "--select", "^Enum$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for 1 contracts
-Bindings have been generated to [..]"#
-    ]]);
+Bindings have been generated to [..]
+
+"#]]);
 });
 
 // forge bind e2e
 forgetest_init!(can_bind_e2e, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["bind"]).assert_success().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for 2 contracts
-Bindings have been generated to [..]"#]]);
+Bindings have been generated to [..]
+
+"#]]);
 
     let bindings_path = prj.root().join("out/bindings");
 
@@ -4238,4 +4437,24 @@ Generated test file: test/Counter.t.sol
 "#]]);
 
     assert!(prj.root().join("test/Counter.t.sol").exists(), "scaffolded test file should exist");
+});
+
+// `forge init` writes its status prose to stderr and keeps stdout empty so agents
+// can pipe the command without diagnostics. Uses `--offline` + `--no-git` to skip
+// network and git side-effects that would otherwise add prose to stdout.
+forgetest!(init_status_on_stderr, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init", "--offline", "--no-git"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Initializing [..]...
+...
+    Initialized forge project
+
+"#]]);
+
+    assert!(prj.root().join("foundry.toml").exists());
 });

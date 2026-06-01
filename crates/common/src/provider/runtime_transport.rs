@@ -11,6 +11,7 @@ use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
+    utils::guess_local_url,
 };
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
@@ -199,7 +200,7 @@ impl RuntimeTransport {
         // Disable automatic proxy detection if requested. This helps in sandboxed environments
         // (e.g., Cursor IDE sandbox, macOS App Sandbox) where system proxy detection via
         // SCDynamicStore causes crashes. See: https://github.com/foundry-rs/foundry/issues/12733
-        if self.no_proxy {
+        if self.no_proxy || guess_local_url(self.url.as_str()) {
             client_builder = client_builder.no_proxy();
         }
 

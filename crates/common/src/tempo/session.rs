@@ -3,10 +3,13 @@
 use super::{KeyType, registry::*, tempo_home};
 use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_signer::Signer;
+use eyre::ensure;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU64, path::PathBuf};
-use tempo_primitives::transaction::SignedKeyAuthorization;
+use tempo_primitives::transaction::{
+    CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
+};
 
 /// Relative path from Tempo home to the session registry file.
 pub const WALLET_SESSIONS_PATH: &str = "wallet/sessions.toml";
@@ -31,6 +34,11 @@ impl SessionStatus {
     /// Returns `true` if the session is no longer expected to be usable.
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Revoked | Self::Expired | Self::Failed)
+    }
+
+    /// Returns `true` if entering this status must erase local key material.
+    const fn clears_key_material(self) -> bool {
+        matches!(self, Self::Revoking | Self::Revoked | Self::Expired | Self::Failed)
     }
 
     /// Returns `true` if the session is still in-flight or usable.
@@ -168,7 +176,7 @@ impl SessionRecord {
         self.get(session_id).filter(|session| session.has_live_key_at(now))
     }
 
-    /// Update a session status by id. Terminal statuses clear local key material.
+    /// Update a session status by id. Revoking and terminal statuses clear local key material.
     ///
     /// Returns `true` when the record changed. Missing sessions and idempotent
     /// updates return `false`.
@@ -179,16 +187,7 @@ impl SessionRecord {
             return false;
         };
 
-        let changed = session.status != status || status.is_terminal() && session.key.is_some();
-        if !changed {
-            return false;
-        }
-
-        session.status = status;
-        if status.is_terminal() {
-            session.key = None;
-        }
-        true
+        set_session_status(session, status)
     }
 
     /// Mark expired live entries as expired. Returns the number updated.
@@ -197,7 +196,7 @@ impl SessionRecord {
         for session in &mut self.sessions {
             let should_expire = session.status.is_live() && session.is_expired_at(now);
             let should_clear_key =
-                session.key.is_some() && (should_expire || session.status.is_terminal());
+                session.key.is_some() && (should_expire || session.status.clears_key_material());
 
             if should_expire {
                 session.status = SessionStatus::Expired;
@@ -211,6 +210,19 @@ impl SessionRecord {
         }
         updated
     }
+}
+
+fn set_session_status(session: &mut SessionEntry, status: SessionStatus) -> bool {
+    let changed = session.status != status || status.clears_key_material() && session.key.is_some();
+    if !changed {
+        return false;
+    }
+
+    session.status = status;
+    if status.clears_key_material() {
+        session.key = None;
+    }
+    true
 }
 
 /// A live session key resolved into the signer and Tempo access-key metadata.
@@ -244,6 +256,14 @@ pub fn read_session_record() -> Option<SessionRecord> {
 /// Read a live session-scoped key entry by session id.
 pub fn read_live_session_key(session_id: B256, now: u64) -> Option<SessionEntry> {
     read_session_record()?.live_key(session_id, now).cloned()
+}
+
+/// Read a session entry by id, returning parse/read errors to the caller.
+pub fn read_session_entry(session_id: B256) -> eyre::Result<Option<SessionEntry>> {
+    let path =
+        session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
+    Ok(read_toml_file::<SessionRecord>(&path, "tempo sessions")?
+        .and_then(|record| record.get(session_id).cloned()))
 }
 
 /// Resolve a live session key into a signer and access-key configuration.
@@ -284,7 +304,11 @@ pub fn resolve_live_session_signer(
         })
         .transpose()?;
     if let Some(auth) = &key_authorization {
-        validate_session_key_authorization(&session, key, auth)?;
+        validate_signed_session_authorization(
+            &session,
+            key_type_to_signature_type(key.key_type),
+            auth,
+        )?;
     }
     let access_key = TempoAccessKeyConfig {
         wallet_address: session.root_account,
@@ -295,58 +319,63 @@ pub fn resolve_live_session_signer(
     Ok(Some(ResolvedSessionSigner { session, signer, access_key }))
 }
 
-/// Ensures a session key authorization matches the stored key, chain, and root signer.
-fn validate_session_key_authorization(
+/// Ensures a signed authorization matches stored session identity, key type, signer, and policy.
+pub(crate) fn validate_signed_session_authorization(
     session: &SessionEntry,
-    key: &SessionKeyMaterial,
+    expected_key_type: SignatureType,
     authorization: &SignedKeyAuthorization,
 ) -> eyre::Result<()> {
-    eyre::ensure!(
-        authorization.authorization.key_id == session.key_address,
+    let auth = &authorization.authorization;
+    ensure!(
+        auth.key_id == session.key_address,
         "session {} key_authorization key_id is {}, expected {}",
         session.session_id,
-        authorization.authorization.key_id,
+        auth.key_id,
         session.key_address
     );
-    eyre::ensure!(
-        authorization.authorization.chain_id == session.chain_id,
+    ensure!(
+        auth.chain_id == session.chain_id,
         "session {} key_authorization chain_id is {}, expected {}",
         session.session_id,
-        authorization.authorization.chain_id,
+        auth.chain_id,
         session.chain_id
     );
-    let expected_key_type = key_type_to_signature_type(key.key_type);
-    eyre::ensure!(
-        authorization.authorization.key_type == expected_key_type,
+    ensure!(
+        auth.key_type == expected_key_type,
         "session {} key_authorization key_type is {:?}, expected {:?}",
         session.session_id,
-        authorization.authorization.key_type,
+        auth.key_type,
         expected_key_type
+    );
+    // `session_id` is local metadata; the signed binding lives in the authorization witness.
+    ensure!(
+        auth.witness == Some(session.session_id),
+        "session {} key_authorization witness is {:?}, expected {}",
+        session.session_id,
+        auth.witness,
+        session.session_id
     );
     let recovered = authorization
         .recover_signer()
         .map_err(|err| eyre::eyre!("failed to recover session key_authorization signer: {err}"))?;
-    eyre::ensure!(
+    ensure!(
         recovered == session.root_account,
         "session {} key_authorization signer is {}, expected {}",
         session.session_id,
         recovered,
         session.root_account
     );
-    validate_session_authorization_policy(session, authorization)?;
-    Ok(())
+    validate_session_authorization_policy(session, auth)
 }
 
 /// Ensures authorization expiry, limits, and call scope match the stored session policy.
 fn validate_session_authorization_policy(
     session: &SessionEntry,
-    authorization: &SignedKeyAuthorization,
+    auth: &KeyAuthorization,
 ) -> eyre::Result<()> {
-    let auth = &authorization.authorization;
-
     let expected_expiry = NonZeroU64::new(session.expiry)
         .ok_or_else(|| eyre::eyre!("session {} has invalid zero expiry", session.session_id))?;
-    eyre::ensure!(
+    ensure!(
         auth.expiry == Some(expected_expiry),
         "session {} key_authorization expiry is {:?}, expected {}",
         session.session_id,
@@ -356,7 +385,7 @@ fn validate_session_authorization_policy(
 
     let expected_limits = session_authorization_limits(session)?;
     let actual_limits = auth.limits.as_deref().map(authorization_limits);
-    eyre::ensure!(
+    ensure!(
         actual_limits == expected_limits,
         "session {} key_authorization limits do not match session limits",
         session.session_id
@@ -364,7 +393,7 @@ fn validate_session_authorization_policy(
 
     let expected_scope = session_authorization_scope(session);
     let actual_scope = auth.allowed_calls.as_deref().map(authorization_scope);
-    eyre::ensure!(
+    ensure!(
         actual_scope == expected_scope,
         "session {} key_authorization allowed_calls do not match session scope",
         session.session_id
@@ -399,30 +428,25 @@ struct CanonicalSelectorRule {
 fn session_authorization_limits(
     session: &SessionEntry,
 ) -> eyre::Result<Option<Vec<CanonicalTokenLimit>>> {
-    session
-        .limits
-        .as_deref()
-        .map(|limits| {
-            let mut limits = limits
-                .iter()
-                .map(|limit| {
-                    Ok(CanonicalTokenLimit {
-                        token: limit.currency,
-                        limit: parse_session_limit(&limit.limit)?,
-                        period: 0,
-                    })
-                })
-                .collect::<eyre::Result<Vec<_>>>()?;
-            limits.sort();
-            Ok(limits)
+    let Some(limits) = session.limits.as_deref() else {
+        return Ok(None);
+    };
+    let mut limits = limits
+        .iter()
+        .map(|limit| {
+            Ok(CanonicalTokenLimit {
+                token: limit.currency,
+                limit: parse_session_limit(&limit.limit)?,
+                period: 0,
+            })
         })
-        .transpose()
+        .collect::<eyre::Result<Vec<_>>>()?;
+    limits.sort();
+    Ok(Some(limits))
 }
 
 /// Converts signed authorization limits into canonical form for session comparison.
-fn authorization_limits(
-    limits: &[tempo_primitives::transaction::TokenLimit],
-) -> Vec<CanonicalTokenLimit> {
+fn authorization_limits(limits: &[TokenLimit]) -> Vec<CanonicalTokenLimit> {
     let mut limits = limits
         .iter()
         .map(|limit| CanonicalTokenLimit {
@@ -444,23 +468,21 @@ fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
 
 /// Converts stored session scope into canonical form for authorization comparison.
 fn session_authorization_scope(session: &SessionEntry) -> Option<Vec<CanonicalCallScope>> {
-    session.scope.as_deref().map(|scope| {
-        let mut scope = scope
-            .iter()
-            .map(|scope| CanonicalCallScope {
-                target: scope.target,
-                selector_rules: session_authorization_selector_rules(&scope.selector_rules),
-            })
-            .collect::<Vec<_>>();
-        scope.sort();
-        scope
-    })
+    let mut scope = session
+        .scope
+        .as_deref()?
+        .iter()
+        .map(|scope| CanonicalCallScope {
+            target: scope.target,
+            selector_rules: session_authorization_selector_rules(&scope.selector_rules),
+        })
+        .collect::<Vec<_>>();
+    scope.sort();
+    Some(scope)
 }
 
 /// Converts signed authorization scope into canonical form for session comparison.
-fn authorization_scope(
-    scope: &[tempo_primitives::transaction::CallScope],
-) -> Vec<CanonicalCallScope> {
+fn authorization_scope(scope: &[CallScope]) -> Vec<CanonicalCallScope> {
     let mut scope = scope
         .iter()
         .map(|scope| CanonicalCallScope {
@@ -489,9 +511,7 @@ fn session_authorization_selector_rules(
 }
 
 /// Converts signed authorization selector rules into canonical form for session comparison.
-fn authorization_selector_rules(
-    rules: &[tempo_primitives::transaction::SelectorRule],
-) -> Vec<CanonicalSelectorRule> {
+fn authorization_selector_rules(rules: &[SelectorRule]) -> Vec<CanonicalSelectorRule> {
     let mut rules = rules
         .iter()
         .map(|rule| {
@@ -505,13 +525,11 @@ fn authorization_selector_rules(
 }
 
 /// Maps stored session key types to Tempo authorization signature types.
-const fn key_type_to_signature_type(
-    key_type: KeyType,
-) -> tempo_primitives::transaction::SignatureType {
+const fn key_type_to_signature_type(key_type: KeyType) -> SignatureType {
     match key_type {
-        KeyType::Secp256k1 => tempo_primitives::transaction::SignatureType::Secp256k1,
-        KeyType::P256 => tempo_primitives::transaction::SignatureType::P256,
-        KeyType::WebAuthn => tempo_primitives::transaction::SignatureType::WebAuthn,
+        KeyType::Secp256k1 => SignatureType::Secp256k1,
+        KeyType::P256 => SignatureType::P256,
+        KeyType::WebAuthn => SignatureType::WebAuthn,
     }
 }
 
@@ -546,6 +564,30 @@ pub fn update_session_status(session_id: B256, status: SessionStatus) -> eyre::R
     })
 }
 
+/// Atomically update a session status only when the current status matches `current`.
+///
+/// Returns `true` when an entry was found with the expected current status. The
+/// registry is only rewritten when the matched entry actually changes.
+pub fn update_session_status_if(
+    session_id: B256,
+    current: SessionStatus,
+    status: SessionStatus,
+) -> eyre::Result<bool> {
+    mutate_session_record(|record| {
+        let Some(session) =
+            record.sessions.iter_mut().find(|session| session.session_id == session_id)
+        else {
+            return (false, false);
+        };
+        if session.status != current {
+            return (false, false);
+        }
+
+        let changed = set_session_status(session, status);
+        (true, changed)
+    })
+}
+
 /// Atomically remove a session from the registry.
 pub fn remove_session_entry(session_id: B256) -> eyre::Result<bool> {
     mutate_session_record(|record| {
@@ -571,9 +613,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use std::{fs, str::FromStr};
-    use tempo_primitives::transaction::{
-        CallScope, KeyAuthorization, PrimitiveSignature, SelectorRule, SignatureType, TokenLimit,
-    };
+    use tempo_primitives::transaction::PrimitiveSignature;
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -661,7 +701,8 @@ mod tests {
             SignatureType::Secp256k1,
             entry.key_address,
         )
-        .with_expiry(entry.expiry);
+        .with_expiry(entry.expiry)
+        .with_witness(entry.session_id);
         if let Some(limits) = &entry.limits {
             authorization = authorization.with_limits(
                 limits
@@ -777,7 +818,7 @@ mod tests {
         assert_eq!(record.get(active_id).unwrap().status, SessionStatus::Active);
         assert!(record.get(active_id).unwrap().key.is_some());
         assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
-        assert!(record.get(revoking_id).unwrap().key.is_some());
+        assert!(record.get(revoking_id).unwrap().key.is_none());
         assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
         assert!(record.get(revoked_id).unwrap().key.is_none());
         assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
@@ -1023,6 +1064,23 @@ mod tests {
     }
 
     #[test]
+    fn resolve_live_session_signer_rejects_authorization_for_wrong_session_id() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x15; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |auth| {
+                    auth.with_witness(B256::from([0x16; 32]))
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("witness"));
+        });
+    }
+
+    #[test]
     fn resolve_live_session_signer_rejects_authorization_with_wider_session_limit() {
         with_tempo_home(|| {
             let session_id = B256::from([0x10; 32]);
@@ -1186,7 +1244,7 @@ key = "0x1111"
             let record = read_session_record().unwrap();
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Revoking);
-            assert!(session.key.is_some());
+            assert!(session.key.is_none());
 
             assert!(update_session_status(session_id, SessionStatus::Revoked).unwrap());
             let record = read_session_record().unwrap();
@@ -1213,6 +1271,39 @@ key = "0x1111"
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Failed);
             assert!(session.key.is_none());
+        });
+    }
+
+    #[test]
+    fn update_session_status_if_only_updates_matching_current_status() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0xc2; 32]);
+            upsert_session_entry(sample_entry_with_key(session_id, 200, SessionStatus::Active))
+                .unwrap();
+
+            assert!(
+                update_session_status_if(
+                    session_id,
+                    SessionStatus::Active,
+                    SessionStatus::Revoking,
+                )
+                .unwrap()
+            );
+            let record = read_session_record().unwrap();
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Revoking);
+            assert!(session.key.is_none());
+
+            assert!(!update_session_status_if(
+                session_id,
+                SessionStatus::Active,
+                SessionStatus::Failed,
+            )
+            .unwrap());
+            assert_eq!(
+                read_session_record().unwrap().get(session_id).unwrap().status,
+                SessionStatus::Revoking
+            );
         });
     }
 

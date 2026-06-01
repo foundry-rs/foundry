@@ -341,6 +341,8 @@ impl EtherscanVerificationProvider {
             verify_args = verify_args.via_ir(true);
         }
 
+        apply_license_type(&mut verify_args, args.license_type.as_deref());
+
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = args.num_of_optimizations {
                 verify_args.optimized().runs(optimizations as u32)
@@ -456,6 +458,12 @@ impl EtherscanVerificationProvider {
     }
 }
 
+fn apply_license_type(verify_args: &mut VerifyContract, license_type: Option<&str>) {
+    if let Some(license_type) = license_type {
+        verify_args.other.insert("licenseType".to_string(), license_type.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +471,20 @@ mod tests {
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
     use tempfile::tempdir;
+
+    #[test]
+    fn applies_license_type_to_verify_request() {
+        let mut verify_args = VerifyContract::new(
+            Default::default(),
+            "Counter".to_string(),
+            "contract Counter {}".to_string(),
+            "v0.8.23+commit.f704f362".to_string(),
+        );
+
+        apply_license_type(&mut verify_args, Some("13"));
+
+        assert_eq!(verify_args.other.get("licenseType").map(String::as_str), Some("13"));
+    }
 
     #[test]
     fn can_extract_etherscan_verify_config() {

@@ -141,6 +141,19 @@ pub fn bail_machine_usage(message: impl Into<String>) -> ! {
     std::process::exit(ExitCode::Usage.to_i32());
 }
 
+/// Like [`bail_machine_usage`] but attaches structured `details` so agents
+/// can react without parsing the prose `message`.
+pub fn bail_machine_usage_with_details(
+    message: impl Into<String>,
+    details: serde_json::Value,
+) -> ! {
+    let envelope = JsonEnvelope::error(
+        JsonMessage::error(diagnostic::cli::USAGE_INVALID, message).with_details(details),
+    );
+    let _ = print_json(&envelope);
+    std::process::exit(ExitCode::Usage.to_i32());
+}
+
 /// Fallback envelope emitter for an untyped `eyre::Report`. Always tags
 /// `cli.unknown` and preserves the eyre cause chain in `details.cause_chain`.
 /// The process exit code is the caller's responsibility.
