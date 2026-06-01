@@ -26,7 +26,13 @@ Examples:
 - `wallet.signature.rejected`
 - `test.failed`
 - `test.setup_failed`
+- `test.warning`
 - `script.broadcast_failed`
+
+Stream-event `code` fields (e.g. the `code` carried on `kind: "warning"`
+records under `foundry:forge.test.event@v1`) draw from this same
+registry: any code mirrored from a stream event into a terminal envelope
+`warnings[]` entry is identical.
 
 ## Reserved domains
 
@@ -36,7 +42,7 @@ Examples:
 | `compiler` | `foundry-compilers`, `forge`    | `compiler.solc.error`                     |
 | `network`  | RPC / HTTP layers               | `network.rpc.timeout`                     |
 | `wallet`   | `foundry-wallets`               | `wallet.key.missing`                      |
-| `test`     | `forge test`                    | `test.failed`, `test.setup_failed`        |
+| `test`     | `forge test`                    | `test.failed`, `test.setup_failed`, `test.warning` |
 | `script`   | `forge script`                  | `script.broadcast_failed`                 |
 | `cast`     | `cast`                          | `cast.tx.not_found`                       |
 | `anvil`    | `anvil`                         | `anvil.fork.unreachable`                  |

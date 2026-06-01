@@ -43,7 +43,7 @@ pub(super) async fn run(
     }
 
     if !shell::is_json() {
-        sh_println!("Watching transfers to {addr}... (Ctrl-C to stop)")?;
+        sh_status!("Watching transfers to {addr}... (Ctrl-C to stop)")?;
     }
 
     // Fetch logs from the requested start block (historical when from_block is set)

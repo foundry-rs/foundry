@@ -383,6 +383,7 @@ impl<N: Network> ProviderBuilder<N> {
             ..
         } = self;
         let url = url?;
+        let no_proxy = no_proxy || is_local;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
@@ -459,13 +460,14 @@ impl<N: Network> ProviderBuilder<N> {
             .map(|url_str| {
                 let builder = Self::new(url_str);
                 let url = builder.url?;
+                let transport_no_proxy = no_proxy || builder.is_local;
                 parsed_urls.push(url.clone());
                 Ok(RuntimeTransportBuilder::new(url)
                     .with_timeout(timeout)
                     .with_headers(headers.clone())
                     .with_jwt(jwt.clone())
                     .accept_invalid_certs(accept_invalid_certs)
-                    .no_proxy(no_proxy)
+                    .no_proxy(transport_no_proxy)
                     .build())
             })
             .collect::<Result<Vec<_>>>()?;
@@ -518,6 +520,7 @@ impl<N: Network> ProviderBuilder<N> {
             ..
         } = self;
         let url = url?;
+        let no_proxy = no_proxy || is_local;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);

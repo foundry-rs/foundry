@@ -760,14 +760,8 @@ mod tests {
 
     /// Create a dummy `SignedKeyAuthorization` for tests.
     fn test_key_authorization() -> SignedKeyAuthorization {
-        SignedKeyAuthorization {
-            authorization: KeyAuthorization::unrestricted(
-                4217,
-                SignatureType::Secp256k1,
-                Address::ZERO,
-            ),
-            signature: PrimitiveSignature::from_bytes(&[0u8; 65]).expect("valid dummy signature"),
-        }
+        KeyAuthorization::unrestricted(4217, SignatureType::Secp256k1, Address::ZERO)
+            .into_signed(PrimitiveSignature::default())
     }
 
     fn strip_key_auth_if_provisioned(

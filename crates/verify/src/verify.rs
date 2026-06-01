@@ -175,6 +175,13 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub via_ir: bool,
 
+    /// The Etherscan license type code to include with the verification request.
+    ///
+    /// See Etherscan's supported `licenseType` values. This is only used for Etherscan-style
+    /// verifiers.
+    #[arg(long, value_name = "CODE", help_heading = "Verifier options")]
+    pub license_type: Option<String>,
+
     /// The EVM version to use.
     ///
     /// Overrides the version specified in the config.
@@ -610,8 +617,11 @@ mod tests {
             "0x0000000000000000000000000000000000000000",
             "src/Domains.sol:Domains",
             "--via-ir",
+            "--license-type",
+            "13",
         ]);
         assert!(args.via_ir);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
     }
 
     #[test]
