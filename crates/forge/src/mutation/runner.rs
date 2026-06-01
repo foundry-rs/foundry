@@ -709,7 +709,6 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_primitives::U256;
-    use tempfile::TempDir;
 
     #[test]
     fn temp_config_preserves_materialized_overrides_and_rebases_paths() {
