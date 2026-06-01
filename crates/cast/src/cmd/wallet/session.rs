@@ -25,7 +25,7 @@ use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule}
 
 use crate::{
     cmd::{
-        account_keychain::send_keychain_tx_from,
+        keychain::send_keychain_tx_from,
         tempo_policy_args::{parse_period, parse_policy_token, parse_scope as parse_policy_scope},
     },
     tx::SendTxOpts,
@@ -163,7 +163,7 @@ async fn run_revoke(
         }
     };
     update_session_status(session_id, SessionStatus::Revoked)?;
-    if status != SessionRevokeStatus::OnChain {
+    if let Some(status) = status {
         print_revoke_status(session_id, Some(&entry), status)?;
     }
 
@@ -174,7 +174,7 @@ async fn revoke_session_key_on_chain(
     entry: &SessionEntry,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
-) -> Result<SessionRevokeStatus> {
+) -> Result<Option<SessionRevokeStatus>> {
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let rpc_chain_id = provider.get_chain_id().await?;
@@ -189,15 +189,15 @@ async fn revoke_session_key_on_chain(
 
     let info = provider.get_keychain_key(entry.root_account, entry.key_address).await?;
     if info.isRevoked {
-        return Ok(SessionRevokeStatus::AlreadyRevoked);
+        return Ok(Some(SessionRevokeStatus::AlreadyRevoked));
     }
     if info.keyId == Address::ZERO {
-        return Ok(SessionRevokeStatus::NotProvisioned);
+        return Ok(Some(SessionRevokeStatus::NotProvisioned));
     }
 
     let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
     send_keychain_tx_from(calldata, tx, &send_tx, entry.root_account).await?;
-    Ok(SessionRevokeStatus::OnChain)
+    Ok(None)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,7 +206,6 @@ enum SessionRevokeStatus {
     Local,
     NotProvisioned,
     AlreadyRevoked,
-    OnChain,
 }
 
 impl SessionRevokeStatus {
@@ -216,7 +215,6 @@ impl SessionRevokeStatus {
             Self::Local => "local",
             Self::NotProvisioned => "not_provisioned",
             Self::AlreadyRevoked => "already_revoked",
-            Self::OnChain => "on_chain",
         }
     }
 }
@@ -259,9 +257,6 @@ fn print_revoke_status(
                 "Revoked Tempo session {} locally; key was already revoked on-chain",
                 session_id
             )?;
-        }
-        SessionRevokeStatus::OnChain => {
-            sh_println!("Revoked Tempo session {} on-chain", session_id)?;
         }
     }
 

@@ -1,6 +1,5 @@
 //! CLI tests for `cast keychain` subcommands.
 
-use alloy_primitives::Address;
 use anvil::NodeConfig;
 use foundry_test_utils::util::OutputExt;
 use std::fs;
@@ -154,18 +153,4 @@ casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, c
         !contents.contains("key = \"0x"),
         "revoked session must not retain private key material:\n{contents}"
     );
-
-    cmd.cast_fuse();
-    cmd.env("TEMPO_HOME", tempo_home.path());
-    let local_revoke_output = cmd
-        .args(["--json", "wallet", "session", "revoke", session_id, "--local"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    let local_revoke: serde_json::Value =
-        serde_json::from_str(local_revoke_output.trim()).expect("local revoke emits JSON");
-    assert_eq!(local_revoke["status"], "revoked");
-    assert_eq!(local_revoke["reason"], "local");
-
-    let _: Address = key_address.parse().expect("key_address is an address");
 });

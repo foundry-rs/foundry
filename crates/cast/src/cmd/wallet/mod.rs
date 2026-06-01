@@ -1176,44 +1176,29 @@ mod tests {
 
     #[test]
     fn can_parse_wallet_session_revoke() {
-        let args = WalletSubcommands::parse_from([
-            "foundry-cli",
-            "session",
-            "revoke",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-        ]);
+        for (extra_args, expected_local) in [([].as_slice(), false), (["--local"].as_slice(), true)]
+        {
+            let args = WalletSubcommands::parse_from(
+                [
+                    "foundry-cli",
+                    "session",
+                    "revoke",
+                    "0x1111111111111111111111111111111111111111111111111111111111111111",
+                ]
+                .into_iter()
+                .chain(extra_args.iter().copied()),
+            );
 
-        match args {
-            WalletSubcommands::Session { command } => match command {
-                SessionSubcommands::Revoke { session_id, local, .. } => {
-                    assert_eq!(session_id, B256::from([0x11; 32]));
-                    assert!(!local);
-                }
-                _ => panic!("expected WalletSubcommands::Session::Revoke"),
-            },
-            _ => panic!("expected WalletSubcommands::Session"),
-        }
-    }
-
-    #[test]
-    fn can_parse_wallet_session_revoke_local() {
-        let args = WalletSubcommands::parse_from([
-            "foundry-cli",
-            "session",
-            "revoke",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-            "--local",
-        ]);
-
-        match args {
-            WalletSubcommands::Session { command } => match command {
-                SessionSubcommands::Revoke { session_id, local, .. } => {
-                    assert_eq!(session_id, B256::from([0x11; 32]));
-                    assert!(local);
-                }
-                _ => panic!("expected WalletSubcommands::Session::Revoke"),
-            },
-            _ => panic!("expected WalletSubcommands::Session"),
+            match args {
+                WalletSubcommands::Session { command } => match command {
+                    SessionSubcommands::Revoke { session_id, local, .. } => {
+                        assert_eq!(session_id, B256::from([0x11; 32]));
+                        assert_eq!(local, expected_local);
+                    }
+                    _ => panic!("expected WalletSubcommands::Session::Revoke"),
+                },
+                _ => panic!("expected WalletSubcommands::Session"),
+            }
         }
     }
 

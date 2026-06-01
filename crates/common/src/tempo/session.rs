@@ -37,7 +37,7 @@ impl SessionStatus {
     }
 
     /// Returns `true` if entering this status must erase local key material.
-    pub const fn clears_key_material(self) -> bool {
+    const fn clears_key_material(self) -> bool {
         matches!(self, Self::Revoking | Self::Revoked | Self::Expired | Self::Failed)
     }
 
