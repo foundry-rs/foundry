@@ -25,7 +25,7 @@ use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule}
 
 use crate::{
     cmd::{
-        keychain::send_keychain_tx_from,
+        keychain::send_keychain_tx,
         tempo_policy_args::{parse_period, parse_policy_token, parse_scope as parse_policy_scope},
     },
     tx::SendTxOpts,
@@ -155,13 +155,37 @@ async fn run_revoke(
     }
 
     update_session_status(session_id, SessionStatus::Revoking)?;
-    let status = match revoke_session_key_on_chain(&entry, tx, send_tx).await {
-        Ok(status) => status,
-        Err(err) => {
-            let _ = update_session_status(session_id, SessionStatus::Failed);
-            return Err(err.wrap_err("failed to revoke Tempo session key on-chain"));
+    let status = async {
+        let config = send_tx.eth.load_config()?;
+        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+        let rpc_chain_id = provider.get_chain_id().await?;
+        if rpc_chain_id != entry.chain_id {
+            eyre::bail!(
+                "session {} was created for chain {}, but the RPC is connected to chain {}",
+                entry.session_id,
+                entry.chain_id,
+                rpc_chain_id
+            );
         }
-    };
+
+        let info = provider.get_keychain_key(entry.root_account, entry.key_address).await?;
+        if info.isRevoked {
+            return Ok(Some(SessionRevokeStatus::AlreadyRevoked));
+        }
+        if info.keyId == Address::ZERO {
+            return Ok(Some(SessionRevokeStatus::NotProvisioned));
+        }
+
+        let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
+        send_keychain_tx(calldata, tx, &send_tx, Some(entry.root_account)).await?;
+        Ok(None)
+    }
+    .await
+    .map_err(|err: eyre::Report| {
+        let _ = update_session_status(session_id, SessionStatus::Failed);
+        err.wrap_err("failed to revoke Tempo session key on-chain")
+    })?;
+
     update_session_status(session_id, SessionStatus::Revoked)?;
     if let Some(status) = status {
         print_revoke_status(session_id, Some(&entry), status)?;
@@ -170,53 +194,12 @@ async fn run_revoke(
     Ok(())
 }
 
-async fn revoke_session_key_on_chain(
-    entry: &SessionEntry,
-    tx: TransactionOpts,
-    send_tx: SendTxOpts,
-) -> Result<Option<SessionRevokeStatus>> {
-    let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    let rpc_chain_id = provider.get_chain_id().await?;
-    if rpc_chain_id != entry.chain_id {
-        eyre::bail!(
-            "session {} was created for chain {}, but the RPC is connected to chain {}",
-            entry.session_id,
-            entry.chain_id,
-            rpc_chain_id
-        );
-    }
-
-    let info = provider.get_keychain_key(entry.root_account, entry.key_address).await?;
-    if info.isRevoked {
-        return Ok(Some(SessionRevokeStatus::AlreadyRevoked));
-    }
-    if info.keyId == Address::ZERO {
-        return Ok(Some(SessionRevokeStatus::NotProvisioned));
-    }
-
-    let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
-    send_keychain_tx_from(calldata, tx, &send_tx, entry.root_account).await?;
-    Ok(None)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SessionRevokeStatus {
     NotFound,
     Local,
     NotProvisioned,
     AlreadyRevoked,
-}
-
-impl SessionRevokeStatus {
-    const fn reason(self) -> &'static str {
-        match self {
-            Self::NotFound => "not_found",
-            Self::Local => "local",
-            Self::NotProvisioned => "not_provisioned",
-            Self::AlreadyRevoked => "already_revoked",
-        }
-    }
 }
 
 fn print_revoke_status(
@@ -230,7 +213,12 @@ fn print_revoke_status(
             serde_json::to_string_pretty(&json!({
                 "session_id": session_id.to_string(),
                 "status": if status == SessionRevokeStatus::NotFound { "not_found" } else { "revoked" },
-                "reason": status.reason(),
+                "reason": match status {
+                    SessionRevokeStatus::NotFound => "not_found",
+                    SessionRevokeStatus::Local => "local",
+                    SessionRevokeStatus::NotProvisioned => "not_provisioned",
+                    SessionRevokeStatus::AlreadyRevoked => "already_revoked",
+                },
                 "root_account": entry.map(|entry| entry.root_account.to_string()),
                 "chain_id": entry.map(|entry| entry.chain_id),
                 "key_address": entry.map(|entry| entry.key_address.to_string()),

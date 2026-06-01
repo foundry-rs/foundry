@@ -2492,7 +2492,7 @@ async fn run_authorize(
         .abi_encode()
     };
 
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
 }
 
 /// `cast keychain revoke` / `cast keychain rev` — revoke a key on-chain.
@@ -2502,7 +2502,7 @@ async fn run_revoke(
     send_tx: SendTxOpts,
 ) -> Result<()> {
     let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
 }
 
 /// `cast keychain rl` — query remaining spending limit.
@@ -2549,7 +2549,7 @@ async fn run_update_limit(
         newLimit: new_limit,
     }
     .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
 }
 
 /// `cast keychain ss` — set allowed call scopes.
@@ -2561,7 +2561,7 @@ async fn run_set_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
 }
 
 /// `cast keychain rs` — remove call scope for a target.
@@ -2573,7 +2573,7 @@ async fn run_remove_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
@@ -2635,7 +2635,7 @@ async fn run_policy_add_call(
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
             .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx, None).await
 }
 
 /// `cast keychain policy set-limit` — update a spending limit amount.
@@ -2660,24 +2660,6 @@ async fn run_policy_set_limit(
 
 /// Send calldata to the Tempo AccountKeychain precompile as a root-authorized transaction.
 pub(crate) async fn send_keychain_tx(
-    calldata: Vec<u8>,
-    tx_opts: TransactionOpts,
-    send_tx: &SendTxOpts,
-) -> Result<()> {
-    send_keychain_tx_inner(calldata, tx_opts, send_tx, None).await
-}
-
-/// Send calldata to AccountKeychain, requiring the resolved root signer to match `expected`.
-pub(crate) async fn send_keychain_tx_from(
-    calldata: Vec<u8>,
-    tx_opts: TransactionOpts,
-    send_tx: &SendTxOpts,
-    expected: Address,
-) -> Result<()> {
-    send_keychain_tx_inner(calldata, tx_opts, send_tx, Some(expected)).await
-}
-
-async fn send_keychain_tx_inner(
     calldata: Vec<u8>,
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
