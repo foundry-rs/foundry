@@ -5759,6 +5759,7 @@ dependencies = [
  "tempfile",
  "tempo-contracts",
  "tempo-precompiles",
+ "tempo-primitives",
  "tokio",
  "tracing",
  "yansi",
