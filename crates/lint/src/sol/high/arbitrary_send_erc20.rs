@@ -11,13 +11,23 @@ use solar::{
         TypeKind, Visit,
     },
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     ARBITRARY_SEND_ERC20,
     Severity::High,
     "arbitrary-send-erc20",
     "`transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`"
+);
+
+declare_forge_lint!(
+    ARBITRARY_SEND_ERC20_PERMIT,
+    Severity::High,
+    "arbitrary-send-erc20-permit",
+    "`transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens"
 );
 
 impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
@@ -46,13 +56,17 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         let has_solady_lib = has_solady_safe_transfer_lib(hir);
         let mut a = Analyzer::new(hir, has_solady_lib);
         for m in func.modifiers {
-            collect_modifier_safety(hir, has_solady_lib, m, &mut a.safe_vars);
+            collect_modifier_safety(hir, has_solady_lib, m, &mut a.safe_vars, &mut a.self_vars);
         }
         for stmt in body.stmts {
             let _ = a.visit_stmt(stmt);
+            // Skip dead code after a definite exit.
+            if branch_always_exits(stmt) {
+                break;
+            }
         }
-        for span in a.hits {
-            ctx.emit(&ARBITRARY_SEND_ERC20, span);
+        for (span, lint) in a.hits {
+            ctx.emit(lint, span);
         }
     }
 }
@@ -80,37 +94,51 @@ struct Analyzer<'hir> {
     /// Function-locals and `immutable`/`constant` state vars only — mutable storage may be
     /// rewritten between the check and the sink.
     safe_vars: HashSet<hir::VariableId>,
-    /// Permits seen earlier on this path. Path-sensitive and killed on token/owner reassignment.
+    /// Locals proven equal to `address(this)`. Subset of `safe_vars`, used to recognise
+    /// the permit `spender` arg via an alias.
+    self_vars: HashSet<hir::VariableId>,
+    /// Permits seen earlier on this path. Killed on token/owner reassignment.
     permits: HashSet<PermitRecord>,
-    /// Pending flash-loan repayments. Path-sensitive; killed on reassignment of any
-    /// referenced var; consumed once by a matching sink.
-    repayments: HashSet<PendingRepayment>,
+    /// Pending flash-loan repayments, as a multiset: repeated `onFlashLoan` calls each
+    /// license one consumption.
+    repayments: HashMap<PendingRepayment, u32>,
     /// Gates the `using ... for address` sink branch on a `SafeTransferLib` being present.
     has_solady_lib: bool,
-    hits: Vec<Span>,
+    hits: Vec<(Span, &'static SolLint)>,
+    /// Vars written by an assignment / `delete`. Used to drop unsound modifier-param
+    /// hoists when the modifier rewrote the param.
+    written: HashSet<hir::VariableId>,
 }
 
 #[derive(Clone)]
 struct FlowState {
     safe_vars: HashSet<hir::VariableId>,
+    self_vars: HashSet<hir::VariableId>,
     permits: HashSet<PermitRecord>,
-    repayments: HashSet<PendingRepayment>,
+    repayments: HashMap<PendingRepayment, u32>,
 }
 
 impl FlowState {
     fn intersection(a: &Self, b: &Self) -> Self {
         Self {
             safe_vars: a.safe_vars.intersection(&b.safe_vars).copied().collect(),
+            self_vars: a.self_vars.intersection(&b.self_vars).copied().collect(),
             permits: a.permits.intersection(&b.permits).copied().collect(),
-            repayments: a.repayments.intersection(&b.repayments).copied().collect(),
+            // Multiset intersection: min per key.
+            repayments: a
+                .repayments
+                .iter()
+                .filter_map(|(k, va)| b.repayments.get(k).map(|vb| (*k, *va.min(vb))))
+                .collect(),
         }
     }
 
     fn intersection_all(mut states: impl Iterator<Item = Self>) -> Self {
         let mut out = states.next().unwrap_or_else(|| Self {
             safe_vars: HashSet::new(),
+            self_vars: HashSet::new(),
             permits: HashSet::new(),
-            repayments: HashSet::new(),
+            repayments: HashMap::new(),
         });
         for state in states {
             out = Self::intersection(&out, &state);
@@ -127,16 +155,19 @@ impl<'hir> Analyzer<'hir> {
         Self {
             hir,
             safe_vars: HashSet::new(),
+            self_vars: HashSet::new(),
             permits: HashSet::new(),
-            repayments: HashSet::new(),
+            repayments: HashMap::new(),
             has_solady_lib,
             hits: Vec::new(),
+            written: HashSet::new(),
         }
     }
 
     fn snapshot(&self) -> FlowState {
         FlowState {
             safe_vars: self.safe_vars.clone(),
+            self_vars: self.self_vars.clone(),
             permits: self.permits.clone(),
             repayments: self.repayments.clone(),
         }
@@ -144,6 +175,7 @@ impl<'hir> Analyzer<'hir> {
 
     fn restore(&mut self, state: FlowState) {
         self.safe_vars = state.safe_vars;
+        self.self_vars = state.self_vars;
         self.permits = state.permits;
         self.repayments = state.repayments;
     }
@@ -197,13 +229,57 @@ impl<'hir> Analyzer<'hir> {
         })
     }
 
-    /// Updates `safe_vars` only; permit kills are caller-owned (state-var writes skip this).
+    /// Updates `safe_vars` / `self_vars` only; permit kills are caller-owned
+    /// (state-var writes skip this).
     fn assign(&mut self, target: hir::VariableId, rhs: &hir::Expr<'_>) {
+        self.written.insert(target);
         if self.is_safe(rhs) {
             self.safe_vars.insert(target);
         } else {
             self.safe_vars.remove(&target);
         }
+        if self.is_self_expr(rhs) {
+            self.self_vars.insert(target);
+        } else {
+            self.self_vars.remove(&target);
+        }
+    }
+
+    /// `true` when `expr` resolves to `address(this)`: bare form, a local alias,
+    /// `payable(...)`/cast wraps, or a ternary whose both branches are self.
+    fn is_self_expr(&self, expr: &hir::Expr<'_>) -> bool {
+        let expr = expr.peel_parens();
+        if is_address_self(expr) {
+            return true;
+        }
+        match &expr.kind {
+            ExprKind::Ident(reses) => reses.iter().any(
+                |r| matches!(r, Res::Item(ItemId::Variable(vid)) if self.self_vars.contains(vid)),
+            ),
+            ExprKind::Payable(inner) => self.is_self_expr(inner),
+            ExprKind::Call(callee, args, _) if is_address_cast(callee) => {
+                args.exprs().next().is_some_and(|e| self.is_self_expr(e))
+            }
+            ExprKind::Ternary(_, t, f) => self.is_self_expr(t) && self.is_self_expr(f),
+            _ => false,
+        }
+    }
+
+    /// Matches EIP-2612 `token.permit(owner, <self>, value, deadline, v, r, s)`.
+    fn match_permit_call(&self, expr: &hir::Expr<'_>) -> Option<PermitRecord> {
+        let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
+        let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
+        if ident.name.as_str() != "permit" {
+            return None;
+        }
+        let args = canonical_args(
+            args.kind,
+            &[&["owner"], &["spender"], &["value"], &["deadline"], &["v"], &["r"], &["s"]],
+        )?;
+        if !self.is_self_expr(args[1]) {
+            return None;
+        }
+        Some(PermitRecord { token: underlying_var(recv)?, owner: underlying_var(args[0])? })
     }
 
     /// Drops permits referencing `target`. Sound for any variable kind.
@@ -218,13 +294,13 @@ impl<'hir> Analyzer<'hir> {
 
     /// Drops pending repayments referencing `target`.
     fn kill_repayments_for(&mut self, target: hir::VariableId) {
-        self.repayments.retain(|r| {
+        self.repayments.retain(|r, _| {
             r.receiver != target && r.token != target && r.amount != target && r.fee != target
         });
     }
 
     /// Matches `from`/`token` plus a sink call with `to == address(this)` and amount
-    /// `amount + fee` against a pending repayment, consuming it on hit.
+    /// `amount + fee` against a pending repayment, consuming one occurrence on hit.
     fn consume_repayment(
         &mut self,
         call_expr: &hir::Expr<'_>,
@@ -246,42 +322,61 @@ impl<'hir> Analyzer<'hir> {
         } else {
             return false;
         };
-        if !is_address_self(to_arg) {
+        if !self.is_self_expr(to_arg) {
             return false;
         }
-        let matched = self.repayments.iter().copied().find(|r| {
+        let matched = self.repayments.keys().copied().find(|r| {
             r.receiver == from_v
                 && r.token == token_v
                 && is_amount_plus_fee(amount_arg, r.amount, r.fee)
         });
         if let Some(rep) = matched {
-            self.repayments.remove(&rep);
+            match self.repayments.get_mut(&rep) {
+                Some(count) if *count > 1 => *count -= 1,
+                _ => {
+                    self.repayments.remove(&rep);
+                }
+            }
             true
         } else {
             false
         }
     }
 
-    /// Records vars proven equal to a safe origin. Handles `==`/`!=`, `&&`/`||` (via De Morgan)
-    /// and `!`. Disjunctions are skipped — they don't establish a must-fact.
+    /// Records vars proven safe by `pred`. Handles `==`/`!=`, `&&`/`||` and `!` via
+    /// De Morgan; disjunctions keep only facts true on both sides.
     fn add_facts(&mut self, pred: &hir::Expr<'_>, negate: bool) {
         match &pred.peel_parens().kind {
             ExprKind::Binary(lhs, op, rhs) => {
-                let (eq, and) = if negate {
-                    (ast::BinOpKind::Ne, ast::BinOpKind::Or)
+                let (eq, and, or) = if negate {
+                    (ast::BinOpKind::Ne, ast::BinOpKind::Or, ast::BinOpKind::And)
                 } else {
-                    (ast::BinOpKind::Eq, ast::BinOpKind::And)
+                    (ast::BinOpKind::Eq, ast::BinOpKind::And, ast::BinOpKind::Or)
                 };
                 if op.kind == and {
                     self.add_facts(lhs, negate);
                     self.add_facts(rhs, negate);
+                } else if op.kind == or {
+                    // Disjunction: keep facts true in both arms.
+                    let baseline = self.snapshot();
+                    self.add_facts(lhs, negate);
+                    let after_lhs = self.snapshot();
+                    self.restore(baseline);
+                    self.add_facts(rhs, negate);
+                    let after_rhs = self.snapshot();
+                    self.restore(FlowState::intersection(&after_lhs, &after_rhs));
                 } else if op.kind == eq {
                     for (a, b) in [(lhs, rhs), (rhs, lhs)] {
-                        if self.is_safe(a)
-                            && let Some(v) = underlying_var(b)
+                        if let Some(v) = underlying_var(b)
                             && self.is_safe_target(v)
                         {
-                            self.safe_vars.insert(v);
+                            if self.is_safe(a) {
+                                self.safe_vars.insert(v);
+                            }
+                            // Equality with `address(this)` also makes `b` a self alias.
+                            if self.is_self_expr(a) {
+                                self.self_vars.insert(v);
+                            }
                         }
                     }
                 }
@@ -306,10 +401,21 @@ impl<'hir> Analyzer<'hir> {
                 ExprKind::Tuple(r) => Some(*r),
                 _ => None,
             };
-            for (i, lhs_elem) in lhs_elems.iter().enumerate() {
-                if let Some(lhs_expr) = lhs_elem {
+            // Read all RHS facts before any write — handles `(x, y) = (y, x)` swaps.
+            type EvaluatedSlot<'a> = (Option<&'a hir::Expr<'a>>, Option<(bool, bool)>);
+            let evaluated: Vec<EvaluatedSlot<'_>> = lhs_elems
+                .iter()
+                .enumerate()
+                .map(|(i, lhs_elem)| {
+                    let lhs_expr = lhs_elem.as_deref();
                     let rhs_expr = rhs_elems.and_then(|r| r.get(i).copied()).flatten();
-                    self.assign_one(lhs_expr, rhs_expr);
+                    let flags = rhs_expr.map(|r| (self.is_safe(r), self.is_self_expr(r)));
+                    (lhs_expr, flags)
+                })
+                .collect();
+            for (lhs_expr, flags) in evaluated {
+                if let Some(lhs_expr) = lhs_expr {
+                    self.assign_one_flags(lhs_expr, flags);
                 }
             }
         } else {
@@ -319,16 +425,29 @@ impl<'hir> Analyzer<'hir> {
 
     /// `rhs == None` (unknown slot) drops the target's safe-fact.
     fn assign_one(&mut self, lhs: &hir::Expr<'_>, rhs: Option<&hir::Expr<'_>>) {
+        let flags = rhs.map(|r| (self.is_safe(r), self.is_self_expr(r)));
+        self.assign_one_flags(lhs, flags);
+    }
+
+    /// Like `assign_one` but with pre-evaluated `(is_safe, is_self)` flags.
+    fn assign_one_flags(&mut self, lhs: &hir::Expr<'_>, flags: Option<(bool, bool)>) {
         let Some(target) = underlying_var(lhs) else { return };
+        self.written.insert(target);
         self.kill_permits_for(target);
         self.kill_repayments_for(target);
         // Drop any prior safe-fact before the state-var bail-out.
         self.safe_vars.remove(&target);
+        self.self_vars.remove(&target);
         if self.hir.variable(target).kind.is_state() {
             return;
         }
-        if rhs.is_some_and(|r| self.is_safe(r)) {
-            self.safe_vars.insert(target);
+        if let Some((is_safe, is_self)) = flags {
+            if is_safe {
+                self.safe_vars.insert(target);
+            }
+            if is_self {
+                self.self_vars.insert(target);
+            }
         }
     }
 
@@ -401,7 +520,7 @@ impl<'hir> Analyzer<'hir> {
             // Nested loops own their own `break` / `continue`; they do not exit this isolated body.
             StmtKind::Loop(..) => {
                 let _ = self.visit_stmt(stmt);
-                Some(())
+                (!branch_always_exits(stmt)).then_some(())
             }
             _ => {
                 let _ = self.visit_stmt(stmt);
@@ -425,61 +544,56 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
             StmtKind::If(cond, then, else_) => {
                 let _ = self.visit_expr(cond);
 
-                let baseline_safe = self.safe_vars.clone();
-                let baseline_permits = self.permits.clone();
-                let baseline_repayments = self.repayments.clone();
+                let baseline = self.snapshot();
                 self.add_facts(cond, false);
                 let _ = self.visit_stmt(then);
                 let then_exits = branch_always_exits(then);
-                let after_then_safe = std::mem::replace(&mut self.safe_vars, baseline_safe);
-                let after_then_permits = std::mem::replace(&mut self.permits, baseline_permits);
-                let after_then_repayments =
-                    std::mem::replace(&mut self.repayments, baseline_repayments);
+                let after_then = self.snapshot();
 
                 // Both the explicit `else` body and the implicit fall-through inherit `!cond`.
-                let (after_else_safe, after_else_permits, after_else_repayments, else_exits) =
-                    match else_ {
-                        Some(e) => {
-                            self.add_facts(cond, true);
-                            let _ = self.visit_stmt(e);
-                            (
-                                std::mem::take(&mut self.safe_vars),
-                                std::mem::take(&mut self.permits),
-                                std::mem::take(&mut self.repayments),
-                                branch_always_exits(e),
-                            )
-                        }
-                        None => {
-                            self.add_facts(cond, true);
-                            (
-                                std::mem::take(&mut self.safe_vars),
-                                std::mem::take(&mut self.permits),
-                                std::mem::take(&mut self.repayments),
-                                false,
-                            )
-                        }
-                    };
+                self.restore(baseline);
+                self.add_facts(cond, true);
+                let else_exits = match else_ {
+                    Some(e) => {
+                        let _ = self.visit_stmt(e);
+                        branch_always_exits(e)
+                    }
+                    None => false,
+                };
+                let after_else = self.snapshot();
 
-                let (sv, pm, rp) = match (then_exits, else_exits) {
-                    (true, true) => (
-                        after_then_safe.union(&after_else_safe).copied().collect(),
-                        after_then_permits.union(&after_else_permits).copied().collect(),
-                        after_then_repayments.union(&after_else_repayments).copied().collect(),
-                    ),
-                    (true, false) => (after_else_safe, after_else_permits, after_else_repayments),
-                    (false, true) => (after_then_safe, after_then_permits, after_then_repayments),
-                    (false, false) => (
-                        after_then_safe.intersection(&after_else_safe).copied().collect(),
-                        after_then_permits.intersection(&after_else_permits).copied().collect(),
-                        after_then_repayments
-                            .intersection(&after_else_repayments)
+                let joined = match (then_exits, else_exits) {
+                    // Both branches exit: downstream is unreachable, take a conservative
+                    // union to match the previous behaviour.
+                    (true, true) => FlowState {
+                        safe_vars: after_then
+                            .safe_vars
+                            .union(&after_else.safe_vars)
                             .copied()
                             .collect(),
-                    ),
+                        self_vars: after_then
+                            .self_vars
+                            .union(&after_else.self_vars)
+                            .copied()
+                            .collect(),
+                        permits: after_then.permits.union(&after_else.permits).copied().collect(),
+                        // Multiset union: max per key.
+                        repayments: {
+                            let mut m = after_then.repayments;
+                            for (k, vb) in &after_else.repayments {
+                                let entry = m.entry(*k).or_insert(0);
+                                if *entry < *vb {
+                                    *entry = *vb;
+                                }
+                            }
+                            m
+                        },
+                    },
+                    (true, false) => after_else,
+                    (false, true) => after_then,
+                    (false, false) => FlowState::intersection(&after_then, &after_else),
                 };
-                self.safe_vars = sv;
-                self.permits = pm;
-                self.repayments = rp;
+                self.restore(joined);
                 return ControlFlow::Continue(());
             }
 
@@ -491,6 +605,9 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 {
                     for s in block.stmts {
                         let _ = self.visit_stmt(s);
+                        if branch_always_exits(s) {
+                            break;
+                        }
                     }
                 } else {
                     self.visit_isolated(block.stmts);
@@ -501,6 +618,17 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 let _ = self.visit_expr(&t.expr);
                 for clause in t.clauses {
                     self.visit_isolated(clause.block.stmts);
+                }
+                return ControlFlow::Continue(());
+            }
+
+            // Stop at the first definite-exit inside a sequential block.
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                for s in block.stmts {
+                    let _ = self.visit_stmt(s);
+                    if branch_always_exits(s) {
+                        break;
+                    }
                 }
                 return ControlFlow::Continue(());
             }
@@ -559,15 +687,21 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
             ExprKind::Call(..) => {
                 // EIP-3156: a matching repayment sink consumes the recorded obligation.
                 if let Some(rep) = match_flash_loan_call(self.hir, expr) {
-                    self.repayments.insert(rep);
-                } else if let Some(p) = match_permit_call(expr) {
+                    *self.repayments.entry(rep).or_insert(0) += 1;
+                } else if let Some(p) = self.match_permit_call(expr) {
                     self.permits.insert(p);
                 } else if let Some((from, token)) = match_sink(self.hir, self.has_solady_lib, expr)
                     && !self.is_safe(from)
-                    && !self.permit_covers(token, from)
                     && !self.consume_repayment(expr, from, token)
                 {
-                    self.hits.push(expr.span);
+                    // A matching prior permit doesn't make the sink safe: a non-permit
+                    // token with a fallback (e.g. WETH) silently accepts the permit.
+                    let lint = if self.permit_covers(token, from) {
+                        &ARBITRARY_SEND_ERC20_PERMIT
+                    } else {
+                        &ARBITRARY_SEND_ERC20
+                    };
+                    self.hits.push((expr.span, lint));
                 }
             }
             ExprKind::Assign(lhs, _, rhs) => self.handle_assign(lhs, rhs),
@@ -673,31 +807,15 @@ fn match_sink<'hir>(
     None
 }
 
-/// Matches `token.permit(owner, address(this), value, deadline, v, r, s)` (EIP-2612 shape).
-/// Only `spender == address(this)` permits are recorded; others can't suppress a sink.
-fn match_permit_call(expr: &hir::Expr<'_>) -> Option<PermitRecord> {
-    let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-    let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
-    if ident.name.as_str() != "permit" {
-        return None;
-    }
-    let args = canonical_args(
-        args.kind,
-        &[&["owner"], &["spender"], &["value"], &["deadline"], &["v"], &["r"], &["s"]],
-    )?;
-    if !is_address_self(args[1]) {
-        return None;
-    }
-    Some(PermitRecord { token: underlying_var(recv)?, owner: underlying_var(args[0])? })
-}
-
-/// Hoists `require(modParam == msg.sender)` style guards from the modifier prefix (statements
-/// before its single top-level `_;`), mapping modifier params back to caller args.
+/// Hoists `require(modParam == msg.sender | address(this))` guards from the modifier
+/// prefix (statements before `_;`) to the caller's argument. `out_self` receives params
+/// proven equal to `address(this)`.
 fn collect_modifier_safety<'hir>(
     hir: &'hir hir::Hir<'hir>,
     has_solady_lib: bool,
     invocation: &hir::Modifier<'hir>,
     out_safe: &mut HashSet<hir::VariableId>,
+    out_self: &mut HashSet<hir::VariableId>,
 ) {
     let ItemId::Function(fid) = invocation.id else { return };
     let modifier = hir.function(fid);
@@ -716,13 +834,30 @@ fn collect_modifier_safety<'hir>(
         return;
     };
 
-    let arg_map: Vec<(hir::VariableId, hir::VariableId)> = invocation
-        .args
-        .exprs()
-        .enumerate()
-        .filter_map(|(i, arg)| Some((*modifier.parameters.get(i)?, underlying_var(arg)?)))
-        .collect();
+    // Modifier-param → caller-side var. Supports positional and named call shapes.
+    let arg_map: Vec<(hir::VariableId, hir::VariableId)> = match invocation.args.kind {
+        hir::CallArgsKind::Unnamed(exprs) => exprs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, arg)| Some((*modifier.parameters.get(i)?, underlying_var(arg)?)))
+            .collect(),
+        hir::CallArgsKind::Named(named) => named
+            .iter()
+            .filter_map(|na| {
+                let mp = modifier.parameters.iter().find(|p| {
+                    hir.variable(**p).name.is_some_and(|n| n.as_str() == na.name.as_str())
+                })?;
+                Some((*mp, underlying_var(&na.value)?))
+            })
+            .collect(),
+    };
     if arg_map.is_empty() {
+        return;
+    }
+
+    // Bail when the prefix contains stmts we can't track writes through (e.g. inline
+    // assembly, which currently lowers to `StmtKind::Err`).
+    if contains_unanalysable(&body.stmts[..placeholder_idx]) {
         return;
     }
 
@@ -730,12 +865,35 @@ fn collect_modifier_safety<'hir>(
     for stmt in &body.stmts[..placeholder_idx] {
         let _ = a.visit_stmt(stmt);
     }
-    // Skip caller-args that can't carry a safe-fact (mutable storage).
+    // Skip mutable-storage callers (no safe-fact) and params written inside the modifier
+    // (the local-copy fact doesn't apply to the caller's var).
     for (mp, caller) in arg_map {
-        if a.safe_vars.contains(&mp) && a.is_safe_target(caller) {
+        if !a.is_safe_target(caller) || a.written.contains(&mp) {
+            continue;
+        }
+        if a.safe_vars.contains(&mp) {
             out_safe.insert(caller);
         }
+        if a.self_vars.contains(&mp) {
+            out_self.insert(caller);
+        }
     }
+}
+
+/// `true` if any statement is `StmtKind::Err` (currently catches inline assembly,
+/// which solar doesn't yet lower to HIR).
+fn contains_unanalysable(stmts: &[hir::Stmt<'_>]) -> bool {
+    fn in_stmt(s: &hir::Stmt<'_>) -> bool {
+        match &s.kind {
+            StmtKind::Err(_) => true,
+            StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => contains_unanalysable(b.stmts),
+            StmtKind::If(_, t, e) => in_stmt(t) || e.as_ref().is_some_and(|s| in_stmt(s)),
+            StmtKind::Loop(b, _) => contains_unanalysable(b.stmts),
+            StmtKind::Try(t) => t.clauses.iter().any(|c| contains_unanalysable(c.block.stmts)),
+            _ => false,
+        }
+    }
+    stmts.iter().any(in_stmt)
 }
 
 /// Strips the synthesized trailing `if (!cond) break;` from the HIR `do-while` lowering.
@@ -790,18 +948,40 @@ fn count_placeholders(stmts: &[hir::Stmt<'_>]) -> usize {
     stmts.iter().map(count_in_stmt).sum()
 }
 
-/// Resolves a `VariableId` for bare idents and `address(...)` / `payable(...)` / parens wraps.
+/// Resolves a `VariableId` for bare idents and type-cast / `payable(...)` / parens wraps.
+///
+/// Strips elementary-type casts (e.g. `address(x)`), contract / interface casts
+/// (e.g. `IERC20(rawToken)` — encoded as `Call` with the contract ident as callee), and
+/// `payable(...)` wrappers. Stripping interface casts lets permit and sink correlate when
+/// both sides wrap the same underlying raw-address variable.
 fn underlying_var(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
             Res::Item(ItemId::Variable(vid)) => Some(*vid),
             _ => None,
         }),
-        ExprKind::Call(callee, args, _) if is_address_cast(callee) => {
-            args.exprs().next().and_then(underlying_var)
+        ExprKind::Call(callee, args, _) if is_cast_callee(callee) => {
+            // Type conversions are unary; bail out on anything else to keep this peel
+            // strictly a cast-stripping helper.
+            let mut exprs = args.exprs();
+            let inner = exprs.next()?;
+            if exprs.next().is_some() {
+                return None;
+            }
+            underlying_var(inner)
         }
         ExprKind::Payable(inner) => underlying_var(inner),
         _ => None,
+    }
+}
+
+/// `true` when `callee` is a type-cast head, i.e. `address(...)`, an elementary-type cast,
+/// or an interface/contract cast like `IERC20(...)`.
+fn is_cast_callee(callee: &hir::Expr<'_>) -> bool {
+    match &callee.peel_parens().kind {
+        ExprKind::Type(_) => true,
+        ExprKind::Ident(reses) => reses.iter().any(|r| matches!(r, Res::Item(ItemId::Contract(_)))),
+        _ => false,
     }
 }
 
@@ -1010,11 +1190,14 @@ fn is_require_or_assert(callee: &hir::Expr<'_>) -> bool {
     )
 }
 
-/// `address(this)` or bare `this`.
+/// `address(this)` or bare `this`, including through `payable(...)` and parens wraps.
 fn is_address_self(expr: &hir::Expr<'_>) -> bool {
     let expr = expr.peel_parens();
     if is_builtin(expr, sym::this) {
         return true;
+    }
+    if let ExprKind::Payable(inner) = &expr.kind {
+        return is_address_self(inner);
     }
     matches!(&expr.kind, ExprKind::Call(callee, args, _) if is_address_cast(callee)
         && args.exprs().next().is_some_and(is_address_self))
@@ -1030,10 +1213,15 @@ fn branch_always_exits(stmt: &hir::Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) | StmtKind::Revert(_) => true,
         StmtKind::Expr(expr) => is_exit_call(expr),
-        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
-            b.stmts.last().is_some_and(branch_always_exits)
-        }
+        // Any sequential definite-exit makes the block exit.
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => b.stmts.iter().any(branch_always_exits),
         StmtKind::If(_, t, Some(e)) => branch_always_exits(t) && branch_always_exits(e),
+        // `do-while` runs the body once: if it can't break/continue out and any stmt
+        // definitely exits, the loop does too.
+        StmtKind::Loop(block, LoopSource::DoWhile) => {
+            let user = do_while_user_stmts(block.stmts);
+            !body_has_break_or_continue(user) && user.iter().any(branch_always_exits)
+        }
         _ => false,
     }
 }

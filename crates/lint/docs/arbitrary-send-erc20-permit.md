@@ -1,0 +1,114 @@
+# Arbitrary `from` in `transferFrom` used with `permit`
+
+**Severity**: `High`
+**ID**: `arbitrary-send-erc20-permit`
+
+Flags `transferFrom` / `safeTransferFrom` calls whose `from` argument is not provably
+`msg.sender` (or `address(this)`) when the function also calls
+`token.permit(owner, address(this), …)` for the same token and owner beforehand.
+
+## What it does
+
+Detects, within a single function, the combination of:
+
+1. A preceding `permit(owner, spender, value, deadline, v, r, s)` on `token` with
+   `spender == address(this)`, and
+2. A subsequent ERC20-style transfer of the same token from the same `owner`, where
+   `owner` cannot be proven equal to `msg.sender` or `address(this)`.
+
+Both common sink shapes are recognised:
+
+- Member calls: `token.transferFrom(owner, to, amount)` and
+  `token.safeTransferFrom(owner, to, amount)`.
+- Library calls: `Lib.safeTransferFrom(token, owner, to, amount)`, including the
+  Solady-shaped `using SafeTransferLib for address` form.
+
+The lint does **not** require the transfer `amount` to equal the permit `value`,
+nor does it inspect deadlines or signatures — the dangerous combination is the
+permit-then-arbitrary-transferFrom pattern itself, not the specific amounts.
+
+Matching EIP-3156 flash-loan repayments (`onFlashLoan` followed by a pull-back of
+`amount + fee`) are excluded.
+
+### Scope
+
+The check is intraprocedural and same-variable. It flags one permit-then-`transferFrom`
+flow inside a single function body and correlates the token, owner, and spender by the
+underlying variable, with the following normalisations applied to both sides of the
+correlation:
+
+- elementary type casts (`address(x)`), interface / contract casts (`IERC20(rawToken)`),
+  `payable(...)` wraps, and parentheses are stripped;
+- local aliases of `address(this)` (e.g. `address self = address(this); permit(..., self, ...)`)
+  are recognised as the permit spender;
+- the `using SafeTransferLib for address` member form is treated as a sink.
+
+Dead code after a top-level `return` / `revert` is skipped, and inline
+`// forge-lint: disable-next-line(arbitrary-send-erc20-permit)` suppresses a single sink.
+
+Patterns the check does **not** classify as the permit-variant (the underlying call
+may still be reported by `arbitrary-send-erc20` when the sink itself is unguarded)
+include: copies of the token or owner into another variable
+(`IERC20 t = token; ...`, `address from2 = from; ...`), permits issued from a
+struct / array / mapping receiver (`cfg.token.permit(...)`), permits issued through
+a library wrapper (`SafeERC20.safePermit(...)`), permits issued inside a called
+helper / modifier / parent contract, permits inside `for` or `while` loop bodies
+(whose execution count the analyzer treats as possibly zero), and permits whose
+success is verified by reading `nonces(owner)` before and after.
+
+## Why is this bad?
+
+A `permit` followed by `transferFrom` is the textbook EIP-2612 flow, so it looks
+safe. It is **not** safe when the token does not actually implement `permit` but
+has a fallback function (the canonical example is WETH). On such tokens:
+
+- `permit(...)` is forwarded to the fallback and silently succeeds without
+  authorizing anything.
+- Any pre-existing allowance from another user to this contract can then be drained
+  by anyone, because the contract trusts the (no-op) permit and forwards the
+  attacker-supplied `from` straight into `transferFrom`.
+
+The recommendation is to pin the supported token(s) at deploy time and verify they
+implement `permit` correctly, or to require `from == msg.sender` so that, even if
+the permit silently no-ops, only the caller's own balance is at risk.
+
+If your code separately proves that `permit` succeeded (for example by reading
+`token.nonces(owner)` before and after and reverting on no change) or restricts the
+sink to a vetted token allowlist, review the finding and suppress with
+`// forge-lint: disable-next-line(arbitrary-send-erc20-permit)`.
+
+## Example
+
+### Bad
+
+```solidity
+function pullWithPermit(
+    address from,
+    address to,
+    uint256 value,
+    uint256 deadline,
+    uint8 v,
+    bytes32 r,
+    bytes32 s
+) external {
+    token.permit(from, address(this), value, deadline, v, r, s);
+    token.transferFrom(from, to, value); // arbitrary-send-erc20-permit
+}
+```
+
+### Good
+
+```solidity
+function pullWithPermit(
+    uint256 value,
+    uint256 deadline,
+    uint8 v,
+    bytes32 r,
+    bytes32 s
+) external {
+    // `from` is implicitly the caller — permit + transferFrom only touch the
+    // caller's own balance, even if `token` is a non-permit token with a fallback.
+    token.permit(msg.sender, address(this), value, deadline, v, r, s);
+    token.transferFrom(msg.sender, address(this), value);
+}
+```
