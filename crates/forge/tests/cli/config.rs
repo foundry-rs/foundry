@@ -205,6 +205,7 @@ show_logs = false
 [invariant]
 runs = 256
 depth = 500
+workers = 1
 fail_on_revert = false
 call_override = false
 dictionary_weight = 80
@@ -1386,6 +1387,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "invariant": {
     "runs": 256,
     "depth": 500,
+    "workers": 1,
     "fail_on_revert": false,
     "call_override": false,
     "dictionary_weight": 80,
