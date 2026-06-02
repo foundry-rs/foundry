@@ -4,7 +4,7 @@ use url::Url;
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_rpc_client::BuiltInConnectionString;
 use alloy_signer::{Signature, Signer};
@@ -189,7 +189,7 @@ impl SendTxArgs {
                 sh_warn!("{}", iso4217_warning_message(currency))?;
                 let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
                 if !matches!(response.trim(), "y" | "Y") {
-                    sh_println!("Aborted.")?;
+                    sh_status!("Aborted.")?;
                     return Ok(());
                 }
             }
@@ -240,7 +240,7 @@ impl SendTxArgs {
         }
 
         if let Some(ts) = expires_at {
-            sh_println!("Transaction expires at unix timestamp {ts}")?;
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
@@ -304,7 +304,7 @@ impl SendTxArgs {
                 send_tx.confirmations,
                 timeout,
             )
-            .await
+            .await?;
         // Case 2:
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
@@ -331,7 +331,8 @@ impl SendTxArgs {
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
             let cast = CastTxSender::new(&provider);
-            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+                .await?;
         // Case 3:
         // Tempo access key (keychain) signing. Uses `sign_with_access_key` which
         // handles the provisioning check and embeds `key_authorization` when needed.
@@ -357,7 +358,7 @@ impl SendTxArgs {
                 send_tx.confirmations,
                 timeout,
             )
-            .await
+            .await?;
         // Case 4:
         // Remote sponsor URL: sign locally, ask the sponsor service for a fee-payer signature,
         // then submit the fully-sponsored tx to the regular RPC.
@@ -397,7 +398,7 @@ impl SendTxArgs {
                 send_tx.confirmations,
                 timeout,
             )
-            .await
+            .await?;
         // Case 5:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -434,8 +435,10 @@ impl SendTxArgs {
                 send_tx.confirmations,
                 timeout,
             )
-            .await
+            .await?;
         }
+
+        Ok(())
     }
 }
 
@@ -446,7 +449,7 @@ pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     sync: bool,
     confs: u64,
     timeout: u64,
-) -> Result<()>
+) -> Result<B256>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
@@ -454,16 +457,17 @@ where
     let cast = CastTxSender::new(provider);
 
     if sync {
-        // Send transaction and wait for receipt synchronously
-        let receipt = cast.send_sync(tx).await?;
+        // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
+        // Serialize; adding Serialize would ripple across all network-generic callers.
+        let (tx_hash, receipt) = cast.send_sync(tx).await?;
         sh_println!("{receipt}")?;
+        Ok(tx_hash)
     } else {
         let pending_tx = cast.send(tx).await?;
         let tx_hash = *pending_tx.inner().tx_hash();
         cast.print_tx_result(tx_hash, cast_async, confs, timeout).await?;
+        Ok(tx_hash)
     }
-
-    Ok(())
 }
 
 /// Signs a transaction with a Tempo access key and sends it via `send_raw_transaction`.
@@ -480,7 +484,7 @@ pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
     cast_async: bool,
     confirmations: u64,
     timeout: u64,
-) -> Result<()>
+) -> Result<B256>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
@@ -497,7 +501,10 @@ where
         )
         .await?;
     let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-    CastTxSender::new(provider).print_tx_result(tx_hash, cast_async, confirmations, timeout).await
+    CastTxSender::new(provider)
+        .print_tx_result(tx_hash, cast_async, confirmations, timeout)
+        .await?;
+    Ok(tx_hash)
 }
 
 /// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).

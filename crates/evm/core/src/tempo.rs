@@ -12,10 +12,8 @@ use tempo_contracts::{
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE,
     precompiles::{
-        ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS,
-        SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-        TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
-        VALIDATOR_CONFIG_V2_ADDRESS,
+        ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP403_REGISTRY_ADDRESS,
+        VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
     },
 };
 use tempo_precompiles::{
@@ -26,7 +24,20 @@ use tempo_precompiles::{
     validator_config,
 };
 
-pub use tempo_contracts::precompiles::PATH_USD_ADDRESS;
+pub use tempo_contracts::precompiles::{
+    ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IFeeManager, ISignatureVerifier, IStablecoinDEX,
+    ITIP20ChannelReserve, PATH_USD_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS,
+    SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+};
+pub use tempo_precompiles::{
+    address_registry::{AddressRegistry, IMPLICIT_APPROVAL_LIST, is_implicitly_approved},
+    signature_verifier::SignatureVerifier,
+    stablecoin_dex::StablecoinDEX,
+    tip_fee_manager::TipFeeManager,
+    tip20::is_tip20_prefix,
+    tip20_channel_reserve::TIP20ChannelReserve,
+};
 
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
@@ -40,6 +51,8 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     ACCOUNT_KEYCHAIN_ADDRESS,
     SIGNATURE_VERIFIER_ADDRESS,
     ADDRESS_REGISTRY_ADDRESS,
+    TIP20_CHANNEL_RESERVE_ADDRESS,
+    RECEIVE_POLICY_GUARD_ADDRESS,
 ];
 
 /// All well-known TIP20 fee token addresses on Tempo networks.

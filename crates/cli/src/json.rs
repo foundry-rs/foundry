@@ -1,6 +1,11 @@
 //! Shared JSON output primitives for Foundry CLIs.
 
+use alloy_dyn_abi::DynSolValue;
 use eyre::Result;
+use foundry_common::{
+    fmt::{format_tokens, serialize_value_as_json},
+    sh_println, shell,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_string};
 
@@ -129,13 +134,72 @@ impl JsonMessage {
     }
 }
 
-/// Prints a value as compact, single-line JSON to stdout.
+/// Prints a serializable object: envelope-wrapped in `--json` mode, pretty-printed otherwise.
 ///
-/// The trailing newline makes this suitable for NDJSON streams when each call
-/// emits one self-contained JSON record.
+/// Use this for objects that have no human-readable `Display` format (block data, RPC responses,
+/// etc.).
+pub fn print_json_object<T: Serialize>(value: T) -> Result<()> {
+    if foundry_common::shell::is_json() {
+        print_json_success(value)
+    } else {
+        sh_println!("{}", serde_json::to_string_pretty(&value)?)?;
+        Ok(())
+    }
+}
+
+/// Prints a value as one compact JSON line on stdout and flushes.
+///
+/// Bypasses the shell verbosity layer so `--quiet` cannot suppress structured
+/// output the caller explicitly asked for.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    sh_println!("{}", to_string(value)?)?;
+    let s = to_string(value)?;
+    let mut shell = foundry_common::shell::Shell::get();
+    let out = shell.out();
+    writeln!(out, "{s}")?;
+    out.flush()?;
     Ok(())
+}
+
+/// One NDJSON record on a long-running command's stream. The kind-specific
+/// `payload` is flattened into the same object alongside the spec fields
+/// (`schema_id`, `command_id`, `kind`, `ts`).
+#[derive(Clone, Debug, Serialize)]
+pub struct StreamRecord<T> {
+    pub(crate) schema_id: &'static str,
+    pub(crate) command_id: &'static str,
+    pub(crate) kind: &'static str,
+    /// RFC 3339 UTC with millisecond precision.
+    pub(crate) ts: String,
+    #[serde(flatten)]
+    pub(crate) payload: T,
+}
+
+impl<T> StreamRecord<T> {
+    /// Build a record stamped with the current UTC time.
+    pub fn new(
+        schema_id: &'static str,
+        command_id: &'static str,
+        kind: &'static str,
+        payload: T,
+    ) -> Self {
+        Self {
+            schema_id,
+            command_id,
+            kind,
+            ts: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            payload,
+        }
+    }
+}
+
+/// Emits a single NDJSON record on stdout for a streaming command.
+pub fn print_stream_record<T: Serialize>(
+    schema_id: &'static str,
+    command_id: &'static str,
+    kind: &'static str,
+    payload: T,
+) -> Result<()> {
+    print_json(&StreamRecord::new(schema_id, command_id, kind, payload))
 }
 
 /// Prints a successful JSON envelope to stdout.
@@ -149,6 +213,58 @@ pub fn print_json_success_with_warnings<T: Serialize>(
     warnings: Vec<JsonMessage>,
 ) -> Result<()> {
     print_json(&JsonEnvelope::success_with_warnings(data, warnings))
+}
+
+/// Prints command output that may already be JSON: parsed and envelope-wrapped in `--json` mode,
+/// plain text otherwise. If the output is not valid JSON, it is wrapped as a scalar string.
+pub fn print_json_value_or_scalar(value: impl AsRef<str> + std::fmt::Display) -> Result<()> {
+    if shell::is_json() {
+        match serde_json::from_str::<Value>(value.as_ref()) {
+            Ok(value) => print_json_success(value),
+            Err(_) => print_json_success(value.as_ref()),
+        }
+    } else {
+        sh_println!("{value}")?;
+        Ok(())
+    }
+}
+
+/// Prints a scalar value: JSON envelope in `--json` mode, plain text otherwise.
+pub fn print_scalar(value: impl Serialize + std::fmt::Display) -> Result<()> {
+    if shell::is_json() {
+        print_json_success(value)
+    } else {
+        sh_println!("{value}")?;
+        Ok(())
+    }
+}
+
+/// Prints a list of serializable items: JSON envelope wrapping an array in `--json` mode,
+/// one item per line otherwise.
+pub fn print_list<T: Serialize + std::fmt::Display>(items: &[T]) -> Result<()> {
+    if shell::is_json() {
+        print_json_success(items)
+    } else {
+        for item in items {
+            sh_println!("{item}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Prints ABI-decoded tokens: JSON envelope wrapping a value array in `--json` mode,
+/// one formatted token per line otherwise.
+pub fn print_tokens(tokens: &[DynSolValue]) -> Result<()> {
+    if shell::is_json() {
+        let values = tokens
+            .iter()
+            .cloned()
+            .map(|t| serialize_value_as_json(t, None))
+            .collect::<Result<Vec<Value>>>()?;
+        print_json_success(values)
+    } else {
+        format_tokens(tokens).try_for_each(|t| sh_println!("{t}"))
+    }
 }
 
 #[cfg(test)]
@@ -186,6 +302,32 @@ mod tests {
         assert_eq!(value["warnings"][0]["level"], "warning");
         assert_eq!(value["warnings"][0]["code"], "compiler.remappings");
         assert_eq!(value["warnings"][0]["details"]["count"], 3);
+    }
+
+    #[test]
+    fn stream_record_includes_required_fields_and_flattens_payload() {
+        #[derive(Serialize)]
+        struct TestEvent {
+            contract: String,
+            passed: usize,
+        }
+        let payload = TestEvent { contract: "Counter.t.sol:CounterTest".into(), passed: 3 };
+        let rec = StreamRecord::new(
+            "foundry:forge.test.event@v1",
+            "forge.test",
+            "suite_finished",
+            payload,
+        );
+        let json = to_string(&rec).unwrap();
+        // Compact, no pretty-printing.
+        assert!(!json.contains('\n'), "expected compact json, got: {json}");
+        let v = serde_json::from_str::<Value>(&json).unwrap();
+        assert_eq!(v["schema_id"], "foundry:forge.test.event@v1");
+        assert_eq!(v["command_id"], "forge.test");
+        assert_eq!(v["kind"], "suite_finished");
+        assert!(v["ts"].is_string());
+        assert_eq!(v["contract"], "Counter.t.sol:CounterTest");
+        assert_eq!(v["passed"], 3);
     }
 
     #[test]

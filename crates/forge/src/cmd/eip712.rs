@@ -72,7 +72,7 @@ impl Eip712Args {
                 sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
             } else {
                 for output in &outputs {
-                    sh_println!("{output}")?;
+                    sh_eprintln!("{output}")?;
                 }
             }
 

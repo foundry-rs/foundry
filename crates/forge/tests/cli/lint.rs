@@ -248,7 +248,10 @@ note[mixed-case-function]: function names should use mixedCase
             ..Default::default()
         };
     });
-    cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
+    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
 });
 
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {

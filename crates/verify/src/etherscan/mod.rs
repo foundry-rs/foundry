@@ -1,6 +1,6 @@
 use crate::{
     VerifierArgs,
-    provider::{VerificationContext, VerificationProvider},
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
@@ -50,6 +50,10 @@ trait EtherscanSourceProvider: Send + Sync + Debug {
 
 #[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
+    fn provider_type(&self) -> VerificationProviderType {
+        VerificationProviderType::Etherscan
+    }
+
     async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
@@ -257,7 +261,7 @@ impl EtherscanVerificationProvider {
     ) -> Result<Client> {
         let chain = etherscan_opts.chain.unwrap_or_default();
         let etherscan_key = etherscan_opts.key();
-        let verifier_type = &verifier_args.verifier;
+        let verifier_type = verifier_args.effective_type();
         let verifier_url = verifier_args.verifier_url.as_deref();
 
         // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
@@ -336,6 +340,8 @@ impl EtherscanVerificationProvider {
             // unclear how Etherscan interprets this field in standard-json mode
             verify_args = verify_args.via_ir(true);
         }
+
+        apply_license_type(&mut verify_args, args.license_type.as_deref());
 
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = args.num_of_optimizations {
@@ -452,14 +458,33 @@ impl EtherscanVerificationProvider {
     }
 }
 
+fn apply_license_type(verify_args: &mut VerifyContract, license_type: Option<&str>) {
+    if let Some(license_type) = license_type {
+        verify_args.other.insert("licenseType".to_string(), license_type.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::VerificationProviderType;
     use clap::Parser;
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
     use tempfile::tempdir;
+
+    #[test]
+    fn applies_license_type_to_verify_request() {
+        let mut verify_args = VerifyContract::new(
+            Default::default(),
+            "Counter".to_string(),
+            "contract Counter {}".to_string(),
+            "v0.8.23+commit.f704f362".to_string(),
+        );
+
+        apply_license_type(&mut verify_args, Some("13"));
+
+        assert_eq!(verify_args.other.get("licenseType").map(String::as_str), Some("13"));
+    }
 
     #[test]
     fn can_extract_etherscan_verify_config() {
@@ -568,7 +593,7 @@ mod tests {
 
         let config = args.load_config().unwrap();
 
-        assert_eq!(args.verifier.verifier, VerificationProviderType::Etherscan);
+        assert_eq!(args.verifier.effective_type(), VerificationProviderType::Etherscan);
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();

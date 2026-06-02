@@ -351,6 +351,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.build.via_ir,
+            license_type: None,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -362,8 +363,10 @@ impl CreateArgs {
         // Check config for Etherscan API Keys to avoid preflight check failing if no
         // ETHERSCAN_API_KEY value set.
         let config = verify.load_config()?;
-        verify.etherscan.key =
-            config.get_etherscan_config_with_chain(self.chain_id())?.map(|c| c.key);
+        verify.etherscan.key = config
+            .get_etherscan_config_with_chain(self.chain_id())?
+            .map(|c| c.key)
+            .or_else(|| config.etherscan_api_key.clone());
 
         let context = verify.resolve_context().await?;
 
@@ -671,6 +674,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier,
             via_ir: self.build.via_ir,
+            license_type: None,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -678,7 +682,16 @@ impl CreateArgs {
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };
-        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
+        // Load the full config (including foundry.toml) so the key used for resolution matches
+        // what `verify.run()` will actually use, preventing a "Waiting for sourcify..." message
+        // when the run will actually use Etherscan (or vice versa for unknown chains).
+        let verify_config = verify.load_config()?;
+        let effective_key = verify_config
+            .get_etherscan_config_with_chain(Some(chain))?
+            .map(|c| c.key)
+            .or_else(|| verify_config.etherscan_api_key.clone());
+        let resolved_verifier = verify.verifier.resolve(effective_key.as_deref(), Some(chain));
+        sh_println!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
     }
 

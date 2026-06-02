@@ -77,7 +77,7 @@ impl LintArgs {
         };
 
         if input.is_empty() {
-            sh_println!("nothing to lint")?;
+            sh_status!("nothing to lint")?;
             return Ok(());
         }
 

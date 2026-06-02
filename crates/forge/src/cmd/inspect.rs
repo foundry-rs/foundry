@@ -1,5 +1,4 @@
-use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256};
+use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
@@ -167,10 +166,10 @@ impl InspectArgs {
                 if shell::is_json() {
                     return print_json(&all_libs);
                 }
-                sh_println!(
-                    "Dynamically linked libraries:\n{}",
-                    all_libs.iter().map(|v| format!("  {v}")).collect::<Vec<String>>().join("\n")
-                )?;
+                sh_status!("Dynamically linked libraries:")?;
+                for lib in &all_libs {
+                    sh_println!("{lib}")?;
+                }
             }
             ContractArtifactField::Linearization => {
                 print_linearization(
@@ -202,10 +201,15 @@ fn parse_events(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
     for ev in abi.events.values().flatten() {
         let types = parse_event_params(&ev.inputs);
-        let topic = hex::encode(keccak256(ev.signature()));
-        out.insert(format!("{}({})", ev.name, types), format!("0x{topic}").into());
+        let topic = event_topic(ev).map_or(Value::Null, Into::into);
+        out.insert(format!("{}({})", ev.name, types), topic);
     }
     out
+}
+
+/// Returns topic0 for non-anonymous events. Anonymous events have no signature topic.
+fn event_topic(ev: &Event) -> Option<String> {
+    (!ev.anonymous).then(|| ev.selector().to_string())
 }
 
 fn parse_event_params(ev_params: &[EventParam]) -> String {
@@ -233,8 +237,13 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
             // Print events
             for ev in abi.events.values().flatten() {
                 let types = parse_event_params(&ev.inputs);
-                let selector = ev.selector().to_string();
-                table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
+                let signature = if ev.anonymous {
+                    format!("{}({}) anonymous", ev.name, types)
+                } else {
+                    format!("{}({})", ev.name, types)
+                };
+                let selector = event_topic(ev).unwrap_or_default();
+                table.add_row(["event", &signature, &selector]);
             }
 
             // Print errors
@@ -391,7 +400,7 @@ fn print_errors_events(map: &Map<String, Value>, is_err: bool, should_wrap: bool
         headers,
         |table| {
             for (method, selector) in map {
-                table.add_row([method, selector.as_str().unwrap()]);
+                table.add_row([method.as_str(), selector.as_str().unwrap_or("")]);
             }
         },
         should_wrap,
@@ -723,7 +732,17 @@ fn print_json(obj: &impl serde::Serialize) -> Result<()> {
 }
 
 fn print_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<()> {
-    sh_println!("{}", get_json_str(obj, key)?)?;
+    let value = serde_json::to_value(obj)?;
+    let value = key.and_then(|k| value.get(k)).unwrap_or(&value);
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string_pretty(value)?)?;
+    } else {
+        let s = match value.as_str() {
+            Some(s) => s.to_string(),
+            None => format!("{value:#}"),
+        };
+        sh_println!("{s}")?;
+    }
     Ok(())
 }
 
@@ -735,28 +754,19 @@ fn print_yul(yul: Option<&str>, strip_comments: bool) -> Result<()> {
     static YUL_COMMENTS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(///.*\n\s*)|(\s*/\*\*.*?\*/)").unwrap());
 
-    if strip_comments {
-        sh_println!("{}", YUL_COMMENTS.replace_all(yul, ""))?;
+    let out = if strip_comments {
+        YUL_COMMENTS.replace_all(yul, "").into_owned()
     } else {
-        sh_println!("{yul}")?;
+        yul.to_string()
+    };
+
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string(&out)?)?;
+    } else {
+        sh_println!("{out}")?;
     }
 
     Ok(())
-}
-
-fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String> {
-    let value = serde_json::to_value(obj)?;
-    let value = if let Some(key) = key
-        && let Some(value) = value.get(key)
-    {
-        value
-    } else {
-        &value
-    };
-    Ok(match value.as_str() {
-        Some(s) => s.to_string(),
-        None => format!("{value:#}"),
-    })
 }
 
 fn is_solidity_source(path: &Path) -> bool {

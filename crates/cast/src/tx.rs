@@ -3,7 +3,7 @@ use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
@@ -225,15 +225,16 @@ where
     }
 
     /// Sends a transaction and waits for receipt synchronously
-    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<String> {
+    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<(B256, String)> {
         let mut receipt = TransactionReceiptWithRevertReason::<N> {
             receipt: self.provider.send_transaction_sync(tx).await?,
             revert_reason: None,
         };
+        let tx_hash = receipt.receipt.transaction_hash();
         // Allow to fail silently
         let _ = receipt.update_revert_reason(&self.provider).await;
 
-        self.format_receipt(receipt, None)
+        self.format_receipt(receipt, None).map(|formatted| (tx_hash, formatted))
     }
 
     /// Sends a transaction to the specified address
