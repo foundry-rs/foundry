@@ -354,11 +354,19 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
+        // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
+        // identifiers it constructs are project-relative. Match that here for the filter check
+        // (notably for the `--rerun` failure list, which is persisted relative) but return the
+        // original absolute source paths so downstream compilation can locate them.
         Ok(output
             .artifact_ids()
             .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
             .filter(|(id, abi)| {
-                id.source.starts_with(&config.src) || matches_artifact(test_filter, id, abi)
+                if id.source.starts_with(&config.src) {
+                    return true;
+                }
+                let stripped = id.clone().with_stripped_file_prefixes(&config.root);
+                matches_artifact(test_filter, &stripped, abi)
             })
             .map(|(id, _)| id.source)
             .collect())
@@ -1161,12 +1169,13 @@ impl TestArgs {
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
-        let mut rerun_failures = None;
-        if self.rerun {
+        let rerun_failures = if self.rerun {
             let failures = last_run_failures(config);
             filter.test_pattern = failures.test_pattern;
-            rerun_failures = failures.failures;
-        }
+            failures.failures
+        } else {
+            None
+        };
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
                 bail!("Can not supply both --match-path and |path|");
@@ -1294,16 +1303,16 @@ fn last_run_failures(config: &Config) -> LastRunFailures {
     };
 
     if let Ok(failures) = serde_json::from_str::<RerunFailures>(&filter) {
-        let test_pattern = (!failures.failures.is_empty())
-            .then(|| {
-                failures
-                    .failures
-                    .iter()
-                    .map(|failure| regex::escape(&failure.test))
-                    .collect::<Vec<_>>()
-                    .join("|")
-            })
-            .and_then(|filter| Regex::new(&filter).ok());
+        if failures.failures.is_empty() {
+            return LastRunFailures { test_pattern: None, failures: None };
+        }
+        let test_pattern = failures
+            .failures
+            .iter()
+            .map(|failure| regex::escape(&failure.test))
+            .collect::<Vec<_>>()
+            .join("|");
+        let test_pattern = Regex::new(&test_pattern).ok();
         return LastRunFailures { test_pattern, failures: Some(failures.failures) };
     }
 

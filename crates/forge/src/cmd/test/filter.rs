@@ -1,6 +1,6 @@
 use alloy_json_abi::Function;
 use clap::Parser;
-use foundry_common::{TestFilter, TestFunctionExt, get_contract_name};
+use foundry_common::{TestFilter, TestFunctionExt};
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
 use foundry_config::{Config, filter::GlobMatcher};
 use serde::{Deserialize, Serialize};
@@ -241,12 +241,6 @@ impl TestFilter for ProjectPathsAwareFilter {
 
     fn matches_contract(&self, contract_name: &str) -> bool {
         self.args_filter.matches_contract(contract_name)
-            && self.rerun_failures.as_ref().is_none_or(|failures| {
-                failures.iter().any(|failure| {
-                    failure.contract == contract_name
-                        || get_contract_name(&failure.contract) == contract_name
-                })
-            })
     }
 
     fn matches_path(&self, mut path: &Path) -> bool {
@@ -255,7 +249,7 @@ impl TestFilter for ProjectPathsAwareFilter {
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
     }
 
-    fn matches_test_function_in_contract(&self, contract_name: &str, func: &Function) -> bool {
+    fn matches_test_function_in_contract(&self, contract_id: &str, func: &Function) -> bool {
         if let Some(failures) = &self.rerun_failures {
             if !func.is_any_test() || !self.args_filter.matches_test(&func.signature()) {
                 return false;
@@ -263,8 +257,7 @@ impl TestFilter for ProjectPathsAwareFilter {
             let signature = func.signature();
             let name = signature.split('(').next().unwrap_or(&signature);
             failures.iter().any(|failure| {
-                (failure.contract == contract_name
-                    || get_contract_name(&failure.contract) == contract_name)
+                failure.contract == contract_id
                     && (failure.test == signature || failure.test == name)
             })
         } else {

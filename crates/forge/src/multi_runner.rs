@@ -104,10 +104,10 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
         self.matching_contracts(filter).flat_map(move |(id, c)| {
-            let contract_name = id.identifier();
+            let identifier = id.identifier();
             c.abi
                 .functions()
-                .filter(move |func| filter.matches_test_function_in_contract(&contract_name, func))
+                .filter(move |func| filter.matches_test_function_in_contract(&identifier, func))
         })
     }
 
@@ -129,10 +129,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .map(|(id, c)| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
+                let identifier = id.identifier();
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| filter.matches_test_function_in_contract(&name, func))
+                    .filter(|func| filter.matches_test_function_in_contract(&identifier, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -670,17 +671,18 @@ impl MultiContractRunnerBuilder {
 }
 
 pub fn matches_artifact(filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-    matches_contract(filter, &id.source, &id.name, abi.functions())
+    matches_contract(filter, &id.source, &id.name, &id.identifier(), abi.functions())
 }
 
 pub(crate) fn matches_contract(
     filter: &dyn TestFilter,
     path: &Path,
     contract_name: &str,
+    contract_id: &str,
     functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
         && functions
             .into_iter()
-            .any(|func| filter.matches_test_function_in_contract(contract_name, func.borrow()))
+            .any(|func| filter.matches_test_function_in_contract(contract_id, func.borrow()))
 }
