@@ -611,6 +611,16 @@ fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
     temp_config.mutation_dir = rebase_project_path(&config.root, temp_path, &config.mutation_dir);
     temp_config.libs =
         config.libs.iter().map(|lib| rebase_project_path(&config.root, temp_path, lib)).collect();
+    temp_config.include_paths = config
+        .include_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
+    temp_config.allow_paths = config
+        .allow_paths
+        .iter()
+        .map(|path| rebase_project_path(&config.root, temp_path, path))
+        .collect();
 
     if let Some(path) = &config.fuzz.failure_persist_dir {
         temp_config.fuzz.failure_persist_dir =
@@ -784,6 +794,8 @@ mod tests {
             broadcast: root.join("custom-broadcast"),
             mutation_dir: root.join("custom-cache/mutation"),
             libs: vec![root.join("vendor")],
+            include_paths: vec![root.join("shared")],
+            allow_paths: vec![root.join("fixtures")],
             dynamic_test_linking: true,
             cache: true,
             ..Default::default()
@@ -807,6 +819,8 @@ mod tests {
         assert_eq!(temp_config.broadcast, temp.path().join("custom-broadcast"));
         assert_eq!(temp_config.mutation_dir, temp.path().join("custom-cache/mutation"));
         assert_eq!(temp_config.libs, vec![temp.path().join("vendor")]);
+        assert_eq!(temp_config.include_paths, vec![temp.path().join("shared")]);
+        assert_eq!(temp_config.allow_paths, vec![temp.path().join("fixtures")]);
         assert_eq!(
             temp_config.fuzz.failure_persist_dir,
             Some(temp.path().join("custom-cache/fuzz"))

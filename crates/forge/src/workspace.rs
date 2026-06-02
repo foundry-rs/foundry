@@ -83,8 +83,9 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         copy_dir_recursive(&config.test, &temp_dir.join(&test_rel))?;
     }
 
+    let handled_extra_roots = handled_project_roots(config)?;
     for extra_path in config.include_paths.iter().chain(config.allow_paths.iter()) {
-        copy_extra_project_path(&config.root, temp_dir, extra_path)?;
+        copy_extra_project_path(&config.root, temp_dir, extra_path, &handled_extra_roots)?;
     }
 
     // Copy `script/` too when present and distinct from src/test. Many real
@@ -144,11 +145,62 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn copy_extra_project_path(root: &Path, temp_dir: &Path, path: &Path) -> Result<()> {
+fn handled_project_roots(config: &Config) -> Result<Vec<PathBuf>> {
+    let mut roots = Vec::new();
+    push_handled_project_root(&mut roots, &config.root, &config.src, "src")?;
+    push_handled_project_root(&mut roots, &config.root, &config.test, "test")?;
+
+    if config.script.exists() && config.script != config.src && config.script != config.test {
+        push_handled_project_root(&mut roots, &config.root, &config.script, "script")?;
+    }
+
+    for lib_path in &config.libs {
+        if lib_path.exists() {
+            push_handled_project_root(&mut roots, &config.root, lib_path, "lib")?;
+        }
+    }
+
+    for dep_dir in ["node_modules", "dependencies"] {
+        let dep_path = config.root.join(dep_dir);
+        if dep_path.exists() && dep_path.is_dir() {
+            roots.push(PathBuf::from(dep_dir));
+        }
+    }
+
+    Ok(roots)
+}
+
+fn push_handled_project_root(
+    roots: &mut Vec<PathBuf>,
+    root: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<()> {
+    let rel = relative_to_root(root, path);
+    ensure_safe_relative_path(&rel, label, path)?;
+    ensure_within_root(root, path, label, path)?;
+    roots.push(rel);
+    Ok(())
+}
+
+fn is_covered_by_handled_root(rel: &Path, handled_roots: &[PathBuf]) -> bool {
+    handled_roots.iter().any(|root| !root.as_os_str().is_empty() && rel.starts_with(root))
+}
+
+fn copy_extra_project_path(
+    root: &Path,
+    temp_dir: &Path,
+    path: &Path,
+    handled_roots: &[PathBuf],
+) -> Result<()> {
     let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
     let rel = relative_to_root(root, &resolved);
     ensure_safe_relative_path(&rel, "include/allow", path)?;
     ensure_within_root(root, &resolved, "include/allow", path)?;
+
+    if is_covered_by_handled_root(&rel, handled_roots) {
+        return Ok(());
+    }
 
     if !resolved.exists() {
         return Ok(());
@@ -485,6 +537,32 @@ mod tests {
         copy_project(&config, &out).unwrap();
 
         assert!(out.join("include/Shared.sol").exists());
+    }
+
+    #[test]
+    fn test_copy_project_skips_include_paths_covered_by_libs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let out = temp.path().join("workspace");
+        create_test_dir_structure(
+            &root,
+            &["src/Counter.sol", "test/Counter.t.sol", "lib/foo/Foo.sol", "lib/bar/Bar.sol"],
+        );
+
+        let config = Config {
+            root: root.clone(),
+            src: root.join("src"),
+            test: root.join("test"),
+            script: root.join("script"),
+            libs: vec![root.join("lib")],
+            include_paths: vec![root.join("lib/foo")],
+            ..Default::default()
+        };
+
+        copy_project(&config, &out).unwrap();
+
+        assert!(out.join("lib/foo/Foo.sol").exists());
+        assert!(out.join("lib/bar/Bar.sol").exists());
     }
 
     #[test]
