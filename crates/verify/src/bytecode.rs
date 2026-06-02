@@ -649,8 +649,10 @@ mod tests {
 
     #[test]
     fn configured_network_uses_config_network() {
-        let mut config = Config::default();
-        config.networks = NetworkVariant::Tempo.into();
+        let config = Config {
+            networks: NetworkVariant::Tempo.into(),
+            ..Default::default()
+        };
 
         assert_eq!(
             VerifyBytecodeArgs::configured_network(None, &config),
