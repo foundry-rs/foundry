@@ -6,7 +6,15 @@
 //! - Running mutations in parallel with caching
 //! - Aggregating results and reporting
 
-use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 
 use alloy_primitives::keccak256;
 use eyre::{Result, WrapErr};
@@ -152,8 +160,22 @@ pub async fn run_mutation_testing(
     let mut mutation_summary = MutationsSummary::new();
     let mut cancelled = false;
     let start_time = Instant::now();
+    let cancellation_requested = Arc::new(AtomicBool::new(false));
+    let ctrlc_handle = {
+        let cancellation_requested = Arc::clone(&cancellation_requested);
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                cancellation_requested.store(true, Ordering::SeqCst);
+            }
+        })
+    };
 
     for path in mutate_paths {
+        if cancellation_requested.load(Ordering::SeqCst) {
+            cancelled = true;
+            break;
+        }
+
         if !mutation_config.show_progress && !json_output {
             sh_println!("Running mutation tests for {}", path.display())?;
         }
@@ -249,7 +271,7 @@ pub async fn run_mutation_testing(
         };
 
         // Run mutations in parallel using isolated workspaces
-        let results = run_mutations_parallel_with_progress(
+        let batch = run_mutations_parallel_with_progress(
             mutants_to_test.clone(),
             path.clone(),
             handler.src.clone(),
@@ -261,12 +283,14 @@ pub async fn run_mutation_testing(
             mutation_config.filter_args.clone(),
             Arc::new(mutation_config.selected_sources_relative.clone()),
             mutation_config.isolate,
+            Arc::clone(&cancellation_requested),
         )?;
+        let file_cancelled = batch.cancelled;
 
         // Collect results for caching
-        let mut results_vec = Vec::with_capacity(skipped_results.len() + results.len());
+        let mut results_vec = Vec::with_capacity(skipped_results.len() + batch.results.len());
         results_vec.extend(skipped_results);
-        for result in results {
+        for result in batch.results {
             results_vec.push((result.mutant.clone(), result.result.clone()));
             match result.result {
                 MutationResult::Dead => handler.add_dead_mutant(result.mutant),
@@ -284,7 +308,6 @@ pub async fn run_mutation_testing(
         // complete before persisting it. Without this guard a Ctrl+C mid-run
         // would write a *partial* results vector to the cache and the next run
         // would treat that subset as the full answer for this file.
-        let file_cancelled = progress.as_ref().is_some_and(|p| p.is_cancelled());
         let complete_run = !file_cancelled && results_vec.len() == mutants.len();
 
         // Persist results for caching only when the run for this file is
@@ -322,6 +345,7 @@ pub async fn run_mutation_testing(
             break;
         }
     }
+    cancelled |= cancellation_requested.load(Ordering::SeqCst);
 
     // Report results
     let duration = start_time.elapsed();
@@ -331,6 +355,8 @@ pub async fn run_mutation_testing(
     if !json_output {
         MutationReporter::new().report(&mutation_summary, duration);
     }
+
+    ctrlc_handle.abort();
 
     Ok(MutationRunResult { summary: mutation_summary, cancelled, duration_secs })
 }

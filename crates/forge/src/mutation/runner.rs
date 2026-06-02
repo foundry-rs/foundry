@@ -51,6 +51,13 @@ pub struct MutantTestResult {
     pub result: MutationResult,
 }
 
+/// Result of a parallel mutation batch.
+#[derive(Debug, Clone)]
+pub struct MutationBatchResult {
+    pub results: Vec<MutantTestResult>,
+    pub cancelled: bool,
+}
+
 /// Tracks progress and adaptive span skipping across parallel workers.
 pub struct SharedMutationState {
     /// Spans where mutations have survived - shared across workers for adaptive skipping.
@@ -59,7 +66,7 @@ pub struct SharedMutationState {
     pub completed: AtomicUsize,
     pub total: AtomicUsize,
     /// Cancellation flag (Ctrl+C)
-    pub cancelled: AtomicBool,
+    pub cancelled: Arc<AtomicBool>,
     /// Optional progress display
     pub progress: Option<MutationProgress>,
     /// Whether to suppress all output (for JSON mode)
@@ -75,40 +82,18 @@ pub struct SharedMutationState {
 }
 
 impl SharedMutationState {
-    pub fn new() -> Self {
+    pub fn new(
+        cancelled: Arc<AtomicBool>,
+        silent: bool,
+        progress: Option<MutationProgress>,
+    ) -> Self {
         Self {
             survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
-            cancelled: AtomicBool::new(false),
-            progress: None,
-            silent: false,
-            pending_workers: Mutex::new(Vec::new()),
-            max_pending_workers: AtomicUsize::new(usize::MAX),
-        }
-    }
-
-    pub fn new_silent() -> Self {
-        Self {
-            survived_spans: Mutex::new(SurvivedSpans::new()),
-            completed: AtomicUsize::new(0),
-            total: AtomicUsize::new(0),
-            cancelled: AtomicBool::new(false),
-            progress: None,
-            silent: true,
-            pending_workers: Mutex::new(Vec::new()),
-            max_pending_workers: AtomicUsize::new(usize::MAX),
-        }
-    }
-
-    pub fn with_progress(progress: MutationProgress) -> Self {
-        Self {
-            survived_spans: Mutex::new(SurvivedSpans::new()),
-            completed: AtomicUsize::new(0),
-            total: AtomicUsize::new(0),
-            cancelled: AtomicBool::new(false),
-            progress: Some(progress),
-            silent: false,
+            cancelled,
+            progress,
+            silent,
             pending_workers: Mutex::new(Vec::new()),
             max_pending_workers: AtomicUsize::new(usize::MAX),
         }
@@ -174,7 +159,7 @@ impl SharedMutationState {
 
 impl Default for SharedMutationState {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(AtomicBool::new(false)), false, None)
     }
 }
 
@@ -192,10 +177,11 @@ pub fn run_mutations_parallel_with_progress(
     filter_args: FilterArgs,
     selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
-) -> Result<Vec<MutantTestResult>> {
+    cancellation_requested: Arc<AtomicBool>,
+) -> Result<MutationBatchResult> {
     let total = mutants.len();
     if total == 0 {
-        return Ok(vec![]);
+        return Ok(MutationBatchResult { results: vec![], cancelled: false });
     }
 
     // Default to available parallelism if num_workers is 0
@@ -205,13 +191,7 @@ pub fn run_mutations_parallel_with_progress(
         num_workers
     };
 
-    let shared_state = Arc::new(if let Some(p) = progress {
-        SharedMutationState::with_progress(p)
-    } else if silent {
-        SharedMutationState::new_silent()
-    } else {
-        SharedMutationState::new()
-    });
+    let shared_state = Arc::new(SharedMutationState::new(cancellation_requested, silent, progress));
     shared_state.total.store(total, Ordering::SeqCst);
     shared_state.set_max_pending_workers(num_workers);
 
@@ -237,23 +217,6 @@ pub fn run_mutations_parallel_with_progress(
         .to_path_buf();
 
     workspace::ensure_safe_relative_path(&source_relative, "source", &source_abs)?;
-
-    // Set up Ctrl+C handler using a background thread with tokio signal
-    // This replaces ctrlc crate with tokio's built-in signal handling
-    let ctrlc_handle = shared_state.progress.is_some().then(|| {
-        let state_for_ctrlc = Arc::clone(&shared_state);
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to create tokio runtime for signal handler");
-            rt.block_on(async {
-                if tokio::signal::ctrl_c().await.is_ok() {
-                    state_for_ctrlc.cancel();
-                }
-            });
-        })
-    });
 
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()
@@ -337,22 +300,20 @@ pub fn run_mutations_parallel_with_progress(
         let _ = handle.join();
     }
 
+    let cancelled = shared_state.is_cancelled();
+
     // Clear progress and handle cancellation
     if let Some(ref progress) = shared_state.progress {
         progress.clear();
-        if shared_state.is_cancelled() && !shared_state.silent {
-            let _ = sh_println!(
-                "\nMutation testing cancelled. Showing results for {} completed mutants.\n",
-                results.len()
-            );
-        }
+    }
+    if cancelled && !shared_state.silent {
+        let _ = sh_println!(
+            "\nMutation testing cancelled. Showing results for {} completed mutants.\n",
+            results.len()
+        );
     }
 
-    // The signal handler thread will exit when the program exits,
-    // no need to join it since it's waiting on a signal that won't come after cancellation
-    drop(ctrlc_handle);
-
-    Ok(results)
+    Ok(MutationBatchResult { results, cancelled })
 }
 
 /// Test a single mutant in an isolated temporary workspace.
@@ -762,7 +723,7 @@ mod tests {
 
     #[test]
     fn park_timed_out_worker_bounds_pending_handles() {
-        let state = SharedMutationState::new();
+        let state = SharedMutationState::default();
         state.set_max_pending_workers(1);
 
         state.park_timed_out_worker(std::thread::spawn(|| {}));
