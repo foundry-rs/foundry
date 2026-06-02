@@ -13,7 +13,6 @@ use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
 };
-use foundry_config::Chain;
 use foundry_evm_core::{
     abi::{Vm, console},
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
@@ -36,7 +35,6 @@ use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
     VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
 };
-use tempo_primitives::{TempoAddressExt, transaction::PrimitiveSignature};
 
 mod precompiles;
 
@@ -475,11 +473,8 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        let label = if self.disable_labels {
-            None
-        } else {
-            self.annotated_label(trace, self.labels.get(&trace.address).cloned())
-        };
+        let label =
+            if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
 
         if trace.kind.is_any_create() {
             return DecodedCallTrace { label, ..Default::default() };
@@ -908,47 +903,6 @@ impl CallTraceDecoder {
             return format!("{label}: [{addr}]");
         }
         format_token(value)
-    }
-
-    fn annotated_label(&self, trace: &CallTrace, label: Option<String>) -> Option<String> {
-        if let Some(annotation) = self.t5_lane_annotation(trace) {
-            let target = label.unwrap_or_else(|| trace.address.to_string());
-            Some(format!("{annotation} {target}"))
-        } else {
-            label
-        }
-    }
-
-    fn t5_lane_annotation(&self, trace: &CallTrace) -> Option<&'static str> {
-        if trace.depth != 0
-            || trace.kind.is_any_create()
-            || !self.chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
-        {
-            return None;
-        }
-
-        if trace.address.is_tip20() {
-            return Some(if ITIP20::ITIP20Calls::is_payment(&trace.data) {
-                "[payment-lane]"
-            } else {
-                "[general:tip20-selector]"
-            });
-        }
-
-        if trace.address == TIP20_CHANNEL_RESERVE_ADDRESS {
-            return Some(
-                if ITIP20ChannelReserve::ITIP20ChannelReserveCalls::is_payment_with_valid_signature(
-                    &trace.data,
-                    |signature| PrimitiveSignature::from_bytes(signature).is_ok(),
-                ) {
-                    "[payment-lane]"
-                } else {
-                    "[general:channel-reserve-selector]"
-                },
-            );
-        }
-
-        Some("[general:target]")
     }
 }
 
@@ -1522,12 +1476,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lane_annotation_preserves_existing_labels_when_not_applicable() {
+    async fn test_tempo_decode_preserves_existing_labels() {
         let decoder = CallTraceDecoder::new();
         let trace = CallTrace { address: PATH_USD_ADDRESS, success: true, ..Default::default() };
 
         let decoded = decoder.decode_function(&trace).await;
         assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+    }
+
+    #[tokio::test]
+    async fn test_t5_decode_does_not_synthesize_general_target_label() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+        let trace = CallTrace {
+            address: address!("0x0000000000000000000000000000000000000123"),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label, None);
     }
 
     #[tokio::test]
@@ -1619,7 +1588,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_t5_channel_reserve_call_event_and_lane_annotation_decode() {
+    async fn test_t5_channel_reserve_call_and_event_decode() {
         let mut decoder = CallTraceDecoder::new().clone();
         decoder.chain_id = Some(4217);
 
@@ -1639,7 +1608,7 @@ mod tests {
             ..Default::default()
         };
         let decoded = decoder.decode_function(&trace).await;
-        assert_eq!(decoded.label.as_deref(), Some("[payment-lane] TIP20ChannelReserve"));
+        assert_eq!(decoded.label.as_deref(), Some("TIP20ChannelReserve"));
         assert_eq!(
             decoded.call_data.expect("open should decode").signature,
             "open(address,address,address,uint96,bytes32,address)"
@@ -1657,7 +1626,10 @@ mod tests {
             ..Default::default()
         };
         let decoded = decoder.decode_function(&trace).await;
-        assert_eq!(decoded.label.as_deref(), Some("[payment-lane] PathUSD"));
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+        let json = serde_json::to_string(&decoded).expect("decoded trace serializes");
+        assert!(json.contains(r#""label":"PathUSD""#));
+        assert!(!json.contains("payment-lane"));
 
         let balance_of = ITIP20::balanceOfCall {
             account: address!("0x0000000000000000000000000000000000000def"),
@@ -1670,7 +1642,7 @@ mod tests {
             ..Default::default()
         };
         let decoded = decoder.decode_function(&trace).await;
-        assert_eq!(decoded.label.as_deref(), Some("[general:tip20-selector] PathUSD"));
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
 
         let event = ITIP20ChannelReserve::ChannelOpened {
             channelId: B256::repeat_byte(0x33),
