@@ -88,7 +88,7 @@ pub fn build_project(
     config: &Config,
 ) -> Result<CompactContractBytecode> {
     let project = config.project()?;
-    let compiler = ProjectCompiler::new();
+    let compiler = ProjectCompiler::new().quiet(true);
 
     let mut output = compiler.compile(&project)?;
 

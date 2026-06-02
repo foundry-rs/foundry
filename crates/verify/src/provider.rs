@@ -196,7 +196,7 @@ impl VerificationProviderType {
 
         // 1. Explicit `--verifier sourcify` always wins over ETHERSCAN_API_KEY.
         if is_explicit && self.is_sourcify() {
-            sh_println!(
+            sh_status!(
                 "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
             or use the --verifier flag to verify on another provider."
             )?;
@@ -251,7 +251,7 @@ impl VerificationProviderType {
                 }
                 // Fall through to branch 5 (Sourcify default) below.
             } else {
-                sh_eprintln!(
+                sh_status!(
                     "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
                      Unset it or pass `--verifier sourcify` (or another provider) to override."
                 )?;
@@ -261,7 +261,7 @@ impl VerificationProviderType {
 
         // 5. No key, no explicit verifier: default to Sourcify.
         if self.is_sourcify() {
-            sh_println!(
+            sh_status!(
                 "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
             or use the --verifier flag to verify on another provider."
             )?;
