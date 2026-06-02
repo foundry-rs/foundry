@@ -290,7 +290,7 @@ forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
     // explicitly byte code hash for consistent checks
     prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
-    let output = cmd
+    let assert = cmd
         .forge_fuse()
         .args([
             "create",
@@ -303,15 +303,16 @@ forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
             "--tempo.expires",
             "30",
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .assert_success();
+    let output = assert.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        output.contains("Transaction expires at unix timestamp "),
-        "expected create to print resolved tempo expiry, got:\n{output}",
+        stderr.contains("Transaction expires at unix timestamp "),
+        "expected create to print resolved tempo expiry, got:\n{stderr}",
     );
-    assert!(output.contains("Deployed to:"), "{output}");
+    assert!(stdout.contains("Deployed to:"), "{stdout}");
 });
 
 // tests that we can deploy the template contract
