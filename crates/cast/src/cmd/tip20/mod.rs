@@ -2,23 +2,19 @@ use crate::{
     cmd::send::{cast_send, cast_send_with_access_key, validate_sponsor_url},
     tx::{CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
-use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{EthereumWallet, Network, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_rpc_client::BuiltInConnectionString;
-use alloy_signer::{Signature, Signer};
+use alloy_signer::Signer;
 use clap::Parser;
 use foundry_cli::{
     opts::TransactionOpts,
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
-    fmt::{UIfmt, UIfmtReceiptExt},
-    provider::ProviderBuilder,
-    tempo::TEMPO_BROWSER_GAS_BUFFER,
+    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{str::FromStr, time::Duration};
@@ -200,33 +196,7 @@ pub(super) async fn send_tip20_transaction(
     pre_resolved_signer: Option<WalletSigner>,
     access_key: Option<TempoAccessKeyConfig>,
 ) -> eyre::Result<()> {
-    send_tip20_transaction_inner::<TempoNetwork>(
-        to,
-        sig,
-        args,
-        send_tx,
-        tx_params.into_transaction_opts(),
-        pre_resolved_signer,
-        access_key,
-    )
-    .await
-}
-
-async fn send_tip20_transaction_inner<N: Network>(
-    to: NameOrAddress,
-    sig: &'static str,
-    args: Vec<String>,
-    send_tx: SendTxOpts,
-    mut tx_opts: TransactionOpts,
-    pre_resolved_signer: Option<WalletSigner>,
-    access_key: Option<TempoAccessKeyConfig>,
-) -> eyre::Result<()>
-where
-    N::TxEnvelope: From<Signed<N::UnsignedTx>>,
-    N::UnsignedTx: SignableTransaction<Signature>,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
-{
+    let mut tx_opts = tx_params.into_transaction_opts();
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let sponsor_url = tx_opts.tempo.sponsor_url.clone();
     let expires_at = tx_opts.tempo.resolve_expires();
@@ -247,7 +217,7 @@ where
     }
 
     let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     if let Some(interval) = send_tx.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }
@@ -288,17 +258,14 @@ where
     }
 
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    if let Some(browser) = send_tx.browser.run::<N>().await? {
-        let chain = builder.chain();
+    if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
         let (mut tx, _) = builder.build(browser.address()).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-        if chain.is_tempo()
-            && let Some(gas) = tx.gas_limit()
-        {
+        if let Some(gas) = tx.gas_limit() {
             tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
         }
         if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
+            sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         }
         let tx_hash = browser.send_transaction_via_browser(tx).await?;
         CastTxSender::new(&provider)
@@ -311,7 +278,7 @@ where
         let (mut tx, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<N>(&mut tx, ak.wallet_address).await?;
+            sponsor.attach_and_print::<TempoNetwork>(&mut tx, ak.wallet_address).await?;
         }
         cast_send_with_access_key(
             &provider,
@@ -338,7 +305,7 @@ where
         let relay = BuiltInConnectionString::from_str(&sponsor_url)?;
         let connector =
             RelayConnector::with_config(default, relay, SponsorshipMode::SignOnly, false);
-        let provider = AlloyProviderBuilder::<_, _, N>::default()
+        let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
             .wallet(wallet)
             .connect_with(&connector)
             .await?;
@@ -352,12 +319,13 @@ where
         let (mut tx, _) = builder.build(&signer).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<N>(&mut tx, from).await?;
+            sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
         }
 
         let wallet = EthereumWallet::from(signer);
-        let provider =
-            AlloyProviderBuilder::<_, _, N>::default().wallet(wallet).connect_provider(&provider);
+        let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
+            .wallet(wallet)
+            .connect_provider(&provider);
         cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
             .await?;
     }
