@@ -212,7 +212,14 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
         return None;
     }
     match edges {
-        EdgeCoverage::Hash(edges) => Some(keccak256(edges)),
+        EdgeCoverage::Hash { hitcount, indices } => {
+            let mut bytes = Vec::with_capacity(indices.len() * (std::mem::size_of::<usize>() + 1));
+            for &index in indices {
+                bytes.extend_from_slice(&index.to_le_bytes());
+                bytes.push(hitcount[index]);
+            }
+            Some(keccak256(bytes))
+        }
         EdgeCoverage::CollisionFree(hits) => {
             // `From<EdgeCovInspector>` does not sort on the per-call drain path,
             // so sort here for a deterministic fingerprint across runs regardless

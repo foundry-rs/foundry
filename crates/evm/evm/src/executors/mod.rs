@@ -1107,17 +1107,18 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
             match x {
-                EdgeCoverage::Hash(x) => {
-                    if history_map.len() < x.len() {
-                        history_map.resize(x.len(), 0);
+                EdgeCoverage::Hash { hitcount, indices } => {
+                    if history_map.len() < hitcount.len() {
+                        history_map.resize(hitcount.len(), 0);
                     }
-                    // Iterate over the current map and the history map together and update
-                    // the history map, if we discover some new coverage, report true
-                    for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
-                        Self::merge_edge_count(*curr, hist, &mut new_coverage, &mut is_edge);
-
-                        // Hash reuses its map; collision-free drains hits.
-                        *curr = 0;
+                    for edge_index in indices.drain(..) {
+                        Self::merge_edge_count(
+                            hitcount[edge_index],
+                            &mut history_map[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                        hitcount[edge_index] = 0;
                     }
                 }
                 EdgeCoverage::CollisionFree(hits) => {
@@ -1152,6 +1153,15 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             return;
         };
 
+        Self::merge_edge_bucket(bucket, hist, new_coverage, is_edge);
+    }
+
+    const fn merge_edge_bucket(
+        bucket: u8,
+        hist: &mut u8,
+        new_coverage: &mut bool,
+        is_edge: &mut bool,
+    ) {
         // If the old record for this edge pair is lower, update
         if *hist < bucket {
             if *hist == 0 {
@@ -1217,6 +1227,92 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history, evm_edge_indices);
         let (new_san, edge_san) = self.merge_sancov_coverage(sancov_history);
         (new_evm || new_san, edge_evm || edge_san)
+    }
+
+    /// Merge both coverage domains and return every hit edge index from the same pass.
+    pub fn merge_all_coverage_with_edges(
+        &mut self,
+        evm_history: &mut Vec<u8>,
+        evm_edge_indices: &mut EdgeIndexMap,
+        sancov_history: &mut Vec<u8>,
+        sancov_edge_offset: usize,
+    ) -> (bool, bool, Vec<usize>) {
+        let mut edges_covered = Vec::new();
+        let (new_coverage, is_edge) = self.merge_all_coverage_with_edges_into(
+            evm_history,
+            evm_edge_indices,
+            sancov_history,
+            sancov_edge_offset,
+            &mut edges_covered,
+        );
+        (new_coverage, is_edge, edges_covered)
+    }
+
+    /// Merge both coverage domains and append every hit edge index to `edges_covered`.
+    pub fn merge_all_coverage_with_edges_into(
+        &mut self,
+        evm_history: &mut Vec<u8>,
+        evm_edge_indices: &mut EdgeIndexMap,
+        sancov_history: &mut Vec<u8>,
+        sancov_edge_offset: usize,
+        edges_covered: &mut Vec<usize>,
+    ) -> (bool, bool) {
+        let mut new_coverage = false;
+        let mut is_edge = false;
+
+        if let Some(x) = &mut self.edge_coverage {
+            match x {
+                EdgeCoverage::Hash { hitcount, indices } => {
+                    if evm_history.len() < hitcount.len() {
+                        evm_history.resize(hitcount.len(), 0);
+                    }
+                    for edge_index in indices.drain(..) {
+                        edges_covered.push(edge_index);
+                        Self::merge_edge_count(
+                            hitcount[edge_index],
+                            &mut evm_history[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                        hitcount[edge_index] = 0;
+                    }
+                }
+                EdgeCoverage::CollisionFree(hits) => {
+                    for hit in hits.drain(..) {
+                        let edge_index = evm_edge_indices.edge_index(hit.edge);
+                        edges_covered.push(edge_index);
+                        if evm_history.len() <= edge_index {
+                            debug_assert_eq!(evm_history.len(), edge_index);
+                            evm_history.reserve(1);
+                            evm_history.push(0);
+                        }
+                        Self::merge_edge_count(
+                            hit.count,
+                            &mut evm_history[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Some(x) = &mut self.sancov_coverage {
+            if sancov_history.len() < x.len() {
+                sancov_history.resize(x.len(), 0);
+            }
+            for (edge_index, (curr, hist)) in
+                std::iter::zip(x.iter_mut(), sancov_history.iter_mut()).enumerate()
+            {
+                if let Some(bucket) = Self::bin_count(*curr) {
+                    edges_covered.push(sancov_edge_offset + edge_index);
+                    Self::merge_edge_bucket(bucket, hist, &mut new_coverage, &mut is_edge);
+                }
+                *curr = 0;
+            }
+        }
+
+        (new_coverage, is_edge)
     }
 }
 

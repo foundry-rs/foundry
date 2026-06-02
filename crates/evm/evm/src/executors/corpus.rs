@@ -61,6 +61,7 @@ use proptest::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{HashMap, HashSet},
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -76,7 +77,7 @@ const CORPUS_DIR: &str = "corpus";
 const SYNC_DIR: &str = "sync";
 const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
 
-const FAVORABILITY_THRESHOLD: f64 = 0.3;
+const SANCOV_EDGE_OFFSET: usize = usize::MAX / 2;
 
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
@@ -100,6 +101,10 @@ enum MutationType {
     /// Replace input bytes using comparison operands observed for a corpus entry
     /// (input-to-state, LibAFL-style).
     Cmp,
+    /// Insert a tx loaded from an on-disk corpus entry into the original sequence.
+    CrossoverInsert,
+    /// Replace a tx in the original sequence with one loaded from an on-disk corpus entry.
+    CrossoverReplace,
 }
 
 /// Persisted optimization state: the best value found and the sequence that produced it.
@@ -114,10 +119,9 @@ struct OptimizationState {
 struct CorpusEntry {
     // Unique corpus identifier.
     uuid: Uuid,
-    // Total mutations of corpus as primary source.
-    total_mutations: usize,
-    // New coverage found as a result of mutating this corpus.
-    new_finds_produced: usize,
+    // Unique coverage indices this entry hits.
+    #[serde(skip_serializing)]
+    unique_edges_covered: Vec<usize>,
     // Corpus call sequence.
     #[serde(skip_serializing)]
     tx_seq: Vec<BasicTxDetails>,
@@ -125,8 +129,7 @@ struct CorpusEntry {
     // Parallel to `tx_seq`. Empty inner vec means "no cmp data for this call".
     #[serde(skip_serializing)]
     cmp_seq: Vec<Vec<CmpOperands>>,
-    // Whether this corpus is favored, i.e. producing new finds more often than
-    // `FAVORABILITY_THRESHOLD`.
+    // Whether this corpus is favored (part of the top-rated coverage minset).
     is_favored: bool,
     /// Timestamp of when this entry was written to disk in seconds.
     #[serde(skip_serializing)]
@@ -136,19 +139,19 @@ struct CorpusEntry {
 impl CorpusEntry {
     /// Creates a corpus entry with a new UUID.
     pub fn new(tx_seq: Vec<BasicTxDetails>) -> Self {
-        Self::new_with_cmp(tx_seq, Vec::new(), Uuid::new_v4())
+        Self::new_with_cmp_and_edges(tx_seq, Vec::new(), Vec::new(), Uuid::new_v4())
     }
 
-    /// Creates a corpus entry with the given UUID and per-call cmp operand log.
-    pub fn new_with_cmp(
+    /// Creates a corpus entry with coverage and per-call cmp operand log.
+    pub fn new_with_cmp_and_edges(
         tx_seq: Vec<BasicTxDetails>,
         cmp_seq: Vec<Vec<CmpOperands>>,
+        edges_covered: Vec<usize>,
         uuid: Uuid,
     ) -> Self {
-        Self {
+        let mut entry = Self {
             uuid,
-            total_mutations: 0,
-            new_finds_produced: 0,
+            unique_edges_covered: Vec::new(),
             tx_seq,
             cmp_seq,
             is_favored: false,
@@ -156,7 +159,15 @@ impl CorpusEntry {
                 .duration_since(UNIX_EPOCH)
                 .expect("time went backwards")
                 .as_secs(),
-        }
+        };
+        entry.set_edges(edges_covered);
+        entry
+    }
+
+    pub fn set_edges(&mut self, mut edges_covered: Vec<usize>) {
+        edges_covered.sort_unstable();
+        edges_covered.dedup();
+        self.unique_edges_covered = edges_covered;
     }
 
     fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<()> {
@@ -189,7 +200,7 @@ pub(crate) struct GlobalCorpusMetrics {
     cumulative_edges_seen: AtomicUsize,
     // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
     cumulative_features_seen: AtomicUsize,
-    // Number of corpus entries.
+    // Number of persisted corpus entries discovered or written on disk.
     corpus_count: AtomicUsize,
     // Number of corpus entries that are favored.
     favored_items: AtomicUsize,
@@ -218,7 +229,7 @@ pub(crate) struct CorpusMetrics {
     cumulative_edges_seen: usize,
     // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
     cumulative_features_seen: usize,
-    // Number of corpus entries.
+    // Number of persisted corpus entries discovered or written on disk.
     corpus_count: usize,
     // Number of corpus entries that are favored.
     favored_items: usize,
@@ -245,15 +256,6 @@ impl CorpusMetrics {
             self.cumulative_features_seen += 1;
         }
     }
-
-    /// Updates campaign favored items.
-    pub const fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
-        if is_favored && !corpus_favored {
-            self.favored_items += 1;
-        } else if !is_favored && corpus_favored {
-            self.favored_items -= 1;
-        }
-    }
 }
 
 /// Per-worker corpus manager.
@@ -269,6 +271,10 @@ pub struct WorkerCorpus {
     edge_indices: EdgeIndexMap,
     /// History of binned hitcount of sancov (native Rust) edges seen during fuzzing
     sancov_history_map: Vec<u8>,
+    /// Best corpus entry for each coverage index.
+    top_rated: HashMap<usize, (Uuid, usize)>,
+    /// Cached persisted corpus entries used by on-disk crossover mutations.
+    disk_corpus_entries: Vec<CorpusDirEntry>,
     /// Number of failed replays from initial corpus
     pub(crate) failed_replays: usize,
     /// Worker Metrics
@@ -358,6 +364,8 @@ impl WorkerCorpus {
             Just(MutationType::Suffix),
             Just(MutationType::Abi),
             Just(MutationType::Cmp),
+            Just(MutationType::CrossoverInsert),
+            Just(MutationType::CrossoverReplace),
         ]
         .boxed();
 
@@ -385,6 +393,11 @@ impl WorkerCorpus {
             };
         let mut edge_indices = EdgeIndexMap::default();
         let mut sancov_history_map = Vec::new();
+        let mut top_rated = HashMap::new();
+        let disk_corpus_entries = worker_dir
+            .as_ref()
+            .map(|dir| read_corpus_dir(&dir.join(CORPUS_DIR)).collect::<Vec<_>>())
+            .unwrap_or_default();
         let mut metrics = CorpusMetrics::default();
         let mut failed_replays = 0;
         let mut optimization_best_value = None;
@@ -433,7 +446,7 @@ impl WorkerCorpus {
 
             // Then, [distribute]s it to workers.
             let executor = executor.expect("Executor required for master worker");
-            'corpus_replay: for entry in read_corpus_dir(corpus_dir) {
+            'corpus_replay: for entry in &disk_corpus_entries {
                 let tx_seq = entry.read_tx_seq()?;
                 if tx_seq.is_empty() {
                     continue;
@@ -443,15 +456,19 @@ impl WorkerCorpus {
                 let mut cmp_seq = Vec::with_capacity(tx_seq.len());
                 // Targets deployed during this entry, cleared after the entry.
                 let mut created: Vec<Address> = Vec::new();
+                let mut edges_covered = Vec::new();
                 for tx in &tx_seq {
                     if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
                         cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
-                        let (new_coverage, is_edge) = call_result.merge_all_coverage(
-                            &mut history_map,
-                            &mut edge_indices,
-                            &mut sancov_history_map,
-                        );
+                        let (new_coverage, is_edge) = call_result
+                            .merge_all_coverage_with_edges_into(
+                                &mut history_map,
+                                &mut edge_indices,
+                                &mut sancov_history_map,
+                                SANCOV_EDGE_OFFSET,
+                                &mut edges_covered,
+                            );
                         if new_coverage {
                             metrics.update_seen(is_edge);
                         }
@@ -491,16 +508,21 @@ impl WorkerCorpus {
                 );
 
                 // Populate in memory corpus with the sequence from corpus file.
-                in_memory_corpus.push(CorpusEntry::new_with_cmp(tx_seq, cmp_seq, entry.uuid));
+                let corpus_entry =
+                    CorpusEntry::new_with_cmp_and_edges(tx_seq, cmp_seq, edges_covered, entry.uuid);
+                Self::update_top_rated_in(&mut top_rated, &corpus_entry);
+                in_memory_corpus.push(corpus_entry);
             }
         }
 
-        Ok(Self {
+        let mut worker = Self {
             id,
             in_memory_corpus,
             history_map,
             edge_indices,
             sancov_history_map,
+            top_rated,
+            disk_corpus_entries,
             failed_replays,
             metrics,
             tx_generator,
@@ -513,7 +535,11 @@ impl WorkerCorpus {
             last_sync_metrics: Default::default(),
             optimization_best_value,
             optimization_best_sequence,
-        })
+        };
+
+        worker.recompute_favored_and_cull_corpus()?;
+
+        Ok(worker)
     }
 
     /// Updates stats for the given call sequence, if new coverage produced.
@@ -525,6 +551,7 @@ impl WorkerCorpus {
         inputs: &[BasicTxDetails],
         cmp_seq: &[Vec<CmpOperands>],
         new_coverage: bool,
+        edges_covered: Vec<usize>,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
         let Some(worker_corpus) = &self.worker_dir else {
@@ -537,30 +564,7 @@ impl WorkerCorpus {
             self.optimization_best_value.is_none_or(|best| *value > best)
         });
 
-        // Update stats of current mutated primary corpus.
-        if let Some(uuid) = &self.current_mutated {
-            let should_credit = new_coverage || improved_optimization;
-            if let Some(corpus) =
-                self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid == *uuid)
-            {
-                corpus.total_mutations += 1;
-                if should_credit {
-                    corpus.new_finds_produced += 1
-                }
-                let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
-                    > FAVORABILITY_THRESHOLD;
-                self.metrics.update_favored(is_favored, corpus.is_favored);
-                corpus.is_favored = is_favored;
-
-                trace!(
-                    target: "corpus",
-                    "updated corpus {}, total mutations: {}, new finds: {}",
-                    corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
-                );
-            }
-
-            self.current_mutated = None;
-        }
+        self.current_mutated = None;
 
         // Persist optimization state to disk if improved.
         if let Some((value, best_seq)) = optimization
@@ -586,13 +590,27 @@ impl WorkerCorpus {
             inputs.to_vec()
         };
         let corpus_cmp_seq = cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
-        let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
+        let corpus = CorpusEntry::new_with_cmp_and_edges(
+            corpus_inputs,
+            corpus_cmp_seq,
+            edges_covered,
+            Uuid::new_v4(),
+        );
+        self.update_top_rated(&corpus);
 
         // Persist to disk.
+        let corpus_path = worker_corpus.join(corpus.file_name(self.config.corpus_gzip));
+        let corpus_uuid = corpus.uuid;
+        let corpus_timestamp = corpus.timestamp;
         let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
         if let Err(err) = write_result {
             debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
         } else {
+            self.disk_corpus_entries.push(CorpusDirEntry {
+                path: corpus_path,
+                uuid: corpus_uuid,
+                timestamp: corpus_timestamp,
+            });
             trace!(
                 target: "corpus",
                 "persisted {} inputs for new coverage for {} corpus",
@@ -609,6 +627,9 @@ impl WorkerCorpus {
         // them. We want this as it is new coverage and may help reach the other branch.
         self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
+        if let Err(err) = self.recompute_favored_and_cull_corpus() {
+            debug!(target: "corpus", %err, "failed to recompute minset corpus");
+        }
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -642,18 +663,35 @@ impl WorkerCorpus {
     }
 
     /// Collects EVM and sancov coverage from call result and updates metrics.
+    /// Returns whether new coverage was found and all coverage indices hit by this call.
     pub fn merge_edge_coverage<FEN: FoundryEvmNetwork>(
         &mut self,
         call_result: &mut RawCallResult<FEN>,
+    ) -> (bool, Vec<usize>) {
+        if !self.config.collect_edge_coverage() {
+            return (false, Vec::new());
+        }
+
+        let mut edges_covered = Vec::new();
+        let new_coverage = self.merge_edge_coverage_into(call_result, &mut edges_covered);
+        (new_coverage, edges_covered)
+    }
+
+    pub fn merge_edge_coverage_into<FEN: FoundryEvmNetwork>(
+        &mut self,
+        call_result: &mut RawCallResult<FEN>,
+        edges_covered: &mut Vec<usize>,
     ) -> bool {
         if !self.config.collect_edge_coverage() {
             return false;
         }
 
-        let (new_coverage, is_edge) = call_result.merge_all_coverage(
+        let (new_coverage, is_edge) = call_result.merge_all_coverage_with_edges_into(
             &mut self.history_map,
             &mut self.edge_indices,
             &mut self.sancov_history_map,
+            SANCOV_EDGE_OFFSET,
+            edges_covered,
         );
         if new_coverage {
             self.metrics.update_seen(is_edge);
@@ -661,8 +699,61 @@ impl WorkerCorpus {
         new_coverage
     }
 
-    /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
-    /// configured max mutations value. Used by invariant test campaigns.
+    fn update_top_rated(&mut self, corpus: &CorpusEntry) {
+        Self::update_top_rated_in(&mut self.top_rated, corpus);
+    }
+
+    fn update_top_rated_in(top_rated: &mut HashMap<usize, (Uuid, usize)>, corpus: &CorpusEntry) {
+        let cost = corpus.tx_seq.len();
+        for &edge_idx in &corpus.unique_edges_covered {
+            match top_rated.get_mut(&edge_idx) {
+                Some((best_uuid, best_cost)) if cost < *best_cost => {
+                    *best_uuid = corpus.uuid;
+                    *best_cost = cost;
+                }
+                Some(_) => {}
+                None => {
+                    top_rated.insert(edge_idx, (corpus.uuid, cost));
+                }
+            }
+        }
+    }
+
+    fn recompute_top_rated_for_edge(&mut self, edge_idx: usize) {
+        let best = self
+            .in_memory_corpus
+            .iter()
+            .filter(|corpus| corpus.unique_edges_covered.binary_search(&edge_idx).is_ok())
+            .min_by_key(|corpus| corpus.tx_seq.len())
+            .map(|corpus| (corpus.uuid, corpus.tx_seq.len()));
+
+        if let Some(best) = best {
+            self.top_rated.insert(edge_idx, best);
+        } else {
+            self.top_rated.remove(&edge_idx);
+        }
+    }
+
+    fn recompute_favored_and_cull_corpus(&mut self) -> Result<()> {
+        if self.in_memory_corpus.is_empty() {
+            self.metrics.favored_items = 0;
+            return Ok(());
+        }
+
+        let favored_uuids = self.top_rated.values().map(|&(uuid, _)| uuid).collect::<HashSet<_>>();
+        let mut favored_items = 0;
+        for corpus in &mut self.in_memory_corpus {
+            corpus.is_favored = favored_uuids.contains(&corpus.uuid);
+            if corpus.is_favored {
+                favored_items += 1;
+            }
+        }
+        self.metrics.favored_items = favored_items;
+
+        self.cull_corpus()
+    }
+
+    /// Generates new call sequence from in memory corpus. Used by invariant test campaigns.
     #[instrument(skip_all)]
     pub fn new_inputs(
         &mut self,
@@ -680,8 +771,6 @@ impl WorkerCorpus {
         };
 
         if !self.in_memory_corpus.is_empty() {
-            self.evict_oldest_corpus()?;
-
             let mutation_type = self
                 .mutation_generator
                 .new_tree(test_runner)
@@ -823,6 +912,36 @@ impl WorkerCorpus {
                         }
                     }
                 }
+                MutationType::CrossoverInsert => {
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let base_uuid = corpus.uuid;
+                    new_seq = corpus.tx_seq.clone();
+                    let idx = rng.random_range(0..=new_seq.len());
+
+                    self.current_mutated = Some(base_uuid);
+
+                    if let Some(disk_tx) = self.load_random_disk_tx(test_runner) {
+                        trace!(target: "corpus", "crossover insert on-disk tx into {}", base_uuid);
+                        new_seq.insert(idx, disk_tx);
+                    } else {
+                        trace!(target: "corpus", "no on-disk corpus available for crossover insert, leaving {} unchanged", base_uuid);
+                    }
+                }
+                MutationType::CrossoverReplace => {
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let base_uuid = corpus.uuid;
+                    new_seq = corpus.tx_seq.clone();
+                    let idx = rng.random_range(0..new_seq.len());
+
+                    self.current_mutated = Some(base_uuid);
+
+                    if let Some(disk_tx) = self.load_random_disk_tx(test_runner) {
+                        trace!(target: "corpus", "crossover replace tx in {}", base_uuid);
+                        new_seq[idx] = disk_tx;
+                    } else {
+                        trace!(target: "corpus", "no on-disk corpus available for crossover replace, leaving {} unchanged", base_uuid);
+                    }
+                }
             }
         }
 
@@ -835,8 +954,8 @@ impl WorkerCorpus {
         Ok(new_seq)
     }
 
-    /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
-    /// than configured max mutations value. Used by fuzz (stateless) test campaigns.
+    /// Generates a new input from the shared in memory corpus. Used by fuzz (stateless) test
+    /// campaigns.
     #[instrument(skip_all)]
     pub fn new_input(
         &mut self,
@@ -848,8 +967,6 @@ impl WorkerCorpus {
         if !self.config.is_coverage_guided() {
             return Ok(self.new_tx(test_runner)?.call_details.calldata);
         }
-
-        self.evict_oldest_corpus()?;
 
         let tx = if self.in_memory_corpus.is_empty() {
             self.new_tx(test_runner)?
@@ -908,32 +1025,77 @@ impl WorkerCorpus {
         Ok(sequence[depth].clone())
     }
 
-    /// Flush the oldest corpus mutated more than configured max mutations unless they are
-    /// favored.
-    fn evict_oldest_corpus(&mut self) -> Result<()> {
-        if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
-            && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
-                corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
-            })
-        {
-            let corpus = &self.in_memory_corpus[index];
+    /// Flush non-favored entries from memory when the corpus size exceeds the minimum.
+    ///
+    /// Entries remain on disk and in `disk_corpus_entries` so they can still be used as crossover
+    /// donors. `metrics.corpus_count` intentionally tracks persisted on-disk entries, not live
+    /// in-memory entries.
+    fn cull_corpus(&mut self) -> Result<()> {
+        let min_size = self.config.corpus_min_size;
+        if self.in_memory_corpus.len() <= min_size {
+            return Ok(());
+        }
 
-            trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
+        let mut remaining_removals = self.in_memory_corpus.len() - min_size;
+        let mut old_to_new = vec![None; self.in_memory_corpus.len()];
+        let mut retained = Vec::with_capacity(self.in_memory_corpus.len());
+        let mut evicted_uuids = HashSet::new();
 
-            // Remove corpus from memory.
-            self.in_memory_corpus.remove(index);
+        for (old_index, corpus) in self.in_memory_corpus.drain(..).enumerate() {
+            if !corpus.is_favored && remaining_removals > 0 {
+                trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus from memory");
+                evicted_uuids.insert(corpus.uuid);
+                remaining_removals -= 1;
+            } else {
+                old_to_new[old_index] = Some(retained.len());
+                retained.push(corpus);
+            }
+        }
 
-            // Adjust the tracked indices.
-            self.new_entry_indices.retain_mut(|i| {
-                if *i > index {
-                    *i -= 1; // Shift indices down.
-                    true // Keep this index.
-                } else {
-                    *i != index // Remove if it's the deleted index, keep otherwise.
-                }
-            });
+        if evicted_uuids.is_empty() {
+            self.in_memory_corpus = retained;
+            return Ok(());
+        }
+
+        self.in_memory_corpus = retained;
+        self.new_entry_indices = self
+            .new_entry_indices
+            .iter()
+            .filter_map(|&i| old_to_new.get(i).copied().flatten())
+            .collect();
+
+        let impacted_edges = self
+            .top_rated
+            .iter()
+            .filter_map(|(&edge_idx, &(uuid, _))| evicted_uuids.contains(&uuid).then_some(edge_idx))
+            .collect::<Vec<_>>();
+        for edge_idx in impacted_edges {
+            self.recompute_top_rated_for_edge(edge_idx);
         }
         Ok(())
+    }
+
+    /// Loads a random tx from a random on-disk corpus entry of this worker.
+    fn load_random_disk_tx(&self, test_runner: &mut TestRunner) -> Option<BasicTxDetails> {
+        if self.disk_corpus_entries.is_empty() {
+            return None;
+        }
+
+        let entry = &self.disk_corpus_entries
+            [test_runner.rng().random_range(0..self.disk_corpus_entries.len())];
+        let tx_seq = match entry.read_tx_seq() {
+            Ok(seq) => seq,
+            Err(err) => {
+                debug!(target: "corpus", %err, "failed to load on-disk corpus entry {:?}", entry.path);
+                return None;
+            }
+        };
+        if tx_seq.is_empty() {
+            return None;
+        }
+
+        let tx_idx = test_runner.rng().random_range(0..tx_seq.len());
+        tx_seq.into_iter().nth(tx_idx)
     }
 
     /// Mutates calldata of provided tx by abi decoding current values and randomly selecting the
@@ -1133,6 +1295,7 @@ impl WorkerCorpus {
             let mut cmp_seq = Vec::with_capacity(tx_seq.len());
             // Targets deployed during this entry, cleared after the entry.
             let mut created: Vec<Address> = Vec::new();
+            let mut edges_covered = Vec::new();
             for tx in &tx_seq {
                 if !Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                     cmp_seq.push(Vec::new());
@@ -1143,10 +1306,12 @@ impl WorkerCorpus {
                 cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
 
                 // Check if this provides new coverage.
-                let (new_coverage, is_edge) = call_result.merge_all_coverage(
+                let (new_coverage, is_edge) = call_result.merge_all_coverage_with_edges_into(
                     &mut self.history_map,
                     &mut self.edge_indices,
                     &mut self.sancov_history_map,
+                    SANCOV_EDGE_OFFSET,
+                    &mut edges_covered,
                 );
 
                 if new_coverage {
@@ -1190,8 +1355,19 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_with_cmp(tx_seq.clone(), cmp_seq, entry.uuid);
+                let corpus_entry = CorpusEntry::new_with_cmp_and_edges(
+                    tx_seq.clone(),
+                    cmp_seq,
+                    edges_covered,
+                    entry.uuid,
+                );
+                self.update_top_rated(&corpus_entry);
                 self.in_memory_corpus.push(corpus_entry);
+                self.disk_corpus_entries.push(CorpusDirEntry {
+                    path: corpus_path,
+                    uuid: entry.uuid,
+                    timestamp: entry.timestamp,
+                });
             } else {
                 // Remove the file as it did not generate new coverage.
                 if let Err(err) = std::fs::remove_file(&entry.path) {
@@ -1201,6 +1377,8 @@ impl WorkerCorpus {
                 trace!(target: "corpus", "removed synced corpus from {sync_path:?}");
             }
         }
+
+        self.recompute_favored_and_cull_corpus()?;
 
         Ok(())
     }
@@ -1468,7 +1646,6 @@ mod tests {
         let config = FuzzCorpusConfig {
             corpus_dir: Some(temp_corpus_dir()),
             corpus_gzip: false,
-            corpus_min_mutations: 0,
             corpus_min_size: 0,
             ..Default::default()
         };
@@ -1493,6 +1670,8 @@ mod tests {
             history_map: Vec::new(),
             edge_indices: EdgeIndexMap::default(),
             sancov_history_map: Vec::new(),
+            top_rated: HashMap::new(),
+            disk_corpus_entries: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1530,86 +1709,59 @@ mod tests {
     }
 
     #[test]
-    fn favored_sets_true_and_metrics_increment_when_ratio_gt_threshold() {
-        let (mut manager, uuid) = new_manager_with_single_corpus();
-        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        corpus.total_mutations = 4;
-        corpus.new_finds_produced = 2; // ratio currently 0.5 if both increment → 3/5 = 0.6 > 0.3.
-        corpus.is_favored = false;
+    fn minset_marks_smallest_covering_corpus_as_favored() {
+        let (mut manager, _) = new_manager_with_single_corpus();
+        manager.in_memory_corpus.clear();
 
-        // Ensure metrics start at 0.
-        assert_eq!(manager.metrics.favored_items, 0);
-
-        // Mark this as the currently mutated corpus and process a run with new coverage.
-        manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], &[], true, None);
-
-        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
-        assert!(corpus.is_favored, "expected favored to be true when ratio > threshold");
-        assert_eq!(
-            manager.metrics.favored_items, 1,
-            "favored_items should increment on false→true"
+        let large = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx(), basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
         );
+        let large_uuid = large.uuid;
+        let small = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
+        let small_uuid = small.uuid;
+
+        manager.update_top_rated(&large);
+        manager.update_top_rated(&small);
+        manager.in_memory_corpus.push(large);
+        manager.in_memory_corpus.push(small);
+
+        manager.recompute_favored_and_cull_corpus().unwrap();
+
+        let large = manager.in_memory_corpus.iter().find(|c| c.uuid == large_uuid);
+        let small = manager.in_memory_corpus.iter().find(|c| c.uuid == small_uuid).unwrap();
+        assert!(large.is_none(), "larger non-favored corpus should be culled");
+        assert!(small.is_favored, "smallest corpus covering the edge should be favored");
+        assert_eq!(manager.metrics.favored_items, 1);
     }
 
     #[test]
-    fn favored_sets_false_and_metrics_decrement_when_ratio_lt_threshold() {
-        let (mut manager, uuid) = new_manager_with_single_corpus();
-        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        corpus.total_mutations = 9;
-        corpus.new_finds_produced = 3; // 3/9 = 0.333.. > 0.3; after +1: 3/10 = 0.3 => not favored.
-        corpus.is_favored = true; // Start as favored.
-
-        manager.metrics.favored_items = 1;
-
-        // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
-        manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], &[], false, None);
-
-        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
-        assert!(!corpus.is_favored, "expected favored to be false when ratio < threshold");
-        assert_eq!(
-            manager.metrics.favored_items, 0,
-            "favored_items should decrement on true→false"
-        );
-    }
-
-    #[test]
-    fn favored_is_false_on_ratio_equal_threshold() {
-        let (mut manager, uuid) = new_manager_with_single_corpus();
-        let corpus = manager.in_memory_corpus.iter_mut().find(|c| c.uuid == uuid).unwrap();
-        // After this call with new_coverage=true, totals become 10 and 3 → 0.3.
-        corpus.total_mutations = 9;
-        corpus.new_finds_produced = 2;
-        corpus.is_favored = false;
-
-        manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], &[], true, None);
-
-        let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
-        assert!(
-            !(corpus.is_favored),
-            "with strict '>' comparison, favored must be false when ratio == threshold"
-        );
-    }
-
-    #[test]
-    fn eviction_skips_favored_and_evicts_non_favored() {
-        // Manager with two corpora.
+    fn culling_keeps_favored_minset_entries() {
         let tx_gen = Just(basic_tx()).boxed();
         let config = FuzzCorpusConfig {
             corpus_dir: Some(temp_corpus_dir()),
-            corpus_min_mutations: 0,
             corpus_min_size: 0,
             ..Default::default()
         };
 
-        let mut favored = CorpusEntry::new(vec![basic_tx()]);
-        favored.total_mutations = 2;
+        let mut favored = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
         favored.is_favored = true;
+        let favored_uuid = favored.uuid;
+        let favored_cost = favored.tx_seq.len();
 
         let mut non_favored = CorpusEntry::new(vec![basic_tx()]);
-        non_favored.total_mutations = 2;
         non_favored.is_favored = false;
         let non_favored_uuid = non_favored.uuid;
 
@@ -1628,6 +1780,8 @@ mod tests {
             history_map: Vec::new(),
             edge_indices: EdgeIndexMap::default(),
             sancov_history_map: Vec::new(),
+            top_rated: HashMap::from([(1, (favored_uuid, favored_cost))]),
+            disk_corpus_entries: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1637,16 +1791,93 @@ mod tests {
             optimization_best_sequence: vec![],
         };
 
-        // First eviction should remove the non-favored one.
-        manager.evict_oldest_corpus().unwrap();
+        manager.cull_corpus().unwrap();
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert!(manager.in_memory_corpus.iter().all(|c| c.is_favored));
 
-        // Attempt eviction again: only favored remains → should not remove.
-        manager.evict_oldest_corpus().unwrap();
+        manager.cull_corpus().unwrap();
         assert_eq!(manager.in_memory_corpus.len(), 1, "favored corpus must not be evicted");
 
-        // Ensure the evicted one was the non-favored uuid.
         assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
+    }
+
+    #[test]
+    fn culling_flushes_all_non_favored_from_memory_but_keeps_disk_entries() {
+        let tx_gen = Just(basic_tx()).boxed();
+        let config = FuzzCorpusConfig {
+            corpus_dir: Some(temp_corpus_dir()),
+            corpus_min_size: 0,
+            ..Default::default()
+        };
+
+        let mut favored = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
+        favored.is_favored = true;
+        let favored_uuid = favored.uuid;
+        let favored_cost = favored.tx_seq.len();
+        let non_favored = (0..3).map(|_| CorpusEntry::new(vec![basic_tx()])).collect::<Vec<_>>();
+        let non_favored_uuids =
+            non_favored.iter().map(|corpus| corpus.uuid).collect::<HashSet<_>>();
+
+        let corpus_root = temp_corpus_dir();
+        let worker_subdir = corpus_root.join("worker0");
+        fs::create_dir_all(&worker_subdir).unwrap();
+        let disk_corpus_entries = std::iter::once(favored_uuid)
+            .chain(non_favored_uuids.iter().copied())
+            .map(|uuid| CorpusDirEntry {
+                path: worker_subdir.join(format!("{uuid}-1.json")),
+                uuid,
+                timestamp: 1,
+            })
+            .collect::<Vec<_>>();
+
+        let mut in_memory_corpus = vec![favored];
+        in_memory_corpus.extend(non_favored);
+        let mut manager = WorkerCorpus {
+            id: 0,
+            tx_generator: tx_gen,
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config: config.into(),
+            in_memory_corpus,
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
+            top_rated: HashMap::from([(1, (favored_uuid, favored_cost))]),
+            disk_corpus_entries,
+            metrics: CorpusMetrics { corpus_count: 4, ..Default::default() },
+            new_entry_indices: vec![0, 1, 2, 3],
+            last_sync_timestamp: 0,
+            worker_dir: Some(corpus_root),
+            last_sync_metrics: CorpusMetrics::default(),
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
+        };
+
+        manager.cull_corpus().unwrap();
+
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(manager.in_memory_corpus[0].uuid, favored_uuid);
+        assert_eq!(manager.disk_corpus_entries.len(), 4, "on-disk crossover donors stay cached");
+        assert_eq!(manager.metrics.corpus_count, 4, "corpus_count tracks persisted entries");
+        assert_eq!(manager.new_entry_indices, vec![0]);
+        assert!(
+            manager.in_memory_corpus.iter().all(|corpus| !non_favored_uuids.contains(&corpus.uuid))
+        );
+    }
+
+    #[test]
+    fn culling_can_empty_memory_when_no_entries_are_favored() {
+        let (mut manager, _) = new_manager_with_single_corpus();
+
+        manager.cull_corpus().unwrap();
+
+        assert!(manager.in_memory_corpus.is_empty());
+        assert!(manager.new_entry_indices.is_empty());
     }
 }
