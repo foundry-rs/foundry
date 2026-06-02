@@ -13,14 +13,45 @@ use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::{Address, ChainId, map::AddressHashMap};
 use clap::Parser;
-use foundry_evm_hardforks::FoundryHardfork;
+use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use tempo_contracts::precompiles::{
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS,
+    RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
+};
 
 pub mod celo;
 
 #[cfg(feature = "optimism")]
 mod optimism;
+
+const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
+    ("Nonce", NONCE_PRECOMPILE_ADDRESS),
+    ("StablecoinDex", STABLECOIN_DEX_ADDRESS),
+    ("TIP20Factory", TIP20_FACTORY_ADDRESS),
+    ("TIP403Registry", TIP403_REGISTRY_ADDRESS),
+    ("FeeManager", TIP_FEE_MANAGER_ADDRESS),
+    ("ValidatorConfig", VALIDATOR_CONFIG_ADDRESS),
+    ("ValidatorConfigV2", VALIDATOR_CONFIG_V2_ADDRESS),
+    ("AccountKeychain", ACCOUNT_KEYCHAIN_ADDRESS),
+    ("SignatureVerifier", SIGNATURE_VERIFIER_ADDRESS),
+    ("AddressRegistry", ADDRESS_REGISTRY_ADDRESS),
+    ("TIP20ChannelReserve", TIP20_CHANNEL_RESERVE_ADDRESS),
+    ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
+];
+
+fn is_tempo_precompile_active(address: Address, hardfork: TempoHardfork) -> bool {
+    if address == TIP20_CHANNEL_RESERVE_ADDRESS {
+        hardfork.is_t5()
+    } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
+        hardfork.is_t6()
+    } else {
+        true
+    }
+}
 
 #[derive(
     Clone,
@@ -256,9 +287,26 @@ impl NetworkConfigs {
 
     /// Returns precompiles label for configured networks, to be used in traces.
     pub fn precompiles_label(self) -> AddressHashMap<String> {
+        self.precompiles_label_at_tempo_hardfork(TempoHardfork::default())
+    }
+
+    /// Returns precompiles label for configured networks at the active Tempo hardfork.
+    pub fn precompiles_label_at_tempo_hardfork(
+        self,
+        hardfork: TempoHardfork,
+    ) -> AddressHashMap<String> {
         let mut labels = AddressHashMap::default();
         if self.celo {
             labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
+        }
+        if self.is_tempo() {
+            labels.extend(
+                TEMPO_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| is_tempo_precompile_active(*address, hardfork))
+                    .map(|(label, address)| (address, label.to_string())),
+            );
         }
         labels
     }
@@ -269,6 +317,11 @@ impl NetworkConfigs {
         if self.celo {
             precompiles
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
+        }
+        if self.is_tempo() {
+            precompiles.extend(
+                TEMPO_PRECOMPILES.iter().map(|(label, address)| (label.to_string(), *address)),
+            );
         }
         precompiles
     }
@@ -301,6 +354,32 @@ mod tests {
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
+        assert_eq!(via_new.precompiles(), via_old.precompiles());
+        assert_eq!(via_new.precompiles_label(), via_old.precompiles_label());
+    }
+
+    #[test]
+    fn canonical_tempo_network_reports_precompiles() {
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
+
+        assert_eq!(
+            cfg.precompiles().get("TIP20ChannelReserve"),
+            Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
+        );
+        assert_eq!(
+            cfg.precompiles_label_at_tempo_hardfork(TempoHardfork::T5)
+                .get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert!(!cfg.precompiles_label().contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(
+            !cfg.precompiles_label_at_tempo_hardfork(TempoHardfork::T5)
+                .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
+        );
+        assert!(
+            cfg.precompiles_label_at_tempo_hardfork(TempoHardfork::T6)
+                .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
+        );
     }
 
     // --- resolved() / active_network_name ---

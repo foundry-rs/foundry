@@ -5644,6 +5644,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-alloy",
+ "tempo-chainspec",
  "tempo-contracts",
  "tempo-evm",
  "tempo-precompiles",
@@ -5724,6 +5725,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "tempo-contracts",
 ]
 
 [[package]]
@@ -5745,6 +5747,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
+ "foundry-evm-hardforks",
  "foundry-linking",
  "futures",
  "itertools 0.14.0",

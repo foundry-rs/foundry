@@ -7,6 +7,7 @@
 
 use alloy_primitives::{Address, Bytes, U256, address};
 use revm::state::Bytecode;
+use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
@@ -55,6 +56,25 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     RECEIVE_POLICY_GUARD_ADDRESS,
 ];
 
+/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
+pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
+    if address == TIP20_CHANNEL_RESERVE_ADDRESS {
+        hardfork.is_t5()
+    } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
+        hardfork.is_t6()
+    } else {
+        true
+    }
+}
+
+/// Returns the well-known Tempo precompile addresses active at `hardfork`.
+pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
+    TEMPO_PRECOMPILE_ADDRESSES
+        .iter()
+        .copied()
+        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
+}
+
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
 
@@ -78,7 +98,17 @@ pub fn initialize_tempo_genesis(
     admin: Address,
     recipient: Address,
 ) -> Result<(), TempoPrecompileError> {
-    StorageCtx::enter(storage, || initialize_tempo_genesis_inner(admin, recipient))
+    initialize_tempo_genesis_at_hardfork(storage, admin, recipient, TempoHardfork::default())
+}
+
+/// Initialize Tempo precompiles and contracts for a specific active hardfork.
+pub fn initialize_tempo_genesis_at_hardfork(
+    storage: &mut impl PrecompileStorageProvider,
+    admin: Address,
+    recipient: Address,
+    hardfork: TempoHardfork,
+) -> Result<(), TempoPrecompileError> {
+    StorageCtx::enter(storage, || initialize_tempo_genesis_inner(admin, recipient, hardfork))
 }
 
 /// Inner genesis initialization logic. Must be called within a [`StorageCtx`] scope
@@ -86,6 +116,7 @@ pub fn initialize_tempo_genesis(
 pub fn initialize_tempo_genesis_inner(
     admin: Address,
     recipient: Address,
+    hardfork: TempoHardfork,
 ) -> Result<(), TempoPrecompileError> {
     // Idempotent: PATH_USD is the first token created during genesis; if it already exists, skip.
     if TIP20Factory::new().is_tip20(PATH_USD_ADDRESS)? {
@@ -96,8 +127,8 @@ pub fn initialize_tempo_genesis_inner(
 
     // Set sentinel bytecode for precompile addresses
     let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-    for precompile in TEMPO_PRECOMPILE_ADDRESSES {
-        ctx.set_code(*precompile, sentinel.clone())?;
+    for precompile in active_tempo_precompile_addresses(hardfork) {
+        ctx.set_code(precompile, sentinel.clone())?;
     }
 
     // Create PathUSD token: 0x20C0000000000000000000000000000000000000

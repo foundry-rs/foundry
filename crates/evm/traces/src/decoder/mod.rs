@@ -23,16 +23,18 @@ use foundry_evm_core::{
         MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
+use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20Factory, ITIP403Registry, IValidatorConfig,
+    IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20ChannelReserve, ITIP20Factory,
+    ITIP403Registry, IValidatorConfig,
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
 };
 
 mod precompiles;
@@ -109,6 +111,20 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the Tempo hardfork for hardfork-specific precompile detection.
+    #[inline]
+    pub fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
+        self.decoder.tempo_hardfork = hardfork;
+        if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
+            self.decoder
+                .labels
+                .insert(TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string());
+        } else {
+            self.decoder.labels.remove(&TIP20_CHANNEL_RESERVE_ADDRESS);
+        }
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -171,6 +187,9 @@ pub struct CallTraceDecoder {
 
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
+
+    /// The Tempo hardfork, used to determine hardfork-specific precompiles.
+    pub tempo_hardfork: Option<TempoHardfork>,
 }
 
 impl CallTraceDecoder {
@@ -238,6 +257,7 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::functions().into_values())
                 .chain(IValidatorConfig::abi::functions().into_values())
                 .chain(IAccountKeychain::abi::functions().into_values())
+                .chain(ITIP20ChannelReserve::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
@@ -253,6 +273,7 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::events().into_values())
                 .chain(IValidatorConfig::abi::events().into_values())
                 .chain(IAccountKeychain::abi::events().into_values())
+                .chain(ITIP20ChannelReserve::abi::events().into_values())
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
@@ -266,6 +287,8 @@ impl CallTraceDecoder {
             disable_labels: false,
 
             chain_id: None,
+
+            tempo_hardfork: None,
         }
     }
 
@@ -302,7 +325,11 @@ impl CallTraceDecoder {
         let nodes = arena.nodes().iter().filter(|node| {
             // Skip precompile addresses, they will never resolve externally.
             if node.is_precompile()
-                || precompiles::is_known_precompile(node.trace.address, self.chain_id)
+                || precompiles::is_known_precompile(
+                    node.trace.address,
+                    self.chain_id,
+                    self.tempo_hardfork,
+                )
             {
                 return false;
             }
@@ -476,7 +503,7 @@ impl CallTraceDecoder {
             return DecodedCallTrace { label, ..Default::default() };
         }
 
-        if let Some(trace) = precompiles::decode(trace, self.chain_id) {
+        if let Some(trace) = precompiles::decode(trace, self.chain_id, self.tempo_hardfork) {
             return trace;
         }
 
@@ -871,7 +898,11 @@ impl CallTraceDecoder {
                 // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER
                     || n.is_precompile()
-                    || precompiles::is_known_precompile(n.trace.address, self.chain_id)
+                    || precompiles::is_known_precompile(
+                        n.trace.address,
+                        self.chain_id,
+                        self.tempo_hardfork,
+                    )
                 {
                     return false;
                 }
@@ -1523,11 +1554,18 @@ mod tests {
 
     #[test]
     fn test_identify_addresses_skips_tempo_precompiles() {
-        use foundry_evm_core::tempo::TEMPO_PRECOMPILE_ADDRESSES;
+        use foundry_evm_core::tempo::{TEMPO_PRECOMPILE_ADDRESSES, TIP20_CHANNEL_RESERVE_ADDRESS};
 
         // Decoder with Tempo chain ID (4217).
-        let mut decoder = CallTraceDecoder::new().clone();
-        decoder.chain_id = Some(4217);
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T5))
+            .build();
+
+        assert_eq!(
+            decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
 
         let mut arena = CallTraceArena::default();
         let regular_addr = Address::from([0x42; 20]);
@@ -1552,6 +1590,36 @@ mod tests {
 
         // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_identify_addresses_does_not_skip_future_tempo_precompiles() {
+        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T4))
+            .build();
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: TIP20_CHANNEL_RESERVE_ADDRESS,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        assert_eq!(identifier.queried, vec![regular_addr, TIP20_CHANNEL_RESERVE_ADDRESS]);
     }
 
     #[test]

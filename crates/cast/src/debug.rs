@@ -6,10 +6,13 @@ use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler, shell};
 use foundry_config::Config;
 use foundry_debugger::Debugger;
-use foundry_evm::traces::{
-    CallTraceDecoderBuilder, DebugTraceIdentifier,
-    debug::ContractSources,
-    identifier::{SignaturesIdentifier, TraceIdentifiers},
+use foundry_evm::{
+    hardforks::TempoHardfork,
+    traces::{
+        CallTraceDecoderBuilder, DebugTraceIdentifier,
+        debug::ContractSources,
+        identifier::{SignaturesIdentifier, TraceIdentifiers},
+    },
 };
 
 /// labels the traces, conditionally prints them or opens the debugger
@@ -57,7 +60,8 @@ pub(crate) async fn handle_traces(
         .with_labels(labels.chain(config_labels))
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_label_disabled(disable_label)
-        .with_chain_id(Some(chain.id()));
+        .with_chain_id(Some(chain.id()))
+        .with_tempo_hardfork(chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>()));
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
