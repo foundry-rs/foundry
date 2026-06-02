@@ -145,7 +145,7 @@ Each row's status is one of:
 | `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | migrated |
-| `forge verify-contract`| Verification GUID / URL                              | JSON                                       | todo   |
+| `forge verify-contract`| `<guid-or-job-id>\t<url>` on submission; empty if already verified | n/a                              | migrated |
 
 ### `anvil`, `chisel`, `script`
 
