@@ -332,7 +332,8 @@ edition = "2021"
         let formatted_file = prettyplease::unparse(&file_contents);
 
         let expected_contents = syn::parse_file(expected_contents)?;
-        let formatted_exp = prettyplease::unparse(&expected_contents);
+        let formatted_exp =
+            qualify_shadowed_sibling_module_paths(prettyplease::unparse(&expected_contents));
 
         eyre::ensure!(
             formatted_file == formatted_exp,
@@ -412,12 +413,39 @@ fn qualify_shadowed_sibling_module_paths(mut contents: String) -> String {
 
     for module_name in module_names {
         if contents.contains(&format!("pub enum {module_name}")) {
-            contents =
-                contents.replace(&format!("{module_name}::"), &format!("super::{module_name}::"));
+            contents = qualify_unqualified_module_paths(&contents, &module_name);
         }
     }
 
     contents
+}
+
+fn qualify_unqualified_module_paths(contents: &str, module_name: &str) -> String {
+    let needle = format!("{module_name}::");
+    let replacement = format!("super::{module_name}::");
+    let mut qualified = String::with_capacity(contents.len());
+    let mut rest = contents;
+
+    while let Some(index) = rest.find(&needle) {
+        let (before, after) = rest.split_at(index);
+        qualified.push_str(before);
+
+        let boundary = before
+            .chars()
+            .next_back()
+            .is_none_or(|c| !matches!(c, '_' | '0'..='9' | 'a'..='z' | 'A'..='Z' | ':'));
+
+        if boundary {
+            qualified.push_str(&replacement);
+        } else {
+            qualified.push_str(&needle);
+        }
+
+        rest = &after[needle.len()..];
+    }
+
+    qualified.push_str(rest);
+    qualified
 }
 
 fn top_level_module_names(contents: &str) -> Vec<String> {

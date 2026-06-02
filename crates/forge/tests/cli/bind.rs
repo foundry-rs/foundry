@@ -57,7 +57,15 @@ interface IExampleContractEvents {
     event SomeEvent(SomeEventData eventData);
 }
 
-interface IExampleContract is IExampleContractEvents {}
+interface MyIExampleContractEvents {
+    struct MyEventData {
+        address sender;
+    }
+
+    event MyEvent(MyEventData eventData);
+}
+
+interface IExampleContract is IExampleContractEvents, MyIExampleContractEvents {}
 "#,
     );
 
@@ -72,6 +80,16 @@ Compiler run successful!
         .stderr_eq(str![[r#"
 Generating bindings for 1 contracts
 Bindings have been generated to [..]
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["bind", "--select", "^IExampleContract$", "--optimize"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Bindings found. Checking for consistency.
+Checking bindings for 1 contracts
+OK.
 
 "#]]);
 
