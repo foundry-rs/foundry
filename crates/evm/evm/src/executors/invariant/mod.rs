@@ -6,7 +6,9 @@ use crate::{
     inspectors::Fuzzer,
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
+use alloy_primitives::{
+    Address, Bytes, FixedBytes, I256, Selector, U256, keccak256, map::AddressMap,
+};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
@@ -34,7 +36,10 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use proptest::{strategy::Strategy, test_runner::TestRunner};
+use proptest::{
+    strategy::Strategy,
+    test_runner::{RngAlgorithm, TestRng, TestRunner},
+};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
 use revm::{context::Block, state::Account};
@@ -176,8 +181,26 @@ fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_coun
     total_samples / worker_count + usize::from((worker_id as usize) < total_samples % worker_count)
 }
 
-fn invariant_worker_runner(runner: &mut TestRunner, worker_id: u32) -> TestRunner {
+fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
     if worker_id == 0 {
+        seed
+    } else {
+        let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
+        U256::from_be_bytes(keccak256(seed_data).0)
+    }
+}
+
+fn invariant_worker_runner(
+    runner: &mut TestRunner,
+    worker_id: u32,
+    seed: Option<U256>,
+) -> TestRunner {
+    if let Some(seed) = seed {
+        let worker_seed = invariant_worker_seed(seed, worker_id);
+        trace!(target: "forge::test", ?worker_seed, "deterministic seed for invariant worker {worker_id}");
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
+        TestRunner::new_with_rng(runner.config().clone(), rng)
+    } else if worker_id == 0 {
         runner.clone()
     } else {
         TestRunner::new_with_rng(runner.config().clone(), runner.new_rng())
@@ -479,6 +502,8 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     pub executor: Executor<FEN>,
     /// Proptest runner.
     runner: TestRunner,
+    /// Configured fuzz seed used to derive deterministic invariant worker runners.
+    fuzz_seed: Option<U256>,
     /// The invariant configuration
     config: InvariantConfig,
     /// Contracts deployed with `setUp()`
@@ -499,9 +524,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
     ) -> Self {
+        Self::new_with_fuzz_seed(executor, runner, None, config, setup_contracts, project_contracts)
+    }
+
+    /// Instantiates an invariant executor with the configured fuzz seed for deterministic worker
+    /// runner derivation.
+    pub fn new_with_fuzz_seed(
+        executor: Executor<FEN>,
+        runner: TestRunner,
+        fuzz_seed: Option<U256>,
+        config: InvariantConfig,
+        setup_contracts: &'a ContractsByAddress,
+        project_contracts: &'a ContractsByArtifact,
+    ) -> Self {
         Self {
             executor,
             runner,
+            fuzz_seed,
             config,
             setup_contracts,
             project_contracts,
@@ -573,7 +612,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
-                    let worker_runner = invariant_worker_runner(&mut runner, worker_plan.worker_id);
+                    let worker_runner =
+                        invariant_worker_runner(&mut runner, worker_plan.worker_id, self.fuzz_seed);
                     let gas_report_samples = gas_report_samples_for_worker(
                         config.gas_report_samples,
                         worker_plan.worker_id,
@@ -611,6 +651,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 .collect::<Result<Vec<_>>>()?
         } else {
             let worker_plan = worker_plans[0];
+            let runner =
+                invariant_worker_runner(&mut runner, worker_plan.worker_id, self.fuzz_seed);
             let gas_report_samples = config.gas_report_samples as usize;
             vec![Self::run_invariant_worker(
                 base_executor,
@@ -1778,7 +1820,59 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::{prelude::any, strategy::ValueTree, test_runner::Config};
     use serde_json::json;
+
+    fn first_generated_u64(runner: &mut TestRunner) -> u64 {
+        any::<u64>().new_tree(runner).unwrap().current()
+    }
+
+    fn test_runner() -> TestRunner {
+        TestRunner::new(Config { failure_persistence: None, ..Default::default() })
+    }
+
+    fn seeded_test_runner(seed: U256) -> TestRunner {
+        let config = Config { failure_persistence: None, ..Default::default() };
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
+        TestRunner::new_with_rng(config, rng)
+    }
+
+    #[test]
+    fn invariant_worker_seed_preserves_master_seed_and_derives_workers() {
+        let seed = U256::from(0x1234);
+
+        assert_eq!(invariant_worker_seed(seed, 0), seed);
+        assert_ne!(invariant_worker_seed(seed, 1), seed);
+        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(seed, 2));
+        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(U256::from(0x5678), 1));
+    }
+
+    #[test]
+    fn invariant_worker_runner_preserves_seed_for_master_worker() {
+        let seed = U256::from(0x1234);
+        let mut seeded_runner = seeded_test_runner(seed);
+        let mut parent = test_runner();
+        let mut worker = invariant_worker_runner(&mut parent, 0, Some(seed));
+
+        assert_eq!(first_generated_u64(&mut worker), first_generated_u64(&mut seeded_runner));
+    }
+
+    #[test]
+    fn invariant_worker_runner_uses_seed_independent_of_parent_rng_state() {
+        let seed = U256::from(0x1234);
+        let mut parent = test_runner();
+        let mut advanced_parent = test_runner();
+        let _ = first_generated_u64(&mut advanced_parent);
+
+        let mut worker = invariant_worker_runner(&mut parent, 1, Some(seed));
+        let mut worker_from_advanced_parent =
+            invariant_worker_runner(&mut advanced_parent, 1, Some(seed));
+
+        assert_eq!(
+            first_generated_u64(&mut worker),
+            first_generated_u64(&mut worker_from_advanced_parent)
+        );
+    }
 
     #[test]
     fn invariant_progress_json_includes_throughput_fields() {
