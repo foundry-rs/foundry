@@ -15,7 +15,7 @@
 //! - State preconditions (reentrancy guards, paused checks)
 
 use eyre::Result;
-use solar::ast::{CallArgsKind, ExprKind};
+use solar::ast::{CallArgsKind, Expr, ExprKind, UnOpKind};
 
 use super::{MutationContext, Mutator};
 use crate::mutation::mutant::{Mutant, MutationType};
@@ -59,9 +59,7 @@ impl Mutator for RequireMutator {
         let line_number = context.line_number();
         let column_number = context.column_number();
 
-        // Extract condition text from source
         let source = context.source.unwrap_or("");
-        let condition_text = extract_span_text(source, condition_expr.span);
 
         // Build the rest of the call (message and other arguments after the condition,
         // if any) using span-based extraction so that commas inside the condition
@@ -100,7 +98,7 @@ impl Mutator for RequireMutator {
         let mutated_false = format!("{func_name}(false{rest_args})");
         push_mutant(mutated_false, original.clone(), source_line.clone());
 
-        let inverted_condition = invert_condition_text(&condition_text);
+        let inverted_condition = invert_condition_text(source, condition_expr);
         let mutated_inverted = format!("{func_name}({inverted_condition}{rest_args})");
         push_mutant(mutated_inverted, original, source_line);
 
@@ -135,11 +133,14 @@ fn extract_span_text(source: &str, span: solar::ast::Span) -> String {
     source.get(lo..hi).map(|s| s.to_string()).unwrap_or_default()
 }
 
-fn invert_condition_text(condition: &str) -> String {
-    let condition = condition.trim();
-    if let Some(stripped) = condition.strip_prefix('!') {
-        stripped.trim().to_string()
-    } else {
-        format!("!({condition})")
+fn invert_condition_text(source: &str, condition_expr: &Expr<'_>) -> String {
+    match &condition_expr.kind {
+        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
+            extract_span_text(source, inner.span)
+        }
+        _ => {
+            let condition = extract_span_text(source, condition_expr.span);
+            format!("!({})", condition.trim())
+        }
     }
 }

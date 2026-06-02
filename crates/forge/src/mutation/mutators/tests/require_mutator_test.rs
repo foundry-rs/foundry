@@ -8,4 +8,9 @@ mutator_tests!(RequireMutator;
         "require(paused, \"paused\")",
         "require(true, \"paused\")",
     ]);
+    require_not_composite: "require(!paused && isOwner, \"paused\")" => Some(vec![
+        "require(!(!paused && isOwner), \"paused\")",
+        "require(false, \"paused\")",
+        "require(true, \"paused\")",
+    ]);
 );
