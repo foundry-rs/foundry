@@ -66,7 +66,7 @@ pub struct SharedMutationState {
     pub completed: AtomicUsize,
     pub total: AtomicUsize,
     /// Cancellation flag (Ctrl+C)
-    pub cancelled: AtomicBool,
+    pub cancelled: Arc<AtomicBool>,
     /// Optional progress display
     pub progress: Option<MutationProgress>,
     /// Whether to suppress all output (for JSON mode)
@@ -83,11 +83,15 @@ pub struct SharedMutationState {
 
 impl SharedMutationState {
     pub fn new() -> Self {
+        Self::with_cancellation(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn with_cancellation(cancelled: Arc<AtomicBool>) -> Self {
         Self {
             survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
-            cancelled: AtomicBool::new(false),
+            cancelled,
             progress: None,
             silent: false,
             pending_workers: Mutex::new(Vec::new()),
@@ -96,11 +100,15 @@ impl SharedMutationState {
     }
 
     pub fn new_silent() -> Self {
+        Self::silent_with_cancellation(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn silent_with_cancellation(cancelled: Arc<AtomicBool>) -> Self {
         Self {
             survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
-            cancelled: AtomicBool::new(false),
+            cancelled,
             progress: None,
             silent: true,
             pending_workers: Mutex::new(Vec::new()),
@@ -109,11 +117,18 @@ impl SharedMutationState {
     }
 
     pub fn with_progress(progress: MutationProgress) -> Self {
+        Self::with_progress_and_cancellation(progress, Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn with_progress_and_cancellation(
+        progress: MutationProgress,
+        cancelled: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
-            cancelled: AtomicBool::new(false),
+            cancelled,
             progress: Some(progress),
             silent: false,
             pending_workers: Mutex::new(Vec::new()),
@@ -199,6 +214,7 @@ pub fn run_mutations_parallel_with_progress(
     filter_args: FilterArgs,
     selected_sources_relative: Arc<Vec<PathBuf>>,
     isolate: bool,
+    cancellation_requested: Arc<AtomicBool>,
 ) -> Result<MutationBatchResult> {
     let total = mutants.len();
     if total == 0 {
@@ -213,11 +229,11 @@ pub fn run_mutations_parallel_with_progress(
     };
 
     let shared_state = Arc::new(if let Some(p) = progress {
-        SharedMutationState::with_progress(p)
+        SharedMutationState::with_progress_and_cancellation(p, cancellation_requested)
     } else if silent {
-        SharedMutationState::new_silent()
+        SharedMutationState::silent_with_cancellation(cancellation_requested)
     } else {
-        SharedMutationState::new()
+        SharedMutationState::with_cancellation(cancellation_requested)
     });
     shared_state.total.store(total, Ordering::SeqCst);
     shared_state.set_max_pending_workers(num_workers);
@@ -251,30 +267,6 @@ pub fn run_mutations_parallel_with_progress(
         .stack_size(16 * 1024 * 1024) // 16MB stack to avoid overflow in deep call chains
         .build()
         .map_err(|e| eyre::eyre!("Failed to create thread pool: {}", e))?;
-
-    // Set up Ctrl+C handling for every mutation run, not only the progress UI
-    // path. The shutdown channel lets us join the listener when this batch
-    // finishes instead of leaving a parked thread behind after each run.
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let ctrlc_handle = {
-        let state_for_ctrlc = Arc::clone(&shared_state);
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to create tokio runtime for signal handler");
-            rt.block_on(async {
-                tokio::select! {
-                    signal = tokio::signal::ctrl_c() => {
-                        if signal.is_ok() {
-                            state_for_ctrlc.cancel();
-                        }
-                    }
-                    _ = shutdown_rx => {}
-                }
-            });
-        })
-    };
 
     // Use a thread-safe collection to store results as they complete
     let completed_results: Arc<Mutex<Vec<MutantTestResult>>> =
@@ -363,9 +355,6 @@ pub fn run_mutations_parallel_with_progress(
             results.len()
         );
     }
-
-    let _ = shutdown_tx.send(());
-    let _ = ctrlc_handle.join();
 
     Ok(MutationBatchResult { results, cancelled })
 }
