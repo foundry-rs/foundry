@@ -415,6 +415,7 @@ impl TestArgs {
             bail!("`invariant.workers` must be greater than 0");
         }
         warn_unsupported_invariant_workers(&config)?;
+        let invariant_workers = config.invariant.workers;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -532,6 +533,7 @@ impl TestArgs {
 
             (libraries, outcome)
         };
+        outcome.invariant_workers = invariant_workers;
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -708,7 +710,6 @@ impl TestArgs {
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
         let fuzz_seed = config.fuzz.seed;
-        let invariant_workers = config.invariant.workers;
         if self.list {
             return list(runner, filter);
         }
@@ -786,18 +787,14 @@ impl TestArgs {
             }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
-            let mut outcome = TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed);
-            outcome.invariant_workers = invariant_workers;
-            return Ok(outcome);
+            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
-            let mut outcome = TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed);
-            outcome.invariant_workers = invariant_workers;
-            return Ok(outcome);
+            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         let remote_chain =
@@ -861,7 +858,6 @@ impl TestArgs {
 
         let mut outcome = TestOutcome::empty(None, self.allow_failure);
         outcome.fuzz_seed = fuzz_seed;
-        outcome.invariant_workers = invariant_workers;
 
         let mut any_test_failed = false;
         let mut backtrace_builder = None;

@@ -165,8 +165,7 @@ impl InvariantThroughputMetrics {
 }
 
 fn max_invariant_workers_for_runs(runs: u32) -> usize {
-    let max_workers = (runs / MIN_RUNS_PER_INVARIANT_WORKER).max(1) as usize;
-    max_workers.min(runs as usize).max(1)
+    (runs / MIN_RUNS_PER_INVARIANT_WORKER).max(1) as usize
 }
 
 fn invariant_worker_count(config: &InvariantConfig) -> usize {
@@ -1176,7 +1175,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             return;
         }
 
-        for (idx, (_site, error)) in result.failures.handler_failures_mut().enumerate() {
+        for (idx, error) in result.failures.handler_failures_mut().enumerate() {
             if early_exit.should_stop() {
                 break;
             }

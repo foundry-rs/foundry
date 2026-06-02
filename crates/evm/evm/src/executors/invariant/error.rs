@@ -327,11 +327,9 @@ impl InvariantFailures {
         self.handler_count
     }
 
-    pub fn handler_failures_mut(
-        &mut self,
-    ) -> impl Iterator<Item = ((Address, Selector), &mut InvariantFuzzError)> {
+    pub fn handler_failures_mut(&mut self) -> impl Iterator<Item = &mut InvariantFuzzError> {
         self.failures.iter_mut().filter_map(|(key, error)| match key {
-            FailureKey::Handler(addr, selector) => Some(((*addr, *selector), error)),
+            FailureKey::Handler(_, _) => Some(error),
             FailureKey::Invariant(_) => None,
         })
     }
