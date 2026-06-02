@@ -52,7 +52,6 @@ pub struct MutantTestResult {
 }
 
 /// Tracks progress and adaptive span skipping across parallel workers.
-#[derive(Default)]
 pub struct SharedMutationState {
     /// Spans where mutations have survived - shared across workers for adaptive skipping.
     pub survived_spans: Mutex<SurvivedSpans>,
@@ -70,6 +69,9 @@ pub struct SharedMutationState {
     ///   1. The `TempDir` is *not* dropped while the worker is still touching it.
     ///   2. We can join the threads at the end of the run and surface leaks.
     pub pending_workers: Mutex<Vec<JoinHandle<()>>>,
+    /// Maximum number of timed-out worker handles to keep pending at once.
+    /// Older handles are joined before parking more, bounding cleanup backlog.
+    max_pending_workers: AtomicUsize,
 }
 
 impl SharedMutationState {
@@ -82,6 +84,7 @@ impl SharedMutationState {
             progress: None,
             silent: false,
             pending_workers: Mutex::new(Vec::new()),
+            max_pending_workers: AtomicUsize::new(usize::MAX),
         }
     }
 
@@ -94,6 +97,7 @@ impl SharedMutationState {
             progress: None,
             silent: true,
             pending_workers: Mutex::new(Vec::new()),
+            max_pending_workers: AtomicUsize::new(usize::MAX),
         }
     }
 
@@ -106,6 +110,7 @@ impl SharedMutationState {
             progress: Some(progress),
             silent: false,
             pending_workers: Mutex::new(Vec::new()),
+            max_pending_workers: AtomicUsize::new(usize::MAX),
         }
     }
 
@@ -135,6 +140,42 @@ impl SharedMutationState {
     pub fn increment_completed(&self) -> usize {
         self.completed.fetch_add(1, Ordering::SeqCst) + 1
     }
+
+    pub fn set_max_pending_workers(&self, max: usize) {
+        self.max_pending_workers.store(max.max(1), Ordering::SeqCst);
+    }
+
+    fn park_timed_out_worker(&self, handle: JoinHandle<()>) {
+        let mut pending = match self.pending_workers.lock() {
+            Ok(pending) => pending,
+            Err(_) => {
+                let _ = handle.join();
+                return;
+            }
+        };
+
+        let max_pending = self.max_pending_workers.load(Ordering::SeqCst).max(1);
+        while pending.len() >= max_pending {
+            let old_handle = pending.remove(0);
+            drop(pending);
+            let _ = old_handle.join();
+            pending = match self.pending_workers.lock() {
+                Ok(pending) => pending,
+                Err(_) => {
+                    let _ = handle.join();
+                    return;
+                }
+            };
+        }
+
+        pending.push(handle);
+    }
+}
+
+impl Default for SharedMutationState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Run mutation tests in parallel with optional progress display.
@@ -157,6 +198,13 @@ pub fn run_mutations_parallel_with_progress(
         return Ok(vec![]);
     }
 
+    // Default to available parallelism if num_workers is 0
+    let num_workers = if num_workers == 0 {
+        std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
+    } else {
+        num_workers
+    };
+
     let shared_state = Arc::new(if let Some(p) = progress {
         SharedMutationState::with_progress(p)
     } else if silent {
@@ -165,6 +213,7 @@ pub fn run_mutations_parallel_with_progress(
         SharedMutationState::new()
     });
     shared_state.total.store(total, Ordering::SeqCst);
+    shared_state.set_max_pending_workers(num_workers);
 
     // Only print if no progress bar and not silent
     if shared_state.progress.is_none() && !shared_state.silent {
@@ -188,13 +237,6 @@ pub fn run_mutations_parallel_with_progress(
         .to_path_buf();
 
     workspace::ensure_safe_relative_path(&source_relative, "source", &source_abs)?;
-
-    // Default to available parallelism if num_workers is 0
-    let num_workers = if num_workers == 0 {
-        std::thread::available_parallelism().map(|p| p.get()).unwrap_or(1)
-    } else {
-        num_workers
-    };
 
     // Set up Ctrl+C handler using a background thread with tokio signal
     // This replaces ctrlc crate with tokio's built-in signal handling
@@ -373,55 +415,8 @@ fn test_single_mutant_isolated(
         return MutantTestResult { mutant, result: MutationResult::Invalid };
     }
 
-    // Create a config for the temp directory, preserving relative paths
     let temp_path = temp_dir.path().to_path_buf();
-    let src_rel = workspace::relative_to_root(&config.root, &config.src);
-    let test_rel = workspace::relative_to_root(&config.root, &config.test);
-    let script_rel = workspace::relative_to_root(&config.root, &config.script);
-
-    let mut temp_config = Config::load_with_root(&temp_path).unwrap_or_else(|_| {
-        let mut c = Config::clone(config.as_ref());
-        c.root = temp_path.clone();
-        c.src = temp_path.join(&src_rel);
-        c.test = temp_path.join(&test_rel);
-        c.script = temp_path.join(&script_rel);
-        c.out = temp_path.join("out");
-        c.cache_path = temp_path.join("cache");
-        c
-    });
-    temp_config.root = temp_path.clone();
-    temp_config.src = temp_path.join(&src_rel);
-    temp_config.test = temp_path.join(&test_rel);
-    temp_config.script = temp_path.join(&script_rel);
-    temp_config.out = temp_path.join("out");
-    temp_config.cache_path = temp_path.join("cache");
-
-    // Update libs paths to point to temp directory
-    temp_config.libs = config
-        .libs
-        .iter()
-        .map(|lib| {
-            let lib_rel = workspace::relative_to_root(&config.root, lib);
-            temp_path.join(lib_rel)
-        })
-        .collect();
-
-    // Propagate the per-mutant timeout into the inner fuzz/invariant harness
-    // so the hot test loop itself bails out at the deadline. Without this the
-    // outer `recv_timeout` would only stop *waiting* — the leaked worker
-    // thread would keep running expensive fuzz/invariant runs and starve the
-    // pool. We never raise an existing user-configured value.
-    if let Some(mutation_timeout) = config.mutation.timeout {
-        temp_config.fuzz.timeout = Some(match temp_config.fuzz.timeout {
-            Some(existing) => existing.min(mutation_timeout),
-            None => mutation_timeout,
-        });
-        temp_config.invariant.timeout = Some(match temp_config.invariant.timeout {
-            Some(existing) => existing.min(mutation_timeout),
-            None => mutation_timeout,
-        });
-    }
-
+    let temp_config = temp_config_for_mutation(config, &temp_path);
     let temp_config = Arc::new(temp_config);
 
     // Compile and test, optionally bounded by a wall-clock timeout.
@@ -554,9 +549,7 @@ fn run_compile_and_test_with_timeout(
             // Timeout fired. The worker is still running and still owns the
             // TempDir; park the handle so we can join (and reclaim cleanup)
             // at the end of the parallel run instead of leaking it.
-            if let Ok(mut pending) = shared_state.pending_workers.lock() {
-                pending.push(handle);
-            }
+            shared_state.park_timed_out_worker(handle);
             MutationResult::TimedOut
         }
     }
@@ -598,6 +591,58 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
 
     fs::write(dest_path, new_content)?;
     Ok(())
+}
+
+/// Build the config used inside a per-mutant temp workspace.
+///
+/// Start from the already materialized baseline config instead of reloading
+/// `foundry.toml`, so CLI overrides and runtime normalization stay identical
+/// between the baseline run and every mutant run.
+fn temp_config_for_mutation(config: &Config, temp_path: &Path) -> Config {
+    let mut temp_config = config.clone();
+    temp_config.root = temp_path.to_path_buf();
+    temp_config.src = rebase_project_path(&config.root, temp_path, &config.src);
+    temp_config.test = rebase_project_path(&config.root, temp_path, &config.test);
+    temp_config.script = rebase_project_path(&config.root, temp_path, &config.script);
+    temp_config.out = rebase_project_path(&config.root, temp_path, &config.out);
+    temp_config.cache_path = rebase_project_path(&config.root, temp_path, &config.cache_path);
+    temp_config.snapshots = rebase_project_path(&config.root, temp_path, &config.snapshots);
+    temp_config.broadcast = rebase_project_path(&config.root, temp_path, &config.broadcast);
+    temp_config.mutation_dir = rebase_project_path(&config.root, temp_path, &config.mutation_dir);
+    temp_config.libs =
+        config.libs.iter().map(|lib| rebase_project_path(&config.root, temp_path, lib)).collect();
+
+    if let Some(path) = &config.fuzz.failure_persist_dir {
+        temp_config.fuzz.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+    if let Some(path) = &config.invariant.failure_persist_dir {
+        temp_config.invariant.failure_persist_dir =
+            Some(rebase_project_path(&config.root, temp_path, path));
+    }
+
+    // Propagate the per-mutant timeout into the inner fuzz/invariant harness
+    // so the hot test loop itself bails out at the deadline. Without this the
+    // outer `recv_timeout` would only stop *waiting* — the leaked worker
+    // thread would keep running expensive fuzz/invariant runs and starve the
+    // pool. We never raise an existing user-configured value.
+    if let Some(mutation_timeout) = config.mutation.timeout {
+        temp_config.fuzz.timeout = Some(match temp_config.fuzz.timeout {
+            Some(existing) => existing.min(mutation_timeout),
+            None => mutation_timeout,
+        });
+        temp_config.invariant.timeout = Some(match temp_config.invariant.timeout {
+            Some(existing) => existing.min(mutation_timeout),
+            None => mutation_timeout,
+        });
+    }
+
+    temp_config
+}
+
+fn rebase_project_path(root: &Path, temp_path: &Path, path: &Path) -> PathBuf {
+    let rel = workspace::relative_to_root(root, path);
+    if rel.is_absolute() { path.to_path_buf() } else { temp_path.join(rel) }
 }
 
 /// Compile the project and run tests, returning true if any test failed (mutant killed).
@@ -698,4 +743,82 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     let killed = results.values().any(|suite| suite.failed() > 0);
 
     Ok(killed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::U256;
+
+    #[test]
+    fn park_timed_out_worker_bounds_pending_handles() {
+        let state = SharedMutationState::new();
+        state.set_max_pending_workers(1);
+
+        state.park_timed_out_worker(std::thread::spawn(|| {}));
+        assert_eq!(state.pending_workers.lock().unwrap().len(), 1);
+
+        state.park_timed_out_worker(std::thread::spawn(|| {}));
+        assert_eq!(state.pending_workers.lock().unwrap().len(), 1);
+
+        let pending = std::mem::take(&mut *state.pending_workers.lock().unwrap());
+        for handle in pending {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn temp_config_preserves_materialized_overrides_and_rebases_paths() {
+        let project = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let root = project.path();
+
+        let mut config = Config {
+            root: root.to_path_buf(),
+            src: root.join("contracts"),
+            test: root.join("checks"),
+            script: root.join("deploy"),
+            out: root.join("custom-out"),
+            cache_path: root.join("custom-cache"),
+            snapshots: root.join("custom-snapshots"),
+            broadcast: root.join("custom-broadcast"),
+            mutation_dir: root.join("custom-cache/mutation"),
+            libs: vec![root.join("vendor")],
+            dynamic_test_linking: true,
+            cache: true,
+            ..Default::default()
+        };
+        config.fuzz.seed = Some(U256::from(42));
+        config.fuzz.timeout = Some(90);
+        config.invariant.timeout = Some(80);
+        config.fuzz.failure_persist_dir = Some(root.join("custom-cache/fuzz"));
+        config.invariant.failure_persist_dir = Some(root.join("custom-cache/invariant"));
+        config.mutation.timeout = Some(5);
+
+        let temp_config = temp_config_for_mutation(&config, temp.path());
+
+        assert_eq!(temp_config.root, temp.path());
+        assert_eq!(temp_config.src, temp.path().join("contracts"));
+        assert_eq!(temp_config.test, temp.path().join("checks"));
+        assert_eq!(temp_config.script, temp.path().join("deploy"));
+        assert_eq!(temp_config.out, temp.path().join("custom-out"));
+        assert_eq!(temp_config.cache_path, temp.path().join("custom-cache"));
+        assert_eq!(temp_config.snapshots, temp.path().join("custom-snapshots"));
+        assert_eq!(temp_config.broadcast, temp.path().join("custom-broadcast"));
+        assert_eq!(temp_config.mutation_dir, temp.path().join("custom-cache/mutation"));
+        assert_eq!(temp_config.libs, vec![temp.path().join("vendor")]);
+        assert_eq!(
+            temp_config.fuzz.failure_persist_dir,
+            Some(temp.path().join("custom-cache/fuzz"))
+        );
+        assert_eq!(
+            temp_config.invariant.failure_persist_dir,
+            Some(temp.path().join("custom-cache/invariant"))
+        );
+        assert!(temp_config.dynamic_test_linking);
+        assert!(temp_config.cache);
+        assert_eq!(temp_config.fuzz.seed, Some(U256::from(42)));
+        assert_eq!(temp_config.fuzz.timeout, Some(5));
+        assert_eq!(temp_config.invariant.timeout, Some(5));
+    }
 }
