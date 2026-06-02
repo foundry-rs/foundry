@@ -5,8 +5,8 @@ use crate::{
 };
 use solar::{
     ast::{
-        DataLocation, ElementaryType, LitKind, StateMutability, StrKind, TypeSize, UnOpKind,
-        Visibility,
+        BinOpKind, DataLocation, ElementaryType, LitKind, StateMutability, StrKind, TypeSize,
+        UnOpKind, Visibility,
     },
     interface::{Span, kw, sym},
     sema::{
@@ -663,7 +663,7 @@ fn arg_matches_type<'hir>(
     arg: &'hir hir::Expr<'hir>,
     param_ty: Ty<'hir>,
 ) -> bool {
-    expr_ty(gcx, hir, arg).is_none_or(|arg_ty| arg_ty.convert_implicit_to(param_ty, gcx))
+    expr_ty(gcx, hir, arg).is_some_and(|arg_ty| arg_ty.convert_implicit_to(param_ty, gcx))
 }
 
 fn is_address_like<'hir>(
@@ -769,11 +769,29 @@ fn expr_ty<'hir>(
             let ty = gcx.type_of_hir_ty(ty);
             Some(gcx.mk_ty(TyKind::Type(ty)))
         }
-        ExprKind::Unary(_, inner) => expr_ty(gcx, hir, inner),
+        ExprKind::Unary(op, inner) => match op.kind {
+            UnOpKind::Not => Some(gcx.types.bool),
+            _ => expr_ty(gcx, hir, inner),
+        },
+        ExprKind::Binary(_, op, _) if binary_op_returns_bool(op.kind) => Some(gcx.types.bool),
         ExprKind::Assign(..) | ExprKind::Binary(..) | ExprKind::Delete(..) | ExprKind::Err(_) => {
             None
         }
     }
+}
+
+const fn binary_op_returns_bool(op: BinOpKind) -> bool {
+    matches!(
+        op,
+        BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge
+            | BinOpKind::Eq
+            | BinOpKind::Ne
+            | BinOpKind::And
+            | BinOpKind::Or
+    )
 }
 
 fn member_ty<'hir>(

@@ -77,6 +77,12 @@ contract ReentrancyNoEth {
         balances[msg.sender] = amount;
     }
 
+    function viewOverloadWithBoolExpressionThenWrite(IHook hook, bool flag) external {
+        uint256 amount = balances[msg.sender];
+        hook.overloaded(flag && true);
+        balances[msg.sender] = amount;
+    }
+
     function unrelatedStateWriteAfterCall(IHook hook) external {
         uint256 amount = balances[msg.sender];
         hook.notify(amount);
