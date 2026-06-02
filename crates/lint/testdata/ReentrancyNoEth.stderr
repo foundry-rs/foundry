@@ -54,3 +54,19 @@ LL │         hook.overloaded(amount);
    │
    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
 
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         balances[hook.key()] = amount;
+   │                  ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         delete balances[hook.key()];
+   │                         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+

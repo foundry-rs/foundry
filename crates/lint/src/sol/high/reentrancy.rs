@@ -283,18 +283,18 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.analyze_expr(lhs, state);
                 }
                 self.analyze_expr(rhs, state);
+                self.analyze_lhs_indices(lhs, state);
                 let written_vars = state_write_lhs_vars(self.hir, lhs);
                 if !written_vars.is_empty() {
                     self.emit_pending_calls(state, &written_vars);
                 }
-                self.analyze_lhs_indices(lhs, state);
             }
             ExprKind::Delete(inner) => {
+                self.analyze_lhs_indices(inner, state);
                 let written_vars = state_write_lhs_vars(self.hir, inner);
                 if !written_vars.is_empty() {
                     self.emit_pending_calls(state, &written_vars);
                 }
-                self.analyze_lhs_indices(inner, state);
             }
             ExprKind::Unary(op, inner)
                 if matches!(
@@ -505,7 +505,7 @@ fn is_uncapped_value_call(
     opts: Option<&[hir::NamedArg<'_>]>,
 ) -> bool {
     let Some(opts) = opts else { return false };
-    let ExprKind::Member(_, member) = &callee.kind else { return false };
+    let ExprKind::Member(_, member) = &callee.peel_parens().kind else { return false };
     if member.name != kw::Call {
         return false;
     }

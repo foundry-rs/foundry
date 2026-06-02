@@ -8,6 +8,7 @@ interface IHook {
     function overloaded(uint256 amount) external;
     function overloaded(bool flag) external view returns (bool);
     function balanceOf(address account) external view returns (uint256);
+    function key() external returns (address);
 }
 
 contract ReentrancyNoEth {
@@ -80,6 +81,16 @@ contract ReentrancyNoEth {
         uint256 amount = balances[msg.sender];
         hook.notify(amount);
         credits[msg.sender] = amount;
+    }
+
+    function callInAssignmentIndexThenWrite(IHook hook) external {
+        uint256 amount = balances[msg.sender];
+        balances[hook.key()] = amount; //~WARN: external call can be reentered before `balances` is updated
+    }
+
+    function callInDeleteIndexThenWrite(IHook hook) external {
+        uint256 amount = balances[msg.sender];
+        delete balances[hook.key()]; //~WARN: external call can be reentered before `balances` is updated
     }
 
     function ethTransferIsHandledByReentrancyEth(address payable target) external {
