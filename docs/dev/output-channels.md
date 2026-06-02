@@ -122,7 +122,7 @@ Each row's status is one of:
 | `forge test`           | (empty; exit code = pass/fail)                       | JSON test results, JUnit XML with `--junit`| todo   |
 | `forge create`         | Deployed address                                     | JSON `{ "address": "…", "tx_hash": "…", … }` | todo |
 | `forge inspect <field>`| Just that field's value                              | JSON of that field                         | migrated |
-| `forge install`        | (empty)                                              | (empty)                                    | todo   |
+| `forge install`        | (empty)                                              | (empty)                                    | migrated |
 | `forge init`           | (empty)                                              | (empty)                                    | migrated |
 | `forge update`         | (empty)                                              | (empty)                                    | migrated |
 | `forge remove`         | (empty)                                              | (empty)                                    | migrated |

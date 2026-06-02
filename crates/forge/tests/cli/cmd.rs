@@ -307,21 +307,17 @@ forgetest!(can_init_repo_with_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
@@ -359,21 +355,16 @@ ignore them in the `.gitignore` file.
 forgetest!(can_init_no_git, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init")
-        .arg(prj.root())
-        .arg("--no-git")
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.arg("init").arg(prj.root()).arg("--no-git").assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
     prj.assert_config_exists();
 
     assert!(!prj.root().join(".git").exists());
@@ -389,14 +380,12 @@ forgetest!(can_init_with_no_commit, |prj, cmd| {
         .arg(prj.root())
         .arg("--no-commit")
         .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
+        .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -476,17 +465,12 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force")
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.arg("--force").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -516,17 +500,12 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force")
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.arg("--force").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -558,17 +537,12 @@ Run with the `--force` flag to initialize regardless.
 
 "#]]);
 
-    cmd.arg("--force")
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.arg("--force").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -605,14 +579,12 @@ forgetest!(can_init_using_parent_repo, |prj, cmd| {
         .arg("--force")
         .arg("--use-parent-git")
         .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
+        .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -639,21 +611,16 @@ Initializing [..]...
 forgetest!(can_init_vscode, |prj, cmd| {
     prj.wipe();
 
-    cmd.arg("init")
-        .arg(prj.root())
-        .arg("--vscode")
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.arg("init").arg(prj.root()).arg("--vscode").assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let settings = prj.root().join(".vscode/settings.json");
     assert!(settings.is_file());
@@ -774,8 +741,6 @@ forgetest!(flaky_can_clone, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -784,7 +749,9 @@ Compiler run successful!
     .stderr_eq(str![[r#"
 Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 
@@ -835,8 +802,6 @@ forgetest!(flaky_can_clone_sourcify, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -845,7 +810,9 @@ Compiler run successful!
         .stderr_eq(str![[r#"
 Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 
@@ -872,8 +839,6 @@ forgetest!(flaky_can_clone_no_remappings_txt, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -882,7 +847,9 @@ Compiler run successful!
     .stderr_eq(str![[r#"
 Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 
@@ -935,17 +902,11 @@ forgetest!(flaky_can_clone_keep_directory_structure, |prj, cmd| {
 forgetest!(can_init_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
 "#]]);
@@ -970,20 +931,16 @@ Initializing [..]...
 forgetest!(can_init_vyper_project, |prj, cmd| {
     prj.wipe();
 
-    cmd.args(["init", "--vyper"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     assert!(prj.root().join("foundry.toml").exists());
     assert!(prj.root().join("lib/forge-std").exists());
@@ -1009,16 +966,16 @@ forgetest!(can_init_tempo_project, |prj, cmd| {
     cmd.args(["init", "--network", "tempo"])
         .arg(prj.root())
         .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
-    Installed tempo-std[..]
-
-"#]])
+        .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 Initializing [..]...
 ...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
+    Installed forge-std[..]
+Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: None)
+...
+    Installed tempo-std[..]
     Initialized forge project
 
 "#]]);
@@ -1114,8 +1071,6 @@ forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -1124,7 +1079,9 @@ Compiler run successful!
     .stderr_eq(str![[r#"
 Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 
@@ -4559,7 +4516,6 @@ forgetest!(init_status_on_stderr, |prj, cmd| {
         .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 Initializing [..]...
-...
     Initialized forge project
 
 "#]]);
