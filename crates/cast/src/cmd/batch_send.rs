@@ -133,6 +133,7 @@ impl BatchSendArgs {
                 timeout,
             )
             .await
+            .map(drop)
         } else {
             let signer = match signer {
                 Some(s) => s,

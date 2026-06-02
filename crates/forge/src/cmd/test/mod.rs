@@ -195,6 +195,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
+    /// Number of workers to use for invariant test campaigns.
+    #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
+    pub invariant_workers: Option<usize>,
+
     /// Run only the fuzz case at the given 1-based run index.
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
     pub fuzz_run: Option<u32>,
@@ -482,6 +486,10 @@ impl TestArgs {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
         }
+        if config.invariant.workers == 0 {
+            bail!("`invariant.workers` must be greater than 0");
+        }
+        let invariant_workers = config.invariant.workers;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -615,6 +623,7 @@ impl TestArgs {
 
             (libraries, outcome)
         };
+        outcome.invariant_workers = invariant_workers;
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -1444,6 +1453,14 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
+        let mut invariant_dict = Dict::default();
+        if let Some(invariant_workers) = self.invariant_workers {
+            invariant_dict.insert("workers".to_string(), invariant_workers.into());
+        }
+        if !invariant_dict.is_empty() {
+            dict.insert("invariant".to_string(), invariant_dict.into());
+        }
+
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
@@ -1767,6 +1784,15 @@ mod tests {
             TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
         assert_eq!(args.fuzz_run, Some(10));
         assert_eq!(args.fuzz_worker, Some(2));
+    }
+
+    #[test]
+    fn invariant_workers() {
+        let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "4"]);
+        assert_eq!(args.invariant_workers, Some(4));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<usize>("invariant.workers").unwrap(), 4);
     }
 
     #[test]
