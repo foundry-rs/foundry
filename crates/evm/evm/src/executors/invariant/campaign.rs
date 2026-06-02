@@ -462,6 +462,7 @@ mod tests {
                 target: Address::repeat_byte(sender.wrapping_add(1)),
                 calldata: Bytes::from(vec![0, 0, 0, sender]),
                 value: None,
+                gas_limit: None,
             },
         }
     }
@@ -673,7 +674,7 @@ mod tests {
                 3,
                 0x30,
                 "transfer(address)",
-                InvariantMetrics { calls: 3, reverts: 1, discards: 0 },
+                InvariantMetrics { calls: 3, reverts: 1, discards: 0, ..Default::default() },
                 3,
                 0,
             ),
@@ -685,7 +686,7 @@ mod tests {
                 1,
                 0x10,
                 "transfer(address)",
-                InvariantMetrics { calls: 1, reverts: 0, discards: 2 },
+                InvariantMetrics { calls: 1, reverts: 0, discards: 2, ..Default::default() },
                 1,
                 4,
             ),
@@ -697,7 +698,7 @@ mod tests {
                 2,
                 0x20,
                 "approve(address)",
-                InvariantMetrics { calls: 2, reverts: 1, discards: 1 },
+                InvariantMetrics { calls: 2, reverts: 1, discards: 1, ..Default::default() },
                 2,
                 0,
             ),
@@ -713,9 +714,15 @@ mod tests {
         assert_eq!(result.last_run_inputs[0].sender, Address::repeat_byte(0x30));
 
         let transfer_metrics = result.metrics.get("transfer(address)").unwrap();
-        assert_eq!(transfer_metrics, &InvariantMetrics { calls: 4, reverts: 1, discards: 2 });
+        assert_eq!(
+            transfer_metrics,
+            &InvariantMetrics { calls: 4, reverts: 1, discards: 2, ..Default::default() }
+        );
         let approve_metrics = result.metrics.get("approve(address)").unwrap();
-        assert_eq!(approve_metrics, &InvariantMetrics { calls: 2, reverts: 1, discards: 1 });
+        assert_eq!(
+            approve_metrics,
+            &InvariantMetrics { calls: 2, reverts: 1, discards: 1, ..Default::default() }
+        );
 
         let coverage = result.line_coverage.unwrap();
         assert_eq!(coverage.get(&B256::ZERO).unwrap().get(7).unwrap().get(), 6);

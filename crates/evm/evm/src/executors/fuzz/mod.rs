@@ -1,6 +1,6 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
-    corpus::{GlobalCorpusMetrics, WorkerCorpus},
+    corpus::{GlobalCorpusMetrics, WorkerCorpus, WorkerCorpusReplayConfig},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -463,12 +463,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             worker_id,
             self.config.corpus.clone(),
             strategy.boxed(),
-            // Master worker replays the persisted corpus using the executor
-            (worker_id == 0).then_some(&self.executor_f),
-            Some(func),
-            None,  // fuzzed_contracts for invariant tests
-            None,  // dynamic target ctx (invariant-only)
-            false, // gas_fuzz is invariant-only
+            WorkerCorpusReplayConfig {
+                // Master worker replays the persisted corpus using the executor.
+                executor: (worker_id == 0).then_some(&self.executor_f),
+                fuzzed_function: Some(func),
+                ..Default::default()
+            },
         )?;
         let mut executor = self.executor_f.clone();
 

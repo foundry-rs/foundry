@@ -469,6 +469,16 @@ pub struct WorkerCorpus {
     gas_fuzz: bool,
 }
 
+/// Context used by the master worker to replay persisted corpus entries.
+#[derive(Clone, Copy, Default)]
+pub struct WorkerCorpusReplayConfig<'a, FEN: FoundryEvmNetwork> {
+    pub executor: Option<&'a Executor<FEN>>,
+    pub fuzzed_function: Option<&'a Function>,
+    pub fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
+    pub dynamic: Option<DynamicTargetCtx<'a>>,
+    pub gas_fuzz: bool,
+}
+
 /// Refs used during corpus replay to register contracts deployed mid-sequence as fuzz targets,
 /// mirroring the campaign loop so follow-up calls into them aren't dropped by `can_replay_tx`.
 #[derive(Clone, Copy)]
@@ -646,13 +656,15 @@ impl WorkerCorpus {
         id: usize,
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
-        // Only required by master worker (id = 0) to replay existing corpus.
-        executor: Option<&Executor<FEN>>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<DynamicTargetCtx<'_>>,
-        gas_fuzz: bool,
+        replay: WorkerCorpusReplayConfig<'_, FEN>,
     ) -> Result<Self> {
+        let WorkerCorpusReplayConfig {
+            executor,
+            fuzzed_function,
+            fuzzed_contracts,
+            dynamic,
+            gas_fuzz,
+        } = replay;
         let seed = if id == 0 {
             WorkerCorpusSeed::load_from_disk(
                 &config,
@@ -1676,6 +1688,7 @@ mod tests {
                 target: Address::ZERO,
                 calldata: Bytes::new(),
                 value: None,
+                gas_limit: None,
             },
         }
     }
@@ -1737,6 +1750,7 @@ mod tests {
                 target: Address::ZERO,
                 calldata,
                 value: None,
+                gas_limit: None,
             },
         };
         let cmp = CmpOperands {
@@ -1857,10 +1871,7 @@ mod tests {
             1,
             corpus_config(corpus_root),
             Just(basic_tx()).boxed(),
-            None,
-            None,
-            None,
-            None,
+            WorkerCorpusReplayConfig::default(),
         )
         .unwrap();
 
