@@ -249,7 +249,7 @@ pub async fn run_mutation_testing(
         };
 
         // Run mutations in parallel using isolated workspaces
-        let results = run_mutations_parallel_with_progress(
+        let batch = run_mutations_parallel_with_progress(
             mutants_to_test.clone(),
             path.clone(),
             handler.src.clone(),
@@ -262,11 +262,12 @@ pub async fn run_mutation_testing(
             Arc::new(mutation_config.selected_sources_relative.clone()),
             mutation_config.isolate,
         )?;
+        let file_cancelled = batch.cancelled;
 
         // Collect results for caching
-        let mut results_vec = Vec::with_capacity(skipped_results.len() + results.len());
+        let mut results_vec = Vec::with_capacity(skipped_results.len() + batch.results.len());
         results_vec.extend(skipped_results);
-        for result in results {
+        for result in batch.results {
             results_vec.push((result.mutant.clone(), result.result.clone()));
             match result.result {
                 MutationResult::Dead => handler.add_dead_mutant(result.mutant),
@@ -284,7 +285,6 @@ pub async fn run_mutation_testing(
         // complete before persisting it. Without this guard a Ctrl+C mid-run
         // would write a *partial* results vector to the cache and the next run
         // would treat that subset as the full answer for this file.
-        let file_cancelled = progress.as_ref().is_some_and(|p| p.is_cancelled());
         let complete_run = !file_cancelled && results_vec.len() == mutants.len();
 
         // Persist results for caching only when the run for this file is
