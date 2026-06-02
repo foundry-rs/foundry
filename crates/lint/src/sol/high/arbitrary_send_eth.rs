@@ -7,11 +7,13 @@ use solar::{
     ast::{self, LitKind},
     interface::{Span, Symbol, data_structures::Never, kw, sym},
     sema::{
+        Gcx, Ty,
         builtins::Builtin,
         hir::{
             self, CallArgs, ContractKind, ElementaryType, ExprKind, FunctionId, FunctionKind,
             ItemId, LoopSource, Res, StmtKind, TypeKind, Visit,
         },
+        ty::TyKind,
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -27,6 +29,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
     fn check_function(
         &mut self,
         ctx: &LintContext,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -37,7 +40,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
             return;
         }
         let Some(body) = func.body else { return };
-        let mut entry = Analyzer::new(hir);
+        let mut entry = Analyzer::new(gcx, hir);
         for m in func.modifiers {
             for arg in m.args.exprs() {
                 let _ = entry.visit_expr(arg);
@@ -46,12 +49,12 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
         for span in &entry.hits {
             ctx.emit(&ARBITRARY_SEND_ETH, *span);
         }
-        if func.modifiers.iter().any(|m| modifier_restricts_caller(hir, m)) {
+        if func.modifiers.iter().any(|m| modifier_restricts_caller(gcx, hir, m)) {
             return;
         }
-        let mut analyzer = Analyzer::new(hir);
+        let mut analyzer = Analyzer::new(gcx, hir);
         for m in func.modifiers {
-            collect_modifier_safety(hir, m, &mut analyzer.safe_vars);
+            collect_modifier_safety(gcx, hir, m, &mut analyzer.safe_vars);
         }
         for stmt in body.stmts {
             let _ = analyzer.visit_stmt(stmt);
@@ -66,6 +69,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
 }
 
 struct Analyzer<'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     /// Locals/non-state vars proven equal to a safe origin on this path.
     safe_vars: HashSet<hir::VariableId>,
@@ -112,8 +116,9 @@ const HELPER_DEPTH: u8 = 3;
 const SELF_ALIAS_DEPTH: u8 = 8;
 
 impl<'hir> Analyzer<'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>) -> Self {
+    fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
         Self {
+            gcx,
             hir,
             safe_vars: HashSet::new(),
             safe_fn_ptrs: HashSet::new(),
@@ -254,7 +259,7 @@ impl<'hir> Analyzer<'hir> {
                 matches!(r, Res::Item(ItemId::Variable(vid))
                     if matches!(self.hir.variable(*vid).ty.kind, TypeKind::Function(_)))
             }),
-            _ => matches!(expr_type(self.hir, callee_inner), Some(TypeKind::Function(_))),
+            _ => expr_is_function(self.gcx, callee_inner),
         };
         is_fn_ptr && self.is_fn_ptr_safe_rhs(callee_inner)
     }
@@ -412,7 +417,7 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 let _ = self.visit_expr(cond);
                 let baseline = self.snapshot();
                 self.add_facts(cond, false);
-                if cond_restricts_caller(self.hir, cond, true, &[]) {
+                if cond_restricts_caller(self.gcx, self.hir, cond, true, &[]) {
                     self.caller_restricted = true;
                 }
                 let _ = self.visit_stmt(then);
@@ -420,7 +425,7 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 let after_then = self.snapshot();
                 self.restore(baseline);
                 self.add_facts(cond, true);
-                if cond_restricts_caller(self.hir, cond, false, &[]) {
+                if cond_restricts_caller(self.gcx, self.hir, cond, false, &[]) {
                     self.caller_restricted = true;
                 }
                 let else_exits = match else_ {
@@ -549,7 +554,7 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 let result = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
                     self.add_facts(cond, false);
-                    if cond_restricts_caller(self.hir, cond, true, &[]) {
+                    if cond_restricts_caller(self.gcx, self.hir, cond, true, &[]) {
                         self.caller_restricted = true;
                     }
                 }
@@ -557,7 +562,7 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
             }
             ExprKind::Call(..) => {
                 if !self.caller_restricted
-                    && let Some(dest) = match_sink(self.hir, expr)
+                    && let Some(dest) = match_sink(self.gcx, self.hir, expr)
                     && !self.is_safe(dest)
                     && !self.fn_ptr_call_routes_to_self(expr)
                 {
@@ -574,6 +579,7 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
 
 /// Returns the destination expression when `expr` is an ETH-sending sink.
 fn match_sink<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<&'hir hir::Expr<'hir>> {
@@ -605,7 +611,7 @@ fn match_sink<'hir>(
             {
                 return Some(callee);
             }
-            _ if matches!(expr_type(hir, callee_inner), Some(TypeKind::Function(_))) => {
+            _ if expr_is_function(gcx, callee_inner) => {
                 return Some(callee);
             }
             _ => {}
@@ -615,7 +621,7 @@ fn match_sink<'hir>(
     let ExprKind::Member(recv, member) = &callee.peel_parens().kind else { return None };
     if matches!(member.name, sym::transfer | sym::send)
         && args.len() == 1
-        && receiver_is_address(hir, recv)
+        && receiver_is_address(gcx, recv)
         && !is_address_self(recv)
     {
         let amt = args.exprs().next()?;
@@ -623,18 +629,19 @@ fn match_sink<'hir>(
             return Some(recv);
         }
     }
-    match_eth_library_call(hir, recv, member.name, args)
+    match_eth_library_call(gcx, hir, recv, member.name, args)
 }
 
 /// Recognises common OZ/Solady ETH-sending helpers and returns the destination expression.
 fn match_eth_library_call<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     recv: &'hir hir::Expr<'hir>,
     member: Symbol,
     args: &'hir CallArgs<'hir>,
 ) -> Option<&'hir hir::Expr<'hir>> {
     let n = args.len();
-    let using = receiver_is_address(hir, recv);
+    let using = receiver_is_address(gcx, recv);
     let recv_is_lib = matches!(&recv.peel_parens().kind, ExprKind::Ident(reses)
     if reses.iter().any(|r| matches!(
         r,
@@ -692,11 +699,12 @@ fn arg<'hir>(
 
 /// True when a modifier reverts unless `msg.sender` equals a trusted principal.
 fn modifier_restricts_caller<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     invocation: &hir::Modifier<'_>,
 ) -> bool {
     let ItemId::Function(fid) = invocation.id else { return false };
-    modifier_function_restricts_caller(hir, fid, &mut Vec::new())
+    modifier_function_restricts_caller(gcx, hir, fid, &mut Vec::new())
 }
 
 /// Resolves the `FunctionId` invoked by a modifier or base-constructor invocation.
@@ -709,6 +717,7 @@ fn invoked_function(hir: &hir::Hir<'_>, invocation: &hir::Modifier<'_>) -> Optio
 }
 
 fn modifier_function_restricts_caller<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     fid: FunctionId,
     stack: &mut Vec<FunctionId>,
@@ -719,7 +728,7 @@ fn modifier_function_restricts_caller<'hir>(
     let Some((modifier, prefix)) = modifier_prefix(hir, fid) else { return false };
     stack.push(fid);
     let restricts =
-        prefix.iter().any(|s| stmt_restricts_caller(hir, s, modifier.parameters, stack));
+        prefix.iter().any(|s| stmt_restricts_caller(gcx, hir, s, modifier.parameters, stack));
     stack.pop();
     restricts
 }
@@ -744,27 +753,28 @@ fn modifier_prefix<'hir>(
 }
 
 fn stmt_restricts_caller<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     stmt: &'hir hir::Stmt<'hir>,
     params: &[hir::VariableId],
     stack: &mut Vec<FunctionId>,
 ) -> bool {
     match &stmt.kind {
-        StmtKind::Expr(e) => expr_restricts_caller(hir, e, params, stack),
+        StmtKind::Expr(e) => expr_restricts_caller(gcx, hir, e, params, stack),
         StmtKind::If(cond, then, else_) => {
             let then_exits = branch_always_exits(then);
             let else_exits = else_.as_ref().is_some_and(|e| branch_always_exits(e));
             let by_if_revert = match (then_exits, else_exits) {
-                (true, false) => cond_restricts_caller(hir, cond, false, params),
-                (false, true) => cond_restricts_caller(hir, cond, true, params),
+                (true, false) => cond_restricts_caller(gcx, hir, cond, false, params),
+                (false, true) => cond_restricts_caller(gcx, hir, cond, true, params),
                 _ => false,
             };
             if by_if_revert {
                 return true;
             }
-            let then_restricts = stmt_restricts_caller(hir, then, params, stack);
+            let then_restricts = stmt_restricts_caller(gcx, hir, then, params, stack);
             let else_restricts =
-                else_.as_ref().is_some_and(|e| stmt_restricts_caller(hir, e, params, stack));
+                else_.as_ref().is_some_and(|e| stmt_restricts_caller(gcx, hir, e, params, stack));
             match (then_exits, else_exits) {
                 (true, true) => true,
                 (true, false) => else_.is_some() && else_restricts,
@@ -773,13 +783,14 @@ fn stmt_restricts_caller<'hir>(
             }
         }
         StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
-            b.stmts.iter().any(|s| stmt_restricts_caller(hir, s, params, stack))
+            b.stmts.iter().any(|s| stmt_restricts_caller(gcx, hir, s, params, stack))
         }
         _ => false,
     }
 }
 
 fn expr_restricts_caller<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
     params: &[hir::VariableId],
@@ -787,7 +798,10 @@ fn expr_restricts_caller<'hir>(
 ) -> bool {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
     if is_require_or_assert(callee) {
-        return args.exprs().next().is_some_and(|c| cond_restricts_caller(hir, c, true, params));
+        return args
+            .exprs()
+            .next()
+            .is_some_and(|c| cond_restricts_caller(gcx, hir, c, true, params));
     }
     let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
     reses.iter().any(|r| match r {
@@ -810,7 +824,7 @@ fn expr_restricts_caller<'hir>(
                 return false;
             }
             stack.push(*fid);
-            let r = stmts.iter().any(|s| stmt_restricts_caller(hir, s, f.parameters, stack));
+            let r = stmts.iter().any(|s| stmt_restricts_caller(gcx, hir, s, f.parameters, stack));
             stack.pop();
             r
         }
@@ -838,6 +852,7 @@ fn stmt_contains_return(stmt: &hir::Stmt<'_>) -> bool {
 
 /// True when `cond` entails `msg.sender == trusted` along every accepting path.
 fn cond_restricts_caller<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     cond: &'hir hir::Expr<'hir>,
     polarity: bool,
@@ -851,15 +866,15 @@ fn cond_restricts_caller<'hir>(
                 (ast::BinOpKind::Ne, ast::BinOpKind::Or, ast::BinOpKind::And)
             };
             if op.kind == any_op {
-                cond_restricts_caller(hir, lhs, polarity, params)
-                    || cond_restricts_caller(hir, rhs, polarity, params)
+                cond_restricts_caller(gcx, hir, lhs, polarity, params)
+                    || cond_restricts_caller(gcx, hir, rhs, polarity, params)
             } else if op.kind == all_op {
-                cond_restricts_caller(hir, lhs, polarity, params)
-                    && cond_restricts_caller(hir, rhs, polarity, params)
+                cond_restricts_caller(gcx, hir, lhs, polarity, params)
+                    && cond_restricts_caller(gcx, hir, rhs, polarity, params)
             } else if op.kind == eq {
                 let pair = |a: &'hir hir::Expr<'hir>, b: &'hir hir::Expr<'hir>| {
                     is_msg_sender_like(hir, a, HELPER_DEPTH)
-                        && is_trusted_principal_inner(hir, b, params, HELPER_DEPTH)
+                        && is_trusted_principal_inner(gcx, hir, b, params, HELPER_DEPTH)
                 };
                 pair(lhs, rhs) || pair(rhs, lhs)
             } else {
@@ -867,7 +882,7 @@ fn cond_restricts_caller<'hir>(
             }
         }
         ExprKind::Unary(op, inner) if matches!(op.kind, ast::UnOpKind::Not) => {
-            cond_restricts_caller(hir, inner, !polarity, params)
+            cond_restricts_caller(gcx, hir, inner, !polarity, params)
         }
         _ => false,
     }
@@ -961,6 +976,7 @@ fn is_caller_like<'hir>(
 
 /// Conservatively recognises deploy-time-fixed caller principals.
 fn is_trusted_principal_inner<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
     params: &[hir::VariableId],
@@ -988,27 +1004,27 @@ fn is_trusted_principal_inner<'hir>(
                     LitKind::Number(n) => n.is_zero(),
                     _ => false,
                 },
-                _ => is_trusted_principal_inner(hir, inner, params, depth),
+                _ => is_trusted_principal_inner(gcx, hir, inner, params, depth),
             })
         }
-        ExprKind::Payable(inner) => is_trusted_principal_inner(hir, inner, params, depth),
+        ExprKind::Payable(inner) => is_trusted_principal_inner(gcx, hir, inner, params, depth),
         ExprKind::Ident(reses) => reses.iter().any(|r| match r {
             Res::Item(ItemId::Variable(vid)) => {
                 let var = hir.variable(*vid);
-                var.kind.is_state() && !state_var_aliases_self(hir, *vid, SELF_ALIAS_DEPTH)
+                var.kind.is_state() && !state_var_aliases_self(gcx, hir, *vid, SELF_ALIAS_DEPTH)
             }
             _ => false,
         }),
-        ExprKind::Member(base, _) => is_trusted_principal_inner(hir, base, params, depth),
+        ExprKind::Member(base, _) => is_trusted_principal_inner(gcx, hir, base, params, depth),
         ExprKind::Index(base, idx) => {
-            is_trusted_principal_inner(hir, base, params, depth)
+            is_trusted_principal_inner(gcx, hir, base, params, depth)
                 && idx.is_none_or(|i| index_is_static(hir, i, params))
         }
         ExprKind::Call(callee, args, _) => {
             depth > 0
                 && args.exprs().next().is_none()
                 && callee_no_arg_returns(hir, callee, |e| {
-                    is_trusted_principal_inner(hir, e, &[], depth - 1)
+                    is_trusted_principal_inner(gcx, hir, e, &[], depth - 1)
                 })
         }
         _ => false,
@@ -1017,6 +1033,7 @@ fn is_trusted_principal_inner<'hir>(
 
 /// True when `vid` is a state variable that may alias `address(this)`.
 fn state_var_aliases_self<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     vid: hir::VariableId,
     depth: u8,
@@ -1030,16 +1047,16 @@ fn state_var_aliases_self<'hir>(
     }
     if let Some(init) = var.initializer {
         let initializer_aliases = if var_is_address_like(var) {
-            expr_resolves_to_self(hir, init, depth - 1)
+            expr_resolves_to_self(gcx, hir, init, depth - 1)
         } else {
-            expr_may_contain_self_in(hir, init, depth - 1, &HashSet::new())
+            expr_may_contain_self_in(gcx, hir, init, depth - 1, &HashSet::new())
         };
         if initializer_aliases {
             return true;
         }
     }
     let Some(cid) = var.contract else { return false };
-    if contract_function_assigns_to_self(hir, cid, vid, depth - 1) {
+    if contract_function_assigns_to_self(gcx, hir, cid, vid, depth - 1) {
         return true;
     }
     for (other_cid, other) in hir.contracts_enumerated() {
@@ -1049,7 +1066,7 @@ fn state_var_aliases_self<'hir>(
         if !other.linearized_bases.contains(&cid) {
             continue;
         }
-        if contract_function_assigns_to_self(hir, other_cid, vid, depth - 1) {
+        if contract_function_assigns_to_self(gcx, hir, other_cid, vid, depth - 1) {
             return true;
         }
     }
@@ -1058,12 +1075,13 @@ fn state_var_aliases_self<'hir>(
 
 /// Conservative free-standing "this expression *may* embed `address(this)` somewhere".
 fn expr_may_contain_self_in<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
     depth: u8,
     local_aliases: &HashSet<hir::VariableId>,
 ) -> bool {
-    if expr_resolves_to_self(hir, expr, depth) {
+    if expr_resolves_to_self(gcx, hir, expr, depth) {
         return true;
     }
     if let Some(vid) = lhs_root_var(expr)
@@ -1075,27 +1093,29 @@ fn expr_may_contain_self_in<'hir>(
         return false;
     }
     match &expr.peel_parens().kind {
-        ExprKind::Payable(inner) => expr_may_contain_self_in(hir, inner, depth - 1, local_aliases),
+        ExprKind::Payable(inner) => {
+            expr_may_contain_self_in(gcx, hir, inner, depth - 1, local_aliases)
+        }
         ExprKind::Call(callee, args, _)
             if is_address_like_cast_callee(callee) || is_numeric_cast_callee(callee) =>
         {
             args.exprs()
                 .next()
-                .is_some_and(|e| expr_may_contain_self_in(hir, e, depth - 1, local_aliases))
+                .is_some_and(|e| expr_may_contain_self_in(gcx, hir, e, depth - 1, local_aliases))
         }
         ExprKind::Call(_, args, _) => {
-            args.exprs().any(|e| expr_may_contain_self_in(hir, e, depth - 1, local_aliases))
+            args.exprs().any(|e| expr_may_contain_self_in(gcx, hir, e, depth - 1, local_aliases))
         }
         ExprKind::Ternary(_, t, f) => {
-            expr_may_contain_self_in(hir, t, depth - 1, local_aliases)
-                || expr_may_contain_self_in(hir, f, depth - 1, local_aliases)
+            expr_may_contain_self_in(gcx, hir, t, depth - 1, local_aliases)
+                || expr_may_contain_self_in(gcx, hir, f, depth - 1, local_aliases)
         }
         ExprKind::Tuple(elems) => elems
             .iter()
             .flatten()
-            .any(|e| expr_may_contain_self_in(hir, e, depth - 1, local_aliases)),
+            .any(|e| expr_may_contain_self_in(gcx, hir, e, depth - 1, local_aliases)),
         ExprKind::Array(elems) => {
-            elems.iter().any(|e| expr_may_contain_self_in(hir, e, depth - 1, local_aliases))
+            elems.iter().any(|e| expr_may_contain_self_in(gcx, hir, e, depth - 1, local_aliases))
         }
         _ => false,
     }
@@ -1103,6 +1123,7 @@ fn expr_may_contain_self_in<'hir>(
 
 /// True when `expr` may evaluate to `address(this)`.
 fn expr_resolves_to_self<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
     depth: u8,
@@ -1114,34 +1135,35 @@ fn expr_resolves_to_self<'hir>(
         return false;
     }
     match &expr.peel_parens().kind {
-        ExprKind::Payable(inner) => expr_resolves_to_self(hir, inner, depth - 1),
+        ExprKind::Payable(inner) => expr_resolves_to_self(gcx, hir, inner, depth - 1),
         ExprKind::Call(callee, args, _)
             if is_address_like_cast_callee(callee) || is_numeric_cast_callee(callee) =>
         {
-            args.exprs().next().is_some_and(|e| expr_resolves_to_self(hir, e, depth - 1))
+            args.exprs().next().is_some_and(|e| expr_resolves_to_self(gcx, hir, e, depth - 1))
         }
         ExprKind::Ident(reses) => reses.iter().any(|r| match r {
             Res::Item(ItemId::Variable(other_vid)) => {
-                state_var_aliases_self(hir, *other_vid, depth)
+                state_var_aliases_self(gcx, hir, *other_vid, depth)
             }
             _ => false,
         }),
-        ExprKind::Member(_, _) | ExprKind::Index(_, _) => {
-            lhs_root_var(expr).map(|vid| state_var_aliases_self(hir, vid, depth)).unwrap_or(false)
-        }
+        ExprKind::Member(_, _) | ExprKind::Index(_, _) => lhs_root_var(expr)
+            .map(|vid| state_var_aliases_self(gcx, hir, vid, depth))
+            .unwrap_or(false),
         ExprKind::Call(callee, args, _) => {
             if args.exprs().count() == 0 {
-                callee_returns_self(hir, callee, depth - 1)
+                callee_returns_self(gcx, hir, callee, depth - 1)
             } else if let Some(arg) = identity_helper_arg(hir, callee, args) {
-                expr_resolves_to_self(hir, arg, depth - 1)
+                expr_resolves_to_self(gcx, hir, arg, depth - 1)
             } else {
                 false
             }
         }
         ExprKind::Ternary(_, t, f) => {
-            expr_resolves_to_self(hir, t, depth - 1) || expr_resolves_to_self(hir, f, depth - 1)
+            expr_resolves_to_self(gcx, hir, t, depth - 1)
+                || expr_resolves_to_self(gcx, hir, f, depth - 1)
         }
-        ExprKind::Assign(_, _, rhs) => expr_resolves_to_self(hir, rhs, depth - 1),
+        ExprKind::Assign(_, _, rhs) => expr_resolves_to_self(gcx, hir, rhs, depth - 1),
         _ => false,
     }
 }
@@ -1251,11 +1273,12 @@ fn is_numeric_cast_callee(callee: &hir::Expr<'_>) -> bool {
 
 /// True when `callee` is a zero-arg helper whose body is `return <self-resolving>;`.
 fn callee_returns_self<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     callee: &'hir hir::Expr<'hir>,
     depth: u8,
 ) -> bool {
-    let pred = |e: &'hir hir::Expr<'hir>| expr_resolves_to_self(hir, e, depth);
+    let pred = |e: &'hir hir::Expr<'hir>| expr_resolves_to_self(gcx, hir, e, depth);
     if callee_no_arg_returns(hir, callee, pred) {
         return true;
     }
@@ -1284,6 +1307,7 @@ const HELPER_CALL_DEPTH: u8 = 4;
 
 /// Per-function scan state for [`contract_function_assigns_to_self`].
 struct SelfAssignScan<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     target: hir::VariableId,
     depth: u8,
@@ -1295,7 +1319,7 @@ struct SelfAssignScan<'a, 'hir> {
 
 impl<'hir> SelfAssignScan<'_, 'hir> {
     fn expr_may_contain_self(&self, expr: &'hir hir::Expr<'hir>) -> bool {
-        expr_may_contain_self_in(self.hir, expr, self.depth, &self.local_self_aliases)
+        expr_may_contain_self_in(self.gcx, self.hir, expr, self.depth, &self.local_self_aliases)
     }
 
     /// True when `lhs` (possibly inside a tuple) aliases the target.
@@ -1315,7 +1339,7 @@ impl<'hir> SelfAssignScan<'_, 'hir> {
         }
         let target = self.hir.variable(self.target);
         if var_is_address_like(target) {
-            expr_resolves_to_self(self.hir, rhs, self.depth)
+            expr_resolves_to_self(self.gcx, self.hir, rhs, self.depth)
                 || lhs_root_var(rhs).is_some_and(|vid| self.local_self_aliases.contains(&vid))
         } else {
             self.expr_may_contain_self(rhs)
@@ -1455,10 +1479,7 @@ impl<'hir> hir::Visit<'hir> for SelfAssignScan<'_, 'hir> {
             && let ExprKind::Member(recv, member) = &callee.peel_parens().kind
             && member.name.as_str() == "push"
             && lhs_root_var(recv) == Some(self.target)
-            && matches!(
-                expr_type(self.hir, recv),
-                Some(TypeKind::Array(_) | TypeKind::Elementary(ElementaryType::Bytes))
-            )
+            && expr_is_array_or_bytes(self.gcx, recv)
             && call_args.exprs().any(|a| self.expr_may_contain_self(a))
         {
             *self.found = true;
@@ -1490,6 +1511,7 @@ impl<'hir> hir::Visit<'hir> for SelfAssignScan<'_, 'hir> {
 
 /// Scans every function of `cid` for an assignment that aliases `vid` to `address(this)`.
 fn contract_function_assigns_to_self<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     cid: hir::ContractId,
     vid: hir::VariableId,
@@ -1500,6 +1522,7 @@ fn contract_function_assigns_to_self<'hir>(
         let Some(body) = f.body else { continue };
         let mut found = false;
         let mut scan = SelfAssignScan {
+            gcx,
             hir,
             target: vid,
             depth,
@@ -1657,6 +1680,7 @@ fn expr_touches_param(expr: &hir::Expr<'_>, params: &[hir::VariableId]) -> bool 
 
 /// Hoists `require(modParam == msg.sender)`-style guards from the modifier prefix.
 fn collect_modifier_safety<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     invocation: &'hir hir::Modifier<'hir>,
     out_safe: &mut HashSet<hir::VariableId>,
@@ -1679,7 +1703,7 @@ fn collect_modifier_safety<'hir>(
     for stmt in &prefix {
         let _ = collector.visit_stmt(stmt);
     }
-    let mut a = Analyzer::new(hir);
+    let mut a = Analyzer::new(gcx, hir);
     for stmt in &prefix {
         let _ = a.visit_stmt(stmt);
     }
@@ -1836,8 +1860,8 @@ const fn var_is_address_like(var: &hir::Variable<'_>) -> bool {
 }
 
 /// True when `expr`'s static type is `address` / `address payable`.
-fn receiver_is_address<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
-    matches!(expr_type(hir, expr), Some(TypeKind::Elementary(ElementaryType::Address(_))))
+fn receiver_is_address<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+    expr_ty(gcx, expr).is_some_and(ty_is_address)
 }
 
 /// Callee of a single-argument cast that yields an address-shaped value.
@@ -1852,125 +1876,25 @@ fn is_address_like_cast_callee(callee: &hir::Expr<'_>) -> bool {
     }
 }
 
-/// Best-effort static type of an expression.
-fn expr_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &hir::Expr<'hir>,
-) -> Option<hir::TypeKind<'hir>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Payable(_) => Some(TypeKind::Elementary(ElementaryType::Address(true))),
-        ExprKind::Lit(lit) => match &lit.kind {
-            LitKind::Address(_) => Some(TypeKind::Elementary(ElementaryType::Address(false))),
-            _ => None,
-        },
-        ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
-            ExprKind::Type(ty) => Some(ty.kind.clone()),
-            ExprKind::Member(base, member)
-                if member.name == sym::decode && is_builtin(base, sym::abi) && args.len() == 2 =>
-            {
-                let mut it = args.exprs();
-                let _data = it.next()?;
-                let ty_arg = it.next()?;
-                let ty_expr = match &ty_arg.peel_parens().kind {
-                    ExprKind::Tuple(elems) if elems.len() == 1 => elems[0]?,
-                    _ => ty_arg,
-                };
-                match &ty_expr.peel_parens().kind {
-                    ExprKind::Type(ty) => Some(ty.kind.clone()),
-                    ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
-                        Res::Item(ItemId::Contract(cid)) => {
-                            Some(TypeKind::Custom(ItemId::Contract(*cid)))
-                        }
-                        _ => None,
-                    }),
-                    _ => None,
-                }
-            }
-            ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-                Res::Item(ItemId::Contract(cid)) => Some(TypeKind::Custom(ItemId::Contract(*cid))),
-                Res::Item(ItemId::Function(fid)) => {
-                    let func = hir.function(*fid);
-                    (func.returns.len() == 1).then(|| hir.variable(func.returns[0]).ty.kind.clone())
-                }
-                _ => None,
-            }),
-            ExprKind::Member(base, member) => match expr_type(hir, base)? {
-                TypeKind::Custom(ItemId::Contract(cid)) => {
-                    let arity = args.len();
-                    let contract = hir.contract(cid);
-                    let bases: &[hir::ContractId] = if contract.linearization_failed() {
-                        std::slice::from_ref(&cid)
-                    } else {
-                        contract.linearized_bases
-                    };
-                    let mut fallback: Option<TypeKind<'_>> = None;
-                    for &bid in bases {
-                        for fid in hir.contract(bid).all_functions() {
-                            let f = hir.function(fid);
-                            if f.name.is_none_or(|n| n.name != member.name)
-                                || f.returns.len() != 1
-                                || f.parameters.len() != arity
-                            {
-                                continue;
-                            }
-                            let ret = hir.variable(f.returns[0]).ty.kind.clone();
-                            if matches!(
-                                ret,
-                                TypeKind::Elementary(ElementaryType::Address(_))
-                                    | TypeKind::Custom(ItemId::Contract(_))
-                            ) {
-                                return Some(ret);
-                            }
-                            fallback = fallback.or(Some(ret));
-                        }
-                    }
-                    fallback
-                }
-                _ => None,
-            },
-            _ => None,
-        },
-        ExprKind::New(ty) => Some(ty.kind.clone()),
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Variable(id)) => Some(hir.variable(*id).ty.kind.clone()),
-            Res::Item(ItemId::Contract(id)) => Some(TypeKind::Custom(ItemId::Contract(*id))),
-            _ => None,
-        }),
-        ExprKind::Member(base, member) => {
-            if let ExprKind::Ident(reses) = &base.peel_parens().kind
-                && reses.iter().any(|r| {
-                    let Res::Builtin(b) = r else { return false };
-                    matches!(
-                        (b.name(), member.name),
-                        (sym::msg, sym::sender)
-                            | (sym::tx, kw::Origin)
-                            | (sym::block, kw::Coinbase)
-                    )
-                })
-            {
-                return Some(TypeKind::Elementary(ElementaryType::Address(false)));
-            }
-            match expr_type(hir, base)? {
-                TypeKind::Custom(ItemId::Struct(sid)) => {
-                    hir.strukt(sid).fields.iter().find_map(|&fid| {
-                        let var = hir.variable(fid);
-                        (var.name?.name == member.name).then(|| var.ty.kind.clone())
-                    })
-                }
-                _ => None,
-            }
-        }
-        ExprKind::Index(base, _) => match expr_type(hir, base)? {
-            TypeKind::Mapping(m) => Some(m.value.kind.clone()),
-            TypeKind::Array(a) => Some(a.element.kind.clone()),
-            _ => None,
-        },
-        ExprKind::Ternary(_, then_e, else_e) => {
-            expr_type(hir, then_e).or_else(|| expr_type(hir, else_e))
-        }
-        ExprKind::Assign(lhs, _, rhs) => expr_type(hir, rhs).or_else(|| expr_type(hir, lhs)),
-        _ => None,
-    }
+fn expr_ty<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> Option<Ty<'hir>> {
+    gcx.type_of_expr(expr.peel_parens().id)
+}
+
+fn expr_is_function<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+    expr_ty(gcx, expr).is_some_and(|ty| matches!(ty.peel_refs().kind, TyKind::Fn(_)))
+}
+
+fn expr_is_array_or_bytes<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+    expr_ty(gcx, expr).is_some_and(|ty| {
+        matches!(
+            ty.peel_refs().kind,
+            TyKind::Array(..) | TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes)
+        )
+    })
+}
+
+fn ty_is_address(ty: Ty<'_>) -> bool {
+    matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
 }
 
 fn is_require_or_assert(callee: &hir::Expr<'_>) -> bool {
