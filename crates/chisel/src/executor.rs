@@ -412,15 +412,15 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
 
 /// Maps a solar [`Ty`] to a [`DynSolType`].
 fn solar_expr_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, expr: &Expr<'_>) -> Option<DynSolType> {
-    // `expr` is the inspected expression inside Chisel's generated `abi.encode(...)` call. Solar
-    // currently reports hex string literals as `StringLiteral`, but solc ABI-encodes
-    // `hex"..."` literals as dynamic bytes in that context.
-    if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..)))
-    {
-        return Some(DynSolType::Bytes);
+    match ty.kind {
+        // `expr` is the inspected expression inside Chisel's generated `abi.encode(...)` call.
+        // Solar currently reports both `"..."` and `hex"..."` as `StringLiteral`, but solc
+        // ABI-encodes hex string literals as dynamic bytes in that context.
+        TyKind::StringLiteral(_, _) if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..))) => {
+            Some(DynSolType::Bytes)
+        }
+        _ => solar_ty_to_dyn(gcx, ty),
     }
-
-    solar_ty_to_dyn(gcx, ty)
 }
 
 fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
