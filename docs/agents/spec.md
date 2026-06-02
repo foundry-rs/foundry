@@ -300,15 +300,43 @@ Terminal envelope under `foundry:forge.script@v1`:
 ```
 {
   "mode":              "dry_run" | "broadcast",
-  "broadcast":         bool,
   "tx_count":          uint,
-  "tx_hashes":         [String],            // 0x-prefixed, in order
-  "created_contracts": [{ "address": String, "contract_name"?: String }]
+  "transactions":      [{
+    "hash":           String,                // 0x-prefixed
+    "status":         "success" | "failed" | "pending",
+    "block_number"?:  uint
+  }],
+  "created_contracts": [{
+    "address":         String,               // 0x-prefixed
+    "contract_name"?:  String,
+    "tx_hash"?:        String                // 0x-prefixed; the creating tx
+  }]
 }
 ```
 
 On broadcast failure (`script.broadcast_failed`), `data` is `null` and
-`errors[0].details.cause_chain` is `[String]` (the eyre cause chain).
+`errors[0].details` carries typed recovery context:
+
+```
+{
+  "kind":         "rpc.timeout" | "nonce.too_low" | "signer.failed" | "unknown",
+  "retryable":    bool,                       // true only for "rpc.timeout"
+  "cause_chain":  [String],                   // eyre chain, outermost first
+  "recovery": {
+    "resume_supported": bool,                 // true in v1
+    "sequence_paths":   [String],             // run-latest.json paths
+    "submitted_count":  uint                  // txs with a known hash
+  }
+}
+```
+
+Agents should branch on `details.kind`/`details.retryable` and, when
+`recovery.sequence_paths` is non-empty, re-invoke `forge script --resume`
+to continue the partial broadcast. Plain retries are not idempotent.
+
+`--verify` is rejected under `--machine` for v1. To verify after a
+successful broadcast, parse `created_contracts[].address` from the
+envelope and call `forge verify-contract` per entry.
 
 ---
 

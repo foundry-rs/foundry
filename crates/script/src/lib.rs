@@ -346,11 +346,13 @@ impl ScriptArgs {
             // wait_for_pending() to avoid double-processing.
             let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
             emit_phase("broadcast")?;
+            // Snapshot recovery context before `.broadcast()` consumes `bundled`.
+            let recovery = machine_mode.then(|| RecoveryInfo::from_sequence(&bundled.sequence));
             let res =
                 if batch { bundled.broadcast_batch().await } else { bundled.broadcast().await };
             let broadcasted = match res {
                 Ok(b) => b,
-                Err(e) if machine_mode => bail_broadcast_failed(e),
+                Err(e) if machine_mode => bail_broadcast_failed(e, recovery.unwrap()),
                 Err(e) => return Err(e),
             };
             // Build payload before `verify` consumes `broadcasted`.
@@ -388,7 +390,6 @@ impl ScriptArgs {
 
         let unsupported: Vec<&'static str> = [
             ("--debug", self.debug),
-            ("--resume", self.resume),
             ("--verify", self.verify),
             ("--interactive", self.wallets.interactive || self.wallets.interactives > 0),
             ("--ledger", self.wallets.ledger),
@@ -544,9 +545,11 @@ impl ScriptArgs {
         // Wait for pending txes and broadcast others.
         let bundled = bundled.wait_for_pending().await?;
         emit_phase("broadcast")?;
+        // Snapshot recovery context before `.broadcast()` consumes `bundled`.
+        let recovery = machine_mode.then(|| RecoveryInfo::from_sequence(&bundled.sequence));
         let broadcasted = match bundled.broadcast().await {
             Ok(b) => b,
-            Err(e) if machine_mode => bail_broadcast_failed(e),
+            Err(e) if machine_mode => bail_broadcast_failed(e, recovery.unwrap()),
             Err(e) => return Err(e),
         };
 
@@ -786,13 +789,74 @@ fn bail_machine_failure(code: &'static str, message: String, e: eyre::Report) ->
     std::process::exit(foundry_cli::ExitCode::GenericError.to_i32());
 }
 
-fn bail_broadcast_failed(e: eyre::Report) -> ! {
-    let first = e.chain().next().map(ToString::to_string).unwrap_or_else(|| e.to_string());
-    bail_machine_failure(
-        foundry_cli::diagnostic::script::BROADCAST_FAILED,
-        format!("broadcast failed: {first}"),
-        e,
-    )
+/// `script.broadcast_failed` with typed recovery context so agents can decide
+/// whether to retry, resume, or escalate without parsing prose.
+fn bail_broadcast_failed(e: eyre::Report, recovery: RecoveryInfo) -> ! {
+    let cause_chain: Vec<String> = e.chain().map(ToString::to_string).collect();
+    let first = cause_chain.first().cloned().unwrap_or_else(|| e.to_string());
+    let kind = classify_broadcast_error(&cause_chain);
+    let details = serde_json::json!({
+        "kind": kind,
+        // Only `rpc.timeout` is treated as transient; other failures need `--resume`.
+        "retryable": kind == "rpc.timeout",
+        "cause_chain": cause_chain,
+        "recovery": recovery,
+    });
+    let mut envelope = foundry_cli::json::JsonEnvelope::error(
+        foundry_cli::json::JsonMessage::error(
+            foundry_cli::diagnostic::script::BROADCAST_FAILED,
+            format!("broadcast failed: {first}"),
+        )
+        .with_details(details),
+    );
+    envelope.warnings = drain_machine_warnings();
+    let _ = foundry_cli::json::print_json(&envelope);
+    std::process::exit(foundry_cli::ExitCode::GenericError.to_i32());
+}
+
+/// Heuristic classification of broadcast errors using dotted codes from the
+/// `script.broadcast_failed.kind` enum. Conservative: anything unrecognised
+/// is `"unknown"` so `retryable` defaults to `false`.
+fn classify_broadcast_error(cause_chain: &[String]) -> &'static str {
+    let joined = cause_chain.join("\n").to_ascii_lowercase();
+    if joined.contains("nonce") {
+        "nonce.too_low"
+    } else if joined.contains("timeout") {
+        "rpc.timeout"
+    } else if joined.contains("signer") || joined.contains("sign") {
+        "signer.failed"
+    } else {
+        "unknown"
+    }
+}
+
+/// Recovery context attached to `script.broadcast_failed`. `sequence_paths`
+/// points at the on-disk `run-latest.json` files that agents can pass to
+/// `forge script --resume`. Empty when no sequence was persisted.
+#[derive(Serialize)]
+struct RecoveryInfo {
+    resume_supported: bool,
+    sequence_paths: Vec<String>,
+    submitted_count: usize,
+}
+
+impl RecoveryInfo {
+    fn from_sequence<N: alloy_network::Network>(
+        sequence: &crate::sequence::ScriptSequenceKind<N>,
+    ) -> Self
+    where
+        N::TxEnvelope: for<'d> serde::Deserialize<'d> + Serialize,
+    {
+        let mut sequence_paths = Vec::new();
+        let mut submitted_count = 0usize;
+        for seq in sequence.sequences() {
+            if let Some((path, _)) = seq.paths.as_ref() {
+                sequence_paths.push(path.display().to_string());
+            }
+            submitted_count += seq.transactions.iter().filter(|t| t.hash.is_some()).count();
+        }
+        Self { resume_supported: true, sequence_paths, submitted_count }
+    }
 }
 
 /// Generic fallback: `cli.unknown` with prior warnings preserved.
@@ -824,10 +888,18 @@ fn drain_machine_warnings() -> Vec<foundry_cli::json::JsonMessage> {
 #[derive(Serialize)]
 struct ScriptResultData {
     mode: &'static str,
-    broadcast: bool,
     tx_count: usize,
-    tx_hashes: Vec<String>,
+    transactions: Vec<TxOutcome>,
     created_contracts: Vec<CreatedContract>,
+}
+
+#[derive(Serialize)]
+struct TxOutcome {
+    hash: String,
+    /// `"success" | "failed" | "pending"` — pending until a receipt is recorded.
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_number: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -835,18 +907,15 @@ struct CreatedContract {
     address: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     contract_name: Option<String>,
+    /// Hash of the tx that created this contract (when known).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tx_hash: Option<String>,
 }
 
 impl ScriptResultData {
     /// Empty payload for the dry-run / no-broadcast case.
     const fn dry_run() -> Self {
-        Self {
-            mode: "dry_run",
-            broadcast: false,
-            tx_count: 0,
-            tx_hashes: vec![],
-            created_contracts: vec![],
-        }
+        Self { mode: "dry_run", tx_count: 0, transactions: vec![], created_contracts: vec![] }
     }
 
     fn from_sequence<N: alloy_network::Network>(
@@ -855,13 +924,24 @@ impl ScriptResultData {
     where
         N::TxEnvelope: for<'d> serde::Deserialize<'d> + Serialize,
     {
-        let (mut tx_count, mut tx_hashes, mut created_contracts) = (0, vec![], vec![]);
+        use alloy_network::ReceiptResponse;
+        let (mut tx_count, mut transactions, mut created_contracts) = (0, vec![], vec![]);
         let name = |n: &Option<String>| n.clone().filter(|s| !s.is_empty());
         for seq in sequence.sequences() {
+            // Index receipts by tx hash so we can fill status/block_number per tx.
+            let receipt_by_hash: std::collections::HashMap<_, _> =
+                seq.receipts.iter().map(|r| (r.transaction_hash(), r)).collect();
             for tx in &seq.transactions {
                 tx_count += 1;
+                let tx_hash_str = tx.hash.map(|h| format!("{h:#x}"));
                 if let Some(h) = tx.hash {
-                    tx_hashes.push(format!("{h:#x}"));
+                    let (status, block_number) = match receipt_by_hash.get(&h) {
+                        Some(r) => {
+                            (if r.status() { "success" } else { "failed" }, r.block_number())
+                        }
+                        None => ("pending", None),
+                    };
+                    transactions.push(TxOutcome { hash: format!("{h:#x}"), status, block_number });
                 }
                 // `contract_address` is also populated for ordinary CALLs; gate on `call_kind`.
                 if tx.call_kind.is_any_create()
@@ -870,17 +950,19 @@ impl ScriptResultData {
                     created_contracts.push(CreatedContract {
                         address: format!("{addr:#x}"),
                         contract_name: name(&tx.contract_name),
+                        tx_hash: tx_hash_str.clone(),
                     });
                 }
                 for c in &tx.additional_contracts {
                     created_contracts.push(CreatedContract {
                         address: format!("{:#x}", c.address),
                         contract_name: name(&c.contract_name),
+                        tx_hash: tx_hash_str.clone(),
                     });
                 }
             }
         }
-        Self { mode: "broadcast", broadcast: true, tx_count, tx_hashes, created_contracts }
+        Self { mode: "broadcast", tx_count, transactions, created_contracts }
     }
 }
 
@@ -1695,5 +1777,60 @@ mod tests {
         ]);
         // priority (200) > max_fee (100) — broadcast should reject this at runtime
         assert!(args.priority_gas_price.unwrap() > args.with_gas_price.unwrap());
+    }
+
+    /// Synthetic fixture covering the `ScriptSequenceKind::Multi` payload path
+    /// (used by Tempo `broadcast_batch` and multi-chain scripts). Asserts that
+    /// `ScriptResultData::from_sequence` aggregates txs and created contracts
+    /// across child sequences. Live Tempo nodes are not in the test harness; the
+    /// `Single` path is covered by `machine_mode_broadcast_success_emits_payload`.
+    #[test]
+    fn script_result_from_multi_sequence_aggregates_children() {
+        use crate::{multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind};
+        use alloy_rpc_types::TransactionRequest;
+        use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
+        use foundry_common::transactions::TransactionMaybeSigned;
+        use revm_inspectors::tracing::types::CallKind;
+
+        let make_create_tx = |hash_byte: u8, addr_byte: u8, name: &str| {
+            let mut tx = TransactionWithMetadata::<Ethereum>::from_tx_request(
+                TransactionMaybeSigned::new(TransactionRequest::default()),
+            );
+            tx.hash = Some(B256::from([hash_byte; 32]));
+            tx.call_kind = CallKind::Create;
+            tx.contract_address = Some(Address::from([addr_byte; 20]));
+            tx.contract_name = Some(name.to_string());
+            tx
+        };
+
+        let mut seq_a = ScriptSequence::<Ethereum>::default();
+        seq_a.transactions.push_back(make_create_tx(0xaa, 0xa1, "ChainAContract"));
+        let mut seq_b = ScriptSequence::<Ethereum>::default();
+        seq_b.transactions.push_back(make_create_tx(0xbb, 0xb1, "ChainBContract"));
+        seq_b.transactions.push_back(make_create_tx(0xbc, 0xb2, "ChainBContract2"));
+
+        // Use a tempdir because `ScriptSequenceKind`'s `Drop` saves to these paths.
+        let tmp = tempdir().unwrap();
+        let kind = ScriptSequenceKind::Multi(MultiChainSequence::<Ethereum> {
+            deployments: vec![seq_a, seq_b],
+            path: tmp.path().join("multi.json"),
+            sensitive_path: tmp.path().join("multi.sensitive.json"),
+            timestamp: 0,
+        });
+
+        let payload = ScriptResultData::from_sequence(&kind);
+        assert_eq!(payload.mode, "broadcast");
+        assert_eq!(payload.tx_count, 3);
+        assert_eq!(payload.transactions.len(), 3);
+        // No receipts attached → all `pending`.
+        for tx in &payload.transactions {
+            assert_eq!(tx.status, "pending");
+            assert!(tx.block_number.is_none());
+        }
+        // Each CREATE produced one entry, each linked to its tx_hash.
+        assert_eq!(payload.created_contracts.len(), 3);
+        for c in &payload.created_contracts {
+            assert!(c.tx_hash.as_deref().is_some_and(|h| h.starts_with("0x")));
+        }
     }
 }

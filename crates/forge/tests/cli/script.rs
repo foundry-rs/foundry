@@ -3927,7 +3927,8 @@ contract Demo {
     assert_eq!(envelope["success"], true);
     assert_eq!(envelope["data"]["mode"], "dry_run");
     assert_eq!(envelope["data"]["tx_count"], 0);
-    assert!(envelope["data"]["tx_hashes"].as_array().unwrap().is_empty());
+    assert!(envelope["data"]["transactions"].as_array().unwrap().is_empty());
+    assert!(envelope["data"].get("broadcast").is_none(), "broadcast must be dropped: {envelope}");
 
     // Warning duality: same `(code, message)` on the stream record and in `warnings[]`.
     let stream_warning =
@@ -3984,19 +3985,27 @@ contract DeployScript is Script {
     let envelope: Value =
         serde_json::from_str(stdout.lines().rfind(|l| !l.is_empty()).unwrap()).unwrap();
     assert_eq!(envelope["success"], false);
-    // `data: null` (key present + explicitly Null); `is_null()` alone also passes when absent.
     assert_eq!(envelope.get("data"), Some(&Value::Null), "{envelope}");
-    assert_eq!(envelope["errors"][0]["code"], "script.broadcast_failed");
-    assert!(
-        !envelope["errors"][0]["details"]["cause_chain"].as_array().unwrap().is_empty(),
-        "{envelope}"
-    );
+    let err = &envelope["errors"][0];
+    assert_eq!(err["code"], "script.broadcast_failed");
+    let details = &err["details"];
+    assert!(!details["cause_chain"].as_array().unwrap().is_empty(), "{envelope}");
+    // Typed fields agents can react to without parsing prose.
+    assert!(details["kind"].is_string(), "{envelope}");
+    assert!(details["retryable"].is_boolean(), "{envelope}");
+    // Recovery context: --resume is the v1 recovery primitive.
+    let recovery = &details["recovery"];
+    assert_eq!(recovery["resume_supported"], true, "{envelope}");
+    assert!(recovery["sequence_paths"].is_array(), "{envelope}");
+    assert!(recovery["submitted_count"].is_u64(), "{envelope}");
+    // Warning duality survives the failure path.
     let warnings = envelope["warnings"].as_array().unwrap();
     assert!(warnings.iter().any(|w| w["code"] == "script.noop_target"), "{envelope}");
 });
 
 // Reject flags whose stdout would corrupt the stream or whose runtime would
-// block on user/device input. One representative per class.
+// block on user/device input. Covers each rejected flag in the v1 list.
+// `--resume` is allowed under `--machine` (it's the documented recovery primitive).
 forgetest!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
     let script = prj.add_source(
         "Foo",
@@ -4007,18 +4016,69 @@ contract Demo {
    "#,
     );
 
-    for flag in ["--debug", "--interactive", "--ledger"] {
-        cmd.forge_fuse().arg("--machine").arg("script").arg(&script).arg(flag);
+    let cases: &[&[&str]] = &[
+        &["--debug"],
+        &["--verify", "--broadcast"], // `--verify` requires `--broadcast` in clap.
+        &["--interactive"],
+        &["--ledger"],
+        &["--trezor"],
+        &["--browser"],
+        // Keystore without `--password`/`--password-file` would prompt for a passphrase.
+        &["--keystore", "/tmp/nonexistent.json"],
+    ];
+    for args in cases {
+        cmd.forge_fuse().arg("--machine").arg("script").arg(&script).args(*args);
         let assert = cmd.assert_failure();
         let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
         let envelope: Value = serde_json::from_str(stdout.trim()).unwrap();
-        assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-        assert_eq!(assert.get_output().status.code(), Some(2));
-        assert!(
-            envelope["errors"][0]["message"].as_str().unwrap().contains(flag),
-            "missing {flag} mention: {envelope}"
-        );
+        assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid", "{args:?}: {envelope}");
+        assert_eq!(assert.get_output().status.code(), Some(2), "{args:?}");
+        let msg = envelope["errors"][0]["message"].as_str().unwrap();
+        // `--keystore <PATH>` is reported as `--keystore/--account ...`; match
+        // the bare flag rather than the full literal arg.
+        let token = args[0];
+        assert!(msg.contains(token), "missing {token} mention for {args:?}: {envelope}");
     }
+});
+
+// `script.missing_rpc_url` warning duality: stream record + terminal `warnings[]`
+// carry the same `(code, message)` when on-chain simulation is skipped (script
+// produces broadcast txs but no `--rpc-url` is provided).
+forgetest_init!(machine_mode_missing_rpc_url_warning_duality, |prj, cmd| {
+    let script = prj.add_source(
+        "NoRpc",
+        r#"
+import "forge-std/Script.sol";
+contract Hello {}
+contract NoRpcScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Hello();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    let assert =
+        cmd.arg("--machine").arg("script").arg(script).arg("--target-contract").arg("NoRpcScript");
+    let assert = assert.assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    let stream: Vec<Value> =
+        lines[..lines.len() - 1].iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+
+    let stream_warning = stream
+        .iter()
+        .find(|r| r["kind"] == "warning" && r["code"] == "script.missing_rpc_url")
+        .expect("missing_rpc_url stream record");
+    let warnings = envelope["warnings"].as_array().unwrap();
+    let env_warning = warnings
+        .iter()
+        .find(|w| w["code"] == "script.missing_rpc_url")
+        .expect("missing_rpc_url envelope warning");
+    assert_eq!(stream_warning["message"], env_warning["message"]);
 });
 
 // Happy-path broadcast pins the `@v1` payload shape (mode, tx hashes, CREATEs).
@@ -4065,18 +4125,23 @@ contract DeployScript is Script {
     let data = &envelope["data"];
     assert_eq!(envelope["success"], true, "{envelope}");
     assert_eq!(data["mode"], "broadcast", "{envelope}");
+    assert!(data.get("broadcast").is_none(), "broadcast must be dropped: {envelope}");
     assert!(data["tx_count"].as_u64().unwrap_or(0) >= 1, "{envelope}");
-    let tx_hashes = data["tx_hashes"].as_array().unwrap();
+    // `transactions[]` carries per-tx outcome (hash + status + optional block_number).
+    let transactions = data["transactions"].as_array().unwrap();
+    assert!(!transactions.is_empty(), "{envelope}");
+    for tx in transactions {
+        assert!(tx["hash"].as_str().unwrap().starts_with("0x"), "{tx}");
+        let status = tx["status"].as_str().unwrap();
+        assert!(matches!(status, "success" | "failed" | "pending"), "bad status `{status}`");
+    }
+    // `created_contracts[].tx_hash` links each entry to the creating tx.
+    let creates = data["created_contracts"].as_array().unwrap();
+    assert!(creates.iter().any(|c| c["address"].as_str().unwrap().starts_with("0x")), "{envelope}");
     assert!(
-        !tx_hashes.is_empty() && tx_hashes.iter().all(|h| h.as_str().unwrap().starts_with("0x")),
-        "{envelope}"
-    );
-    assert!(
-        data["created_contracts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|c| c["address"].as_str().unwrap().starts_with("0x")),
+        creates.iter().all(|c| c
+            .get("tx_hash")
+            .is_none_or(|h| h.as_str().is_some_and(|s| s.starts_with("0x")))),
         "{envelope}"
     );
 });
