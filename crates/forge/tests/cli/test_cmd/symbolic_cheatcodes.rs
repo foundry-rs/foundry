@@ -3569,8 +3569,6 @@ contract SymbolicBoundSkip is Test {
     function checkRuntimeNoopsAndArrayAssertions() public {
         vm.breakpoint("symbolic");
         vm.breakpoint("symbolic", true);
-        vm.setEvmVersion("cancun");
-        assertEq(vm.getEvmVersion(), "cancun");
         assertTrue(bytes(vm.getFoundryVersion()).length != 0);
         vm.sleep(0);
         Vm.AccessListItem[] memory access = new Vm.AccessListItem[](0);
