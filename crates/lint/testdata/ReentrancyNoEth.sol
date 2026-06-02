@@ -5,6 +5,8 @@ pragma solidity ^0.8.18;
 
 interface IHook {
     function notify(uint256 amount) external;
+    function overloaded(uint256 amount) external;
+    function overloaded(bool flag) external view returns (bool);
     function balanceOf(address account) external view returns (uint256);
 }
 
@@ -59,6 +61,18 @@ contract ReentrancyNoEth {
     function viewCallThenWrite(IHook hook) external {
         uint256 amount = balances[msg.sender];
         hook.balanceOf(msg.sender);
+        balances[msg.sender] = amount;
+    }
+
+    function mutatingOverloadThenWrite(IHook hook) external {
+        uint256 amount = balances[msg.sender];
+        hook.overloaded(amount); //~WARN: external call can be reentered before `balances` is updated
+        balances[msg.sender] = 0;
+    }
+
+    function viewOverloadThenWrite(IHook hook) external {
+        uint256 amount = balances[msg.sender];
+        hook.overloaded(true);
         balances[msg.sender] = amount;
     }
 
