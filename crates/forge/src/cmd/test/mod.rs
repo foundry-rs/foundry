@@ -414,6 +414,7 @@ impl TestArgs {
         if config.invariant.workers == 0 {
             bail!("`invariant.workers` must be greater than 0");
         }
+        warn_unsupported_invariant_workers(&config)?;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -1290,6 +1291,28 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
     if let Some(decoder) = other.last_run_decoder {
         base.last_run_decoder = Some(decoder);
     }
+}
+
+fn warn_unsupported_invariant_workers(config: &Config) -> Result<()> {
+    if config.invariant.workers <= 1 {
+        return Ok(());
+    }
+
+    let reason = if config.invariant.timeout.is_some() {
+        Some("invariant.timeout is configured")
+    } else if config.invariant.call_override {
+        Some("invariant.call_override is enabled")
+    } else {
+        None
+    };
+
+    if let Some(reason) = reason {
+        sh_warn!(
+            "`invariant.workers = {}` was configured, but invariant campaigns with {reason} currently run with 1 worker",
+            config.invariant.workers
+        )?;
+    }
+    Ok(())
 }
 
 /// Load persisted filter (with last test run failures) from file.

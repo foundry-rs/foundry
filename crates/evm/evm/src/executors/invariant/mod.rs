@@ -2,7 +2,7 @@ use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
         RawCallResult,
-        corpus::{DynamicTargetCtx, WorkerCorpus},
+        corpus::{DynamicTargetCtx, WorkerCorpus, WorkerCorpusSeed},
     },
     inspectors::Fuzzer,
 };
@@ -170,7 +170,7 @@ fn max_invariant_workers_for_runs(runs: u32) -> usize {
 }
 
 fn invariant_worker_count(config: &InvariantConfig) -> usize {
-    if config.timeout.is_some() || config.call_override || config.corpus.collect_edge_coverage() {
+    if config.timeout.is_some() || config.call_override {
         return 1;
     }
 
@@ -551,6 +551,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let worker_plans = campaign_spec.worker_plans(worker_count)?;
         let campaign_seed =
             self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
+        let replay_targets = FuzzRunIdentifiedContracts::new(
+            campaign_seed.targeted_contracts.clone(),
+            campaign_seed.targets_are_updatable,
+        );
+        let corpus_seed = WorkerCorpusSeed::load_from_disk(
+            &self.config.corpus,
+            Some(&self.executor),
+            None,
+            Some(&replay_targets),
+            Some(self.dynamic_target_ctx()),
+        )?;
         let run_in_parallel = worker_plans.len() > 1;
         let corpus_persistence = if run_in_parallel {
             InvariantCorpusPersistence::Deferred
@@ -591,6 +602,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         progress,
                         &campaign_state,
                         campaign_seed.clone(),
+                        corpus_seed.clone(),
                         corpus_persistence,
                     );
                     debug!("finished in {:?}", timer.elapsed());
@@ -610,7 +622,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 fuzz_state,
                 progress,
                 &campaign_state,
-                campaign_seed,
+                campaign_seed.clone(),
+                corpus_seed.clone(),
                 corpus_persistence,
             )?]
         };
@@ -629,6 +642,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         }
         let (result, corpus_entries) = aggregator.finish_with_corpus_entries()?;
         if corpus_persistence.is_deferred() {
+            let replay_targets = FuzzRunIdentifiedContracts::new(
+                campaign_seed.targeted_contracts.clone(),
+                campaign_seed.targets_are_updatable,
+            );
+            let corpus_entries = corpus_seed.filter_campaign_entries(
+                &corpus_entries,
+                &self.executor,
+                None,
+                Some(&replay_targets),
+                Some(self.dynamic_target_ctx()),
+            )?;
             WorkerCorpus::persist_campaign_outputs(
                 &self.config.corpus,
                 &corpus_entries,
@@ -655,6 +679,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         progress: Option<&ProgressBar>,
         campaign_state: &InvariantCampaignState,
         campaign_seed: InvariantCampaignSeed,
+        corpus_seed: WorkerCorpusSeed,
         corpus_persistence: InvariantCorpusPersistence,
     ) -> Result<InvariantWorkerOutput> {
         // Note: invariant function signatures (no inputs) are validated upstream in the
@@ -674,9 +699,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             fuzz_state,
             &runner,
             &config,
-            setup_contracts,
-            project_contracts,
             &campaign_seed,
+            corpus_seed,
         )?;
         let mut corpus_entries = Vec::new();
         let progress_worker_id = corpus_persistence.progress_worker_id(plan.worker_id);
@@ -1215,9 +1239,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         fuzz_state: EvmFuzzState,
         runner: &TestRunner,
         config: &InvariantConfig,
-        setup_contracts: &ContractsByAddress,
-        project_contracts: &ContractsByArtifact,
         campaign_seed: &InvariantCampaignSeed,
+        corpus_seed: WorkerCorpusSeed,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         let fuzz_state = fuzz_state.into_invariant();
         let targeted_contracts = FuzzRunIdentifiedContracts::new(
@@ -1311,21 +1334,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
         }
 
-        let is_master_worker = plan.worker_id == 0;
-        let dynamic = DynamicTargetCtx {
-            project_contracts,
-            setup_contracts,
-            artifact_filters: &campaign_seed.artifact_filters,
-        };
-        let worker = WorkerCorpus::new(
+        let worker = WorkerCorpus::from_seed(
             plan.worker_id as usize,
             config.corpus.clone(),
             strategy.boxed(),
-            is_master_worker.then_some(&*executor),
-            None,
-            is_master_worker.then_some(&targeted_contracts),
-            is_master_worker.then_some(dynamic),
-        )?;
+            corpus_seed,
+        );
 
         let mut invariant_test =
             InvariantTest::new(fuzz_state, targeted_contracts, failures, runner.clone());
@@ -1333,7 +1347,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Seed invariant test with previously persisted optimization state,
         // but only if the current invariant is in optimization mode. Persisted optimization state
         // is a master-worker artifact loaded with the initial corpus.
-        if is_master_worker && invariant_contract.is_optimization() {
+        if invariant_contract.is_optimization() {
             let (opt_best_value, opt_best_sequence) = worker.optimization_initial_state();
             if let Some(value) = opt_best_value {
                 invariant_test.update_optimization_value(value, &opt_best_sequence);
@@ -1851,7 +1865,11 @@ mod tests {
 
         config.call_override = false;
         config.corpus.show_edge_coverage = true;
-        assert_eq!(invariant_worker_count(&config), 1);
+        assert_eq!(invariant_worker_count(&config), 4);
+
+        config.corpus.show_edge_coverage = false;
+        config.corpus.corpus_dir = Some(std::path::PathBuf::from("corpus"));
+        assert_eq!(invariant_worker_count(&config), 4);
     }
 
     #[test]
