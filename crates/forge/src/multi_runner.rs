@@ -423,6 +423,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             Some(known_contracts),
             Some(artifact_id.clone()),
             None,
+            false,
         ));
         ExecutorBuilder::default()
             .inspectors(|stack| {

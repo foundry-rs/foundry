@@ -6,8 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Non-verification tempo checks: local tests, fork tests, cast commands, DEX operations
 
-# Hardfork version, defaults to T3 (latest features)
-HARDFORK="${TEMPO_HARDFORK:-T3}"
+# Hardfork version, defaults to T5.
+HARDFORK="${TEMPO_HARDFORK:-T5}"
 
 # Fee token address, defaults to native fee token
 FEE_TOKEN="${TEMPO_FEE_TOKEN:-0x20c0000000000000000000000000000000000000}"
@@ -212,7 +212,7 @@ echo "$KC_INFO" | grep -q "secp256k1"
 
 echo -e "\n=== CAST KEYCHAIN: KEY-INFO --json ==="
 KC_INFO_JSON=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL" --json)
-echo "$KC_INFO_JSON" | jq -e '.signatureType == "secp256k1"'
+echo "$KC_INFO_JSON" | jq -e '.data.signatureType == "secp256k1"'
 
 echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH LIMIT ==="
 kc_limited_json="$(cast wallet new --json)"

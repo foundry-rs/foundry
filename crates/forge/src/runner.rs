@@ -914,9 +914,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Snapshot the per-test corpus dir before `config` is moved into `InvariantExecutor`.
         let resolved_corpus_dir = config.corpus.corpus_dir.clone();
 
-        let mut evm = InvariantExecutor::new(
+        let mut evm = InvariantExecutor::new_with_fuzz_seed(
             executor,
             runner,
+            self.config.fuzz.seed,
             config,
             identified_contracts,
             &self.cr.mcr.known_contracts,

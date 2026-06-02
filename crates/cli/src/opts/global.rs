@@ -140,7 +140,9 @@ impl GlobalArgs {
 
     /// Create a new shell instance.
     pub fn shell(&self) -> Shell {
-        let mode = match self.quiet {
+        // `--machine` forces Quiet; structured output goes through
+        // `print_json` / `print_stream_record`, which bypass the quiet check.
+        let mode = match self.quiet || self.machine {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,
         };
