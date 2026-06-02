@@ -86,17 +86,6 @@ impl InvariantConfig {
         Self { failure_persist_dir: Some(cache_dir), ..Default::default() }
     }
 
-    /// Returns why invariant campaigns for this config must run with one worker, if any.
-    pub const fn single_worker_reason(&self) -> Option<&'static str> {
-        if self.call_override {
-            Some("invariant.call_override is enabled")
-        } else if self.corpus.sancov_active() {
-            Some("sancov is enabled")
-        } else {
-            None
-        }
-    }
-
     /// Returns true if generated invariant calls may advance block time or height.
     pub const fn has_delay(&self) -> bool {
         self.max_block_delay.is_some() || self.max_time_delay.is_some()

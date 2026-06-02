@@ -163,10 +163,6 @@ fn max_invariant_workers_for_runs(runs: u32) -> usize {
 }
 
 fn invariant_worker_count(config: &InvariantConfig) -> usize {
-    if config.single_worker_reason().is_some() {
-        return 1;
-    }
-
     if config.timeout.is_some() {
         return config.workers;
     }
@@ -1818,7 +1814,7 @@ mod tests {
     }
 
     #[test]
-    fn invariant_worker_count_is_explicit_and_disables_unsafe_parallel_modes() {
+    fn invariant_worker_count_uses_configured_workers_and_caps_short_campaigns() {
         let mut config = InvariantConfig {
             runs: MIN_RUNS_PER_INVARIANT_WORKER * 4,
             workers: 4,
@@ -1826,14 +1822,6 @@ mod tests {
         };
         assert_eq!(invariant_worker_count(&config), 4);
 
-        config.timeout = Some(1);
-        assert_eq!(invariant_worker_count(&config), 4);
-
-        config.timeout = None;
-        config.call_override = true;
-        assert_eq!(invariant_worker_count(&config), 1);
-
-        config.call_override = false;
         config.corpus.show_edge_coverage = true;
         assert_eq!(invariant_worker_count(&config), 4);
 
@@ -1841,16 +1829,10 @@ mod tests {
         config.corpus.corpus_dir = Some(std::path::PathBuf::from("corpus"));
         assert_eq!(invariant_worker_count(&config), 4);
 
-        config.corpus.corpus_dir = None;
-        config.corpus.sancov_edges = true;
-        assert_eq!(invariant_worker_count(&config), 1);
-
-        config.corpus.sancov_edges = false;
-        config.corpus.sancov_trace_cmp = true;
-        assert_eq!(invariant_worker_count(&config), 1);
-
-        config.corpus.sancov_trace_cmp = false;
         config.runs = MIN_RUNS_PER_INVARIANT_WORKER - 1;
+        config.timeout = None;
+        assert_eq!(invariant_worker_count(&config), 1);
+
         config.timeout = Some(1);
         assert_eq!(invariant_worker_count(&config), 4);
     }
