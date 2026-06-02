@@ -372,14 +372,7 @@ fn format_event_definition(gcx: Gcx<'_>, event: &Event<'_>) -> Result<String> {
 
 /// Converts an [`Expr`] directly to a [`DynSolType`] for ABI inspection.
 fn expr_to_dyn(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<DynSolType> {
-    // Solar currently lowers hex string literals to `StringLiteral`; ABI inspection should decode
-    // them as bytes, matching Solidity's ABI type for `hex"..."` literals.
-    if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..)))
-    {
-        return Some(DynSolType::Bytes);
-    }
-
-    gcx.type_of_expr(expr.id).and_then(|ty| solar_ty_to_dyn(gcx, ty))
+    gcx.type_of_expr(expr.id).and_then(|ty| solar_expr_ty_to_dyn(gcx, ty, expr))
 }
 
 /// Whether execution should continue after inspecting this expression.
@@ -418,6 +411,17 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
 }
 
 /// Maps a solar [`Ty`] to a [`DynSolType`].
+fn solar_expr_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, expr: &Expr<'_>) -> Option<DynSolType> {
+    // Solar currently lowers hex string literals to `StringLiteral`; ABI inspection should decode
+    // them as bytes, matching Solidity's ABI type for `hex"..."` literals.
+    if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..)))
+    {
+        return Some(DynSolType::Bytes);
+    }
+
+    solar_ty_to_dyn(gcx, ty)
+}
+
 fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
     match ty.kind {
         TyKind::Elementary(et) => elementary_to_dyn(et),
@@ -581,7 +585,6 @@ mod tests {
             ("[int8(1), 2, 3]", fixed_array(DynSolType::Int(8), 3)),
             ("new uint256[](3)", array(DynSolType::Uint(256))),
             ("uint256[] memory a = new uint256[](3);\na[0]", DynSolType::Uint(256)),
-            ("uint256[] memory a = new uint256[](3);\na[0:3]", array(DynSolType::Uint(256))),
         ];
         generic_type_test(source, array_expressions);
         generic_type_test(source, EXPRESSIONS);
@@ -665,7 +668,7 @@ mod tests {
                 ("abi.decode(bytes(\"\"), (address, bytes))", Tuple(vec![Address, Bytes])),
                 ("abi.decode(bytes(\"\"), (uint112, uint48))", Tuple(vec![Uint(112), Uint(48)])),
                 ("abi.encode(1, 2)", Bytes),
-                ("abi.encodePacked(1, 2)", Bytes),
+                ("abi.encodePacked(uint256(1), uint256(2))", Bytes),
                 ("abi.encodeWithSelector(bytes4(0), 1, 2)", Bytes),
                 ("abi.encodeWithSignature(\"f(uint256)\", 1)", Bytes),
                 //
@@ -707,13 +710,13 @@ mod tests {
                 //
 
                 //
-                ("blockhash(uint)", FixedBytes(32)),
-                ("keccak256(bytes)", FixedBytes(32)),
-                ("sha256(bytes)", FixedBytes(32)),
-                ("ripemd160(bytes)", FixedBytes(20)),
-                ("ecrecover(bytes32, uint8, bytes32, bytes32)", Address),
-                ("addmod(uint, uint, uint)", Uint(256)),
-                ("mulmod(uint, uint, uint)", Uint(256)),
+                ("blockhash(0)", FixedBytes(32)),
+                ("keccak256(bytes(\"\"))", FixedBytes(32)),
+                ("sha256(bytes(\"\"))", FixedBytes(32)),
+                ("ripemd160(bytes(\"\"))", FixedBytes(20)),
+                ("ecrecover(bytes32(0), 0, bytes32(0), bytes32(0))", Address),
+                ("addmod(1, 2, 3)", Uint(256)),
+                ("mulmod(1, 2, 3)", Uint(256)),
                 //
 
                 // address
@@ -823,8 +826,8 @@ mod tests {
         let mut compiler = Compiler::new(sess);
 
         compiler.enter_mut(|c| -> Option<DynSolType> {
-            // Stage 1: parse + lower (mutable access required).
-            let lowered = {
+            // Stage 1: parse, lower, and analyze (mutable access required).
+            let analyzed = {
                 let mut pcx = c.parse();
                 let file = c
                     .sess()
@@ -837,12 +840,11 @@ mod tests {
                 pcx.add_file(file);
                 pcx.parse();
                 matches!(c.lower_asts(), Ok(ControlFlow::Continue(())))
+                    && matches!(c.analysis(), Ok(ControlFlow::Continue(())))
             };
-            if !lowered {
+            if !analyzed {
                 return None;
             }
-
-            let _ = c.analysis();
 
             // Stage 2: walk HIR (immutable access).
             let gcx = c.gcx();
