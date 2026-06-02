@@ -136,11 +136,11 @@ impl<'hir> Analyzer<'hir> {
         self.caller_restricted = state.caller_restricted;
     }
 
-    fn is_safe(&self, expr: &hir::Expr<'_>) -> bool {
+    fn is_safe(&self, expr: &'hir hir::Expr<'hir>) -> bool {
         self.is_safe_inner(expr, HELPER_DEPTH)
     }
 
-    fn is_safe_inner(&self, expr: &hir::Expr<'_>, depth: u8) -> bool {
+    fn is_safe_inner(&self, expr: &'hir hir::Expr<'hir>, depth: u8) -> bool {
         match &expr.peel_parens().kind {
             ExprKind::Member(base, ident) if ident.name == sym::sender => {
                 is_builtin(base, sym::msg)
@@ -191,7 +191,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// `target = rhs`: update `safe_vars` for non-state targets.
-    fn assign(&mut self, target: hir::VariableId, rhs: &hir::Expr<'_>) {
+    fn assign(&mut self, target: hir::VariableId, rhs: &'hir hir::Expr<'hir>) {
         if self.is_safe(rhs) {
             self.safe_vars.insert(target);
         } else {
@@ -200,7 +200,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Handles single-var and tuple LHS; tuple slots align with a tuple-literal RHS.
-    fn handle_assign(&mut self, lhs: &hir::Expr<'_>, rhs: &hir::Expr<'_>) {
+    fn handle_assign(&mut self, lhs: &hir::Expr<'_>, rhs: &'hir hir::Expr<'hir>) {
         let lhs = lhs.peel_parens();
         if let ExprKind::Tuple(lhs_elems) = &lhs.kind {
             let rhs_elems = tuple_elems(rhs);
@@ -215,7 +215,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// `rhs == None` (unknown slot) drops the target's safe-fact.
-    fn assign_one(&mut self, lhs: &hir::Expr<'_>, rhs: Option<&hir::Expr<'_>>) {
+    fn assign_one(&mut self, lhs: &hir::Expr<'_>, rhs: Option<&'hir hir::Expr<'hir>>) {
         let Some(target) = underlying_var(lhs) else { return };
         self.safe_vars.remove(&target);
         self.safe_fn_ptrs.remove(&target);
@@ -246,7 +246,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// True when `expr` is a fn-pointer call whose destination is provably `this`.
-    fn fn_ptr_call_routes_to_self(&self, expr: &hir::Expr<'_>) -> bool {
+    fn fn_ptr_call_routes_to_self(&self, expr: &'hir hir::Expr<'hir>) -> bool {
         let ExprKind::Call(callee, _, _) = &expr.kind else { return false };
         let callee_inner = callee.peel_parens();
         let is_fn_ptr = match &callee_inner.kind {
@@ -260,7 +260,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Records vars proven equal to a safe origin from `pred`. `negate = true` flips polarity.
-    fn add_facts(&mut self, pred: &hir::Expr<'_>, negate: bool) {
+    fn add_facts(&mut self, pred: &'hir hir::Expr<'hir>, negate: bool) {
         match &pred.peel_parens().kind {
             ExprKind::Binary(lhs, op, rhs) => {
                 let (eq, and_op, or_op) = if negate {
@@ -292,7 +292,12 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// `lhs ∨ rhs`: a safety fact is added only if it holds under both arms.
-    fn add_facts_disjunction(&mut self, lhs: &hir::Expr<'_>, rhs: &hir::Expr<'_>, negate: bool) {
+    fn add_facts_disjunction(
+        &mut self,
+        lhs: &'hir hir::Expr<'hir>,
+        rhs: &'hir hir::Expr<'hir>,
+        negate: bool,
+    ) {
         let baseline = self.safe_vars.clone();
         self.add_facts(lhs, negate);
         let lhs_added: HashSet<_> = self.safe_vars.difference(&baseline).copied().collect();
@@ -584,7 +589,7 @@ fn match_sink<'hir>(
     }
 
     if let Some(opts) = opts
-        && opts.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
+        && opts.args.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
     {
         let callee_inner = callee.peel_parens();
         match &callee_inner.kind {
@@ -686,7 +691,10 @@ fn arg<'hir>(
 }
 
 /// True when a modifier reverts unless `msg.sender` equals a trusted principal.
-fn modifier_restricts_caller(hir: &hir::Hir<'_>, invocation: &hir::Modifier<'_>) -> bool {
+fn modifier_restricts_caller<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    invocation: &hir::Modifier<'_>,
+) -> bool {
     let ItemId::Function(fid) = invocation.id else { return false };
     modifier_function_restricts_caller(hir, fid, &mut Vec::new())
 }
@@ -700,8 +708,8 @@ fn invoked_function(hir: &hir::Hir<'_>, invocation: &hir::Modifier<'_>) -> Optio
     }
 }
 
-fn modifier_function_restricts_caller(
-    hir: &hir::Hir<'_>,
+fn modifier_function_restricts_caller<'hir>(
+    hir: &'hir hir::Hir<'hir>,
     fid: FunctionId,
     stack: &mut Vec<FunctionId>,
 ) -> bool {
@@ -735,9 +743,9 @@ fn modifier_prefix<'hir>(
     Some((modifier, prefix))
 }
 
-fn stmt_restricts_caller(
-    hir: &hir::Hir<'_>,
-    stmt: &hir::Stmt<'_>,
+fn stmt_restricts_caller<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    stmt: &'hir hir::Stmt<'hir>,
     params: &[hir::VariableId],
     stack: &mut Vec<FunctionId>,
 ) -> bool {
@@ -771,9 +779,9 @@ fn stmt_restricts_caller(
     }
 }
 
-fn expr_restricts_caller(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
+fn expr_restricts_caller<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
     params: &[hir::VariableId],
     stack: &mut Vec<FunctionId>,
 ) -> bool {
@@ -829,9 +837,9 @@ fn stmt_contains_return(stmt: &hir::Stmt<'_>) -> bool {
 }
 
 /// True when `cond` entails `msg.sender == trusted` along every accepting path.
-fn cond_restricts_caller(
-    hir: &hir::Hir<'_>,
-    cond: &hir::Expr<'_>,
+fn cond_restricts_caller<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    cond: &'hir hir::Expr<'hir>,
     polarity: bool,
     params: &[hir::VariableId],
 ) -> bool {
@@ -849,7 +857,7 @@ fn cond_restricts_caller(
                 cond_restricts_caller(hir, lhs, polarity, params)
                     && cond_restricts_caller(hir, rhs, polarity, params)
             } else if op.kind == eq {
-                let pair = |a: &hir::Expr<'_>, b: &hir::Expr<'_>| {
+                let pair = |a: &'hir hir::Expr<'hir>, b: &'hir hir::Expr<'hir>| {
                     is_msg_sender_like(hir, a, HELPER_DEPTH)
                         && is_trusted_principal_inner(hir, b, params, HELPER_DEPTH)
                 };
@@ -866,20 +874,28 @@ fn cond_restricts_caller(
 }
 
 /// `msg.sender` modulo parens / casts / `payable(...)` / no-arg helpers.
-fn is_msg_sender_like(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, depth: u8) -> bool {
+fn is_msg_sender_like<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+    depth: u8,
+) -> bool {
     is_caller_like(hir, expr, depth, sym::msg, sym::sender)
 }
 
 /// `tx.origin` modulo parens / casts / `payable(...)` / no-arg helpers.
-fn is_tx_origin_like(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, depth: u8) -> bool {
+fn is_tx_origin_like<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+    depth: u8,
+) -> bool {
     is_caller_like(hir, expr, depth, sym::tx, kw::Origin)
 }
 
 /// True when `callee` is a zero-arg function whose body is `return <pred-matching>;`.
-fn callee_no_arg_returns(
-    hir: &hir::Hir<'_>,
-    callee: &hir::Expr<'_>,
-    pred: impl Fn(&hir::Expr<'_>) -> bool,
+fn callee_no_arg_returns<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    callee: &'hir hir::Expr<'hir>,
+    pred: impl Fn(&'hir hir::Expr<'hir>) -> bool,
 ) -> bool {
     let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
     reses.iter().any(|r| {
@@ -889,10 +905,10 @@ fn callee_no_arg_returns(
 
 /// True when `fid` is a zero-parameter function whose body is `return expr;`,
 /// or `namedRet = expr;` (with an optional trailing bare `return;`).
-fn function_no_arg_returns(
-    hir: &hir::Hir<'_>,
+fn function_no_arg_returns<'hir>(
+    hir: &'hir hir::Hir<'hir>,
     fid: FunctionId,
-    pred: impl Fn(&hir::Expr<'_>) -> bool,
+    pred: impl Fn(&'hir hir::Expr<'hir>) -> bool,
 ) -> bool {
     let f = hir.function(fid);
     let Some(body) = f.body else { return false };
@@ -923,9 +939,9 @@ fn function_no_arg_returns(
 }
 
 /// Shared shape for `msg.sender` / `tx.origin` recognition.
-fn is_caller_like(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
+fn is_caller_like<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
     depth: u8,
     ns: Symbol,
     member: Symbol,
@@ -944,9 +960,9 @@ fn is_caller_like(
 }
 
 /// Conservatively recognises deploy-time-fixed caller principals.
-fn is_trusted_principal_inner(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
+fn is_trusted_principal_inner<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
     params: &[hir::VariableId],
     depth: u8,
 ) -> bool {
@@ -1000,7 +1016,11 @@ fn is_trusted_principal_inner(
 }
 
 /// True when `vid` is a state variable that may alias `address(this)`.
-fn state_var_aliases_self(hir: &hir::Hir<'_>, vid: hir::VariableId, depth: u8) -> bool {
+fn state_var_aliases_self<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    vid: hir::VariableId,
+    depth: u8,
+) -> bool {
     if depth == 0 {
         return false;
     }
@@ -1037,9 +1057,9 @@ fn state_var_aliases_self(hir: &hir::Hir<'_>, vid: hir::VariableId, depth: u8) -
 }
 
 /// Conservative free-standing "this expression *may* embed `address(this)` somewhere".
-fn expr_may_contain_self_in(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
+fn expr_may_contain_self_in<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
     depth: u8,
     local_aliases: &HashSet<hir::VariableId>,
 ) -> bool {
@@ -1082,7 +1102,11 @@ fn expr_may_contain_self_in(
 }
 
 /// True when `expr` may evaluate to `address(this)`.
-fn expr_resolves_to_self(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, depth: u8) -> bool {
+fn expr_resolves_to_self<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+    depth: u8,
+) -> bool {
     if is_address_self(expr) {
         return true;
     }
@@ -1226,8 +1250,12 @@ fn is_numeric_cast_callee(callee: &hir::Expr<'_>) -> bool {
 }
 
 /// True when `callee` is a zero-arg helper whose body is `return <self-resolving>;`.
-fn callee_returns_self(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>, depth: u8) -> bool {
-    let pred = |e: &hir::Expr<'_>| expr_resolves_to_self(hir, e, depth);
+fn callee_returns_self<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    callee: &'hir hir::Expr<'hir>,
+    depth: u8,
+) -> bool {
+    let pred = |e: &'hir hir::Expr<'hir>| expr_resolves_to_self(hir, e, depth);
     if callee_no_arg_returns(hir, callee, pred) {
         return true;
     }
@@ -1266,12 +1294,12 @@ struct SelfAssignScan<'a, 'hir> {
 }
 
 impl<'hir> SelfAssignScan<'_, 'hir> {
-    fn expr_may_contain_self(&self, expr: &hir::Expr<'_>) -> bool {
+    fn expr_may_contain_self(&self, expr: &'hir hir::Expr<'hir>) -> bool {
         expr_may_contain_self_in(self.hir, expr, self.depth, &self.local_self_aliases)
     }
 
     /// True when `lhs` (possibly inside a tuple) aliases the target.
-    fn lhs_aliases_target(&self, lhs: &hir::Expr<'_>, rhs: &hir::Expr<'_>) -> bool {
+    fn lhs_aliases_target(&self, lhs: &'hir hir::Expr<'hir>, rhs: &'hir hir::Expr<'hir>) -> bool {
         let lhs = lhs.peel_parens();
         let rhs = rhs.peel_parens();
         if let ExprKind::Tuple(lhs_elems) = &lhs.kind {
@@ -1295,7 +1323,7 @@ impl<'hir> SelfAssignScan<'_, 'hir> {
     }
 
     /// Records non-state locals proven (path-insensitively) to carry `address(this)`.
-    fn record_local_self_alias(&mut self, lhs: &hir::Expr<'_>, rhs: &hir::Expr<'_>) {
+    fn record_local_self_alias(&mut self, lhs: &hir::Expr<'_>, rhs: &'hir hir::Expr<'hir>) {
         let lhs = lhs.peel_parens();
         let rhs = rhs.peel_parens();
         if let ExprKind::Tuple(lhs_elems) = &lhs.kind {
@@ -1461,8 +1489,8 @@ impl<'hir> hir::Visit<'hir> for SelfAssignScan<'_, 'hir> {
 }
 
 /// Scans every function of `cid` for an assignment that aliases `vid` to `address(this)`.
-fn contract_function_assigns_to_self(
-    hir: &hir::Hir<'_>,
+fn contract_function_assigns_to_self<'hir>(
+    hir: &'hir hir::Hir<'hir>,
     cid: hir::ContractId,
     vid: hir::VariableId,
     depth: u8,
@@ -1550,8 +1578,16 @@ fn lhs_root_var(lhs: &hir::Expr<'_>) -> Option<hir::VariableId> {
 }
 
 /// True when every sub-expression of `expr` is independent of the call's parameters.
-fn index_is_static(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, params: &[hir::VariableId]) -> bool {
-    fn walk(hir: &hir::Hir<'_>, e: &hir::Expr<'_>, params: &[hir::VariableId]) -> bool {
+fn index_is_static<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+    params: &[hir::VariableId],
+) -> bool {
+    fn walk<'hir>(
+        hir: &'hir hir::Hir<'hir>,
+        e: &'hir hir::Expr<'hir>,
+        params: &[hir::VariableId],
+    ) -> bool {
         if expr_touches_param(e, params)
             || is_msg_sender_like(hir, e, HELPER_DEPTH)
             || is_tx_origin_like(hir, e, HELPER_DEPTH)
@@ -1620,9 +1656,9 @@ fn expr_touches_param(expr: &hir::Expr<'_>, params: &[hir::VariableId]) -> bool 
 }
 
 /// Hoists `require(modParam == msg.sender)`-style guards from the modifier prefix.
-fn collect_modifier_safety(
-    hir: &hir::Hir<'_>,
-    invocation: &hir::Modifier<'_>,
+fn collect_modifier_safety<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    invocation: &'hir hir::Modifier<'hir>,
     out_safe: &mut HashSet<hir::VariableId>,
 ) {
     let ItemId::Function(fid) = invocation.id else { return };
@@ -1800,7 +1836,7 @@ const fn var_is_address_like(var: &hir::Variable<'_>) -> bool {
 }
 
 /// True when `expr`'s static type is `address` / `address payable`.
-fn receiver_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn receiver_is_address<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     matches!(expr_type(hir, expr), Some(TypeKind::Elementary(ElementaryType::Address(_))))
 }
 
