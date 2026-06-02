@@ -82,55 +82,18 @@ pub struct SharedMutationState {
 }
 
 impl SharedMutationState {
-    pub fn new() -> Self {
-        Self::with_cancellation(Arc::new(AtomicBool::new(false)))
-    }
-
-    pub fn with_cancellation(cancelled: Arc<AtomicBool>) -> Self {
-        Self {
-            survived_spans: Mutex::new(SurvivedSpans::new()),
-            completed: AtomicUsize::new(0),
-            total: AtomicUsize::new(0),
-            cancelled,
-            progress: None,
-            silent: false,
-            pending_workers: Mutex::new(Vec::new()),
-            max_pending_workers: AtomicUsize::new(usize::MAX),
-        }
-    }
-
-    pub fn new_silent() -> Self {
-        Self::silent_with_cancellation(Arc::new(AtomicBool::new(false)))
-    }
-
-    pub fn silent_with_cancellation(cancelled: Arc<AtomicBool>) -> Self {
-        Self {
-            survived_spans: Mutex::new(SurvivedSpans::new()),
-            completed: AtomicUsize::new(0),
-            total: AtomicUsize::new(0),
-            cancelled,
-            progress: None,
-            silent: true,
-            pending_workers: Mutex::new(Vec::new()),
-            max_pending_workers: AtomicUsize::new(usize::MAX),
-        }
-    }
-
-    pub fn with_progress(progress: MutationProgress) -> Self {
-        Self::with_progress_and_cancellation(progress, Arc::new(AtomicBool::new(false)))
-    }
-
-    pub fn with_progress_and_cancellation(
-        progress: MutationProgress,
+    pub fn new(
         cancelled: Arc<AtomicBool>,
+        silent: bool,
+        progress: Option<MutationProgress>,
     ) -> Self {
         Self {
             survived_spans: Mutex::new(SurvivedSpans::new()),
             completed: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
             cancelled,
-            progress: Some(progress),
-            silent: false,
+            progress,
+            silent,
             pending_workers: Mutex::new(Vec::new()),
             max_pending_workers: AtomicUsize::new(usize::MAX),
         }
@@ -196,7 +159,7 @@ impl SharedMutationState {
 
 impl Default for SharedMutationState {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(AtomicBool::new(false)), false, None)
     }
 }
 
@@ -228,13 +191,7 @@ pub fn run_mutations_parallel_with_progress(
         num_workers
     };
 
-    let shared_state = Arc::new(if let Some(p) = progress {
-        SharedMutationState::with_progress_and_cancellation(p, cancellation_requested)
-    } else if silent {
-        SharedMutationState::silent_with_cancellation(cancellation_requested)
-    } else {
-        SharedMutationState::with_cancellation(cancellation_requested)
-    });
+    let shared_state = Arc::new(SharedMutationState::new(cancellation_requested, silent, progress));
     shared_state.total.store(total, Ordering::SeqCst);
     shared_state.set_max_pending_workers(num_workers);
 
@@ -766,7 +723,7 @@ mod tests {
 
     #[test]
     fn park_timed_out_worker_bounds_pending_handles() {
-        let state = SharedMutationState::new();
+        let state = SharedMutationState::default();
         state.set_max_pending_workers(1);
 
         state.park_timed_out_worker(std::thread::spawn(|| {}));
