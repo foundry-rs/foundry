@@ -438,6 +438,18 @@ fn format_event_definition(gcx: Gcx<'_>, event: &Event<'_>) -> Result<String> {
 ///
 /// `lookup` controls whether user-defined type names are resolved via the HIR.
 fn expr_to_dyn(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
+    if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..)))
+    {
+        return expr_to_dyn_fallback(gcx, expr, lookup);
+    }
+
+    gcx.type_of_expr(expr.id)
+        .and_then(|ty| solar_ty_to_dyn(gcx, ty))
+        .or_else(|| expr_to_dyn_fallback(gcx, expr, lookup))
+}
+
+/// HIR-based expression type inference for cases not covered by Solar's expression type table.
+fn expr_to_dyn_fallback(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
     match &expr.kind {
         // Elementary type expression: `uint256`, `address`, etc.
         ExprKind::Type(ty) => hir_ty_to_dyn(gcx, ty),
@@ -1093,10 +1105,11 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
             let size: usize = n.try_into().ok()?;
             Some(DynSolType::FixedArray(Box::new(inner), size))
         }
-        TyKind::DynArray(elem) | TyKind::Slice(elem) => {
+        TyKind::DynArray(elem) => {
             let inner = solar_ty_to_dyn(gcx, elem)?;
             Some(DynSolType::Array(Box::new(inner)))
         }
+        TyKind::Slice(array) => solar_ty_to_dyn(gcx, array),
         TyKind::Tuple(tys) => {
             Some(DynSolType::Tuple(tys.iter().filter_map(|t| solar_ty_to_dyn(gcx, *t)).collect()))
         }
@@ -1164,42 +1177,42 @@ mod tests {
             &[
                 // units
                 // uint
-                ("1 seconds", Uint(256)),
-                ("1 minutes", Uint(256)),
-                ("1 hours", Uint(256)),
-                ("1 days", Uint(256)),
-                ("1 weeks", Uint(256)),
-                ("1 wei", Uint(256)),
-                ("1 gwei", Uint(256)),
-                ("1 ether", Uint(256)),
+                ("1 seconds", Uint(8)),
+                ("1 minutes", Uint(8)),
+                ("1 hours", Uint(16)),
+                ("1 days", Uint(24)),
+                ("1 weeks", Uint(24)),
+                ("1 wei", Uint(8)),
+                ("1 gwei", Uint(32)),
+                ("1 ether", Uint(64)),
                 // int
-                ("-1 seconds", Int(256)),
-                ("-1 minutes", Int(256)),
-                ("-1 hours", Int(256)),
-                ("-1 days", Int(256)),
-                ("-1 weeks", Int(256)),
-                ("-1 wei", Int(256)),
-                ("-1 gwei", Int(256)),
-                ("-1 ether", Int(256)),
+                ("-1 seconds", Int(8)),
+                ("-1 minutes", Int(8)),
+                ("-1 hours", Int(16)),
+                ("-1 days", Int(24)),
+                ("-1 weeks", Int(24)),
+                ("-1 wei", Int(8)),
+                ("-1 gwei", Int(32)),
+                ("-1 ether", Int(64)),
                 //
-                ("true ? 1 : 0", Uint(256)),
-                ("true ? -1 : 0", Int(256)),
+                ("true ? 1 : 0", Uint(8)),
+                ("true ? -1 : 0", Int(8)),
                 // misc
                 //
 
                 // ops
                 // uint
-                ("1 + 1", Uint(256)),
-                ("1 - 1", Uint(256)),
-                ("1 * 1", Uint(256)),
-                ("1 / 1", Uint(256)),
-                ("1 % 1", Uint(256)),
-                ("1 ** 1", Uint(256)),
-                ("1 | 1", Uint(256)),
-                ("1 & 1", Uint(256)),
-                ("1 ^ 1", Uint(256)),
-                ("1 >> 1", Uint(256)),
-                ("1 << 1", Uint(256)),
+                ("1 + 1", Uint(8)),
+                ("1 - 1", Uint(8)),
+                ("1 * 1", Uint(8)),
+                ("1 / 1", Uint(8)),
+                ("1 % 1", Uint(8)),
+                ("1 ** 1", Uint(8)),
+                ("1 | 1", Uint(8)),
+                ("1 & 1", Uint(8)),
+                ("1 ^ 1", Uint(8)),
+                ("1 >> 1", Uint(8)),
+                ("1 << 1", Uint(8)),
                 // int
                 ("int(1) + 1", Int(256)),
                 ("int(1) - 1", Int(256)),
@@ -1246,7 +1259,7 @@ mod tests {
         let source = &mut source();
 
         let array_expressions: &[(&str, DynSolType)] = &[
-            ("[1, 2, 3]", fixed_array(DynSolType::Uint(256), 3)),
+            ("[1, 2, 3]", fixed_array(DynSolType::Uint(8), 3)),
             ("[uint8(1), 2, 3]", fixed_array(DynSolType::Uint(8), 3)),
             ("[int8(1), 2, 3]", fixed_array(DynSolType::Int(8), 3)),
             ("new uint256[](3)", array(DynSolType::Uint(256))),
@@ -1271,13 +1284,13 @@ mod tests {
                 // int and uint
                 ("uint", Uint(256)),
                 ("uint(1)", Uint(256)),
-                ("1", Uint(256)),
-                ("0x01", Uint(256)),
+                ("1", Uint(8)),
+                ("0x01", Uint(8)),
                 ("int", Int(256)),
                 ("int(1)", Int(256)),
                 ("int(-1)", Int(256)),
-                ("-1", Int(256)),
-                ("-0x01", Int(256)),
+                ("-1", Int(8)),
+                ("-0x01", Int(8)),
                 //
 
                 // address
@@ -1410,8 +1423,8 @@ mod tests {
                 ("type(uint256).max", Uint(256)),
                 ("type(int128).max", Int(128)),
                 ("type(int256).max", Int(256)),
-                ("type(Enum1).min", Uint(256)),
-                ("type(Enum1).max", Uint(256)),
+                ("type(Enum1).min", Uint(8)),
+                ("type(Enum1).max", Uint(8)),
                 // function
                 ("this.run.address", Address),
                 ("this.run.selector", FixedBytes(4)),
@@ -1485,8 +1498,12 @@ mod tests {
         *s = new_source.clone();
 
         let src = new_source.to_repl_source();
-        let sess =
-            solar::interface::Session::builder().with_buffer_emitter(Default::default()).build();
+        let mut opts = solar::interface::config::Opts::default();
+        opts.unstable.typeck = true;
+        let sess = solar::interface::Session::builder()
+            .opts(opts)
+            .with_buffer_emitter(Default::default())
+            .build();
         let mut compiler = Compiler::new(sess);
 
         compiler.enter_mut(|c| -> Option<DynSolType> {
@@ -1508,6 +1525,8 @@ mod tests {
             if !lowered {
                 return None;
             }
+
+            let _ = c.analysis();
 
             // Stage 2: walk HIR (immutable access).
             let gcx = c.gcx();
@@ -1531,11 +1550,15 @@ mod tests {
         T: AsRef<str> + std::fmt::Display + 'a,
         I: IntoIterator<Item = &'a (T, DynSolType)> + 'a,
     {
+        let mut failures = Vec::new();
         for (input, expected) in input {
             let input = input.as_ref();
             let ty = get_type_ethabi(s, input, true);
-            assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
+            if ty.as_ref() != Some(expected) {
+                failures.push(format!("{input}: got {ty:?}, expected {expected:?}"));
+            }
         }
+        assert!(failures.is_empty(), "\n{}", failures.join("\n"));
     }
 
     fn init_tracing() {
