@@ -1151,21 +1151,17 @@ struct Transaction {
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj.add_script(
@@ -1279,21 +1275,17 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj.add_script(
@@ -1449,21 +1441,17 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
 });
 
 forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let script = prj.add_script(
         "ScriptTxOrigin.s.sol",
@@ -1535,21 +1523,17 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let script = prj.add_script(
         "ScriptTxOrigin.s.sol",
@@ -1764,21 +1748,17 @@ Error: Multiple functions with the same name `run` found in the ABI
 });
 
 forgetest_async!(can_decode_custom_errors, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-
-"#]])
-        .stderr_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
     Initialized forge project
 
-"#]]);
+"#]],
+    );
 
     let script = prj.add_script(
         "CustomErrorScript.s.sol",

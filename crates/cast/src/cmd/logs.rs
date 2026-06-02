@@ -98,6 +98,8 @@ impl LogsArgs {
             return Ok(());
         }
 
+        // JSON envelope intentionally unsupported for streaming: --subscribe emits NDJSON events
+        // continuously; a terminal JsonEnvelope is pointless.
         // FIXME: this is a hotfix for <https://github.com/foundry-rs/foundry/issues/7682>
         //  currently the alloy `eth_subscribe` impl does not work with all transports, so we use
         // the builtin transport here for now

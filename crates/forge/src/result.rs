@@ -54,6 +54,8 @@ pub struct TestOutcome {
     pub known_contracts: Option<ContractsByArtifact>,
     /// The fuzz seed used for the test run.
     pub fuzz_seed: Option<U256>,
+    /// Explicit invariant worker count used for the test run.
+    pub invariant_workers: usize,
 }
 
 impl TestOutcome {
@@ -71,6 +73,7 @@ impl TestOutcome {
             gas_report: None,
             known_contracts,
             fuzz_seed,
+            invariant_workers: 1,
         }
     }
 
@@ -149,6 +152,11 @@ impl TestOutcome {
     /// Returns `true` if any fuzz or invariant test failed.
     pub fn has_fuzz_failures(&self) -> bool {
         self.failures().any(|(_, t)| t.kind.is_fuzz() || t.kind.is_invariant())
+    }
+
+    /// Returns `true` if any invariant test failed.
+    pub fn has_invariant_failures(&self) -> bool {
+        self.failures().any(|(_, t)| t.kind.is_invariant())
     }
 
     /// Sums up all the durations of all individual test suites.
@@ -234,6 +242,13 @@ impl TestOutcome {
                 format!("{seed:#x}").cyan(),
                 "`--fuzz-seed`".cyan()
             )?;
+            if outcome.has_invariant_failures() && outcome.invariant_workers > 1 {
+                sh_println!(
+                    "Invariant workers: {} (use {} to reproduce)",
+                    outcome.invariant_workers,
+                    format!("`--invariant-workers {}`", outcome.invariant_workers).cyan()
+                )?;
+            }
         }
 
         std::process::exit(test_failure_exit_code());

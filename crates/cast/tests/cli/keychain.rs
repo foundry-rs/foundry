@@ -133,6 +133,49 @@ casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
 });
 
+casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
+    let output = cmd
+        .args([
+            "keychain",
+            "doctor",
+            accounts::ADDR2,
+            "--root-account",
+            accounts::ADDR1,
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast keychain doctor --json should emit valid JSON");
+    assert_eq!(parsed["schema_version"], 1);
+});
+
+casttest!(keychain_show_json_no_match_returns_empty_array, |prj, cmd| {
+    let tempo_home = prj.root().join("tempo-home");
+    fs::create_dir_all(tempo_home.join("wallet")).expect("create Tempo wallet dir");
+    fs::write(tempo_home.join("wallet/keys.toml"), "keys = []\n").expect("write keys.toml");
+
+    cmd.env("TEMPO_HOME", &tempo_home);
+
+    let output = cmd
+        .args(["keychain", "show", accounts::ADDR1, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast keychain show --json should emit valid JSON");
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(
+        parsed["data"].as_array().expect("keychain show --json data should be an array").len(),
+        0
+    );
+});
+
 casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
@@ -173,6 +216,7 @@ casttest!(wallet_session_revoke_revokes_provisioned_key_on_chain, async |_prj, c
         .stdout_lossy();
     let checked: serde_json::Value =
         serde_json::from_str(check_output.trim()).expect("keychain check emits JSON");
+    let checked = &checked["data"];
     assert_eq!(checked["provisioned"], false);
     assert_eq!(checked["is_revoked"], true);
 
@@ -227,6 +271,7 @@ casttest!(wallet_session_revoke_sponsor_hash_does_not_mark_revoked, async |_prj,
         .stdout_lossy();
     let checked: serde_json::Value =
         serde_json::from_str(check_output.trim()).expect("keychain check emits JSON");
+    let checked = &checked["data"];
     assert_eq!(checked["provisioned"], true);
     assert_eq!(checked["is_revoked"], false);
 
@@ -269,6 +314,7 @@ casttest!(wallet_session_revoke_marks_unprovisioned_key_revoked_locally, async |
         .stdout_lossy();
     let checked: serde_json::Value =
         serde_json::from_str(check_output.trim()).expect("keychain check emits JSON");
+    let checked = &checked["data"];
     assert_eq!(checked["provisioned"], false);
     assert_eq!(checked["is_revoked"], false);
 
