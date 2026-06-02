@@ -1617,17 +1617,8 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     assert_eq!(modexp.len, 1);
     assert_eq!(modexp.byte(0), modexp_again.byte(0));
 
-    let bn_input = vec![SymWord::Expr(Expr::Var("point".to_string())); 128];
-    let bn_add = execute_symbolic_precompile(
-        precompile_address(6),
-        bn_input,
-        SymWord::Concrete(U256::from(128)),
-    )
-    .unwrap()
-    .unwrap();
-    assert_eq!(bn_add.len, 64);
-
-    let blake_input = vec![SymWord::Expr(Expr::Var("blake_input".to_string())); 213];
+    let mut blake_input = vec![SymWord::Expr(Expr::Var("blake_input".to_string())); 213];
+    blake_input[212] = SymWord::zero();
     let blake = execute_symbolic_precompile(
         precompile_address(9),
         blake_input,
@@ -1636,6 +1627,34 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     .unwrap()
     .unwrap();
     assert_eq!(blake.len, 64);
+}
+
+#[test]
+/// Regression coverage for `validity_sensitive_symbolic_precompiles_fail_closed`.
+fn validity_sensitive_symbolic_precompiles_fail_closed() {
+    let bn_input = vec![SymWord::Expr(Expr::Var("point".to_string())); 128];
+    let err = execute_symbolic_precompile(
+        precompile_address(6),
+        bn_input,
+        SymWord::Concrete(U256::from(128)),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        SymbolicError::Unsupported("symbolic bn254 precompile validity not modeled")
+    ));
+
+    let blake_input = vec![SymWord::Expr(Expr::Var("blake_input".to_string())); 213];
+    let err = execute_symbolic_precompile(
+        precompile_address(9),
+        blake_input,
+        SymWord::Concrete(U256::from(213)),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        SymbolicError::Unsupported("symbolic blake2f precompile final flag not modeled")
+    ));
 }
 
 #[test]

@@ -52,6 +52,42 @@ contract SymbolicFalsePassPrevention is Test {
         assert(ok);
     }
 
+    function checkBn254AddPrecompileFailsClosed(uint256 x) public view {
+        (bool ok,) = address(0x06).staticcall(abi.encode(x, uint256(0), uint256(0), uint256(0)));
+        assert(ok);
+    }
+
+    function checkBn254MulPrecompileFailsClosed(uint256 x) public view {
+        (bool ok,) = address(0x07).staticcall(abi.encode(x, uint256(0), uint256(0)));
+        assert(ok);
+    }
+
+    function checkBn254PairingPrecompileFailsClosed(uint256 x) public view {
+        bytes memory input = new bytes(192);
+        assembly {
+            mstore(add(input, 32), x)
+        }
+        (bool ok,) = address(0x08).staticcall(input);
+        assert(ok);
+    }
+
+    function checkBlake2fFinalFlagFailsClosed(uint8 flag) public {
+        vm.assume(flag > 1);
+        bytes memory input = new bytes(213);
+        input[212] = bytes1(flag);
+
+        (bool ok,) = address(0x09).staticcall(input);
+        assert(ok);
+    }
+
+    function checkSetEvmVersionFailsClosed() public {
+        vm.setEvmVersion("london");
+    }
+
+    function checkGetEvmVersionFailsClosed() public view {
+        assertEq(vm.getEvmVersion(), "cancun");
+    }
+
     function checkExpectSafeMemoryFailsClosed() public {
         vm.expectSafeMemory(0x80, 0xA0);
     }
@@ -95,6 +131,10 @@ contract SymbolicFalsePassPrevention is Test {
 unsupported symbolic execution feature: symbolic ADDMOD unbounded intermediate not modeled
 unsupported symbolic execution feature: symbolic MULMOD unbounded intermediate not modeled
 unsupported symbolic execution feature: KZG point-evaluation precompile not modeled
+unsupported symbolic execution feature: symbolic bn254 precompile validity not modeled
+unsupported symbolic execution feature: symbolic blake2f precompile final flag not modeled
+unsupported symbolic execution feature: symbolic vm.setEvmVersion not modeled
+unsupported symbolic execution feature: symbolic vm.getEvmVersion not modeled
 unsupported symbolic execution feature: symbolic vm.expectSafeMemory not modeled
 unsupported symbolic execution feature: symbolic vm.expectSafeMemoryCall not modeled
 unsupported symbolic execution feature: symbolic vm.stopExpectSafeMemory not modeled

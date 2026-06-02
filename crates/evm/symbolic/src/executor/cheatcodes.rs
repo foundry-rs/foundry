@@ -1576,7 +1576,6 @@ impl SymbolicExecutor {
             || selector == selector!("snapshotValue(string,string,uint256)")
             || selector == selector!("startSnapshotGas(string)")
             || selector == selector!("startSnapshotGas(string,string)")
-            || selector == selector!("setEvmVersion(string)")
             || selector == selector!("sleep(uint256)")
             || selector == selector!("cool(address)")
             || selector == selector!("accessList((address,bytes32[])[])")
@@ -1586,8 +1585,11 @@ impl SymbolicExecutor {
         {
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
+        if selector == selector!("setEvmVersion(string)") {
+            return Err(SymbolicError::Unsupported("symbolic vm.setEvmVersion not modeled"));
+        }
         if selector == selector!("getEvmVersion()") {
-            return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return("cancun".bytes())));
+            return Err(SymbolicError::Unsupported("symbolic vm.getEvmVersion not modeled"));
         }
         if selector == selector!("getFoundryVersion()") {
             return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(

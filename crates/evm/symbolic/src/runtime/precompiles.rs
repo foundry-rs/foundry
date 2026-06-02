@@ -104,6 +104,11 @@ pub(crate) fn execute_symbolic_precompile(
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
+            if input_has_symbolic_bytes(&input, input_len) {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic bn254 precompile validity not modeled",
+                ));
+            }
             Ok(Some(symbolic_fixed_len_precompile_output("bn254_add", input, input_len, 64)))
         }
         Some(7) => {
@@ -111,12 +116,25 @@ pub(crate) fn execute_symbolic_precompile(
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
+            if input_has_symbolic_bytes(&input, input_len) {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic bn254 precompile validity not modeled",
+                ));
+            }
             Ok(Some(symbolic_fixed_len_precompile_output("bn254_mul", input, input_len, 64)))
         }
         Some(8) => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
+            if input_len % 192 != 0 {
+                return Ok(None);
+            }
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
+            }
+            if input_has_symbolic_bytes(&input, input_len) {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic bn254 precompile validity not modeled",
+                ));
             }
             Ok(Some(symbolic_fixed_len_precompile_output("bn254_pairing", input, input_len, 32)))
         }
@@ -127,6 +145,20 @@ pub(crate) fn execute_symbolic_precompile(
             }
             if input_len > input.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
+            }
+            match input.get(212) {
+                Some(SymWord::Concrete(flag)) if flag.is_zero() || *flag == U256::from(1) => {}
+                Some(SymWord::Concrete(_)) => return Ok(None),
+                Some(SymWord::Expr(_)) => {
+                    return Err(SymbolicError::Unsupported(
+                        "symbolic blake2f precompile final flag not modeled",
+                    ));
+                }
+                None => {
+                    return Err(SymbolicError::Unsupported(
+                        "out-of-bounds symbolic precompile input",
+                    ));
+                }
             }
             Ok(Some(symbolic_fixed_len_precompile_output("blake2f", input, input_len, 64)))
         }
@@ -142,6 +174,10 @@ pub(crate) fn execute_symbolic_precompile(
             execute_precompile(address, &input)
         }
     }
+}
+
+fn input_has_symbolic_bytes(input: &[SymWord], input_len: usize) -> bool {
+    input.iter().take(input_len).any(|byte| matches!(byte, SymWord::Expr(_)))
 }
 
 /// Returns the `symbolic_modexp_precompile` precompile helper result.
