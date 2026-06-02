@@ -140,7 +140,7 @@ impl Fuzzer {
         }
 
         // Replace the call with a reentrant callback
-        call.input = CallInput::Bytes(tx.call_details.calldata.0.into());
+        call.input = CallInput::Bytes(tx.call_details.calldata);
         call.caller = tx.sender;
         call.target_address = tx.call_details.target;
         call.bytecode_address = tx.call_details.target;

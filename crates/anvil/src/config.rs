@@ -126,9 +126,9 @@ pub struct NodeConfig {
     pub genesis_block_number: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<PrivateKeySigner>,
-    /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
+    /// Configured block time for the EVM chain. Use `None` for instant/auto mining.
     pub block_time: Option<Duration>,
-    /// Disable auto, interval mining mode uns use `MiningMode::None` instead
+    /// Disable auto and interval mining mode and use `MiningMode::None` instead.
     pub no_mining: bool,
     /// Enables auto and interval mining mode
     pub mixed_mining: bool,
@@ -582,6 +582,14 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
+        if self.networks.is_tempo()
+            && let Some(hardfork) = TempoHardfork::from_chain_and_timestamp(
+                self.get_chain_id(),
+                self.get_genesis_timestamp(),
+            )
+        {
+            return hardfork.into();
+        }
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
             return foundry_evm::hardforks::OpHardfork::default().into();
@@ -977,14 +985,14 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to print `console.log` invocations to stdout.
+    /// Sets whether to print `console.log` invocations to stderr.
     #[must_use]
     pub const fn with_print_logs(mut self, print_logs: bool) -> Self {
         self.print_logs = print_logs;
         self
     }
 
-    /// Sets whether to print traces to stdout.
+    /// Sets whether to print traces to stderr.
     #[must_use]
     pub const fn with_print_traces(mut self, print_traces: bool) -> Self {
         self.print_traces = print_traces;
@@ -1032,7 +1040,7 @@ impl NodeConfig {
             foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
         }
         if !self.silent {
-            sh_println!("{}", self.as_string(fork))?;
+            sh_eprintln!("{}", self.as_string(fork))?;
         }
         Ok(())
     }
@@ -1092,7 +1100,7 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
+    /// Makes the node silent to not emit any banner/status output
     #[must_use]
     pub const fn silent(self) -> Self {
         self.set_silent(true)
@@ -1785,5 +1793,18 @@ mod tests {
         config.set_chain_id(Some(10u64));
 
         assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    fn get_hardfork_on_tempo_never_returns_non_tempo_variant() {
+        // Post-Shanghai timestamp on Ethereum mainnet.
+        let shanghai_ts = 1_681_338_455u64;
+
+        let config = NodeConfig::test_tempo()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(shanghai_ts));
+
+        assert!(config.networks.is_tempo());
+        assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
     }
 }

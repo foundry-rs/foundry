@@ -968,3 +968,120 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 "#
     ]]);
 });
+
+// Regression: `revertToState` / `revertToStateAndDelete` taken before any
+// `vm.blobhashes` override must exercise the `None` arm of
+// `sync_tx_after_env_override_restore` (pre_override_blob_hashes path).
+// The snapshot is taken while env_overrides.blob_hashes is None; after the
+// override is applied and reverted the hashes must return to empty.
+//
+// NOTE: Testing restoration of *non-empty* native blob hashes (EIP-4844 fork
+// mode where tx.blob_hashes is non-empty without a cheatcode) is not reachable
+// from Solidity.
+forgetest_init!(issue_blobhashes_pre_override_snapshot, |prj, cmd| {
+    prj.add_test(
+        "BlobhashesPreOverride.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract BlobhashesPreOverrideSnapshotTest is Test {
+    function test_blobhashes_none_arm_revertToState() public {
+        assertEq(vm.getBlobhashes().length, 0, "no hashes before override");
+
+        uint256 id = vm.snapshotState();
+
+        bytes32[] memory h = new bytes32[](2);
+        h[0] = bytes32(uint256(0xAABB));
+        h[1] = bytes32(uint256(0xCCDD));
+        vm.blobhashes(h);
+        assertEq(vm.getBlobhashes().length, 2, "override visible");
+
+        vm.revertToState(id);
+        assertEq(vm.getBlobhashes().length, 0, "None arm: hashes cleared after revert");
+    }
+
+    function test_blobhashes_none_arm_revertToStateAndDelete() public {
+        assertEq(vm.getBlobhashes().length, 0, "no hashes before override");
+
+        uint256 id = vm.snapshotState();
+
+        bytes32[] memory h = new bytes32[](1);
+        h[0] = bytes32(uint256(0xDEAD));
+        vm.blobhashes(h);
+        assertEq(vm.getBlobhashes().length, 1, "override visible");
+
+        vm.revertToStateAndDelete(id);
+        assertEq(vm.getBlobhashes().length, 0, "None arm: hashes cleared after revertAndDelete");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/BlobhashesPreOverride.t.sol:BlobhashesPreOverrideSnapshotTest
+[PASS] test_blobhashes_none_arm_revertToState() ([GAS])
+[PASS] test_blobhashes_none_arm_revertToStateAndDelete() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+// Regression: `revertToState` taken before `vm.txGasPrice` must restore the
+// configured pre override gas price, not zero.
+forgetest_init!(issue_txgasprice_pre_override_snapshot, |prj, cmd| {
+    prj.update_config(|config| {
+        config.gas_price = Some(10_000_000_000); // 10 gwei
+    });
+    prj.add_test(
+        "TxGasPricePreOverride.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract TxGasPricePreOverrideSnapshotTest is Test {
+    function test_pre_override_gas_price_restored_after_revert() public {
+        uint256 pre_override = tx.gasprice;
+        assertEq(pre_override, 10 gwei, "pre override should be 10 gwei from config");
+
+        uint256 id = vm.snapshotState();
+        vm.txGasPrice(222 gwei);
+        assertEq(tx.gasprice, 222 gwei, "override should be visible");
+
+        vm.revertToState(id);
+        assertEq(tx.gasprice, pre_override, "should restore pre override gas price after revert");
+    }
+
+    function test_pre_override_gas_price_restored_after_revertAndDelete() public {
+        uint256 pre_override = tx.gasprice;
+        assertEq(pre_override, 10 gwei, "pre override should be 10 gwei from config");
+
+        uint256 id = vm.snapshotState();
+        vm.txGasPrice(333 gwei);
+        assertEq(tx.gasprice, 333 gwei, "override should be visible");
+
+        vm.revertToStateAndDelete(id);
+        assertEq(tx.gasprice, pre_override, "should restore pre override gas price after revertAndDelete");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
+[PASS] test_pre_override_gas_price_restored_after_revert() ([GAS])
+[PASS] test_pre_override_gas_price_restored_after_revertAndDelete() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});

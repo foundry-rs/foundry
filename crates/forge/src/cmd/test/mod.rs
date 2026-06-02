@@ -2,9 +2,10 @@ use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
+    diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
-    multi_runner::{MultiNetworkConfig, matches_artifact},
-    result::{SuiteResult, TestOutcome, TestStatus},
+    multi_runner::{MultiNetworkConfig, ShowmapConfig, matches_artifact},
+    result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -14,15 +15,17 @@ use crate::{
 };
 use alloy_primitives::U256;
 use chrono::Utc;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
+    ExitCode,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
-    ProjectCompileOutput,
+    CompilationError, ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
@@ -45,6 +48,8 @@ use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
+    executors::ShowmapDomain,
+    fuzz::CounterExample,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -69,6 +74,26 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+/// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "lowercase")]
+pub enum ShowmapDomainArg {
+    #[default]
+    Evm,
+    Sancov,
+    Both,
+}
+
+impl From<ShowmapDomainArg> for ShowmapDomain {
+    fn from(d: ShowmapDomainArg) -> Self {
+        match d {
+            ShowmapDomainArg::Evm => Self::Evm,
+            ShowmapDomainArg::Sancov => Self::Sancov,
+            ShowmapDomainArg::Both => Self::Both,
+        }
+    }
+}
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
@@ -207,6 +232,57 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options")]
     pub disable_labels: bool,
 
+    /// Replay the persisted corpus and emit AFL-`afl-showmap`-style coverage
+    /// files at the given output directory. Disables the regular fuzz/invariant
+    /// campaign and skips unit tests.
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        conflicts_with_all = ["debug", "flamegraph", "flamechart", "rerun", "fuzz_input_file", "gas_report"],
+    )]
+    pub showmap_out: Option<PathBuf>,
+
+    /// Emit one showmap file per corpus entry (default: one aggregated file per test).
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub showmap_per_input: bool,
+
+    /// Coverage domain(s) to dump.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ShowmapDomainArg::Evm,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub showmap_domain: ShowmapDomainArg,
+
+    /// Approach name (used as a subdirectory of `--showmap-out`).
+    #[arg(
+        long,
+        default_value = "replay",
+        help_heading = "Showmap replay",
+        requires = "showmap_out"
+    )]
+    pub showmap_approach: String,
+
+    /// Trial identifier embedded in each showmap filename. Defaults to a unique
+    /// `trial-<unix_nanos>` so reruns don't overwrite previous trials.
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub showmap_trial: Option<String>,
+
+    /// Override the corpus directory to replay (defaults to the per-test
+    /// `corpus_dir` resolved from config).
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub showmap_corpus_dir: Option<PathBuf>,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -224,6 +300,70 @@ impl TestArgs {
     pub async fn run(mut self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
         self.compile_and_run().await
+    }
+
+    /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
+    fn showmap_config(&self) -> Option<ShowmapConfig> {
+        // Default trial id uses nanosecond precision so back-to-back invocations
+        // don't collide and overwrite each other's output files.
+        let trial = self.showmap_trial.clone().unwrap_or_else(|| {
+            let ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            format!("trial-{ns}")
+        });
+        Some(ShowmapConfig {
+            out_dir: self.showmap_out.clone()?,
+            approach: self.showmap_approach.clone(),
+            trial,
+            per_input: self.showmap_per_input,
+            domain: self.showmap_domain.into(),
+            corpus_dir: self.showmap_corpus_dir.clone(),
+        })
+    }
+
+    /// Reject flags whose stdout shape conflicts with the NDJSON stream
+    /// contract under `--machine`. Called from the binary entry point so
+    /// `--watch` is also rejected.
+    pub(crate) fn reject_machine_unsupported_flags(&self) -> Result<()> {
+        if !foundry_cli::is_machine() {
+            return Ok(());
+        }
+        let unsupported = [
+            ("--watch", self.is_watch()),
+            ("--debug", self.debug),
+            ("--flamegraph", self.flamegraph),
+            ("--flamechart", self.flamechart),
+            ("--gas-report", self.gas_report),
+            ("--summary", self.summary),
+            ("--list", self.list),
+            ("--junit", self.junit),
+            ("--show-progress", self.show_progress),
+            // `--live-logs` writes console.log straight to stdout; the
+            // `live_logs = true` config equivalent is overridden in
+            // `compile_and_run`.
+            ("--live-logs", self.evm.live_logs),
+            // Bails mid-suite on diff; config equivalent overridden in `compile_and_run`.
+            ("--gas-snapshot-check", self.gas_snapshot_check.unwrap_or(false)),
+            // Writes mid-suite to disk and can fail between test_result and
+            // suite_finished; config equivalent overridden in `compile_and_run`.
+            ("--gas-snapshot-emit", self.gas_snapshot_emit == Some(true)),
+        ]
+        .into_iter()
+        .filter_map(|(name, on)| on.then_some(name))
+        .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            foundry_cli::machine::bail_machine_usage_with_details(
+                format!(
+                    "`forge test` under `--machine` does not yet support {}; \
+                     run without `--machine` or omit those flags.",
+                    unsupported.join(", ")
+                ),
+                serde_json::json!({ "unsupported_flags": unsupported }),
+            );
+        }
+        Ok(())
     }
 
     /// Returns a list of files that need to be compiled in order to run all the tests that match
@@ -252,6 +392,11 @@ impl TestArgs {
         });
         let output = project.compile()?;
         if output.has_compiler_errors() {
+            // Mirror the main-compile typed envelope so agents don't see this
+            // path as `cli.unknown` + exit 1.
+            if foundry_cli::is_machine() {
+                emit_machine_compile_error(&output);
+            }
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
@@ -273,11 +418,26 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
+        let machine_mode = foundry_cli::is_machine();
+
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
-        // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        // Override foundry.toml knobs that would print outside the NDJSON
+        // stream or bail mid-suite; the CLI equivalents are rejected in
+        // `reject_machine_unsupported_flags`.
+        if machine_mode {
+            config.show_progress = false;
+            config.live_logs = false;
+            config.gas_snapshot_check = false;
+            config.gas_snapshot_emit = false;
+        }
+
+        // Skip implicit dep install: it prints to stdout. A missing dep then
+        // surfaces as a typed `compiler.solc.error` from the compile below.
+        if !machine_mode
+            && install::install_missing_dependencies(&mut config).await
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -289,11 +449,20 @@ impl TestArgs {
         let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit)
+            .quiet(shell::is_json() || self.junit || machine_mode)
             .files(self.get_sources_to_compile(&config, &filter)?);
+        // Disable inner `bail` so a compile error returns the output and we
+        // can emit a typed envelope instead of an untyped `cli.unknown`.
+        if machine_mode {
+            compiler = compiler.bail(false);
+        }
         let output = compiler.compile(&project)?;
+
+        if machine_mode && output.has_compiler_errors() {
+            emit_machine_compile_error(&output);
+        }
 
         self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
     }
@@ -359,6 +528,21 @@ impl TestArgs {
         let inline_config = InlineConfig::new_parsed(output, &config)?;
         let override_networks = inline_config.referenced_override_networks(&config.profile);
 
+        // Multi-pass would emit `test_result*` + `suite_finished` once per
+        // pass for the same suite, violating "exactly one terminator per group".
+        if foundry_cli::is_machine() && !override_networks.is_empty() {
+            let networks: Vec<String> = override_networks.iter().map(|n| n.to_string()).collect();
+            foundry_cli::machine::bail_machine_usage_with_details(
+                "`forge test` under `--machine` does not yet support inline network \
+                 overrides; run without `--machine` or remove the inline `network` \
+                 annotations.",
+                serde_json::json!({
+                    "unsupported_features": ["inline_network_overrides"],
+                    "networks": networks,
+                }),
+            );
+        }
+
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
             self.dispatch_network(
@@ -420,10 +604,11 @@ impl TestArgs {
             }
 
             // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
-            if !self.summary && !shell::is_json() {
+            // Machine mode emits a terminal envelope from the binary entry point instead.
+            if !self.summary && !shell::is_json() && !foundry_cli::is_machine() {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
-            if self.summary && !outcome.results.is_empty() {
+            if self.summary && !outcome.results.is_empty() && !foundry_cli::is_machine() {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
             }
@@ -521,6 +706,7 @@ impl TestArgs {
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         let config = Arc::new(config);
+        let showmap = self.showmap_config();
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -531,6 +717,7 @@ impl TestArgs {
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
             .with_multi_network(multi_network)
+            .with_showmap(showmap)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
@@ -610,8 +797,12 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
+        let machine_mode = foundry_cli::is_machine();
+
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
+        // Machine mode is also a structured stream and must not interleave human output.
+        let silent =
+            machine_mode || self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
@@ -621,22 +812,24 @@ impl TestArgs {
             } else {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
-            if total_tests == 0 {
-                sh_println!(
-                    "No tests found in project! Forge looks for functions that start with `test`"
-                )?;
-            } else {
-                let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                // Try to suggest a test when there's no match.
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    let test_name = test_pattern.as_str();
-                    // Filter contracts but not test functions.
-                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        write!(msg, "\nDid you mean `{suggestion}`?")?;
+            if !machine_mode {
+                if total_tests == 0 {
+                    sh_println!(
+                        "No tests found in project! Forge looks for functions that start with `test`"
+                    )?;
+                } else {
+                    let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                    // Try to suggest a test when there's no match.
+                    if let Some(test_pattern) = &filter.args().test_pattern {
+                        let test_name = test_pattern.as_str();
+                        // Filter contracts but not test functions.
+                        let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                        if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                            write!(msg, "\nDid you mean `{suggestion}`?")?;
+                        }
                     }
+                    sh_warn!("{msg}")?;
                 }
-                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
@@ -666,7 +859,8 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && !self.summary && shell::is_json() {
+        // Agent stream wins over `--json`.
+        if !machine_mode && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
             for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
@@ -756,6 +950,7 @@ impl TestArgs {
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
         for (contract_name, mut suite_result) in rx {
+            let len = suite_result.len();
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
 
@@ -783,7 +978,6 @@ impl TestArgs {
                     sh_warn!("{warning}")?;
                 }
                 if has_tests {
-                    let len = tests.len();
                     let tests = if len > 1 { "tests" } else { "test" };
                     sh_println!("Ran {len} {tests} for {contract_name}")?;
                 }
@@ -794,7 +988,7 @@ impl TestArgs {
                 let show_traces =
                     !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
-                    sh_println!("{}", result.short_result(name))?;
+                    sh_println!("{}", result.short_result_with_suite(name, &contract_name))?;
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind
@@ -815,6 +1009,10 @@ impl TestArgs {
                             sh_println!()?;
                         }
                     }
+                }
+
+                if machine_mode {
+                    emit_test_result_event(&contract_name, name, result)?;
                 }
 
                 // We shouldn't break out of the outer loop directly here so that we finish
@@ -1011,6 +1209,17 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
+            if machine_mode {
+                for warning in &suite_result.warnings {
+                    emit_warning_event(&contract_name, warning)?;
+                }
+                // Terminator follows any record for the group; warning-only
+                // suites get a zero-count `suite_finished`.
+                if has_tests || !suite_result.warnings.is_empty() {
+                    emit_suite_finished_event(&contract_name, &suite_result)?;
+                }
+            }
+
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
@@ -1030,11 +1239,11 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !is_multi_pass && !self.summary && !shell::is_json() {
+        if !is_multi_pass && !self.summary && !shell::is_json() && !machine_mode {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() && !machine_mode {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
             sh_println!("{summary_report}")?;
         }
@@ -1086,6 +1295,124 @@ impl TestArgs {
             Ok([config.src, config.test])
         })
     }
+}
+
+/// Terminal `forge test` envelope payload under `--machine`. Counts are
+/// aggregated across every suite; times are in milliseconds.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TestSummaryData {
+    pub suites: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub duration_ms: u128,
+}
+
+impl TestSummaryData {
+    pub fn from_outcome(outcome: &TestOutcome, wall_clock: Duration) -> Self {
+        Self {
+            suites: outcome.results.len(),
+            passed: outcome.passed(),
+            failed: outcome.failed(),
+            skipped: outcome.skipped(),
+            duration_ms: wall_clock.as_millis(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct TestResultEvent<'a> {
+    suite: &'a str,
+    name: &'a str,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    duration_ms: u128,
+}
+
+#[derive(serde::Serialize)]
+struct SuiteFinishedEvent<'a> {
+    suite: &'a str,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    duration_ms: u128,
+}
+
+#[derive(serde::Serialize)]
+struct WarningEvent<'a> {
+    suite: &'a str,
+    code: &'static str,
+    message: &'a str,
+}
+
+const fn status_str(status: TestStatus) -> &'static str {
+    match status {
+        TestStatus::Success => "passed",
+        TestStatus::Failure => "failed",
+        TestStatus::Skipped => "skipped",
+    }
+}
+
+fn emit_test_result_event(
+    suite: &str,
+    name: &str,
+    result: &crate::result::TestResult,
+) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "test_result",
+        TestResultEvent {
+            suite,
+            name,
+            status: status_str(result.status),
+            reason: result.reason.as_deref(),
+            duration_ms: result.duration.as_millis(),
+        },
+    )?;
+    Ok(())
+}
+
+fn emit_suite_finished_event(suite: &str, result: &SuiteResult) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "suite_finished",
+        SuiteFinishedEvent {
+            suite,
+            passed: result.passed(),
+            failed: result.failed(),
+            skipped: result.skipped(),
+            duration_ms: result.duration.as_millis(),
+        },
+    )?;
+    Ok(())
+}
+
+fn emit_warning_event(suite: &str, message: &str) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "warning",
+        WarningEvent { suite, code: foundry_cli::diagnostic::test::WARNING, message },
+    )?;
+    Ok(())
+}
+
+/// Emit a `compiler.solc.error` envelope and exit `Build (4)`. Shared by the
+/// precompile and main-compile sites under `--machine`.
+fn emit_machine_compile_error(output: &ProjectCompileOutput) -> ! {
+    let errors: Vec<JsonMessage> = output
+        .output()
+        .errors
+        .iter()
+        .filter(|e| e.is_error())
+        .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
+        .collect();
+    // Best-effort: bubbling on a broken stdout would demote exit `4` to `1`.
+    let _ = print_json(&JsonEnvelope::<()>::failure(errors));
+    std::process::exit(ExitCode::Build.to_i32());
 }
 
 impl Provider for TestArgs {
@@ -1193,20 +1520,23 @@ fn last_run_failures(config: &Config) -> Option<regex::Regex> {
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let mut filter = String::new();
-        let mut failures = outcome.failures().peekable();
-        while let Some((test_name, _)) = failures.next() {
-            if test_name.is_any_test()
-                && let Some(test_match) = test_name.split('(').next()
-            {
-                filter.push_str(test_match);
-                if failures.peek().is_some() {
-                    filter.push('|');
-                }
-            }
-        }
+        let filter =
+            outcome.failures().flat_map(rerun_filter_matches).collect::<Vec<_>>().join("|");
         let _ = fs::write(&config.test_failures_file, filter);
     }
+}
+
+fn rerun_filter_matches<'a>(
+    (test_name, test_result): (&'a String, &'a TestResult),
+) -> impl Iterator<Item = &'a str> {
+    let has_predicate_failures =
+        test_result.invariant_failures.iter().any(|failure| failure.predicate_name().is_some());
+    let predicate_failures =
+        test_result.invariant_failures.iter().filter_map(|failure| failure.predicate_name());
+
+    let fallback = test_name.is_any_test().then(|| test_name.split('(').next()).flatten();
+
+    predicate_failures.chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
 }
 
 /// Generate test report in JUnit XML report format.
@@ -1220,36 +1550,184 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {
-            let mut test_status = match test_result.status {
-                TestStatus::Success => TestCaseStatus::success(),
-                TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
-                TestStatus::Skipped => TestCaseStatus::skipped(),
-            };
-            if let Some(reason) = &test_result.reason {
-                test_status.set_message(reason);
-            }
-
-            let mut test_case = TestCase::new(test_name, test_status);
-            test_case.set_time(test_result.duration);
-
-            let mut sys_out = String::new();
-            let result_report = test_result.kind.report();
-            write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
-            if verbosity >= 2 && !test_result.logs.is_empty() {
-                write!(sys_out, "\\nLogs:\\n").unwrap();
-                let console_logs = decode_console_logs(&test_result.logs);
-                for log in console_logs {
-                    write!(sys_out, "  {log}\\n").unwrap();
-                }
-            }
-
-            test_case.set_system_out(sys_out);
-            test_suite.add_test_case(test_case);
+            add_junit_test_cases(&mut test_suite, test_name, test_result, verbosity);
         }
         junit_report.add_test_suite(test_suite);
     }
     junit_report.set_time(total_duration);
     junit_report
+}
+
+/// Adds JUnit test cases for a test result.
+///
+/// Invariant campaigns are expanded into per-predicate and per-handler cases so CI can report
+/// contract-level execution without losing failure attribution.
+fn add_junit_test_cases(
+    test_suite: &mut TestSuite,
+    test_name: &str,
+    test_result: &TestResult,
+    verbosity: u8,
+) {
+    let output = JunitOutput::new(test_result, verbosity);
+    let expanded_invariant = test_result.kind.is_invariant()
+        && (!test_result.invariant_predicate_results.is_empty()
+            || !test_result.invariant_handler_failures.is_empty());
+
+    if !expanded_invariant {
+        add_junit_test_case(
+            test_suite,
+            test_name,
+            test_result.status,
+            test_result.reason.as_deref(),
+            test_result,
+            output.system_out(test_result, test_name),
+        );
+        return;
+    }
+
+    let mut add_expanded_case =
+        |name: &str,
+         status: TestStatus,
+         reason: Option<&str>,
+         counterexample: Option<&CounterExample>| {
+            add_junit_test_case(
+                test_suite,
+                name,
+                status,
+                reason,
+                test_result,
+                output.case_system_out(status, reason, name, counterexample),
+            );
+        };
+
+    if test_result.invariant_predicate_results.is_empty() {
+        let failure = test_result.invariant_failures.first();
+        let status = if failure.is_some() { TestStatus::Failure } else { TestStatus::Success };
+        add_expanded_case(
+            test_name,
+            status,
+            failure.map(|failure| failure.reason()),
+            failure.and_then(|failure| failure.counterexample()),
+        );
+    } else {
+        for predicate in &test_result.invariant_predicate_results {
+            let failure = test_result
+                .invariant_failures
+                .iter()
+                .find(|failure| failure.name() == predicate.name.as_str());
+            let name = format!("{}()", predicate.name);
+            add_expanded_case(
+                &name,
+                predicate.status,
+                predicate.reason.as_deref(),
+                failure.and_then(|failure| failure.counterexample()),
+            );
+        }
+    }
+
+    for failure in &test_result.invariant_handler_failures {
+        let name = format!("handler {}", failure.name());
+        add_expanded_case(
+            &name,
+            TestStatus::Failure,
+            Some(failure.reason()),
+            failure.counterexample(),
+        );
+    }
+}
+
+/// Adds a single JUnit test case to the suite.
+fn add_junit_test_case(
+    test_suite: &mut TestSuite,
+    test_name: &str,
+    status: TestStatus,
+    message: Option<&str>,
+    test_result: &TestResult,
+    system_out: String,
+) {
+    let mut test_status = match status {
+        TestStatus::Success => TestCaseStatus::success(),
+        TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
+        TestStatus::Skipped => TestCaseStatus::skipped(),
+    };
+    if let Some(message) = message {
+        test_status.set_message(message);
+    }
+
+    let mut test_case = TestCase::new(test_name, test_status);
+    test_case.set_time(test_result.duration);
+    test_case.set_system_out(system_out);
+    test_suite.add_test_case(test_case);
+}
+
+/// Helper for assembling JUnit output strings.
+struct JunitOutput {
+    result_report: TestKindReport,
+    logs: Option<Vec<String>>,
+}
+
+impl JunitOutput {
+    /// Creates a JUnit output helper for a test result.
+    fn new(test_result: &TestResult, verbosity: u8) -> Self {
+        Self {
+            result_report: test_result.kind.report(),
+            logs: (verbosity >= 2 && !test_result.logs.is_empty())
+                .then(|| decode_console_logs(&test_result.logs)),
+        }
+    }
+
+    /// Renders the suite-level `system-out` payload.
+    fn system_out(&self, test_result: &TestResult, test_name: &str) -> String {
+        let mut sys_out = String::new();
+        write!(sys_out, "{test_result} {test_name} {}", self.result_report).unwrap();
+        self.append_logs(&mut sys_out);
+        sys_out
+    }
+
+    /// Renders the case-level `system-out` payload.
+    fn case_system_out(
+        &self,
+        status: TestStatus,
+        message: Option<&str>,
+        test_name: &str,
+        counterexample: Option<&CounterExample>,
+    ) -> String {
+        let mut sys_out = String::new();
+        match status {
+            TestStatus::Success => write!(sys_out, "[PASS]").unwrap(),
+            TestStatus::Failure => {
+                let message = message.unwrap_or_default();
+                write!(sys_out, "[FAIL: {message}]").unwrap();
+            }
+            TestStatus::Skipped => {
+                if let Some(message) = message {
+                    write!(sys_out, "[SKIP: {message}]").unwrap();
+                } else {
+                    write!(sys_out, "[SKIP]").unwrap();
+                }
+            }
+        }
+        write!(sys_out, " {test_name} {}", self.result_report).unwrap();
+        if let Some(CounterExample::Sequence(original, sequence)) = counterexample {
+            writeln!(sys_out, "\n\t[Sequence] (original: {original}, shrunk: {})", sequence.len())
+                .unwrap();
+            for ex in sequence {
+                writeln!(sys_out, "{ex}").unwrap();
+            }
+        }
+        self.append_logs(&mut sys_out);
+        sys_out
+    }
+
+    /// Appends captured console logs to the output payload.
+    fn append_logs(&self, sys_out: &mut String) {
+        if let Some(logs) = &self.logs {
+            write!(sys_out, "\\nLogs:\\n").unwrap();
+            for log in logs {
+                write!(sys_out, "  {log}\\n").unwrap();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
