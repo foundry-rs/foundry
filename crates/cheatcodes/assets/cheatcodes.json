@@ -5606,6 +5606,26 @@
     },
     {
       "func": {
+        "id": "expectLogoURIUpdated",
+        "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
+        "declaration": "function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectLogoURIUpdated(address,address,string)",
+        "selector": "0xd450e23a",
+        "selectorBytes": [
+          212,
+          80,
+          226,
+          58
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectPartialRevert_0",
         "description": "Expects an error on next call that starts with the revert data.",
         "declaration": "function expectPartialRevert(bytes4 revertData) external;",
@@ -5918,6 +5938,26 @@
           131,
           139,
           244
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectTip20LogoURIUpdated",
+        "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
+        "declaration": "function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectTip20LogoURIUpdated(address,address,string)",
+        "selector": "0x4e134a2c",
+        "selectorBytes": [
+          78,
+          19,
+          74,
+          44
         ]
       },
       "group": "testing",
@@ -9952,6 +9992,26 @@
     },
     {
       "func": {
+        "id": "setLogoURI",
+        "description": "Sets a TIP-20 token's logo URI directly in storage.\nThis bypasses the token admin check, but still validates the URI against T5 constraints.",
+        "declaration": "function setLogoURI(address token, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setLogoURI(address,string)",
+        "selector": "0x256edb36",
+        "selectorBytes": [
+          37,
+          110,
+          219,
+          54
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "setNonce",
         "description": "Sets the nonce of an account. Must be higher than the current nonce of the account.",
         "declaration": "function setNonce(address account, uint64 newNonce) external;",
@@ -10009,6 +10069,26 @@
       "group": "utilities",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setTip20LogoURI",
+        "description": "Sets a TIP-20 token's logo URI directly in storage.\nThis bypasses the token admin check, but still validates the URI against T5 constraints.",
+        "declaration": "function setTip20LogoURI(address token, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setTip20LogoURI(address,string)",
+        "selector": "0xb452dc23",
+        "selectorBytes": [
+          180,
+          82,
+          220,
+          35
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
