@@ -149,12 +149,6 @@ struct InvariantThroughputMetrics {
 }
 
 impl InvariantThroughputMetrics {
-    #[cfg(test)]
-    const fn record_call(&mut self, gas_used: u64) {
-        self.total_txs += 1;
-        self.total_gas += gas_used;
-    }
-
     fn tx_per_sec(self, elapsed: Duration) -> f64 {
         rate_per_sec(self.total_txs as f64, elapsed)
     }
@@ -206,10 +200,6 @@ impl InvariantCorpusPersistence {
     const fn is_deferred(self) -> bool {
         matches!(self, Self::Deferred)
     }
-
-    const fn progress_worker_id(self, worker_id: u32) -> Option<u32> {
-        if self.is_deferred() { Some(worker_id) } else { None }
-    }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -258,9 +248,8 @@ fn record_new_invariant_failures(
     failures: &InvariantFailures,
 ) {
     for (f, _) in &invariant_contract.invariant_fns {
-        if failures.has_failure(f) {
-            let reason =
-                failures.get_failure(f).and_then(|e| e.revert_reason()).unwrap_or_default();
+        if let Some(failure) = failures.get_failure(f) {
+            let reason = failure.revert_reason().unwrap_or_default();
             campaign_state.record_invariant_failure(&f.name, invariant_contract.name, &reason);
         }
     }
@@ -556,8 +545,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         >,
     ) -> Result<InvariantFuzzTestResult> {
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
-        let worker_count = invariant_worker_count(&self.config);
-        let worker_plans = campaign_spec.worker_plans(worker_count)?;
+        let worker_plans = campaign_spec.worker_plans(invariant_worker_count(&self.config))?;
         let actual_worker_count = worker_plans.len();
         let campaign_seed =
             self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
@@ -572,8 +560,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&replay_targets),
             Some(self.dynamic_target_ctx()),
         )?;
-        let run_in_parallel = worker_plans.len() > 1;
-        let corpus_persistence = if run_in_parallel {
+        let corpus_persistence = if actual_worker_count > 1 {
             InvariantCorpusPersistence::Deferred
         } else {
             InvariantCorpusPersistence::Live
@@ -586,7 +573,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
-        let worker_outputs = if run_in_parallel {
+        let worker_outputs = if corpus_persistence.is_deferred() {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
@@ -628,11 +615,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 .collect::<Result<Vec<_>>>()?
         } else {
             let worker_plan = worker_plans[0];
-            let gas_report_samples = gas_report_samples_for_worker(
-                config.gas_report_samples,
-                worker_plan.worker_id,
-                actual_worker_count,
-            );
+            let gas_report_samples = config.gas_report_samples as usize;
             vec![Self::run_invariant_worker(
                 base_executor,
                 runner,
@@ -640,33 +623,28 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 setup_contracts,
                 project_contracts,
                 worker_plan,
-                invariant_contract.clone(),
+                invariant_contract,
                 fuzz_fixtures,
                 fuzz_state,
                 progress,
                 &campaign_state,
-                campaign_seed.clone(),
+                campaign_seed,
                 corpus_seed.clone(),
                 corpus_persistence,
                 gas_report_samples,
             )?]
         };
 
-        let is_timed_campaign = campaign_state.is_timed_campaign();
         let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
         for worker_output in worker_outputs {
             aggregator.push(worker_output);
         }
-        let (result, corpus_entries) = if is_timed_campaign {
+        let (result, corpus_entries) = if campaign_state.is_timed_campaign() {
             aggregator.finish_partial_with_corpus_entries()?
         } else {
             aggregator.finish_with_corpus_entries()?
         };
         if corpus_persistence.is_deferred() {
-            let replay_targets = FuzzRunIdentifiedContracts::new(
-                campaign_seed.targeted_contracts.clone(),
-                campaign_seed.targets_are_updatable,
-            );
             let corpus_entries = corpus_seed.filter_campaign_entries(
                 &corpus_entries,
                 &self.executor,
@@ -720,17 +698,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
         let mut corpus_entries = Vec::new();
-        let progress_worker_id = corpus_persistence.progress_worker_id(plan.worker_id);
 
-        let is_timed_campaign = campaign_state.is_timed_campaign();
         let mut runs = 0;
-        let continue_campaign = |runs: u32| !campaign_state.should_stop() && runs < plan.runs;
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
 
-        'stop: while continue_campaign(runs) {
+        'stop: while !campaign_state.should_stop() && runs < plan.runs {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
@@ -1061,8 +1036,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             debug_assert!(total_runs <= config.runs, "worker runs were not distributed correctly");
             if let Some(progress) = progress {
                 progress.inc(1);
-            }
-            if let Some(progress) = progress {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
                 // Display current best value, corpus metrics, and failure counts.
                 let best = invariant_test.test_data.optimization_best_value;
@@ -1093,8 +1066,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("⚠ {handler_bugs} handler bug(s)"));
                     }
-                    let msg = if let Some(worker_id) = progress_worker_id {
-                        format!("[w{worker_id}] {msg}")
+                    let msg = if corpus_persistence.is_deferred() {
+                        format!("[w{}] {msg}", plan.worker_id)
                     } else {
                         msg
                     };
@@ -1152,7 +1125,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        let reported_plan = if is_timed_campaign {
+        let reported_plan = if campaign_state.is_timed_campaign() {
             InvariantWorkerPlan { runs, ..plan }
         } else {
             // Sharded campaigns must report the original assigned range. Early worker exit changes
@@ -1813,9 +1786,7 @@ mod tests {
 
     #[test]
     fn invariant_progress_json_includes_throughput_fields() {
-        let mut throughput = InvariantThroughputMetrics::default();
-        throughput.record_call(20);
-        throughput.record_call(30);
+        let throughput = InvariantThroughputMetrics { total_txs: 2, total_gas: 50 };
 
         let payload = build_invariant_progress_json(
             123,
@@ -1898,8 +1869,7 @@ mod tests {
 
     #[test]
     fn invariant_progress_json_zero_elapsed_reports_zero_rates() {
-        let mut throughput = InvariantThroughputMetrics::default();
-        throughput.record_call(21_000);
+        let throughput = InvariantThroughputMetrics { total_txs: 1, total_gas: 21_000 };
 
         let payload = build_invariant_progress_json(
             456,

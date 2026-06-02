@@ -74,7 +74,7 @@ pub struct InvariantWorkerPlan {
 /// Shared state used only to coordinate invariant worker execution.
 pub struct InvariantCampaignState {
     started_at: Instant,
-    timeout: Option<(Instant, Duration)>,
+    timeout: Option<Duration>,
     total_runs: AtomicU32,
     total_txs: AtomicU64,
     total_gas: AtomicU64,
@@ -95,7 +95,7 @@ impl InvariantCampaignState {
         let started_at = Instant::now();
         Self {
             started_at,
-            timeout: timeout.map(|timeout| (started_at, Duration::from_secs(timeout.into()))),
+            timeout: timeout.map(|timeout| Duration::from_secs(timeout.into())),
             total_runs: AtomicU32::new(0),
             total_txs: AtomicU64::new(0),
             total_gas: AtomicU64::new(0),
@@ -133,7 +133,7 @@ impl InvariantCampaignState {
     }
 
     pub fn is_timed_out(&self) -> bool {
-        self.timeout.is_some_and(|(start, duration)| start.elapsed() > duration)
+        self.timeout.is_some_and(|duration| self.elapsed() > duration)
     }
 
     pub fn should_stop(&self) -> bool {
@@ -280,15 +280,13 @@ fn fold_outputs(
     let mut line_coverage = None;
     let mut metrics = HashMap::default();
     let mut corpus_entries = Vec::new();
-    let failed_corpus_replays = outputs
-        .iter()
-        .find(|output| output.plan.worker_id == 0)
-        .expect("master worker output was validated")
-        .result
-        .failed_corpus_replays;
+    let mut failed_corpus_replays = 0;
     let mut optimization_best = None;
 
-    for InvariantWorkerOutput { result, corpus_entries: worker_entries, .. } in outputs {
+    for InvariantWorkerOutput { plan, result, corpus_entries: worker_entries } in outputs {
+        if plan.worker_id == 0 {
+            failed_corpus_replays = result.failed_corpus_replays;
+        }
         for (invariant, error) in result.errors {
             errors.entry(invariant).or_insert(error);
         }

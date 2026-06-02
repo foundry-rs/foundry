@@ -283,14 +283,13 @@ impl WorkerCorpusSeed {
         };
         let mut seen_entries =
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
+        let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
         for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
             let tx_seq = entry.read_tx_seq()?;
             if tx_seq.is_empty() {
                 continue;
             }
 
-            let target =
-                ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
             let coverage = ReplayCoverage {
                 history_map: &mut seed.history_map,
                 edge_indices: &mut seed.edge_indices,
@@ -329,11 +328,10 @@ impl WorkerCorpusSeed {
         let mut edge_indices = self.edge_indices.clone();
         let mut sancov_history_map = self.sancov_history_map.clone();
         let mut filtered = Vec::new();
+        let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
 
         for entry in entries {
             if entry.dedupe_by_coverage {
-                let target =
-                    ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
                 let coverage = ReplayCoverage {
                     history_map: &mut history_map,
                     edge_indices: &mut edge_indices,
@@ -1622,21 +1620,17 @@ fn has_legacy_invariant_corpus_dirs(path: &Path) -> bool {
     })
 }
 
-fn unique_corpus_entries(
-    replay_dirs: &[PathBuf],
-    seen_entries: &mut HashSet<Uuid>,
-) -> Vec<CorpusDirEntry> {
-    let mut entries = Vec::new();
-    for replay_dir in replay_dirs {
-        for entry in read_corpus_dir(replay_dir) {
-            if seen_entries.insert(entry.uuid) {
-                entries.push(entry);
-            } else {
-                trace!(target: "corpus", "skipping duplicate corpus entry {}", entry.uuid);
-            }
+fn unique_corpus_entries<'a>(
+    replay_dirs: &'a [PathBuf],
+    seen_entries: &'a mut HashSet<Uuid>,
+) -> impl Iterator<Item = CorpusDirEntry> + 'a {
+    replay_dirs.iter().flat_map(|replay_dir| read_corpus_dir(replay_dir)).filter(|entry| {
+        let is_new = seen_entries.insert(entry.uuid);
+        if !is_new {
+            trace!(target: "corpus", "skipping duplicate corpus entry {}", entry.uuid);
         }
-    }
-    entries
+        is_new
+    })
 }
 
 #[cfg(test)]
@@ -1806,7 +1800,8 @@ mod tests {
         duplicate.write_to_disk_in(&worker1_corpus, false).unwrap();
 
         let mut seen = HashSet::new();
-        let entries = unique_corpus_entries(&canonical_replay_dirs(&corpus_root), &mut seen);
+        let entries = unique_corpus_entries(&canonical_replay_dirs(&corpus_root), &mut seen)
+            .collect::<Vec<_>>();
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].uuid, corpus.uuid);
