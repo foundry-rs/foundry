@@ -227,6 +227,39 @@ fmt_tests! {
 }
 
 #[test]
+fn test_wrap_comments_preserves_natspec_tag_boundaries() {
+    init_tracing();
+    let source = r#"pragma solidity ^0.8.0;
+
+contract C {
+    /// @dev No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed.
+    /// @dev Zero checks are not systematically performed.
+    function f() external {}
+}
+"#;
+
+    let expected = r#"pragma solidity ^0.8.0;
+
+contract C {
+    /// @dev No-ops are allowed. No-ops are
+    /// allowed. No-ops are allowed. No-ops
+    /// are allowed. No-ops are allowed.
+    /// No-ops are allowed.
+    /// @dev Zero checks are not
+    /// systematically performed.
+    function f() external {}
+}
+"#;
+
+    let fmt_config =
+        Arc::new(FormatterConfig { line_length: 40, wrap_comments: true, ..Default::default() });
+    let path = Path::new("test.sol");
+    let formatted = format(source, path, fmt_config);
+
+    assert_eq!(formatted, expected, "Formatting mismatch");
+}
+
+#[test]
 fn test_comment_empty_line_bug() {
     init_tracing();
     let source = r#"pragma solidity ^0.8.0;
