@@ -4173,6 +4173,7 @@ mod tests {
                 [invariant]
                 runs = 256
                 depth = 500
+                workers = 1
                 fail_on_revert = false
                 call_override = false
                 shrink_run_limit = 5000
@@ -4985,6 +4986,7 @@ mod tests {
                 [invariant]
                 runs = 512
                 depth = 10
+                workers = 4
             ",
             )?;
 
@@ -4994,6 +4996,7 @@ mod tests {
                 InvariantConfig {
                     runs: 512,
                     depth: 10,
+                    workers: 4,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
@@ -5020,11 +5023,13 @@ mod tests {
             jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
             jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
             jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
+            jail.set_env("FOUNDRY_INVARIANT_WORKERS", "3");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
             assert_eq!(config.invariant.depth, 5);
+            assert_eq!(config.invariant.workers, 3);
 
             Ok(())
         });

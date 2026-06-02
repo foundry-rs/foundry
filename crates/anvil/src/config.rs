@@ -985,14 +985,14 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to print `console.log` invocations to stdout.
+    /// Sets whether to print `console.log` invocations to stderr.
     #[must_use]
     pub const fn with_print_logs(mut self, print_logs: bool) -> Self {
         self.print_logs = print_logs;
         self
     }
 
-    /// Sets whether to print traces to stdout.
+    /// Sets whether to print traces to stderr.
     #[must_use]
     pub const fn with_print_traces(mut self, print_traces: bool) -> Self {
         self.print_traces = print_traces;
@@ -1040,7 +1040,7 @@ impl NodeConfig {
             foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
         }
         if !self.silent {
-            sh_println!("{}", self.as_string(fork))?;
+            sh_eprintln!("{}", self.as_string(fork))?;
         }
         Ok(())
     }
@@ -1100,7 +1100,7 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit anything on stdout
+    /// Makes the node silent to not emit any banner/status output
     #[must_use]
     pub const fn silent(self) -> Self {
         self.set_silent(true)
