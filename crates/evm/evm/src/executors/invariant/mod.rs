@@ -1,7 +1,6 @@
 use crate::{
     executors::{
-        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
-        RawCallResult,
+        DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
         corpus::{DynamicTargetCtx, WorkerCorpus, WorkerCorpusSeed},
     },
     inspectors::Fuzzer,
@@ -150,6 +149,7 @@ struct InvariantThroughputMetrics {
 }
 
 impl InvariantThroughputMetrics {
+    #[cfg(test)]
     const fn record_call(&mut self, gas_used: u64) {
         self.total_txs += 1;
         self.total_gas += gas_used;
@@ -169,11 +169,21 @@ fn max_invariant_workers_for_runs(runs: u32) -> usize {
 }
 
 fn invariant_worker_count(config: &InvariantConfig) -> usize {
-    if config.timeout.is_some() || config.call_override {
+    if config.single_worker_reason().is_some() {
         return 1;
     }
 
+    if config.timeout.is_some() {
+        return config.workers;
+    }
+
     config.workers.min(max_invariant_workers_for_runs(config.runs))
+}
+
+fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_count: usize) -> usize {
+    let total_samples = total_samples as usize;
+    let worker_count = worker_count.max(1);
+    total_samples / worker_count + usize::from((worker_id as usize) < total_samples % worker_count)
 }
 
 fn invariant_worker_runner(runner: &mut TestRunner, worker_id: u32) -> TestRunner {
@@ -212,7 +222,7 @@ fn rate_per_sec(total: f64, elapsed: Duration) -> f64 {
 }
 
 /// Tracks invariant failure counts during a campaign.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct InvariantFailureMetrics {
     failures: u64,
     unique_failures: HashSet<String>,
@@ -243,15 +253,15 @@ impl InvariantFailureMetrics {
 /// `failure_metrics` so the live progress stream reflects breaks as they happen.
 /// Iterates in declaration order so the emitted "failure" events are deterministic.
 fn record_new_invariant_failures(
-    failure_metrics: &mut InvariantFailureMetrics,
+    campaign_state: &InvariantCampaignState,
     invariant_contract: &InvariantContract<'_>,
     failures: &InvariantFailures,
 ) {
     for (f, _) in &invariant_contract.invariant_fns {
-        if !failure_metrics.unique_failures.contains(&f.name) && failures.has_failure(f) {
+        if failures.has_failure(f) {
             let reason =
                 failures.get_failure(f).and_then(|e| e.revert_reason()).unwrap_or_default();
-            failure_metrics.record_failure(&f.name, invariant_contract.name, &reason);
+            campaign_state.record_invariant_failure(&f.name, invariant_contract.name, &reason);
         }
     }
 }
@@ -548,6 +558,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
         let worker_count = invariant_worker_count(&self.config);
         let worker_plans = campaign_spec.worker_plans(worker_count)?;
+        let actual_worker_count = worker_plans.len();
         let campaign_seed =
             self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
         let replay_targets = FuzzRunIdentifiedContracts::new(
@@ -572,19 +583,25 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let setup_contracts = self.setup_contracts;
         let project_contracts = self.project_contracts;
         let base_executor = self.executor.clone();
-        let campaign_state = Arc::new(InvariantCampaignState::new(early_exit.clone()));
+        let campaign_state =
+            Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
         let worker_outputs = if run_in_parallel {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
                     let worker_runner = invariant_worker_runner(&mut runner, worker_plan.worker_id);
-                    (worker_plan, worker_runner)
+                    let gas_report_samples = gas_report_samples_for_worker(
+                        config.gas_report_samples,
+                        worker_plan.worker_id,
+                        actual_worker_count,
+                    );
+                    (worker_plan, worker_runner, gas_report_samples)
                 })
                 .collect::<Vec<_>>();
             worker_jobs
                 .into_par_iter()
-                .map(|(worker_plan, worker_runner)| {
+                .map(|(worker_plan, worker_runner, gas_report_samples)| {
                     let _guard =
                         info_span!("invariant_worker", id = worker_plan.worker_id).entered();
                     let timer = Instant::now();
@@ -603,19 +620,26 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         campaign_seed.clone(),
                         corpus_seed.clone(),
                         corpus_persistence,
+                        gas_report_samples,
                     );
                     debug!("finished in {:?}", timer.elapsed());
                     output
                 })
                 .collect::<Result<Vec<_>>>()?
         } else {
+            let worker_plan = worker_plans[0];
+            let gas_report_samples = gas_report_samples_for_worker(
+                config.gas_report_samples,
+                worker_plan.worker_id,
+                actual_worker_count,
+            );
             vec![Self::run_invariant_worker(
                 base_executor,
                 runner,
                 config,
                 setup_contracts,
                 project_contracts,
-                worker_plans[0],
+                worker_plan,
                 invariant_contract.clone(),
                 fuzz_fixtures,
                 fuzz_state,
@@ -624,22 +648,20 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 campaign_seed.clone(),
                 corpus_seed.clone(),
                 corpus_persistence,
+                gas_report_samples,
             )?]
         };
 
-        // Timeout-driven campaigns can execute beyond the initial configured run count. Preserve
-        // the existing single-worker reported run behavior by rebuilding the logical spec from the
-        // worker's final reported plan.
-        let total_reported_runs =
-            worker_outputs.iter().map(|output| output.plan.runs).try_fold(0u32, |acc, runs| {
-                acc.checked_add(runs).ok_or_else(|| eyre!("invariant worker run range overflows"))
-            })?;
-        let mut aggregator =
-            InvariantCampaignAggregator::new(InvariantCampaignSpec::new(total_reported_runs));
+        let is_timed_campaign = campaign_state.is_timed_campaign();
+        let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
         for worker_output in worker_outputs {
             aggregator.push(worker_output);
         }
-        let (result, corpus_entries) = aggregator.finish_with_corpus_entries()?;
+        let (result, corpus_entries) = if is_timed_campaign {
+            aggregator.finish_partial_with_corpus_entries()?
+        } else {
+            aggregator.finish_with_corpus_entries()?
+        };
         if corpus_persistence.is_deferred() {
             let replay_targets = FuzzRunIdentifiedContracts::new(
                 campaign_seed.targeted_contracts.clone(),
@@ -680,15 +702,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         campaign_seed: InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
         corpus_persistence: InvariantCorpusPersistence,
+        gas_report_samples: usize,
     ) -> Result<InvariantWorkerOutput> {
         // Note: invariant function signatures (no inputs) are validated upstream in the
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
-
-        // Runs reported to the campaign aggregator as this worker's logical range length.
-        // In normal sharded campaigns this stays equal to the assigned plan length; timed
-        // single-worker campaigns may grow it beyond the initially configured run count.
-        let mut reported_runs = plan.runs;
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -704,25 +722,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut corpus_entries = Vec::new();
         let progress_worker_id = corpus_persistence.progress_worker_id(plan.worker_id);
 
-        // Start timer for this invariant test.
-        let timer = FuzzTestTimer::new(config.timeout);
-        let is_timed_campaign = timer.is_enabled();
+        let is_timed_campaign = campaign_state.is_timed_campaign();
         let mut runs = 0;
-        let mut last_metrics_report = Instant::now();
-        let campaign_start = Instant::now();
-        let mut throughput = InvariantThroughputMetrics::default();
-        let mut failure_metrics = InvariantFailureMetrics::default();
-        let continue_campaign = |runs: u32| {
-            !campaign_state.should_stop()
-                && !timer.is_timed_out()
-                && (is_timed_campaign || runs < plan.runs)
-        };
+        let continue_campaign = |runs: u32| !campaign_state.should_stop() && runs < plan.runs;
+        campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
 
         'stop: while continue_campaign(runs) {
-            reported_runs = reported_runs.max(runs.saturating_add(1));
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
@@ -749,7 +757,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             while current_run.depth < config.depth {
                 // Check if the timeout has been reached.
-                if campaign_state.should_stop() || timer.is_timed_out() {
+                if campaign_state.should_stop() {
                     // Since we never record a revert here the test is still considered
                     // successful even though it timed out. We *want*
                     // this behavior for now, so that's ok, but
@@ -867,7 +875,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run
                         .fuzz_runs
                         .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
-                    throughput.record_call(call_result.gas_used);
+                    campaign_state.record_call(call_result.gas_used);
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.
@@ -974,7 +982,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         || broken.is_some()
                     {
                         record_new_invariant_failures(
-                            &mut failure_metrics,
+                            campaign_state,
                             &invariant_contract,
                             &invariant_test.test_data.failures,
                         );
@@ -1039,7 +1047,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 if broken.is_some() {
                     // Bridge breaks into pulse metrics, mirroring the in-run path above.
                     record_new_invariant_failures(
-                        &mut failure_metrics,
+                        campaign_state,
                         &invariant_contract,
                         &invariant_test.test_data.failures,
                     );
@@ -1047,24 +1055,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
-            invariant_test.end_run(current_run, config.gas_report_samples as usize);
+            invariant_test.end_run(current_run, gas_report_samples);
             runs += 1;
             let total_runs = campaign_state.increment_runs();
-            debug_assert!(
-                is_timed_campaign || total_runs <= config.runs,
-                "worker runs were not distributed correctly"
-            );
+            debug_assert!(total_runs <= config.runs, "worker runs were not distributed correctly");
             if let Some(progress) = progress {
                 progress.inc(1);
             }
             if let Some(progress) = progress {
+                campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
                 // Display current best value, corpus metrics, and failure counts.
                 let best = invariant_test.test_data.optimization_best_value;
-                let broken = invariant_test.test_data.failures.invariant_count();
-                // Live count of unique handler-side assertion bugs, separate from the
-                // predicate breaks in `broken`. Synced into `failure_metrics` so all
-                // campaign-level counters share one struct.
-                failure_metrics.broken_handlers = invariant_test.test_data.failures.handler_count();
+                let failure_metrics = campaign_state.failure_metrics();
+                let broken = failure_metrics.unique_failures.len();
                 let handler_bugs = failure_metrics.broken_handlers;
                 let total_invariants = invariant_contract.invariant_fns.len();
                 if edge_coverage_enabled || best.is_some() || broken > 0 || handler_bugs > 0 {
@@ -1098,11 +1101,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
-                && plan.worker_id == 0
-                && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
+                && campaign_state.should_emit_metrics_report(DURATION_BETWEEN_METRICS_REPORT)
             {
-                // Sync handler-bug count snapshot into failure_metrics before emitting.
-                failure_metrics.broken_handlers = invariant_test.test_data.failures.handler_count();
+                campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
+                let failure_metrics = campaign_state.failure_metrics();
+                let (total_txs, total_gas) = campaign_state.throughput_totals();
+                let throughput = InvariantThroughputMetrics { total_txs, total_gas };
                 // Display corpus metrics inline as JSON.
                 let metrics = build_invariant_progress_json(
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
@@ -1111,10 +1115,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     invariant_test.test_data.optimization_best_value,
                     throughput,
                     &failure_metrics,
-                    campaign_start.elapsed(),
+                    campaign_state.elapsed(),
                 );
                 let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
-                last_metrics_report = Instant::now();
             }
 
             if stop_after_run {
@@ -1150,14 +1153,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_sequence,
         );
         let reported_plan = if is_timed_campaign {
-            debug_assert_eq!(plan.worker_id, 0);
-            debug_assert_eq!(plan.first_global_run, 0);
-            InvariantWorkerPlan { runs: reported_runs, ..plan }
+            InvariantWorkerPlan { runs, ..plan }
         } else {
             // Sharded campaigns must report the original assigned range. Early worker exit changes
             // the number of executed runs, but it must not shrink `plan.runs`: following workers'
             // `first_global_run` offsets were computed from the original partition.
-            debug_assert_eq!(reported_runs, plan.runs);
             plan
         };
         Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result, corpus_entries })
@@ -1856,7 +1856,7 @@ mod tests {
         assert_eq!(invariant_worker_count(&config), 4);
 
         config.timeout = Some(1);
-        assert_eq!(invariant_worker_count(&config), 1);
+        assert_eq!(invariant_worker_count(&config), 4);
 
         config.timeout = None;
         config.call_override = true;
@@ -1869,6 +1869,31 @@ mod tests {
         config.corpus.show_edge_coverage = false;
         config.corpus.corpus_dir = Some(std::path::PathBuf::from("corpus"));
         assert_eq!(invariant_worker_count(&config), 4);
+
+        config.corpus.corpus_dir = None;
+        config.corpus.sancov_edges = true;
+        assert_eq!(invariant_worker_count(&config), 1);
+
+        config.corpus.sancov_edges = false;
+        config.corpus.sancov_trace_cmp = true;
+        assert_eq!(invariant_worker_count(&config), 1);
+
+        config.corpus.sancov_trace_cmp = false;
+        config.runs = MIN_RUNS_PER_INVARIANT_WORKER - 1;
+        config.timeout = Some(1);
+        assert_eq!(invariant_worker_count(&config), 4);
+    }
+
+    #[test]
+    fn gas_report_samples_are_split_across_workers() {
+        assert_eq!(gas_report_samples_for_worker(0, 0, 4), 0);
+        assert_eq!(gas_report_samples_for_worker(8, 0, 4), 2);
+        assert_eq!(gas_report_samples_for_worker(8, 3, 4), 2);
+        assert_eq!(gas_report_samples_for_worker(10, 0, 4), 3);
+        assert_eq!(gas_report_samples_for_worker(10, 1, 4), 3);
+        assert_eq!(gas_report_samples_for_worker(10, 2, 4), 2);
+        assert_eq!(gas_report_samples_for_worker(10, 3, 4), 2);
+        assert_eq!(gas_report_samples_for_worker(3, 3, 4), 0);
     }
 
     #[test]

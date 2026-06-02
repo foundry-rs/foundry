@@ -61,6 +61,7 @@ use proptest::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -280,37 +281,37 @@ impl WorkerCorpusSeed {
         let Some(executor) = executor else {
             return Ok(seed);
         };
-        for replay_dir in canonical_replay_dirs(corpus_dir) {
-            for entry in read_corpus_dir(&replay_dir) {
-                let tx_seq = entry.read_tx_seq()?;
-                if tx_seq.is_empty() {
-                    continue;
-                }
-
-                let target =
-                    ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
-                let coverage = ReplayCoverage {
-                    history_map: &mut seed.history_map,
-                    edge_indices: &mut seed.edge_indices,
-                    sancov_history_map: &mut seed.sancov_history_map,
-                    metrics: Some(&mut seed.metrics),
-                };
-                let ReplayOutcome { keep_entry, cmp_seq, failed_replays, .. } =
-                    replay_corpus_sequence(&tx_seq, executor, target, coverage)?;
-                seed.failed_replays += failed_replays;
-                if !keep_entry {
-                    continue;
-                }
-
-                seed.metrics.corpus_count += 1;
-                debug!(
-                    target: "corpus",
-                    "load sequence with len {} from corpus file {}",
-                    tx_seq.len(),
-                    entry.path.display()
-                );
-                seed.in_memory_corpus.push(CorpusEntry::new_with_cmp(tx_seq, cmp_seq, entry.uuid));
+        let mut seen_entries =
+            seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
+        for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
+            let tx_seq = entry.read_tx_seq()?;
+            if tx_seq.is_empty() {
+                continue;
             }
+
+            let target =
+                ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
+            let coverage = ReplayCoverage {
+                history_map: &mut seed.history_map,
+                edge_indices: &mut seed.edge_indices,
+                sancov_history_map: &mut seed.sancov_history_map,
+                metrics: Some(&mut seed.metrics),
+            };
+            let ReplayOutcome { keep_entry, cmp_seq, failed_replays, .. } =
+                replay_corpus_sequence(&tx_seq, executor, target, coverage)?;
+            seed.failed_replays += failed_replays;
+            if !keep_entry {
+                continue;
+            }
+
+            seed.metrics.corpus_count += 1;
+            debug!(
+                target: "corpus",
+                "load sequence with len {} from corpus file {}",
+                tx_seq.len(),
+                entry.path.display()
+            );
+            seed.in_memory_corpus.push(CorpusEntry::new_with_cmp(tx_seq, cmp_seq, entry.uuid));
         }
 
         Ok(seed)
@@ -1621,6 +1622,23 @@ fn has_legacy_invariant_corpus_dirs(path: &Path) -> bool {
     })
 }
 
+fn unique_corpus_entries(
+    replay_dirs: &[PathBuf],
+    seen_entries: &mut HashSet<Uuid>,
+) -> Vec<CorpusDirEntry> {
+    let mut entries = Vec::new();
+    for replay_dir in replay_dirs {
+        for entry in read_corpus_dir(replay_dir) {
+            if seen_entries.insert(entry.uuid) {
+                entries.push(entry);
+            } else {
+                trace!(target: "corpus", "skipping duplicate corpus entry {}", entry.uuid);
+            }
+        }
+    }
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1772,6 +1790,26 @@ mod tests {
         assert_eq!(state.best_sequence[0].sender, sequence[0].sender);
         assert_eq!(state.best_sequence[0].call_details.target, sequence[0].call_details.target);
         assert_eq!(state.best_sequence[0].call_details.calldata, sequence[0].call_details.calldata);
+    }
+
+    #[test]
+    fn persisted_worker_corpus_entries_are_deduped_by_uuid() {
+        let corpus_root = temp_corpus_dir();
+        let corpus = CorpusEntry::new(vec![basic_tx()]);
+        let duplicate = corpus.clone();
+
+        let worker0_corpus = corpus_root.join("worker0").join(CORPUS_DIR);
+        let worker1_corpus = corpus_root.join("worker1").join(CORPUS_DIR);
+        fs::create_dir_all(&worker0_corpus).unwrap();
+        fs::create_dir_all(&worker1_corpus).unwrap();
+        corpus.write_to_disk_in(&worker0_corpus, false).unwrap();
+        duplicate.write_to_disk_in(&worker1_corpus, false).unwrap();
+
+        let mut seen = HashSet::new();
+        let entries = unique_corpus_entries(&canonical_replay_dirs(&corpus_root), &mut seen);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].uuid, corpus.uuid);
     }
 
     #[test]

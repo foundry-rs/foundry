@@ -38,7 +38,7 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
-    /// Optional timeout (in seconds) for each invariant test.
+    /// Optional campaign-global timeout (in seconds) for each invariant test.
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
@@ -84,6 +84,17 @@ impl InvariantConfig {
     /// Creates invariant configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
         Self { failure_persist_dir: Some(cache_dir), ..Default::default() }
+    }
+
+    /// Returns why invariant campaigns for this config must run with one worker, if any.
+    pub const fn single_worker_reason(&self) -> Option<&'static str> {
+        if self.call_override {
+            Some("invariant.call_override is enabled")
+        } else if self.corpus.sancov_active() {
+            Some("sancov is enabled")
+        } else {
+            None
+        }
     }
 
     /// Returns true if generated invariant calls may advance block time or height.

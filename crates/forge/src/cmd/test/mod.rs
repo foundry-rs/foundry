@@ -1294,15 +1294,7 @@ fn warn_unsupported_invariant_workers(config: &Config) -> Result<()> {
         return Ok(());
     }
 
-    let reason = if config.invariant.timeout.is_some() {
-        Some("invariant.timeout is configured")
-    } else if config.invariant.call_override {
-        Some("invariant.call_override is enabled")
-    } else {
-        None
-    };
-
-    if let Some(reason) = reason {
+    if let Some(reason) = config.invariant.single_worker_reason() {
         sh_warn!(
             "`invariant.workers = {}` was configured, but invariant campaigns with {reason} currently run with 1 worker",
             config.invariant.workers
