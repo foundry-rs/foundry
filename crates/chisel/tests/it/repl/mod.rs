@@ -43,6 +43,12 @@ repl_test!(hex_string_interpretation, |repl| {
     repl.expect("0x1234");
 });
 
+// Hex literals in the generated inspector `abi.encode(...)` call are ABI-encoded as dynamic bytes.
+repl_test!(hex_literal_inspection_type, |repl| {
+    repl.sendln("hex\"6869\"");
+    repl.expect("Type: dynamic bytes");
+});
+
 // Test cheatcodes availability.
 repl_test!(cheatcodes_available, "", init = true, |repl| {
     repl.sendln("address alice = address(0x1)");

@@ -412,8 +412,9 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
 
 /// Maps a solar [`Ty`] to a [`DynSolType`].
 fn solar_expr_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, expr: &Expr<'_>) -> Option<DynSolType> {
-    // Solar currently lowers hex string literals to `StringLiteral`; ABI inspection should decode
-    // them as bytes, matching Solidity's ABI type for `hex"..."` literals.
+    // `expr` is the inspected expression inside Chisel's generated `abi.encode(...)` call. Solar
+    // currently reports hex string literals as `StringLiteral`, but solc ABI-encodes
+    // `hex"..."` literals as dynamic bytes in that context.
     if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..)))
     {
         return Some(DynSolType::Bytes);
