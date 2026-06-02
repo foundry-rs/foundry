@@ -708,14 +708,18 @@ impl<'sess> State<'sess, '_> {
 
                 // Check if next line is has the same prefix and is not empty
                 if next_line.starts_with(prefix) && !next_line.trim().is_empty() {
+                    let next_content = next_line[prefix.len()..].trim_start();
+                    if prefix == "///" && is_natspec_tag(next_content) {
+                        result.push(current_line.clone());
+                        i += 1;
+                        continue;
+                    }
+
                     // Only merge if the current line doesn't fit within available width
                     if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
                     {
                         // Merge the lines and let the wrapper handle breaking if needed
-                        let merged_line = format!(
-                            "{current_line} {next_content}",
-                            next_content = next_line[prefix.len()..].trim_start()
-                        );
+                        let merged_line = format!("{current_line} {next_content}");
                         result.push(merged_line);
 
                         // Skip both lines since they are merged
@@ -1147,6 +1151,13 @@ fn snippet_with_tabs(s: String, tab_width: usize) -> String {
     }
 
     formatted
+}
+
+fn is_natspec_tag(content: &str) -> bool {
+    let Some(tag) = content.strip_prefix('@') else {
+        return false;
+    };
+    tag.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
 }
 
 /// Formats a doc comment with the requested style.

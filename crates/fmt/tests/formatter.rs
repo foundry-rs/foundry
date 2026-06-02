@@ -250,3 +250,33 @@ contract ProofOfConcept {
 
     assert_eq!(formatted, expected, "Formatting mismatch");
 }
+
+#[test]
+fn test_wrapped_natspec_tags_do_not_merge() {
+    init_tracing();
+    let source = r#"pragma solidity ^0.8.0;
+
+contract ProofOfConcept {
+    /// @dev No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed.
+    /// @dev Zero checks are not systematically performed.
+    function run() external {}
+}
+"#;
+
+    let expected = r#"pragma solidity ^0.8.0;
+
+contract ProofOfConcept {
+    /// @dev No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops
+    /// are allowed.
+    /// @dev Zero checks are not systematically performed.
+    function run() external {}
+}
+"#;
+
+    let fmt_config =
+        Arc::new(FormatterConfig { line_length: 120, wrap_comments: true, ..Default::default() });
+    let path = Path::new("test.sol");
+    let formatted = format(source, path, fmt_config);
+
+    assert_eq!(formatted, expected, "Formatting mismatch");
+}
