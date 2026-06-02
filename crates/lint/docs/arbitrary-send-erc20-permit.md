@@ -52,9 +52,8 @@ include: copies of the token or owner into another variable
 (`IERC20 t = token; ...`, `address from2 = from; ...`), permits issued from a
 struct / array / mapping receiver (`cfg.token.permit(...)`), permits issued through
 a library wrapper (`SafeERC20.safePermit(...)`), permits issued inside a called
-helper / modifier / parent contract, permits inside `for` or `while` loop bodies
-(whose execution count the analyzer treats as possibly zero), and permits whose
-success is verified by reading `nonces(owner)` before and after.
+helper / modifier / parent contract, and permits inside `for` or `while` loop bodies
+(whose execution count the analyzer treats as possibly zero).
 
 ## Why is this bad?
 
