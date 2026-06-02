@@ -3,6 +3,7 @@ use crate::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
         RawCallResult,
         corpus::{DynamicTargetCtx, WorkerCorpus},
+        sequence::execute_tx,
     },
     inspectors::Fuzzer,
 };
@@ -17,7 +18,6 @@ use foundry_common::{
 };
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
-    FoundryBlock,
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
     },
@@ -30,14 +30,14 @@ use foundry_evm_fuzz::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{EvmFuzzState, InvariantFuzzState, invariant_strat, override_call_strat},
+    strategies::{EvmFuzzState, InvariantFuzzState, TxGenerator, override_call_strat},
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
-use revm::{context::Block, state::Account};
+use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -978,13 +978,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let fuzz_state = fuzz_state.into_invariant();
 
         // Creates the invariant strategy.
-        let strategy = invariant_strat(
+        let strategy = TxGenerator::invariant(
             fuzz_state.clone(),
             targeted_senders,
             targeted_contracts.clone(),
             self.config.clone(),
             fuzz_fixtures.clone(),
         )
+        .strategy()
         .no_shrink();
 
         // If any of the targeted contracts have the storage layout enabled then we can sample
@@ -1493,48 +1494,6 @@ pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
     let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success_handler_gate(address, &mut call_result);
     Ok((call_result, success))
-}
-
-/// Executes a fuzz call and returns the result.
-/// Applies any block timestamp (warp) and block number (roll) adjustments before the call.
-pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
-    executor: &mut Executor<FEN>,
-    tx: &BasicTxDetails,
-) -> Result<RawCallResult<FEN>> {
-    let warp = tx.warp.unwrap_or_default();
-    let roll = tx.roll.unwrap_or_default();
-
-    if warp > 0 || roll > 0 {
-        // Apply pre-call block adjustments to the executor's env.
-        let ts = executor.evm_env().block_env.timestamp();
-        let num = executor.evm_env().block_env.number();
-        executor.evm_env_mut().block_env.set_timestamp(ts + warp);
-        executor.evm_env_mut().block_env.set_number(num + roll);
-
-        // Also update the inspector's cheatcodes.block if set.
-        // The inspector's block may override the env during interpreter initialization,
-        // so we need to add our warp/roll on top of any existing cheatcode-set values.
-        let block_env = executor.evm_env().block_env.clone();
-        if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
-            if let Some(block) = cheatcodes.block.as_mut() {
-                let bts = block.timestamp();
-                let bnum = block.number();
-                block.set_timestamp(bts + warp);
-                block.set_number(bnum + roll);
-            } else {
-                cheatcodes.block = Some(block_env);
-            }
-        }
-    }
-
-    // Bound requested value by sender's available balance so payable paths still get
-    // exercised when the requested value exceeds balance, instead of collapsing to zero.
-    let requested_value = tx.call_details.value.unwrap_or(U256::ZERO);
-    let sender_balance = executor.get_balance(tx.sender)?;
-    let value = requested_value.min(sender_balance);
-    executor
-        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
-        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }
 
 #[cfg(test)]

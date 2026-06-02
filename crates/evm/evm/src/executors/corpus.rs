@@ -36,12 +36,12 @@
 
 use super::corpus_io::{CorpusDirEntry, read_corpus_dir};
 use crate::{
-    executors::{Executor, RawCallResult, invariant::execute_tx},
+    executors::{Executor, RawCallResult, sequence::execute_tx},
     inspectors::{CmpOperands, EdgeIndexMap, MAX_EDGE_COUNT},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, I256};
+use alloy_primitives::{Address, I256};
 use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, sh_warn};
 use foundry_config::FuzzCorpusConfig;
@@ -843,10 +843,13 @@ impl WorkerCorpus {
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
         function: &Function,
-    ) -> Result<Bytes> {
+        sender: Address,
+        target: Address,
+    ) -> Result<BasicTxDetails> {
         // Early return if not running with coverage guided fuzzing.
         if !self.config.is_coverage_guided() {
-            return Ok(self.new_tx(test_runner)?.call_details.calldata);
+            let tx = self.new_tx(test_runner)?;
+            return Ok(Self::normalize_stateless_tx(tx, sender, target));
         }
 
         self.evict_oldest_corpus()?;
@@ -867,7 +870,20 @@ impl WorkerCorpus {
             tx
         };
 
-        Ok(tx.call_details.calldata)
+        Ok(Self::normalize_stateless_tx(tx, sender, target))
+    }
+
+    fn normalize_stateless_tx(
+        mut tx: BasicTxDetails,
+        sender: Address,
+        target: Address,
+    ) -> BasicTxDetails {
+        tx.warp = None;
+        tx.roll = None;
+        tx.sender = sender;
+        tx.call_details.target = target;
+        tx.call_details.value = None;
+        tx
     }
 
     /// Generates single call from corpus strategy.
@@ -1406,7 +1422,7 @@ fn has_legacy_invariant_corpus_dirs(path: &Path) -> bool {
 mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolValue;
-    use alloy_primitives::U256;
+    use alloy_primitives::{Bytes, U256};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1426,6 +1442,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("foundry-corpus-tests-{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn stateless_normalization_discards_persisted_execution_context() {
+        let mut tx = basic_tx();
+        tx.warp = Some(U256::from(1));
+        tx.roll = Some(U256::from(2));
+        tx.sender = Address::with_last_byte(0x11);
+        tx.call_details.target = Address::with_last_byte(0x22);
+        tx.call_details.value = Some(U256::from(3));
+
+        let sender = Address::with_last_byte(0xaa);
+        let target = Address::with_last_byte(0xbb);
+        let normalized = WorkerCorpus::normalize_stateless_tx(tx, sender, target);
+
+        assert_eq!(normalized.warp, None);
+        assert_eq!(normalized.roll, None);
+        assert_eq!(normalized.sender, sender);
+        assert_eq!(normalized.call_details.target, target);
+        assert_eq!(normalized.call_details.value, None);
     }
 
     #[test]
