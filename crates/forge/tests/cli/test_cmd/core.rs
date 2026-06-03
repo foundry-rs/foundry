@@ -205,6 +205,23 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     );
 });
 
+forgetest_init!(machine_mode_rejects_mutation_testing, |_prj, cmd| {
+    let assert = cmd.args(["--machine", "test", "--mutate"]).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--mutate"), "missing --mutate mention: {envelope}");
+    assert_eq!(
+        envelope["errors"][0]["details"]["unsupported_flags"],
+        serde_json::json!(["--mutate"]),
+        "missing structured unsupported_flags details: {envelope}"
+    );
+});
+
 // `--allow-failure`: success envelope with `data.failed > 0` and exit 0.
 forgetest_init!(machine_mode_allow_failure_emits_success_envelope, |prj, cmd| {
     prj.add_test(
