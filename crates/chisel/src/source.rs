@@ -509,7 +509,10 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
 
         // Drive HIR lowering and analysis so that subsequent `enter` queries can use them.
-        output.parser_mut().solc_mut().compiler_mut().enter_mut(|c| {
+        // Chisel inspects expression values, so enable Solar's expression type table.
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        compiler.sess_mut().opts.unstable.typeck = true;
+        compiler.enter_mut(|c| {
             let _ = c.lower_asts();
             let _ = c.analysis();
         });
