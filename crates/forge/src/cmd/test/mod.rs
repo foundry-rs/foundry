@@ -783,13 +783,23 @@ impl TestArgs {
             let sources =
                 ContractSources::from_project_output(output, project_root, Some(&libraries))?;
 
+            // Prefer execution traces for normal debug runs, but when execution never starts
+            // (for example if `setUp()` reverts), fall back to available setup/deployment traces.
+            let traces = {
+                let execution = test_result
+                    .traces
+                    .iter()
+                    .filter(|(kind, _)| kind.is_execution())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if execution.is_empty() { test_result.traces.clone() } else { execution }
+            };
+
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .traces(
-                    test_result.traces.iter().filter(|(t, _)| t.is_execution()).cloned().collect(),
-                )
+                .traces(traces)
                 .sources(sources)
-                .breakpoints(test_result.breakpoints.clone());
+                .breakpoints(test_result.breakpoints);
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
