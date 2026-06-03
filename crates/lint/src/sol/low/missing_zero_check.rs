@@ -1,12 +1,17 @@
 use super::MissingZeroCheck;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{
+        Severity, SolLint,
+        analysis::primitives::{
+            address_call_receiver, branch_always_exits, is_address_type, is_require_or_assert,
+        },
+    },
 };
 use solar::{
     ast,
-    interface::{data_structures::Never, kw, sym},
-    sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, StmtKind, TypeKind, Visit},
+    interface::data_structures::Never,
+    sema::hir::{self, ExprKind, ItemId, Res, StmtKind, Visit},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -32,7 +37,7 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
         }
 
         let params: HashSet<hir::VariableId> =
-            func.parameters.iter().copied().filter(|id| is_address(hir, *id)).collect();
+            func.parameters.iter().copied().filter(|id| is_address_type(hir, *id)).collect();
 
         if params.is_empty() {
             return;
@@ -68,10 +73,6 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
     }
     func.kind.is_function()
         && matches!(func.visibility, ast::Visibility::Public | ast::Visibility::External)
-}
-
-fn is_address(hir: &hir::Hir<'_>, id: hir::VariableId) -> bool {
-    matches!(hir.variable(id).ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
 
 /// Tracks address-parameter taint, sinks reached, and guards observed in a function body.
@@ -248,7 +249,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             StmtKind::DeclSingle(var_id) => {
                 let v = self.hir.variable(var_id);
                 if let Some(init) = v.initializer
-                    && is_address(self.hir, var_id)
+                    && is_address_type(self.hir, var_id)
                 {
                     let srcs = self.taint_sources(init);
                     if !srcs.is_empty() {
@@ -299,7 +300,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 }
                 // Taint propagation: assignment to an address local.
                 if let Some(local) = lhs_local_var(self.hir, lhs)
-                    && is_address(self.hir, local)
+                    && is_address_type(self.hir, local)
                 {
                     let srcs = self.taint_sources(rhs);
                     if !srcs.is_empty() {
@@ -334,60 +335,14 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
     }
 }
 
-fn is_require_or_assert(callee: &hir::Expr<'_>) -> bool {
-    if let ExprKind::Ident(reses) = &callee.kind {
-        return reses.iter().any(|r| {
-            if let Res::Builtin(b) = r {
-                let n = b.name();
-                n == sym::require || n == sym::assert
-            } else {
-                false
-            }
-        });
-    }
-    false
-}
-
-/// If `callee` is `<receiver>.{call,delegatecall,transfer,send}` (with or without
-/// call options), returns the `<receiver>` expression.
-fn address_call_receiver<'hir>(callee: &'hir hir::Expr<'hir>) -> Option<&'hir hir::Expr<'hir>> {
-    // `addr.call{value: x}(..)` lowers as `Call(Member(receiver, "call"), ..)` — peel an
-    // outer call layer so the inner Member is reachable.
-    let inner = match &callee.kind {
-        ExprKind::Call(inner, ..) => inner,
-        _ => callee,
-    };
-    let target = if matches!(inner.kind, ExprKind::Member(..)) { inner } else { callee };
-    if let ExprKind::Member(receiver, name) = &target.kind {
-        let n = name.name;
-        if n == kw::Call || n == kw::Delegatecall || n == sym::transfer || n == sym::send {
-            return Some(receiver);
-        }
-    }
-    None
-}
-
-fn branch_always_exits(stmt: &hir::Stmt<'_>) -> bool {
-    match &stmt.kind {
-        StmtKind::Return(_) | StmtKind::Revert(_) => true,
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            block.stmts.last().is_some_and(branch_always_exits)
-        }
-        StmtKind::If(_, t, Some(e)) => branch_always_exits(t) && branch_always_exits(e),
-        _ => false,
-    }
-}
-
 fn is_address_state_var_lhs(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> bool {
     if let ExprKind::Ident(reses) = &lhs.kind {
         for res in *reses {
-            if let Res::Item(ItemId::Variable(vid)) = res {
-                let v = hir.variable(*vid);
-                if v.kind.is_state()
-                    && matches!(v.ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
-                {
-                    return true;
-                }
+            if let Res::Item(ItemId::Variable(vid)) = res
+                && hir.variable(*vid).kind.is_state()
+                && is_address_type(hir, *vid)
+            {
+                return true;
             }
         }
     }

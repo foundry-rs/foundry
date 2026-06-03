@@ -3,7 +3,10 @@
 //! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, and Tempo hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
@@ -131,9 +134,7 @@ impl FoundryHardfork {
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Optimism(fork));
         }
-        // TODO: add tempo support after https://github.com/tempoxyz/tempo/pull/3514 release
-        // providing TempoHardfork::from_chain_and_timestamp
-        None
+        TempoHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Self::Tempo)
     }
 }
 
@@ -189,7 +190,7 @@ impl From<FoundryHardfork> for SpecId {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
             #[cfg(feature = "optimism")]
-            FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
+            FoundryHardfork::Optimism(hardfork) => eth_spec_id_from_optimism_hardfork(hardfork),
             FoundryHardfork::Tempo(hardfork) => hardfork.into(),
         }
     }
@@ -210,18 +211,18 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
     match hardfork {
         EthereumHardfork::Frontier => SpecId::FRONTIER,
         EthereumHardfork::Homestead => SpecId::HOMESTEAD,
-        EthereumHardfork::Dao => SpecId::DAO_FORK,
+        EthereumHardfork::Dao => SpecId::HOMESTEAD,
         EthereumHardfork::Tangerine => SpecId::TANGERINE,
         EthereumHardfork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
         EthereumHardfork::Byzantium => SpecId::BYZANTIUM,
-        EthereumHardfork::Constantinople => SpecId::CONSTANTINOPLE,
+        EthereumHardfork::Constantinople => SpecId::PETERSBURG,
         EthereumHardfork::Petersburg => SpecId::PETERSBURG,
         EthereumHardfork::Istanbul => SpecId::ISTANBUL,
-        EthereumHardfork::MuirGlacier => SpecId::MUIR_GLACIER,
+        EthereumHardfork::MuirGlacier => SpecId::ISTANBUL,
         EthereumHardfork::Berlin => SpecId::BERLIN,
         EthereumHardfork::London => SpecId::LONDON,
-        EthereumHardfork::ArrowGlacier => SpecId::ARROW_GLACIER,
-        EthereumHardfork::GrayGlacier => SpecId::GRAY_GLACIER,
+        EthereumHardfork::ArrowGlacier => SpecId::LONDON,
+        EthereumHardfork::GrayGlacier => SpecId::LONDON,
         EthereumHardfork::Paris => SpecId::MERGE,
         EthereumHardfork::Shanghai => SpecId::SHANGHAI,
         EthereumHardfork::Cancun => SpecId::CANCUN,
@@ -255,6 +256,21 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
     }
 }
 
+/// Map an `OptimismHardfork` enum into its corresponding Ethereum `SpecId`.
+#[cfg(feature = "optimism")]
+pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
+    match hardfork {
+        OpHardfork::Bedrock | OpHardfork::Regolith => SpecId::MERGE,
+        OpHardfork::Canyon => SpecId::SHANGHAI,
+        OpHardfork::Ecotone | OpHardfork::Fjord | OpHardfork::Granite | OpHardfork::Holocene => {
+            SpecId::CANCUN
+        }
+        OpHardfork::Isthmus | OpHardfork::Jovian | OpHardfork::Interop => SpecId::PRAGUE,
+        OpHardfork::Karst => SpecId::OSAKA,
+        f => unreachable!("unimplemented {}", f),
+    }
+}
+
 /// Trait for converting an [`EvmVersion`] into a network-specific spec type.
 pub trait FromEvmVersion: From<FoundryHardfork> {
     fn from_evm_version(version: EvmVersion) -> Self;
@@ -281,7 +297,7 @@ impl FromEvmVersion for SpecId {
             EvmVersion::TangerineWhistle => Self::TANGERINE,
             EvmVersion::SpuriousDragon => Self::SPURIOUS_DRAGON,
             EvmVersion::Byzantium => Self::BYZANTIUM,
-            EvmVersion::Constantinople => Self::CONSTANTINOPLE,
+            EvmVersion::Constantinople => Self::PETERSBURG,
             EvmVersion::Petersburg => Self::PETERSBURG,
             EvmVersion::Istanbul => Self::ISTANBUL,
             EvmVersion::Berlin => Self::BERLIN,
@@ -362,7 +378,7 @@ impl ExecutionSpec for OpSpecId {
 
 impl FromEvmVersion for TempoHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
-        Self::default()
+        latest_active_tempo_hardfork()
     }
 }
 
@@ -389,6 +405,18 @@ impl ExecutionSpec for TempoHardfork {
 /// Returns the spec id derived from [`EvmVersion`] for a given spec type.
 pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
     SPEC::from_evm_version(evm_version)
+}
+
+/// Returns the latest Tempo hardfork that has an activation on a known Tempo network.
+pub fn latest_active_tempo_hardfork() -> TempoHardfork {
+    // Tempo currently publishes activation timestamps through chain-aware hardfork resolution.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
+    TempoHardfork::from_chain_and_timestamp(4217, now)
+        .or_else(|| TempoHardfork::from_chain_and_timestamp(42431, now))
+        .unwrap_or_default()
 }
 
 // Parses an EVM version or network-specific hardfork into the given spec type.
@@ -437,6 +465,24 @@ mod tests {
     #[test]
     fn test_tempo_spec_id_mapping() {
         assert_eq!(SpecId::from(TempoHardfork::Genesis), SpecId::OSAKA);
+    }
+
+    #[test]
+    fn test_tempo_evm_version_defaults_to_latest_active_hardfork() {
+        assert_eq!(latest_active_tempo_hardfork(), TempoHardfork::T4);
+        assert_eq!(evm_spec_id::<TempoHardfork>(EvmVersion::Osaka), TempoHardfork::T4);
+    }
+
+    #[test]
+    fn test_tempo_hardfork_from_chain_and_timestamp() {
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T5))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T5))
+        );
     }
 
     #[test]

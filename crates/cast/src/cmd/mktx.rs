@@ -11,6 +11,7 @@ use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    json::print_scalar,
     opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
@@ -146,12 +147,12 @@ impl MakeTxArgs {
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")
             })?;
-            sh_println!("{hash:?}")?;
+            print_scalar(format!("{hash:?}"))?;
             return Ok(());
         }
 
         if let Some(ts) = expires_at {
-            sh_println!("Transaction expires at unix timestamp {ts}")?;
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
         }
 
         if raw_unsigned {
@@ -179,7 +180,7 @@ impl MakeTxArgs {
             }
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
-            sh_println!("{raw_tx}")?;
+            print_scalar(raw_tx)?;
             return Ok(());
         }
 
@@ -193,7 +194,7 @@ impl MakeTxArgs {
             }
             let signed_tx = provider.sign_transaction(tx).await?;
 
-            sh_println!("{signed_tx}")?;
+            print_scalar(signed_tx)?;
             return Ok(());
         }
 
@@ -212,8 +213,8 @@ impl MakeTxArgs {
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;
 
-        let signed_tx = hex::encode(tx.encoded_2718());
-        sh_println!("0x{signed_tx}")?;
+        let signed_tx = format!("0x{}", hex::encode(tx.encoded_2718()));
+        print_scalar(signed_tx)?;
 
         Ok(())
     }

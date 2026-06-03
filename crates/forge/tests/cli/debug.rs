@@ -10,16 +10,14 @@ forgetest!(
         cmd.args(["init", "--force"])
             .arg(prj.root())
             .assert_success()
-            .stdout_eq(str![[r#"
-Initializing [..]...
-Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std[..]
-    Initialized forge project
-
-"#]])
+            .stdout_eq(str![""])
             .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
 ...
+    Installed forge-std[..]
+    Initialized forge project
 
 "#]]);
 

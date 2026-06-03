@@ -18,6 +18,10 @@ env:
 
 jobs:
   mpp-check:
+    # Skip on PRs from forks (only run for branches in foundry-rs/foundry, i.e. maintainer PRs).
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: depot-ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -37,7 +41,7 @@ jobs:
       # Build and install binaries
       - name: Build and install Foundry binaries
         run: |
-          cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Run MPP e2e test

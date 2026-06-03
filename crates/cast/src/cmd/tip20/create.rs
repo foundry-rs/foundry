@@ -3,6 +3,7 @@ use crate::{
         erc20::build_provider_with_signer,
         send::{cast_send, cast_send_with_access_key},
     },
+    tempo,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -60,7 +61,7 @@ pub(super) async fn run(
     salt: B256,
     force: bool,
     send_tx: SendTxOpts,
-    tx_opts: TxParams,
+    mut tx_opts: TxParams,
 ) -> eyre::Result<()> {
     let (signer, tempo_access_key) = if send_tx.eth.wallet.from.is_some() {
         send_tx.eth.wallet.maybe_signer().await?
@@ -74,7 +75,7 @@ pub(super) async fn run(
         sh_warn!("{}", super::iso4217_warning_message(&currency))?;
         let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
         if !matches!(response.trim(), "y" | "Y") {
-            sh_println!("Aborted.")?;
+            sh_status!("Aborted.")?;
             return Ok(());
         }
     }
@@ -88,6 +89,8 @@ pub(super) async fn run(
         .createToken(name, symbol, currency, quote_token_addr, admin_addr, salt)
         .into_transaction_request();
 
+    let expires_at = tx_opts.tempo.resolve_expires();
+    tempo::print_expires(expires_at)?;
     tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
     if let Some(ref access_key) = tempo_access_key {

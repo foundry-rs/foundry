@@ -1,4 +1,4 @@
-//@compile-flags: --severity high info
+//@compile-flags: --only-lint erc20-unchecked-transfer
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
@@ -28,11 +28,13 @@ contract UncheckedTransfer {
     function uncheckedTransfer(address to, uint256 amount) public {
         IERC20(address(token)).transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
         token.transfer(to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+        token.transfer({to: to, amount: amount}); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
     }
 
     function uncheckedTransferFrom(address from, address to, uint256 amount) public {
         IERC20(address(token)).transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
         token.transferFrom(from, to, amount); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
+        token.transferFrom({from: from, to: to, amount: amount}); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
     }
 
     function uncheckedInLoop(address[] memory recipients, uint256[] memory amounts) public {
@@ -56,6 +58,10 @@ contract UncheckedTransfer {
     // SHOULD PASS: Properly checked transfer calls
     function checkedTransferWithRequire(address to, uint256 amount) public {
         require(token.transfer(to, amount), "Transfer failed");
+    }
+
+    function checkedTransferWithNamedArgs(address to, uint256 amount) public {
+        require(token.transfer({to: to, amount: amount}), "Transfer failed");
     }
 
     function checkedTransferWithVariable(address to, uint256 amount) public {
