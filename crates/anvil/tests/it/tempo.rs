@@ -6,14 +6,16 @@
 //! - Native value transfer rejection
 //! - Basic transaction behavior in Tempo mode
 
+use std::num::NonZeroU64;
+#[cfg(feature = "cli")]
 use std::{
     net::TcpListener,
-    num::NonZeroU64,
     path::PathBuf,
     process::{Child, Command, Stdio},
     time::Duration,
 };
 
+#[cfg(feature = "cli")]
 use crate::utils::http_provider;
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
@@ -49,8 +51,10 @@ const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 const TIP20_TRANSFER_GAS: u64 = 300_000;
 const T5_PRECOMPILE_GAS: u64 = 10_000_000;
 
+#[cfg(feature = "cli")]
 struct ChildGuard(Child);
 
+#[cfg(feature = "cli")]
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -58,6 +62,7 @@ impl Drop for ChildGuard {
     }
 }
 
+#[cfg(feature = "cli")]
 fn anvil_binary() -> PathBuf {
     if let Some(path) = std::env::var_os("CARGO_BIN_EXE_anvil") {
         return PathBuf::from(path);
@@ -304,6 +309,7 @@ async fn test_tempo_t5_implicit_approvals_are_hardfork_gated() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_cli_tempo_t5_hardfork_precompile_smoke() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -522,8 +528,11 @@ async fn test_tempo_t5_key_authorization_witness_burn_flow() {
     let keychain = IAccountKeychainT5Rpc::new(ACCOUNT_KEYCHAIN_ADDRESS, &provider);
 
     let chain_id = provider.get_chain_id().await.unwrap();
+    let signer = dev_key(0);
+    assert_eq!(signer.address(), account);
+    let access_key = PrivateKeySigner::random();
     let unsigned_without_witness =
-        KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, account);
+        KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, access_key.address());
     let authorization = unsigned_without_witness.clone().with_witness(witness);
     assert_eq!(authorization.witness(), Some(witness));
     assert_ne!(
@@ -536,7 +545,9 @@ async fn test_tempo_t5_key_authorization_witness_burn_flow() {
 
     let calldata = keychain.burnKeyAuthorizationWitness(witness).calldata().clone();
     let base_fee = provider.get_gas_price().await.unwrap();
-    let signer = dev_key(0);
+    let key_auth_signature = signer.sign_hash(&authorization.signature_hash()).await.unwrap();
+    let signed_key_auth =
+        authorization.into_signed(PrimitiveSignature::Secp256k1(key_auth_signature));
     let tempo_tx = TempoTransaction {
         chain_id,
         fee_token: Some(ALPHA_USD),
@@ -554,7 +565,7 @@ async fn test_tempo_t5_key_authorization_witness_burn_flow() {
         fee_payer_signature: None,
         valid_before: None,
         valid_after: None,
-        key_authorization: None,
+        key_authorization: Some(signed_key_auth),
         tempo_authorization_list: vec![],
     };
 
@@ -788,6 +799,8 @@ async fn test_tempo_t5_fee_amm_two_hop_route_for_local_fees() {
     }
     api.anvil_set_fee_token(sender, fee_token).await.unwrap();
 
+    let first_hop_pool_before = fee_manager.getPool(fee_token, PATH_USD).call().await.unwrap();
+    let second_hop_pool_before = fee_manager.getPool(PATH_USD, BETA_USD).call().await.unwrap();
     let collected_before = fee_manager.collectedFees(validator, BETA_USD).call().await.unwrap();
     let transfer_tx = TransactionRequest::default()
         .from(sender)
@@ -813,6 +826,26 @@ async fn test_tempo_t5_fee_amm_two_hop_route_for_local_fees() {
     let direct_pool_after = fee_manager.getPool(fee_token, BETA_USD).call().await.unwrap();
     assert_eq!(direct_pool_after.reserveUserToken, 0);
     assert_eq!(direct_pool_after.reserveValidatorToken, 0);
+
+    let first_hop_pool_after = fee_manager.getPool(fee_token, PATH_USD).call().await.unwrap();
+    assert!(
+        first_hop_pool_after.reserveUserToken > first_hop_pool_before.reserveUserToken,
+        "feeToken -> PATH pool should collect fee token input"
+    );
+    assert!(
+        first_hop_pool_after.reserveValidatorToken < first_hop_pool_before.reserveValidatorToken,
+        "feeToken -> PATH pool should spend PATH output"
+    );
+
+    let second_hop_pool_after = fee_manager.getPool(PATH_USD, BETA_USD).call().await.unwrap();
+    assert!(
+        second_hop_pool_after.reserveUserToken > second_hop_pool_before.reserveUserToken,
+        "PATH -> BETA pool should collect PATH input"
+    );
+    assert!(
+        second_hop_pool_after.reserveValidatorToken < second_hop_pool_before.reserveValidatorToken,
+        "PATH -> BETA pool should spend BETA output"
+    );
 }
 
 // ============================================================================
