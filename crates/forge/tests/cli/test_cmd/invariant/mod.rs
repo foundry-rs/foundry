@@ -281,7 +281,7 @@ Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 ╭----------------+-----------+-------+---------+----------╮
 | Contract       | Selector  | Calls | Reverts | Discards |
 +=========================================================+
-| TimeoutHandler | increment | [..]  | [..]    | [..]     |
+| TimeoutHandler | increment | [..]| [..]| [..]|
 ╰----------------+-----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
