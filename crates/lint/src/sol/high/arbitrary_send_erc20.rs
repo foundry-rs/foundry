@@ -605,6 +605,18 @@ impl<'hir> Analyzer<'hir> {
         !var.kind.is_state() || var.is_immutable() || var.is_constant()
     }
 
+    /// Drops permits whose token is `Field(base, name)` when the LHS is the
+    /// corresponding `<base>.<name>` (assignment or `delete`).
+    fn kill_field_permits(&mut self, lhs: &hir::Expr<'_>) {
+        let lhs = lhs.peel_parens();
+        if let ExprKind::Member(base, ident) = &lhs.kind
+            && let Some(base_v) = underlying_var(base)
+        {
+            let key = TokenKey::Field(self.canonical(base_v), ident.name);
+            self.permits.retain(|p| p.token != key);
+        }
+    }
+
     /// Handles single-var and tuple LHS; tuple slots align with a tuple-literal RHS.
     fn handle_assign(&mut self, lhs: &hir::Expr<'_>, rhs: &hir::Expr<'_>) {
         let lhs = lhs.peel_parens();
@@ -991,15 +1003,24 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                     };
                     self.hits.push((expr.span, lint));
                 } else if let Some(writes) = self.call_state_writes(callee) {
-                    // Internal call may mutate `self`'s state vars: drop facts for them.
+                    // Solidity evaluates args before invoking the callee. Walk first so
+                    // nested sinks see the still-live facts, then invalidate.
+                    let result = self.walk_expr(expr);
                     for v in writes {
                         self.invalidate(v);
                     }
+                    return result;
                 }
             }
-            ExprKind::Assign(lhs, _, rhs) => self.handle_assign(lhs, rhs),
+            ExprKind::Assign(lhs, _, rhs) => {
+                self.kill_field_permits(lhs);
+                self.handle_assign(lhs, rhs);
+            }
             // `delete x` resets `x`; treat as unknown reassignment.
-            ExprKind::Delete(target) => self.assign_one(target.peel_parens(), None),
+            ExprKind::Delete(target) => {
+                self.kill_field_permits(target);
+                self.assign_one(target.peel_parens(), None);
+            }
             _ => {}
         }
         self.walk_expr(expr)
@@ -1700,6 +1721,9 @@ fn branch_always_exits(stmt: &hir::Stmt<'_>) -> bool {
             let user = do_while_user_stmts(block.stmts);
             !body_has_break_or_continue(user) && user.iter().any(branch_always_exits)
         }
+        // `try { ... } catch { ... }` exits the enclosing block only when every clause
+        // (success and all catches) definitely exits.
+        StmtKind::Try(t) => t.clauses.iter().all(|c| c.block.stmts.iter().any(branch_always_exits)),
         _ => false,
     }
 }

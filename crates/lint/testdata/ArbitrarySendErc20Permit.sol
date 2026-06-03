@@ -1227,6 +1227,58 @@ contract ArbitrarySendErc20Permit {
         token.transferFrom(from, to, a);
     }
 
+    // Reassigning a struct field drops permits keyed on `Field(base, name)`.
+    function okPermitStructFieldReassigned(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        cfg.token.permit(from, address(this), a, deadline, v, r, s);
+        cfg.token = other;
+        cfg.token.transferFrom(from, to, a);
+    }
+
+    // Every try clause exits; trailing code is unreachable and must not be analyzed.
+    function okPermitTryAllClausesExit(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        try token.permit(from, address(this), a, deadline, v, r, s) {
+            revert("ok");
+        } catch {
+            revert("bad");
+        }
+        token.transferFrom(from, to, a);
+    }
+
+    // Arg-eval order: nested sink in args must see facts live before the outer call's
+    // state-write side effects are applied.
+    function _switchTokenAndReturn(uint256 x) internal returns (uint256) {
+        token = other;
+        return x;
+    }
+    function badPermitNestedSinkBeforeStateWrite(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        token.permit(from, address(this), a, deadline, v, r, s);
+        _switchTokenAndReturn(token.transferFrom(from, to, a) ? 0 : 0); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
     // Immutable seeded from constructor with `address(this)`; flash-loan repayment
     // to that immutable must be accepted as self.
     function okPermitFlashRepaymentToVault(
