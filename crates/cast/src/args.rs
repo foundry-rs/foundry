@@ -37,6 +37,7 @@ use foundry_evm_networks::NetworkVariant;
 use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
+use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -621,6 +622,51 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let who = who.resolve(&provider).await?;
             let out = Cast::new(provider).storage_root(who, slots, block).await?;
             print_scalar(out)?;
+        }
+        CastSubcommand::ChannelId {
+            payer,
+            payee,
+            token,
+            salt,
+            operator,
+            authorized_signer,
+            expiring_nonce_hash,
+            reserve,
+            block,
+            rpc,
+        } => {
+            let config = rpc.load_config()?;
+            let provider = utils::get_provider(&config)?;
+            let payer = payer.resolve(&provider).await?;
+            let payee = payee.resolve(&provider).await?;
+            let token = token.resolve(&provider).await?;
+            let operator = match operator {
+                Some(operator) => operator.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let authorized_signer = match authorized_signer {
+                Some(authorized_signer) => authorized_signer.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let reserve = match reserve {
+                Some(reserve) => reserve.resolve(&provider).await?,
+                None => TIP20_CHANNEL_RESERVE_ADDRESS,
+            };
+
+            let channel_id = ITIP20ChannelReserve::new(reserve, &provider)
+                .computeChannelId(
+                    payer,
+                    payee,
+                    operator,
+                    token,
+                    salt,
+                    authorized_signer,
+                    expiring_nonce_hash,
+                )
+                .block(block.unwrap_or_default())
+                .call()
+                .await?;
+            print_scalar(format!("{channel_id:#x}"))?;
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = rpc.load_config()?;

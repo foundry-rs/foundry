@@ -5216,6 +5216,8 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-compiler",
+ "tempo-chainspec",
+ "tempo-precompiles",
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
@@ -5523,6 +5525,7 @@ dependencies = [
  "snapbox",
  "solar-compiler",
  "soldeer-core",
+ "strum 0.27.2",
  "tempfile",
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
@@ -5644,6 +5647,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-alloy",
+ "tempo-chainspec",
  "tempo-contracts",
  "tempo-evm",
  "tempo-precompiles",
@@ -5724,6 +5728,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "tempo-contracts",
 ]
 
 [[package]]
@@ -5745,6 +5750,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
+ "foundry-evm-hardforks",
  "foundry-linking",
  "futures",
  "itertools 0.14.0",

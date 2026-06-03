@@ -507,7 +507,7 @@ where
 }
 
 /// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).
-fn validate_sponsor_url(raw: &str) -> Result<()> {
+pub(crate) fn validate_sponsor_url(raw: &str) -> Result<()> {
     let url = Url::parse(raw)
         .map_err(|e| eyre::eyre!("--sponsor-url is not a valid URL ({raw}): {e}"))?;
 

@@ -49,9 +49,6 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
         for span in &entry.hits {
             ctx.emit(&ARBITRARY_SEND_ETH, *span);
         }
-        if func.modifiers.iter().any(|m| modifier_restricts_caller(gcx, hir, m)) {
-            return;
-        }
         let mut analyzer = Analyzer::new(gcx, hir);
         for m in func.modifiers {
             collect_modifier_safety(gcx, hir, m, &mut analyzer.safe_vars);
@@ -61,6 +58,12 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
             if branch_always_exits(stmt) {
                 break;
             }
+        }
+        if analyzer.hits.is_empty() {
+            return;
+        }
+        if func.modifiers.iter().any(|m| modifier_restricts_caller(gcx, hir, m)) {
+            return;
         }
         for span in analyzer.hits {
             ctx.emit(&ARBITRARY_SEND_ETH, span);
