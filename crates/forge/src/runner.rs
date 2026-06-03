@@ -842,6 +842,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     )));
                 result.reason = reason;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }
@@ -851,6 +852,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if i == fixtures_len - 1 {
                 result.success = true;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }

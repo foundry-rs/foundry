@@ -2693,6 +2693,8 @@ interface IForkDebugTarget {{
 contract ForkDebugTest {{
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
+    uint256[] public fixtureNewValue = [7];
+
     function testDebugForkTarget() public {{
         vm.createSelectFork("{rpc}");
         IForkDebugTarget target = IForkDebugTarget({deployed});
@@ -2702,6 +2704,13 @@ contract ForkDebugTest {{
 
     /// forge-config: default.fuzz.runs = 1
     function testDebugForkTargetFuzz(uint256 newValue) public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(newValue);
+        require(target.value() == newValue, "value");
+    }}
+
+    function tableDebugForkTarget(uint256 newValue) public {{
         vm.createSelectFork("{rpc}");
         IForkDebugTarget target = IForkDebugTarget({deployed});
         target.set(newValue);
@@ -2735,6 +2744,18 @@ contract ForkDebugTest {{
     ]);
     cmd.assert_success();
     assert_debug_dump_identifies_contract(&fuzz_dump_path, &deployed, "ForkDebugTarget");
+
+    let table_dump_path = prj.root().join("table_dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^tableDebugForkTarget\\(uint256\\)$",
+        "--debug",
+        "--dump",
+        table_dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&table_dump_path, &deployed, "ForkDebugTarget");
 });
 
 fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
