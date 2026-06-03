@@ -170,8 +170,21 @@ impl Create2Args {
             }
 
             hex::decode(matches.replace('X', "0")).wrap_err("invalid matching hex provided")?;
-            // replacing X placeholders by . to match any character at these positions
 
+            // Avoid mining forever when the regex pins the TIP-20 prefix.
+            if avoid_tip20_prefix {
+                let head = &matches[..24];
+                if !head.contains('X') && head.eq_ignore_ascii_case(TIP20_PREFIX_HEX.as_str()) {
+                    eyre::bail!(
+                        "--matching {matches:?} forces the reserved TIP-20 prefix \
+                         ({}); incompatible with --avoid-tip20-prefix because every \
+                         candidate would be filtered out",
+                        TIP20_PREFIX_HEX.as_str(),
+                    );
+                }
+            }
+
+            // replacing X placeholders by . to match any character at these positions
             regexs.push(matches.replace('X', "."));
         }
 
