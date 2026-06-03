@@ -205,13 +205,16 @@ pub fn run_mutations_parallel_with_progress(
     let source_abs =
         if source_path.is_absolute() { source_path } else { config.root.join(&source_path) };
 
+    let root_abs = config.root.canonicalize().unwrap_or_else(|_| config.root.clone());
+    let source_abs = source_abs.canonicalize().unwrap_or(source_abs);
+
     let source_relative = source_abs
-        .strip_prefix(&config.root)
+        .strip_prefix(&root_abs)
         .map_err(|_| {
             eyre::eyre!(
                 "Source path {} is not under project root {}",
                 source_abs.display(),
-                config.root.display()
+                root_abs.display()
             )
         })?
         .to_path_buf();
