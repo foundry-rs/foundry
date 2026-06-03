@@ -180,11 +180,7 @@ impl Tip20Subcommand {
 pub(super) async fn resolve_tip20_signer(
     send_tx: &SendTxOpts,
 ) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
-    if send_tx.eth.wallet.from.is_some() {
-        send_tx.eth.wallet.maybe_signer().await
-    } else {
-        Ok((None, None))
-    }
+    send_tx.eth.wallet.maybe_signer().await
 }
 
 pub(super) async fn send_tip20_transaction(
@@ -291,7 +287,10 @@ pub(super) async fn send_tip20_transaction(
         )
         .await?;
     } else if let Some(sponsor_url) = sponsor_url {
-        let signer = pre_resolved_signer.unwrap_or(send_tx.eth.wallet.signer().await?);
+        let signer = match pre_resolved_signer {
+            Some(signer) => signer,
+            None => send_tx.eth.wallet.signer().await?,
+        };
         let from = signer.address();
         crate::tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
@@ -312,7 +311,10 @@ pub(super) async fn send_tip20_transaction(
         cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
             .await?;
     } else {
-        let signer = pre_resolved_signer.unwrap_or(send_tx.eth.wallet.signer().await?);
+        let signer = match pre_resolved_signer {
+            Some(signer) => signer,
+            None => send_tx.eth.wallet.signer().await?,
+        };
         let from = signer.address();
         crate::tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
