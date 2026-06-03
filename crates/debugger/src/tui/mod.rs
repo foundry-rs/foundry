@@ -59,7 +59,7 @@ fn non_interactive_debugger_message(reason: TuiFallbackReason) -> String {
     )
 }
 
-fn debugger_dump_hint() -> &'static str {
+const fn debugger_dump_hint() -> &'static str {
     "Pass `--dump <PATH>` to export debugger steps."
 }
 
