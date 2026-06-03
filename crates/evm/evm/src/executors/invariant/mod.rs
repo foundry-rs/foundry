@@ -190,6 +190,18 @@ fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
     }
 }
 
+fn should_continue_invariant_worker(
+    campaign_state: &InvariantCampaignState,
+    runs: u32,
+    plan: InvariantWorkerPlan,
+) -> bool {
+    if campaign_state.should_stop() {
+        return false;
+    }
+
+    campaign_state.is_timed_campaign() || runs < plan.runs
+}
+
 fn invariant_worker_runner(
     runner: &mut TestRunner,
     worker_id: u32,
@@ -743,7 +755,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
 
-        'stop: while !campaign_state.should_stop() && runs < plan.runs {
+        'stop: while should_continue_invariant_worker(campaign_state, runs, plan) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
@@ -1071,7 +1083,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             invariant_test.end_run(current_run, gas_report_samples);
             runs += 1;
             let total_runs = campaign_state.increment_runs();
-            debug_assert!(total_runs <= config.runs, "worker runs were not distributed correctly");
+            debug_assert!(
+                campaign_state.is_timed_campaign() || total_runs <= config.runs,
+                "worker runs were not distributed correctly"
+            );
             if let Some(progress) = progress {
                 progress.inc(1);
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
@@ -1929,6 +1944,20 @@ mod tests {
 
         config.timeout = Some(1);
         assert_eq!(invariant_worker_count(&config), 4);
+    }
+
+    #[test]
+    fn timed_invariant_workers_are_not_bounded_by_assigned_runs() {
+        let plan = InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 };
+
+        let untimed = InvariantCampaignState::new(EarlyExit::new(false), None);
+        assert!(should_continue_invariant_worker(&untimed, 0, plan));
+        assert!(!should_continue_invariant_worker(&untimed, 1, plan));
+
+        let timed = InvariantCampaignState::new(EarlyExit::new(false), Some(60));
+        assert!(should_continue_invariant_worker(&timed, 0, plan));
+        assert!(should_continue_invariant_worker(&timed, 1, plan));
+        assert!(should_continue_invariant_worker(&timed, 10_000, plan));
     }
 
     #[test]

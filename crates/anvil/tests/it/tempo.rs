@@ -11,17 +11,23 @@ use std::num::NonZeroU64;
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolValue, sol};
 use anvil::{NodeConfig, spawn};
-use foundry_evm::core::tempo::{PATH_USD_ADDRESS, TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS};
+use foundry_evm::core::tempo::{
+    ITIP20ChannelReserve, PATH_USD_ADDRESS, TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS,
+    active_tempo_precompile_addresses,
+};
 use tempo_alloy::primitives::TempoTxEnvelope;
-use tempo_precompiles::{DEFAULT_FEE_TOKEN, TIP_FEE_MANAGER_ADDRESS};
+use tempo_precompiles::{
+    DEFAULT_FEE_TOKEN, RECEIVE_POLICY_GUARD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+    TIP20_CHANNEL_RESERVE_ADDRESS,
+};
 use tempo_primitives::{
     AASigned, TempoSignature, TempoTransaction,
     transaction::{Call, PrimitiveSignature},
@@ -92,11 +98,19 @@ sol! {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_precompiles_have_code() {
-    let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (api, _handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+
+    assert!(
+        TEMPO_PRECOMPILE_ADDRESSES.contains(&TIP20_CHANNEL_RESERVE_ADDRESS),
+        "T5 channel reserve should be tracked as a Tempo precompile"
+    );
 
     // Tempo precompiles should have sentinel bytecode (0xef)
-    for addr in TEMPO_PRECOMPILE_ADDRESSES {
-        let code = api.get_code(*addr, None).await.unwrap();
+    for addr in active_tempo_precompile_addresses(TempoHardfork::T5) {
+        let code = api.get_code(addr, None).await.unwrap();
         assert!(!code.is_empty(), "Precompile {addr} should have code");
     }
 
@@ -105,6 +119,107 @@ async fn test_tempo_precompiles_have_code() {
         let code = api.get_code(*addr, None).await.unwrap();
         assert!(!code.is_empty(), "Token {addr} should have code deployed");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_pre_t5_channel_reserve_has_no_sentinel_code() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (api, _handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T4.into()))).await;
+
+    let code = api.get_code(TIP20_CHANNEL_RESERVE_ADDRESS, None).await.unwrap();
+    assert!(code.is_empty(), "pre-T5 channel reserve address should not have sentinel code");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_config_reports_channel_reserve_precompile() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (api, _handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+
+    let config = api.config().unwrap();
+
+    assert_eq!(
+        config.current.precompiles.get("TIP20ChannelReserve"),
+        Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_config_filters_hardfork_gated_precompiles() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (api_t4, _handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T4.into()))).await;
+    let config_t4 = api_t4.config().unwrap();
+    assert!(!config_t4.current.precompiles.contains_key("TIP20ChannelReserve"));
+    assert!(!config_t4.current.precompiles.contains_key("ReceivePolicyGuard"));
+
+    let (api_t5, _handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let config_t5 = api_t5.config().unwrap();
+    assert_eq!(
+        config_t5.current.precompiles.get("TIP20ChannelReserve"),
+        Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
+    );
+    assert!(!config_t5.current.precompiles.contains_key("ReceivePolicyGuard"));
+
+    let (api_t6, _handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let config_t6 = api_t6.config().unwrap();
+    assert_eq!(
+        config_t6.current.precompiles.get("ReceivePolicyGuard"),
+        Some(&RECEIVE_POLICY_GUARD_ADDRESS)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_channel_reserve_compute_channel_id_call() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let reserve = ITIP20ChannelReserve::new(TIP20_CHANNEL_RESERVE_ADDRESS, &provider);
+
+    let payer = address!("0x0000000000000000000000000000000000000101");
+    let payee = address!("0x0000000000000000000000000000000000000202");
+    let operator = address!("0x0000000000000000000000000000000000000303");
+    let salt = B256::with_last_byte(0x42);
+    let authorized_signer = address!("0x0000000000000000000000000000000000000404");
+    let expiring_nonce_hash = B256::with_last_byte(0x99);
+
+    let channel_id = reserve
+        .computeChannelId(
+            payer,
+            payee,
+            operator,
+            PATH_USD,
+            salt,
+            authorized_signer,
+            expiring_nonce_hash,
+        )
+        .call()
+        .await
+        .unwrap();
+    let expected = keccak256(
+        (
+            payer,
+            payee,
+            operator,
+            PATH_USD,
+            salt,
+            authorized_signer,
+            expiring_nonce_hash,
+            TIP20_CHANNEL_RESERVE_ADDRESS,
+            U256::from(provider.get_chain_id().await.unwrap()),
+        )
+            .abi_encode(),
+    );
+
+    assert_eq!(channel_id, expected);
 }
 
 // ============================================================================
