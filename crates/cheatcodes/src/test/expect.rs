@@ -7,9 +7,10 @@ use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_dyn_abi::{DynSolValue, EventExt};
 use alloy_json_abi::Event;
 use alloy_primitives::{
-    Address, Bytes, LogData as RawLog, U256, hex,
+    Address, Bytes, LogData as RawLog, U256, hex, keccak256,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
+use alloy_sol_types::SolValue;
 use foundry_common::{abi::get_indexed_event, fmt::format_token};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_traces::DecodedCallLog;
@@ -402,6 +403,43 @@ impl Cheatcode for expectCreate2Call {
         let Self { bytecode, deployer } = self;
         expect_create(state, bytecode.clone(), *deployer, CreateScheme::Create2)
     }
+}
+
+impl Cheatcode for expectTip20LogoURIUpdatedCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, updater, newLogoURI } = self;
+        expect_logo_uri_updated(ccx, token, updater, newLogoURI)
+    }
+}
+
+impl Cheatcode for expectLogoURIUpdatedCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, updater, newLogoURI } = self;
+        expect_logo_uri_updated(ccx, token, updater, newLogoURI)
+    }
+}
+
+fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    token: &Address,
+    updater: &Address,
+    new_logo_uri: &str,
+) -> Result {
+    let expected_emit = ExpectedEmit {
+        depth: ccx.ecx.journal().depth(),
+        log: Some(RawLog::new_unchecked(
+            vec![keccak256("LogoURIUpdated(address,string)"), updater.into_word()],
+            new_logo_uri.abi_encode().into(),
+        )),
+        checks: [true, true, false, false, true],
+        address: Some(*token),
+        anonymous: false,
+        found: false,
+        count: 1,
+        mismatch_error: None,
+    };
+    ccx.state.expected_emits.push_back((expected_emit, Default::default()));
+    Ok(Default::default())
 }
 
 impl Cheatcode for expectRevert_0Call {

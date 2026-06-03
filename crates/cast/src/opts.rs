@@ -1038,6 +1038,50 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
+    /// Compute a Tempo TIP-20 channel reserve channel ID.
+    #[command(name = "channel-id")]
+    ChannelId {
+        /// Channel payer address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payer: NameOrAddress,
+
+        /// Channel payee address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payee: NameOrAddress,
+
+        /// TIP-20 token address locked by the channel.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// User-supplied channel salt.
+        salt: B256,
+
+        /// Optional relayer allowed to submit settlements for the payee.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        operator: Option<NameOrAddress>,
+
+        /// Optional voucher signer. Defaults to the zero address, meaning the payer signs.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        authorized_signer: Option<NameOrAddress>,
+
+        /// Transaction-derived expiring nonce hash from ChannelOpened.
+        #[arg(long, default_value_t = B256::ZERO)]
+        expiring_nonce_hash: B256,
+
+        /// Channel reserve precompile address.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        reserve: Option<NameOrAddress>,
+
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Get the source code of a contract from a block explorer.
     #[command(visible_aliases = &["et", "src"])]
     Source {
