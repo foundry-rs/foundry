@@ -396,26 +396,23 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // inspectable in the debugger.
         let has_invariants = !invariant_fns.is_empty();
 
-        let disable_debug_for_setup =
-            self.executor.inspector().tracer.is_some() && !self.tcfg.debug;
-        let should_override_setup_tracing = disable_debug_for_setup || has_invariants;
+        let should_override_setup_tracing =
+            !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
 
         let prev_tracer = if should_override_setup_tracing {
-            self.executor.inspector_mut().tracer.take()
+            let prev_tracer = self.executor.inspector_mut().tracer.take();
+            self.executor.set_tracing(TraceMode::Call);
+            Some(prev_tracer)
         } else {
             None
         };
-
-        if should_override_setup_tracing {
-            self.executor.set_tracing(TraceMode::Call);
-        }
 
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
         if let Some(prev_tracer) = prev_tracer {
-            self.executor.inspector_mut().tracer = Some(prev_tracer);
+            self.executor.inspector_mut().tracer = prev_tracer;
         }
 
         if setup.reason.is_some() {
