@@ -74,16 +74,13 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
     // Give Etherscan some time to verify the contract.
     Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
         let output = cmd.execute();
-        let out = String::from_utf8_lossy(&output.stdout);
-        test_debug!("{out}");
-        if out.contains("Contract successfully verified") {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        test_debug!("stdout: {stdout}\nstderr: {stderr}");
+        if stderr.contains("Contract successfully verified") {
             return Ok(());
         }
-        eyre::bail!(
-            "Failed to get verification, stdout: {}, stderr: {}",
-            out,
-            String::from_utf8_lossy(&output.stderr)
-        )
+        eyre::bail!("Failed to get verification, stdout: {stdout}, stderr: {stderr}")
     })
 }
 
@@ -232,15 +229,14 @@ fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut 
         add_single_verify_target_file(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
-        let output = cmd
+        let assert = cmd
             .arg("create")
             .args(info.create_args())
             .args([contract_path, "--etherscan-api-key", info.etherscan.as_str(), "--verify"])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-
-        assert!(output.contains("Contract successfully verified"), "{}", output);
+            .assert_success();
+        let output = assert.get_output();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Contract successfully verified"), "stderr: {stderr}");
     }
 }
 
@@ -330,6 +326,7 @@ forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
+Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
 Error: No verifier URL specified for verifier blockscout
 
 "#]]);
@@ -347,15 +344,29 @@ Error: No verifier URL specified for verifier blockscout
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
+Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
 Error: No known Etherscan API URL for chain `4202`. To fix this, please:
 1. Specify a `url` when using Etherscan verifier
 2. Verify the chain `4202` is correct
 
 "#]]);
 
-    cmd.forge_fuse().args(["verify-contract", "--rpc-url", "https://rpc.sepolia-api.lisk.com", "--verifier", "blockscout", "--verifier-url", "https://sepolia-blockscout.lisk.com/api", "0x19b248616E4964f43F611b5871CE1250f360E9d3", "src/Counter.sol:Counter"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args([
+            "verify-contract",
+            "--rpc-url",
+            "https://rpc.sepolia-api.lisk.com",
+            "--verifier",
+            "blockscout",
+            "--verifier-url",
+            "https://sepolia-blockscout.lisk.com/api",
+            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "src/Counter.sol:Counter",
+        ])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
-
 Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
 
 "#]]);

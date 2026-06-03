@@ -31,14 +31,18 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
     // Build the project
-    cmd.arg("build").assert_success().stdout_eq(str![[r#"
-Missing dependencies found. Installing now...
-
-[UPDATING_DEPENDENCIES]
+    cmd.arg("build")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
+"#]])
+        .stderr_eq(str![[r#"
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
 "#]]);
 
     // assert lockfile
@@ -61,10 +65,9 @@ forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
-Missing dependencies found. Installing now...
-
-[UPDATING_DEPENDENCIES]
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -76,6 +79,11 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
+"#]])
+        .stderr_eq(str![[r#"
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
 "#]]);
 
     // assert lockfile
@@ -95,13 +103,16 @@ forgetest!(can_install_and_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
-            str![[r#"
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std"])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
 
-"#]],
-        );
+"#]]);
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -167,11 +178,15 @@ forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     let forge_std_mod = git_mod.join("forge-std");
 
     let install = |cmd: &mut TestCommand| {
-        cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(
-            str![[r#"
+        cmd.forge_fuse()
+            .args(["install", "foundry-rs/forge-std"])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
-    Installed forge-std tag=[..]"#]],
-        );
+...
+    Installed forge-std tag=[..]
+"#]]);
 
         assert!(forge_std.exists());
         assert!(forge_std_mod.exists());
@@ -393,13 +408,16 @@ forgetest!(
         let package_mod = git_mod.join("forge-5980-test");
 
         // install main dependency
-        cmd.forge_fuse().args(["install", "evalir/forge-5980-test"]).assert_success().stdout_eq(
-            str![[r#"
+        cmd.forge_fuse()
+            .args(["install", "evalir/forge-5980-test"])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Installing forge-5980-test in [..] (url: https://github.com/evalir/forge-5980-test, tag: None)
+...
     Installed forge-5980-test
 
-"#]],
-        );
+"#]]);
 
         // assert paths exist
         assert!(package.exists());

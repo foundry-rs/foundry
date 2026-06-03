@@ -3,6 +3,7 @@ use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    json::print_scalar,
     opts::RpcOpts,
     utils::{self, LoadConfig},
 };
@@ -79,7 +80,7 @@ impl FindBlockArgs {
             }
             matching_block.unwrap_or(low_block)
         };
-        sh_println!("{block_num}")?;
+        print_scalar(block_num)?;
 
         Ok(())
     }

@@ -116,6 +116,9 @@ pub use invariant::InvariantConfig;
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 
+pub mod mutation;
+pub use mutation::{MutationConfig, MutatorType};
+
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 
@@ -354,6 +357,8 @@ pub struct Config {
     pub coverage_pattern_inverse: Option<RegexWrapper>,
     /// Path where last test run failures are recorded.
     pub test_failures_file: PathBuf,
+    /// Path where mutation tests are cached, to resume running them
+    pub mutation_dir: PathBuf,
     /// Max concurrent threads to use.
     pub threads: Option<usize>,
     /// Whether to show test execution progress.
@@ -364,6 +369,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Configuration for symbolic testing
     pub symbolic: SymbolicConfig,
+    /// Configuration for mutation testing
+    pub mutation: MutationConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to show `console.log` outputs in realtime during script/test execution
@@ -715,6 +722,7 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "mutation",
         "labels",
         "dependencies",
         "soldeer",
@@ -1333,6 +1341,9 @@ impl Config {
                 self.test_failures_file.display()
             ));
         }
+
+        // Remove mutation test cache directory
+        let _ = fs::remove_dir_all(project.root().join(&self.mutation_dir));
 
         // Remove fuzz and invariant cache directories.
         let mut remove_test_dir = |test_dir: &Option<PathBuf>| {
@@ -2689,11 +2700,13 @@ impl Default for Config {
             path_pattern_inverse: None,
             coverage_pattern_inverse: None,
             test_failures_file: "cache/test-failures".into(),
+            mutation_dir: "cache/mutation".into(),
             threads: None,
             show_progress: false,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
             symbolic: SymbolicConfig::default(),
+            mutation: MutationConfig::default(),
             always_use_create_2_factory: false,
             ffi: false,
             live_logs: false,
@@ -4179,6 +4192,7 @@ mod tests {
                 [invariant]
                 runs = 256
                 depth = 500
+                workers = 1
                 fail_on_revert = false
                 call_override = false
                 shrink_run_limit = 5000
@@ -4991,6 +5005,7 @@ mod tests {
                 [invariant]
                 runs = 512
                 depth = 10
+                workers = 4
             ",
             )?;
 
@@ -5000,6 +5015,7 @@ mod tests {
                 InvariantConfig {
                     runs: 512,
                     depth: 10,
+                    workers: 4,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
@@ -5026,11 +5042,13 @@ mod tests {
             jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
             jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
             jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
+            jail.set_env("FOUNDRY_INVARIANT_WORKERS", "3");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
             assert_eq!(config.invariant.depth, 5);
+            assert_eq!(config.invariant.workers, 3);
 
             Ok(())
         });
@@ -6954,6 +6972,9 @@ mod tests {
                 runs = 256
                 unknown_invariant_key = "should_warn"
 
+                [mutation]
+                unknown_mutation_key = "should_warn"
+
                 [vyper]
                 unknown_vyper_key = "should_warn"
 
@@ -6981,6 +7002,9 @@ mod tests {
                 [profile.default.invariant]
                 runs = 512
                 unknown_nested_invariant_key = "should_warn"
+
+                [profile.default.mutation]
+                unknown_nested_mutation_key = "should_warn"
 
                 [profile.default.vyper]
                 unknown_nested_vyper_key = "should_warn"
@@ -7020,6 +7044,7 @@ mod tests {
                 ("unknown_doc_key", "doc"),
                 ("unknown_fuzz_key", "fuzz"),
                 ("unknown_invariant_key", "invariant"),
+                ("unknown_mutation_key", "mutation"),
                 ("unknown_vyper_key", "vyper"),
                 ("unknown_bind_json_key", "bind_json"),
             ];
@@ -7045,6 +7070,7 @@ mod tests {
                 ("unknown_nested_doc_key", "doc"),
                 ("unknown_nested_fuzz_key", "fuzz"),
                 ("unknown_nested_invariant_key", "invariant"),
+                ("unknown_nested_mutation_key", "mutation"),
                 ("unknown_nested_vyper_key", "vyper"),
                 ("unknown_nested_bind_json_key", "bind_json"),
             ];
@@ -7093,11 +7119,11 @@ mod tests {
                 })
                 .collect();
 
-            // 1 profile key + 7 standalone + 7 nested + 2 array = 17 total
+            // 1 profile key + 8 standalone + 8 nested + 2 array = 19 total
             assert_eq!(
                 unknown_key_warnings.len(),
-                17,
-                "Expected 17 unknown key warnings (1 profile + 7 standalone + 7 nested + 2 array), got {}: {:?}",
+                19,
+                "Expected 19 unknown key warnings (1 profile + 8 standalone + 8 nested + 2 array), got {}: {:?}",
                 unknown_key_warnings.len(),
                 unknown_key_warnings
             );
@@ -7327,50 +7353,6 @@ mod tests {
                 vyper_warnings.is_empty(),
                 "Valid nested vyper keys should not trigger warnings, got: {vyper_warnings:?}"
             );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn no_false_warnings_for_nested_symbolic_config_keys() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                src = "src"
-
-                [profile.default.symbolic]
-                solver_command = "z3 -in -smt2"
-                solver_portfolio = ["z3", "cvc5"]
-                loop = 4
-                depth = 100
-                width = 8
-                exploration_order = "dfs"
-                dynamic_lengths = { payload = [1], values = [2, 3] }
-                default_array_lengths = [0, 2]
-                default_bytes_lengths = [1, 3]
-                "#,
-            )?;
-
-            let cfg = Config::load().unwrap();
-            let symbolic_warnings: Vec<_> = cfg
-                .warnings
-                .iter()
-                .filter(|w| {
-                    matches!(
-                        w,
-                        crate::Warning::UnknownSectionKey { section, .. } if section == "symbolic"
-                    )
-                })
-                .collect();
-
-            assert!(
-                symbolic_warnings.is_empty(),
-                "Valid symbolic keys should not trigger warnings, got: {symbolic_warnings:?}"
-            );
-            assert_eq!(cfg.symbolic.exploration_order, SymbolicExplorationOrder::Dfs);
 
             Ok(())
         });

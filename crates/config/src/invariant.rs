@@ -11,6 +11,11 @@ pub struct InvariantConfig {
     pub runs: u32,
     /// The number of calls executed to attempt to break invariants in one run.
     pub depth: u32,
+    /// Number of workers used to shard invariant runs.
+    ///
+    /// Defaults to `1` to preserve seeded reproducibility unless the user explicitly opts into
+    /// parallel invariant campaigns.
+    pub workers: usize,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
     /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
@@ -33,7 +38,7 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
-    /// Optional timeout (in seconds) for each invariant test.
+    /// Optional campaign-global timeout (in seconds) for each invariant test.
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
@@ -56,6 +61,7 @@ impl Default for InvariantConfig {
         Self {
             runs: 256,
             depth: 500,
+            workers: 1,
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },

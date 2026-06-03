@@ -92,8 +92,13 @@ impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
-    fn matches_test_function(&self, filter: &dyn TestFilter, func: &Function) -> bool {
-        matches_test_function(filter, func, self.config.symbolic.enabled)
+    fn matches_test_function(
+        &self,
+        filter: &dyn TestFilter,
+        contract_id: &str,
+        func: &Function,
+    ) -> bool {
+        matches_test_function(filter, contract_id, func, self.config.symbolic.enabled)
     }
 
     fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
@@ -113,9 +118,12 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
-        self.matching_contracts(filter)
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| self.matches_test_function(filter, func))
+        self.matching_contracts(filter).flat_map(move |(id, c)| {
+            let identifier = id.identifier();
+            c.abi
+                .functions()
+                .filter(move |func| self.matches_test_function(filter, &identifier, func))
+        })
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -138,10 +146,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .map(|(id, c)| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
+                let identifier = id.identifier();
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| self.matches_test_function(filter, func))
+                    .filter(|func| self.matches_test_function(filter, &identifier, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -595,10 +604,7 @@ impl MultiContractRunnerBuilder {
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                && abi.functions().any(|func| {
-                    func.is_any_test()
-                        || (self.config.symbolic.enabled && is_symbolic_entrypoint(func))
-                })
+                && abi.functions().any(|func| func.name.is_any_test())
             {
                 linker.ensure_linked(contract, id)?;
 
@@ -688,27 +694,40 @@ pub fn matches_artifact(
     abi: &JsonAbi,
     symbolic_enabled: bool,
 ) -> bool {
-    matches_contract(filter, &id.source, &id.name, abi.functions(), symbolic_enabled)
+    matches_contract(
+        filter,
+        &id.source,
+        &id.name,
+        &id.identifier(),
+        abi.functions(),
+        symbolic_enabled,
+    )
 }
 
 pub(crate) fn matches_contract(
     filter: &dyn TestFilter,
     path: &Path,
     contract_name: &str,
-    functions: impl IntoIterator<Item = impl Borrow<Function>>,
+    contract_id: &str,
+    functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
     symbolic_enabled: bool,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
         && functions
             .into_iter()
-            .any(|func| matches_test_function(filter, func.borrow(), symbolic_enabled))
+            .any(|func| matches_test_function(filter, contract_id, func.borrow(), symbolic_enabled))
 }
 
-fn matches_test_function(filter: &dyn TestFilter, func: &Function, symbolic_enabled: bool) -> bool {
+fn matches_test_function(
+    filter: &dyn TestFilter,
+    contract_id: &str,
+    func: &Function,
+    symbolic_enabled: bool,
+) -> bool {
     if symbolic_enabled && is_symbolic_entrypoint(func) {
         filter.matches_test(&func.signature())
     } else {
-        filter.matches_test_function(func)
+        filter.matches_test_function_in_contract(contract_id, func)
     }
 }
 
@@ -723,7 +742,7 @@ mod tests {
         let path = Path::new("test/Symbolic.t.sol");
         let func = Function::parse("checkFilteredCompile(uint256)").unwrap();
 
-        assert!(matches_contract(&filter, path, "Symbolic", [func.clone()], true));
-        assert!(!matches_contract(&filter, path, "Symbolic", [func], false));
+        assert!(matches_contract(&filter, path, "Symbolic", "Symbolic", [func.clone()], true));
+        assert!(!matches_contract(&filter, path, "Symbolic", "Symbolic", [func], false));
     }
 }

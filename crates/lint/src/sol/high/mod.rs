@@ -1,6 +1,7 @@
 use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 
 mod arbitrary_send_erc20;
+mod arbitrary_send_eth;
 mod encode_packed_collision;
 mod incorrect_shift;
 mod reentrancy;
@@ -9,18 +10,20 @@ mod unchecked_calls;
 mod unprotected_initializer;
 
 use arbitrary_send_erc20::ARBITRARY_SEND_ERC20;
+use arbitrary_send_eth::ARBITRARY_SEND_ETH;
 use encode_packed_collision::ENCODE_PACKED_COLLISION;
 use incorrect_shift::INCORRECT_SHIFT;
-use reentrancy::REENTRANCY_ETH;
+use reentrancy::{REENTRANCY_ETH, REENTRANCY_NO_ETH};
 use rtlo::RTLO;
 use unchecked_calls::{ERC20_UNCHECKED_TRANSFER, UNCHECKED_CALL};
 use unprotected_initializer::UNPROTECTED_INITIALIZER;
 
 register_lints!(
     (ArbitrarySendErc20, late, (ARBITRARY_SEND_ERC20)),
+    (ArbitrarySendEth, late, (ARBITRARY_SEND_ETH)),
     (EncodedPackedCollision, late, (ENCODE_PACKED_COLLISION)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
-    (ReentrancyEth, late, (REENTRANCY_ETH)),
+    (ReentrancyEth, late, (REENTRANCY_ETH, REENTRANCY_NO_ETH)),
     (UncheckedCall, early, (UNCHECKED_CALL)),
     (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER)),
     (UnprotectedInitializer, late, (UNPROTECTED_INITIALIZER)),

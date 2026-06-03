@@ -183,12 +183,21 @@ pub fn parse_deployed_address(out: &str) -> Option<String> {
 }
 
 pub fn parse_verification_guid(out: &str) -> Option<String> {
-    for line in out.lines() {
-        if line.contains("GUID") {
-            return Some(line.replace("GUID:", "").replace('`', "").trim().to_string());
-        }
+    let mut lines = out.lines().map(str::trim).filter(|line| !line.is_empty());
+    let line = lines.next()?;
+    if lines.next().is_some() {
+        return None;
     }
-    None
+    let mut parts = line.split('\t').map(str::trim);
+    let id = parts.next()?;
+    let url = parts.next()?;
+    if parts.next().is_some() || id.is_empty() || url.is_empty() {
+        return None;
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return None;
+    }
+    Some(id.to_string())
 }
 
 /// Generates a string containing the code of a Solidity contract.

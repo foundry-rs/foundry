@@ -5,7 +5,7 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
-    progress::{TestsProgress, start_fuzz_progress, start_symbolic_progress},
+    progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, TestResult, TestSetup, TestStatus,
         invariant_campaign_display_name,
@@ -17,7 +17,7 @@ use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig, SymbolicConfig};
+use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
@@ -37,12 +37,7 @@ use foundry_evm::{
         strategies::EvmFuzzState,
     },
     revm::primitives::hardfork::SpecId,
-    traces::{SparsedTraceArena, TraceKind, TraceMode, load_contracts},
-};
-use foundry_evm_symbolic::{
-    SymbolicExecutor, SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
-    SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, symbolic_solver_is_builtin,
-    symbolic_solver_portfolio_availability_warning,
+    traces::{TraceKind, TraceMode, load_contracts},
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -460,7 +455,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 if symbolic_enabled && is_symbolic_entrypoint(func) {
                     filter.matches_test(&func.signature())
                 } else {
-                    filter.matches_test_function(func)
+                    filter.matches_test_function_in_contract(self.name, func)
                 }
             })
             .filter(|func| self.function_matches_network_pass(func))
@@ -471,10 +466,6 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.contract.abi.functions().count(),
             find_timer.elapsed(),
         );
-        if let Some(warning) = self.symbolic_solver_command_warning(&functions) {
-            warnings.push(warning);
-        }
-        warnings.extend(self.symbolic_solver_portfolio_availability_warnings(&functions));
 
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
@@ -567,11 +558,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = if self.config.symbolic.enabled && is_symbolic_entrypoint(func) {
-                    TestFunctionKind::SymbolicTest
-                } else {
-                    func.test_function_kind()
-                };
+                let kind = func.test_function_kind();
 
                 let _guard = debug_span!(
                     "test",
@@ -601,71 +588,6 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let duration = start.elapsed();
         SuiteResult::new(duration, test_results, warnings)
     }
-
-    fn symbolic_solver_command_warning(&self, functions: &[&Function]) -> Option<String> {
-        if !self.config.symbolic.enabled
-            || !functions.iter().copied().any(|func| {
-                (is_symbolic_entrypoint(func) || func.is_invariant_test())
-                    && self.effective_symbolic_config(func).is_some_and(|symbolic| {
-                        symbolic_solver_config_executes_custom_program(&symbolic)
-                    })
-            })
-        {
-            return None;
-        }
-
-        Some(
-            "Symbolic solver command configuration can execute arbitrary local programs. \
-             Review `symbolic.solver_command`, custom `symbolic.solver` values, \
-             command-like or custom `symbolic.solver_portfolio` entries, and inline \
-             `forge-config:` or `@custom:halmos` annotations before running symbolic tests from \
-             untrusted projects."
-                .to_string(),
-        )
-    }
-
-    fn effective_symbolic_config(&self, func: &Function) -> Option<SymbolicConfig> {
-        if self.inline_config.contains_function(self.name, &func.name) {
-            self.inline_config(Some(func)).ok().map(|config| config.symbolic)
-        } else {
-            Some(self.config.symbolic.clone())
-        }
-    }
-
-    /// Returns unique availability warnings for symbolic solver portfolios used by this suite.
-    fn symbolic_solver_portfolio_availability_warnings(
-        &self,
-        functions: &[&Function],
-    ) -> Vec<String> {
-        if !self.config.symbolic.enabled {
-            return Vec::new();
-        }
-
-        functions
-            .iter()
-            .copied()
-            .filter(|func| is_symbolic_entrypoint(func) || func.is_invariant_test())
-            .filter_map(|func| self.effective_symbolic_config(func))
-            .filter_map(|symbolic| symbolic_solver_portfolio_availability_warning(&symbolic))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    }
-}
-
-fn symbolic_solver_config_executes_custom_program(symbolic: &SymbolicConfig) -> bool {
-    if symbolic.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty()) {
-        return true;
-    }
-    if symbolic.solver_portfolio.iter().any(|entry| !entry.trim().is_empty()) {
-        return symbolic.solver_portfolio.iter().any(|entry| {
-            let entry = entry.trim();
-            !entry.is_empty()
-                && (entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\'))
-                    || !symbolic_solver_is_builtin(entry))
-        });
-    }
-    !symbolic_solver_is_builtin(symbolic.solver.trim())
 }
 
 /// Executes a single test function, returning a [`TestResult`].
@@ -712,11 +634,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self.cr.mcr.revert_decoder
     }
 
-    /// Returns whether verbose symbolic diagnostics should be rendered after progress clears.
-    fn should_defer_symbolic_diagnostics(&self) -> bool {
-        self.cr.progress.is_some() && self.config.symbolic.dump_smt
-    }
-
     /// Configures this runner with the inline configuration for the contract.
     fn apply_function_inline_config(&mut self, func: &Function) -> Result<()> {
         if self.inline_config.contains_function(self.cr.name, &func.name) {
@@ -752,7 +669,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::TableTest => self.run_table_test(func),
-            TestFunctionKind::SymbolicTest => self.run_symbolic_test(func),
             TestFunctionKind::InvariantTest => {
                 let fail_on_revert_for = |f: &Function| {
                     if self.inline_config.contains_function(self.cr.name, &f.name)
@@ -814,295 +730,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
         self.result.single_result(success, reason, raw_call_result);
         self.result
-    }
-
-    /// Runs a symbolic test and replays any discovered counterexample concretely.
-    fn run_symbolic_test(mut self, func: &Function) -> TestResult {
-        if self.prepare_test(func).is_err() {
-            return self.result;
-        }
-
-        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
-        if self.should_defer_symbolic_diagnostics() {
-            symbolic.capture_diagnostics();
-        }
-        let progress = start_symbolic_progress(
-            self.cr.progress,
-            self.cr.name,
-            &func.name,
-            self.config.symbolic.max_solver_queries,
-        );
-        if let Some(progress) = progress.as_ref() {
-            let progress = progress.clone();
-            symbolic.set_query_observer(move |queries| progress.set_position(queries as u64));
-        }
-        let result = symbolic.run(SymbolicRunInput {
-            executor: self.executor.as_ref(),
-            target: self.address,
-            sender: self.sender,
-            function: func,
-            value: U256::ZERO,
-            ffi_enabled: self.config.ffi,
-        });
-        if let Some(progress) = progress {
-            progress.finish_and_clear();
-        }
-        let portfolio_diagnostics = symbolic.portfolio_diagnostics();
-        let symbolic_diagnostics = symbolic.take_diagnostics();
-
-        match result {
-            SymbolicRunResult::Safe(stats) => {
-                self.result.symbolic_result(true, None, None, stats);
-            }
-            SymbolicRunResult::Incomplete { kind, reason, stats } => {
-                self.result.symbolic_result(
-                    false,
-                    Some(format!("incomplete symbolic execution ({kind:?}): {reason}")),
-                    None,
-                    stats,
-                );
-            }
-            SymbolicRunResult::Counterexample { args, calldata, stats } => {
-                let (mut raw_call_result, reason) = match self.executor.call(
-                    self.sender,
-                    self.address,
-                    func,
-                    &args,
-                    U256::ZERO,
-                    Some(self.revert_decoder()),
-                ) {
-                    Ok(res) => (res.raw, None),
-                    Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
-                    Err(EvmError::Skip(reason)) => {
-                        self.result.single_skip(reason);
-                        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-                        self.result.symbolic_diagnostics = symbolic_diagnostics;
-                        return self.result;
-                    }
-                    Err(err) => {
-                        self.result.symbolic_result(false, Some(err.to_string()), None, stats);
-                        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-                        self.result.symbolic_diagnostics = symbolic_diagnostics;
-                        return self.result;
-                    }
-                };
-
-                let success = self.executor.is_raw_call_mut_success(
-                    self.address,
-                    &mut raw_call_result,
-                    false,
-                );
-                if success {
-                    self.result.symbolic_result(
-                        false,
-                        Some(
-                            "incomplete symbolic execution (Error): symbolic counterexample did not replay"
-                                .to_string(),
-                        ),
-                        None,
-                        stats,
-                    );
-                    self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-                    self.result.symbolic_diagnostics = symbolic_diagnostics;
-                    return self.result;
-                }
-
-                let counterexample = CounterExample::Single(BaseCounterExample::from_fuzz_call(
-                    calldata,
-                    args,
-                    raw_call_result.traces.clone(),
-                ));
-                self.result.extend(raw_call_result);
-                self.result.symbolic_result(false, reason, Some(counterexample), stats);
-            }
-        }
-
-        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-        self.result.symbolic_diagnostics = symbolic_diagnostics;
-        self.result
-    }
-
-    /// Runs a bounded symbolic invariant sequence and replays any discovered sequence concretely.
-    fn run_symbolic_invariant_test(
-        mut self,
-        func: &Function,
-        invariants: Vec<(&Function, bool)>,
-        call_after_invariant: bool,
-        identified_contracts: &ContractsByAddress,
-    ) -> TestResult {
-        let runner = self.invariant_runner();
-        let mut evm = InvariantExecutor::new(
-            self.clone_executor(),
-            runner,
-            self.config.invariant.clone(),
-            identified_contracts,
-            &self.cr.mcr.known_contracts,
-        );
-
-        if let Err(e) = evm.select_contract_artifacts(self.address) {
-            self.result.invariant_setup_fail(e);
-            return self.result;
-        }
-
-        let (sender_filters, targeted_contracts) =
-            match evm.select_contracts_and_senders(self.address) {
-                Ok(targets) => targets,
-                Err(e) => {
-                    self.result.invariant_setup_fail(e);
-                    return self.result;
-                }
-            };
-
-        let targets = {
-            let targets = targeted_contracts.targets();
-            targets
-                .fuzzed_functions()
-                .map(|(address, function)| SymbolicInvariantTarget {
-                    address: *address,
-                    contract_name: targets
-                        .inner
-                        .get(address)
-                        .map(|target| target.identifier.clone()),
-                    function: function.clone(),
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let senders = if sender_filters.targeted.is_empty() {
-            vec![self.sender]
-        } else {
-            sender_filters.targeted
-        };
-
-        let after_invariant = call_after_invariant.then(|| {
-            self.cr
-                .contract
-                .abi
-                .functions()
-                .find(|function| function.name.is_after_invariant())
-                .expect("afterInvariant function was validated before test execution")
-        });
-
-        let fail_on_revert = invariants
-            .iter()
-            .find_map(|(invariant, fail_on_revert)| (*invariant == func).then_some(*fail_on_revert))
-            .unwrap_or(self.config.invariant.fail_on_revert);
-
-        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
-        if self.should_defer_symbolic_diagnostics() {
-            symbolic.capture_diagnostics();
-        }
-        let progress = start_symbolic_progress(
-            self.cr.progress,
-            self.cr.name,
-            &func.name,
-            self.config.symbolic.max_solver_queries,
-        );
-        if let Some(progress) = progress.as_ref() {
-            let progress = progress.clone();
-            symbolic.set_query_observer(move |queries| progress.set_position(queries as u64));
-        }
-        let result = symbolic.run_invariant(SymbolicInvariantRunInput {
-            executor: self.executor.as_ref(),
-            invariant_address: self.address,
-            sender: self.sender,
-            invariant: func,
-            after_invariant,
-            targets,
-            senders,
-            depth: self.config.symbolic.invariant_depth as usize,
-            fail_on_revert,
-            ffi_enabled: self.config.ffi,
-        });
-        if let Some(progress) = progress {
-            progress.finish_and_clear();
-        }
-        let portfolio_diagnostics = symbolic.portfolio_diagnostics();
-        let symbolic_diagnostics = symbolic.take_diagnostics();
-
-        match result {
-            SymbolicInvariantRunResult::Safe(stats) => {
-                self.result.symbolic_result(true, None, None, stats);
-            }
-            SymbolicInvariantRunResult::Incomplete { kind, reason, stats } => {
-                self.result.symbolic_result(
-                    false,
-                    Some(format!("incomplete symbolic invariant execution ({kind:?}): {reason}")),
-                    None,
-                    stats,
-                );
-            }
-            SymbolicInvariantRunResult::Counterexample { sequence, stats } => {
-                let (replayed, reason, replay_sequence) =
-                    self.replay_symbolic_invariant_sequence(func, &sequence, fail_on_revert);
-                if !replayed {
-                    let reason = reason.map_or_else(
-                        || "symbolic invariant counterexample did not replay".to_string(),
-                        |reason| {
-                            format!("symbolic invariant counterexample did not replay: {reason}")
-                        },
-                    );
-                    self.result.symbolic_result(
-                        false,
-                        Some(format!("incomplete symbolic invariant execution (Error): {reason}")),
-                        None,
-                        stats,
-                    );
-                    self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-                    self.result.symbolic_diagnostics = symbolic_diagnostics;
-                    return self.result;
-                }
-
-                self.result.symbolic_result(
-                    false,
-                    reason.or_else(|| Some("symbolic invariant counterexample".to_string())),
-                    Some(CounterExample::Sequence(replay_sequence.len(), replay_sequence)),
-                    stats,
-                );
-            }
-        }
-
-        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
-        self.result.symbolic_diagnostics = symbolic_diagnostics;
-        self.result
-    }
-
-    fn replay_symbolic_invariant_sequence(
-        &self,
-        invariant: &Function,
-        sequence: &[SymbolicInvariantStep],
-        fail_on_revert: bool,
-    ) -> (bool, Option<String>, Vec<BaseCounterExample>) {
-        let mut executor = self.clone_executor();
-        let mut counterexample = Vec::with_capacity(sequence.len());
-
-        for step in sequence {
-            let raw = match executor.transact_raw(
-                step.sender,
-                step.address,
-                step.calldata.clone(),
-                U256::ZERO,
-            ) {
-                Ok(raw) => raw,
-                Err(err) => {
-                    counterexample.push(symbolic_step_counterexample(step, None));
-                    return (false, Some(err.to_string()), counterexample);
-                }
-            };
-            counterexample.push(symbolic_step_counterexample(step, raw.traces.clone()));
-            if raw.reverted {
-                return (fail_on_revert, None, counterexample);
-            }
-        }
-
-        let invariant_calldata = Bytes::from(invariant.selector().to_vec());
-        let mut raw = match executor.call_raw(CALLER, self.address, invariant_calldata, U256::ZERO)
-        {
-            Ok(raw) => raw,
-            Err(err) => return (false, Some(err.to_string()), counterexample),
-        };
-        let success = executor.is_raw_call_mut_success(self.address, &mut raw, false);
-        (!success, None, counterexample)
     }
 
     /// Runs a table test.
@@ -1242,15 +869,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
-        if self.config.symbolic.enabled {
-            return self.run_symbolic_invariant_test(
-                func,
-                invariants,
-                call_after_invariant,
-                identified_contracts,
-            );
-        }
-
         let runner = self.invariant_runner();
         let invariant_config = self.config.invariant.clone();
         let invariant_config = &invariant_config;
@@ -1307,9 +925,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Snapshot the per-test corpus dir before `config` is moved into `InvariantExecutor`.
         let resolved_corpus_dir = config.corpus.corpus_dir.clone();
 
-        let mut evm = InvariantExecutor::new(
+        let mut evm = InvariantExecutor::new_with_fuzz_seed(
             executor,
             runner,
+            self.config.fuzz.seed,
             config,
             identified_contracts,
             &self.cr.mcr.known_contracts,
@@ -2181,28 +1800,6 @@ fn fuzzer_with_cases(seed: Option<U256>, cases: u32, max_global_rejects: u32) ->
     } else {
         trace!(target: "forge::test", "building stochastic fuzzer");
         TestRunner::new(config)
-    }
-}
-
-fn symbolic_step_counterexample(
-    step: &SymbolicInvariantStep,
-    traces: Option<SparsedTraceArena>,
-) -> BaseCounterExample {
-    BaseCounterExample {
-        warp: None,
-        roll: None,
-        sender: Some(step.sender),
-        addr: Some(step.address),
-        calldata: step.calldata.clone(),
-        value: None,
-        contract_name: step.contract_name.clone(),
-        func_name: Some(step.function_name.clone()),
-        signature: Some(step.signature.clone()),
-        args: Some(foundry_common::fmt::format_tokens(&step.args).format(", ").to_string()),
-        raw_args: Some(foundry_common::fmt::format_tokens_raw(&step.args).format(", ").to_string()),
-        traces,
-        show_solidity: false,
-        fuzz: Default::default(),
     }
 }
 

@@ -416,7 +416,7 @@ fn check(
         {
             let source_gas = test.result.kind.report();
             if !within_tolerance(source_gas.gas(), target_gas.gas(), tolerance) {
-                let _ = sh_println!(
+                let _ = sh_eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
                     test.contract_name(),
                     test.signature,
@@ -426,7 +426,7 @@ fn check(
                 has_diff = true;
             }
         } else {
-            let _ = sh_println!(
+            let _ = sh_eprintln!(
                 "No matching snapshot entry found for \"{}::{}\" in snapshot file",
                 test.contract_name(),
                 test.signature
@@ -528,14 +528,14 @@ fn diff(
 
     // Display new tests if any
     if !new_tests.is_empty() {
-        sh_println!("\n{}", "New tests:".yellow())?;
+        sh_eprintln!("\n{}", "New tests:".yellow())?;
         for test in new_tests {
-            sh_println!("  {} {}", "+".green(), test)?;
+            sh_eprintln!("  {} {}", "+".green(), test)?;
         }
     }
 
     // Summary separator
-    sh_println!("\n{}", "-".repeat(80))?;
+    sh_eprintln!("\n{}", "-".repeat(80))?;
 
     let overall_gas_diff = if overall_gas_used > 0 {
         overall_gas_change as f64 / overall_gas_used as f64
@@ -543,7 +543,7 @@ fn diff(
         0.0
     };
 
-    sh_println!(
+    sh_eprintln!(
         "Total tests: {}, {} {}, {} {}, {} {}",
         diffs.len(),
         "↑".red().to_string(),
@@ -553,7 +553,7 @@ fn diff(
         "━",
         unchanged
     )?;
-    sh_println!(
+    sh_eprintln!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
         fmt_pct_change(overall_gas_diff)

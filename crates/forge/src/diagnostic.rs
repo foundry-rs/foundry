@@ -11,9 +11,16 @@ pub mod build {
     pub(crate) const ALL: &[&str] = &[SOLC_ERROR];
 }
 
+/// `forge test` diagnostic codes.
+pub mod test {
+    pub use foundry_cli::diagnostic::test::{FAILED, SETUP_FAILED, WARNING};
+
+    pub(crate) const ALL: &[&str] = &[FAILED, SETUP_FAILED, WARNING];
+}
+
 /// All diagnostic codes declared by `forge`.
 pub fn known_codes() -> Vec<&'static str> {
-    let groups: &[&[&str]] = &[build::ALL];
+    let groups: &[&[&str]] = &[build::ALL, test::ALL];
     groups.iter().flat_map(|g| g.iter().copied()).collect()
 }
 
