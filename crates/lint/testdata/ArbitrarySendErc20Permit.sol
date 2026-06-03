@@ -798,6 +798,37 @@ contract ArbitrarySendErc20Permit {
         token.transferFrom(from, to, a);
     }
 
+    // Catch only runs if the permit reverted; its facts didn't take effect.
+    function okPermitRevertedCatchSink(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        try token.permit(from, address(this), a, deadline, v, r, s) {
+        } catch {
+            token.transferFrom(from, to, a);
+        }
+    }
+
+    // Success clause inherits the permit fact.
+    function badPermitTryCallSuccessSink(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        try token.permit(from, address(this), a, deadline, v, r, s) {
+            token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+        } catch {}
+    }
+
     // EIP-3156 repayment matches and suppresses both lints, even when a permit covering
     // `(token, address(receiver))` was recorded beforehand.
     function okPermitPlusFlashRepayment(

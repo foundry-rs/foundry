@@ -51,9 +51,13 @@ may still be reported by `arbitrary-send-erc20` when the sink itself is unguarde
 include: copies of the token or owner into another variable
 (`IERC20 t = token; ...`, `address from2 = from; ...`), permits issued from a
 struct / array / mapping receiver (`cfg.token.permit(...)`), permits issued through
-a library wrapper (`SafeERC20.safePermit(...)`), permits issued inside a called
-helper / modifier / parent contract, and permits inside `for` or `while` loop bodies
-(whose execution count the analyzer treats as possibly zero).
+a library wrapper (`SafeERC20.safePermit(...)`), and permits issued inside a called
+helper / modifier / parent contract.
+
+Permits inside `for` / `while` loop bodies do **not** establish facts visible after
+the loop (the analyzer treats their execution count as possibly zero), so a
+`transferFrom` placed after the loop is not classified as the permit variant. A
+`transferFrom` inside the same iteration as the permit is still flagged.
 
 ## Why is this bad?
 

@@ -166,3 +166,11 @@ LL │ …     token.transferFrom(address(receiver), address(this), amount + fee
    │
    ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
 
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+

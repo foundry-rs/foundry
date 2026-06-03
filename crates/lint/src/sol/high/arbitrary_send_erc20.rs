@@ -615,10 +615,18 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 return ControlFlow::Continue(());
             }
             StmtKind::Try(t) => {
+                // Catch clauses only run if `t.expr` reverted, so its facts didn't
+                // take effect there. Success clause (`clauses[0]`) inherits them.
+                let baseline = self.snapshot();
                 let _ = self.visit_expr(&t.expr);
-                for clause in t.clauses {
+                let after_call = self.snapshot();
+                let mut post_clauses = Vec::with_capacity(t.clauses.len());
+                for (i, clause) in t.clauses.iter().enumerate() {
+                    self.restore(if i == 0 { after_call.clone() } else { baseline.clone() });
                     self.visit_isolated(clause.block.stmts);
+                    post_clauses.push(self.snapshot());
                 }
+                self.restore(FlowState::intersection_all(post_clauses.into_iter()));
                 return ControlFlow::Continue(());
             }
 
