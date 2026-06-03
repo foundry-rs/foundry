@@ -1,7 +1,7 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::coverage::{
-    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
-    DebugReporter, ItemAnchor, LcovReporter,
+    BytecodeReporter, ContractId, CoverageAttributionReporter, CoverageReport, CoverageReporter,
+    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
 };
@@ -77,6 +77,10 @@ pub struct CoverageArgs {
 }
 
 impl CoverageArgs {
+    fn report_path(&self, root: &Path, default_file_name: &str) -> PathBuf {
+        root.join(self.report_file.as_deref().unwrap_or_else(|| Path::new(default_file_name)))
+    }
+
     pub async fn run(mut self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -111,20 +115,20 @@ impl CoverageArgs {
         self.reporters = self
             .report
             .iter()
-            .map(|report_kind| match report_kind {
+            .filter_map(|report_kind| match report_kind {
                 CoverageReportKind::Summary => {
-                    Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>
+                    Some(Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>)
                 }
                 CoverageReportKind::Lcov => {
-                    let path =
-                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
-                    Box::new(LcovReporter::new(path, self.lcov_version.clone()))
+                    let path = self.report_path(root, "lcov.info");
+                    Some(Box::new(LcovReporter::new(path, self.lcov_version.clone())))
                 }
-                CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
+                CoverageReportKind::Bytecode => Some(Box::new(BytecodeReporter::new(
                     root.to_path_buf(),
                     root.join("bytecode-coverage"),
-                )),
-                CoverageReportKind::Debug => Box::new(DebugReporter),
+                ))),
+                CoverageReportKind::Debug => Some(Box::new(DebugReporter)),
+                CoverageReportKind::Attribution => None,
             })
             .collect::<Vec<_>>();
     }
@@ -290,6 +294,18 @@ impl CoverageArgs {
             }
         }
 
+        if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
+            let reporter = CoverageAttributionReporter::new(
+                self.report_path(project_root, "coverage-attribution.json"),
+            );
+            reporter.report(
+                &report,
+                &outcome,
+                filter.paths().root.as_path(),
+                filter.args().coverage_pattern_inverse.as_ref(),
+            )?;
+        }
+
         // Filter out ignored sources from the report.
         if let Some(not_re) = &filter.args().coverage_pattern_inverse {
             let file_root = filter.paths().root.as_path();
@@ -335,6 +351,8 @@ pub enum CoverageReportKind {
     Lcov,
     Debug,
     Bytecode,
+    /// JSON report mapping each test to the source items it covers.
+    Attribution,
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

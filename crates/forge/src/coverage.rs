@@ -1,5 +1,6 @@
 //! Coverage reports.
 
+use crate::result::{TestKind, TestOutcome, TestResult, TestStatus};
 use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{
     Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
@@ -7,8 +8,9 @@ use comfy_table::{
 use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
 use semver::Version;
+use serde::{Serialize, ser::SerializeSeq};
 use std::{
-    collections::hash_map,
+    collections::{BTreeMap, hash_map},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -215,6 +217,257 @@ impl CoverageReporter for LcovReporter {
         sh_println!("Wrote LCOV report.")?;
 
         Ok(())
+    }
+}
+
+/// Writes per-test coverage attribution as JSON.
+pub struct CoverageAttributionReporter {
+    path: PathBuf,
+}
+
+impl CoverageAttributionReporter {
+    /// Create a new attribution reporter.
+    pub const fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    /// Writes per-test coverage attribution for the provided outcome.
+    pub fn report(
+        &self,
+        report: &CoverageReport,
+        outcome: &TestOutcome,
+        file_root: &Path,
+        coverage_pattern_inverse: Option<&regex::Regex>,
+    ) -> eyre::Result<()> {
+        let known_contracts = outcome
+            .known_contracts
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("coverage attribution requires known contracts"))?;
+
+        let payload = AttributionReport {
+            version: 1,
+            tests: AttributionTests {
+                report,
+                outcome,
+                known_contracts,
+                file_root,
+                coverage_pattern_inverse,
+            },
+        };
+        let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
+        serde_json::to_writer(&mut out, &payload)?;
+        writeln!(out)?;
+        out.flush()?;
+
+        sh_println!("Wrote coverage attribution report.")?;
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct AttributionReport<'a> {
+    version: u8,
+    tests: AttributionTests<'a>,
+}
+
+#[derive(Serialize)]
+struct AttributionTest {
+    suite: String,
+    test: String,
+    status: &'static str,
+    kind: &'static str,
+    covered: Vec<AttributionItem>,
+}
+
+#[derive(Serialize)]
+struct AttributionItem {
+    source: String,
+    contract: String,
+    kind: &'static str,
+    line_start: u32,
+    line_end: u32,
+    byte_start: u32,
+    byte_end: u32,
+    hits: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    function: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_id: Option<u32>,
+}
+
+struct AttributionTests<'a> {
+    report: &'a CoverageReport,
+    outcome: &'a TestOutcome,
+    known_contracts: &'a foundry_common::ContractsByArtifact,
+    file_root: &'a Path,
+    coverage_pattern_inverse: Option<&'a regex::Regex>,
+}
+
+impl Serialize for AttributionTests<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let len = self.outcome.results.values().map(|suite| suite.test_results.len()).sum();
+        let mut seq = serializer.serialize_seq(Some(len))?;
+
+        for (suite, suite_result) in &self.outcome.results {
+            for (test, result) in &suite_result.test_results {
+                seq.serialize_element(&AttributionTest {
+                    suite: suite.clone(),
+                    test: test.clone(),
+                    status: test_status_name(result.status),
+                    kind: test_kind_name(&result.kind),
+                    covered: attributed_items(
+                        self.report,
+                        self.known_contracts,
+                        result,
+                        self.file_root,
+                        self.coverage_pattern_inverse,
+                    ),
+                })?;
+            }
+        }
+
+        seq.end()
+    }
+}
+
+fn attributed_items(
+    report: &CoverageReport,
+    known_contracts: &foundry_common::ContractsByArtifact,
+    result: &TestResult,
+    file_root: &Path,
+    coverage_pattern_inverse: Option<&regex::Regex>,
+) -> Vec<AttributionItem> {
+    type AttributionItemKey = (
+        String,
+        String,
+        &'static str,
+        u32,
+        u32,
+        u32,
+        u32,
+        Option<String>,
+        Option<u32>,
+        Option<u32>,
+    );
+
+    let mut items = BTreeMap::<AttributionItemKey, AttributionItem>::new();
+    let Some(hit_maps) = result.line_coverage.as_ref() else { return Vec::new() };
+
+    for map in hit_maps.0.values() {
+        let (artifact_id, is_deployed_code) = if let Some((artifact_id, _)) =
+            known_contracts.find_by_deployed_code(map.bytecode())
+        {
+            (artifact_id, true)
+        } else if let Some((artifact_id, _)) = known_contracts.find_by_creation_code(map.bytecode())
+        {
+            (artifact_id, false)
+        } else {
+            continue;
+        };
+
+        let Some(source_id) =
+            report.get_source_id(artifact_id.version.clone(), artifact_id.source.clone())
+        else {
+            continue;
+        };
+        let contract_id = ContractId {
+            version: artifact_id.version.clone(),
+            source_id,
+            contract_name: artifact_id.name.as_str().into(),
+        };
+
+        for (item, hits) in report.hit_items_for_hit_map(&contract_id, map, is_deployed_code) {
+            let Some(source_path) =
+                report.source_paths.get(&(contract_id.version.clone(), item.loc.source_id))
+            else {
+                continue;
+            };
+            if !include_source(source_path, file_root, coverage_pattern_inverse) {
+                continue;
+            }
+
+            let source = source_path.display().to_string();
+            let contract = item.loc.contract_name.to_string();
+            let (kind, function, branch_id, path_id) = coverage_item_kind_fields(&item.kind);
+            let line_start = item.loc.lines.start;
+            let line_end = item.loc.lines.end.saturating_sub(1);
+            let byte_start = item.loc.bytes.start;
+            let byte_end = item.loc.bytes.end;
+            let key = (
+                source.clone(),
+                contract.clone(),
+                kind,
+                line_start,
+                line_end,
+                byte_start,
+                byte_end,
+                function.clone(),
+                branch_id,
+                path_id,
+            );
+
+            items.entry(key).and_modify(|item| item.hits += hits).or_insert(AttributionItem {
+                source,
+                contract,
+                kind,
+                line_start,
+                line_end,
+                byte_start,
+                byte_end,
+                hits,
+                function,
+                branch_id,
+                path_id,
+            });
+        }
+    }
+
+    items.into_values().collect()
+}
+
+fn include_source(
+    source_path: &Path,
+    file_root: &Path,
+    coverage_pattern_inverse: Option<&regex::Regex>,
+) -> bool {
+    let Some(not_re) = coverage_pattern_inverse else { return true };
+    let path = source_path.strip_prefix(file_root).unwrap_or(source_path);
+    !not_re.is_match(&path.to_string_lossy())
+}
+
+fn coverage_item_kind_fields(
+    kind: &CoverageItemKind,
+) -> (&'static str, Option<String>, Option<u32>, Option<u32>) {
+    match kind {
+        CoverageItemKind::Line => ("line", None, None, None),
+        CoverageItemKind::Statement => ("statement", None, None, None),
+        CoverageItemKind::Branch { branch_id, path_id, .. } => {
+            ("branch", None, Some(*branch_id), Some(*path_id))
+        }
+        CoverageItemKind::Function { name } => ("function", Some(name.to_string()), None, None),
+    }
+}
+
+const fn test_status_name(status: TestStatus) -> &'static str {
+    match status {
+        TestStatus::Success => "success",
+        TestStatus::Failure => "failure",
+        TestStatus::Skipped => "skipped",
+    }
+}
+
+const fn test_kind_name(kind: &TestKind) -> &'static str {
+    match kind {
+        TestKind::Unit { .. } => "unit",
+        TestKind::Fuzz { .. } => "fuzz",
+        TestKind::Invariant { .. } => "invariant",
+        TestKind::Table { .. } => "table",
     }
 }
 

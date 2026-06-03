@@ -147,6 +147,33 @@ impl CoverageReport {
         Ok(())
     }
 
+    /// Returns the coverage items hit by a [`HitMap`] without mutating this report.
+    pub fn hit_items_for_hit_map<'a>(
+        &'a self,
+        contract_id: &ContractId,
+        hit_map: &HitMap,
+        is_deployed_code: bool,
+    ) -> Vec<(&'a CoverageItem, u32)> {
+        let Some(anchors) = self.anchors.get(contract_id) else { return Vec::new() };
+        let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
+
+        let mut hits_by_item = BTreeMap::<u32, u32>::new();
+        for anchor in anchors {
+            if let Some(hits) = hit_map.get(anchor.instruction) {
+                *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
+            }
+        }
+
+        let Some(items) = self.analyses.get(&contract_id.version) else { return Vec::new() };
+        hits_by_item
+            .into_iter()
+            .filter_map(|(item_id, hits)| {
+                let item = items.get(item_id)?;
+                Some((item, hits))
+            })
+            .collect()
+    }
+
     /// Retains all the coverage items specified by `predicate`.
     ///
     /// This function should only be called after all the sources were used, otherwise, the output
