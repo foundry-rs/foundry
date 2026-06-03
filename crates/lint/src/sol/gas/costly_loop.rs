@@ -14,6 +14,7 @@ impl<'hir> LateLintPass<'hir> for CostlyLoop {
     fn check_function(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {

@@ -25,7 +25,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
-    fn check_function_with_gcx(
+    fn check_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
@@ -388,6 +388,12 @@ fn arg_matches_param<'gcx>(
 }
 
 fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
+    if !is_this_or_super(expr)
+        && let Some(ty) = gcx.type_of_expr(expr.peel_parens().id)
+    {
+        return Some(ty);
+    }
+
     match &expr.peel_parens().kind {
         ExprKind::Array(_) => None,
         ExprKind::Call(callee, args, _) => {

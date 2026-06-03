@@ -20,7 +20,7 @@ use std::collections::HashSet;
 declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop", "external call inside a loop");
 
 impl<'hir> LateLintPass<'hir> for CallsLoop {
-    fn check_function_with_gcx(
+    fn check_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
@@ -265,12 +265,12 @@ pub(super) fn is_external_call<'gcx>(
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
     if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
-        && is_address_like(hir, base)
+        && is_address_like(gcx, base)
     {
         return true;
     }
 
-    if matches!(member.name, sym::send | sym::transfer) && is_address_like(hir, base) {
+    if matches!(member.name, sym::send | sym::transfer) && is_address_like(gcx, base) {
         return true;
     }
 
@@ -310,15 +310,15 @@ pub(super) fn is_state_mutating_external_call<'gcx>(
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
     // Low-level address calls: `call` and `delegatecall` are in scope; `staticcall` is not.
-    if matches!(member.name, kw::Call | kw::Delegatecall) && is_address_like(hir, base) {
+    if matches!(member.name, kw::Call | kw::Delegatecall) && is_address_like(gcx, base) {
         return true;
     }
 
-    if member.name == kw::Staticcall && is_address_like(hir, base) {
+    if member.name == kw::Staticcall && is_address_like(gcx, base) {
         return false;
     }
 
-    if matches!(member.name, sym::send | sym::transfer) && is_address_like(hir, base) {
+    if matches!(member.name, sym::send | sym::transfer) && is_address_like(gcx, base) {
         return true;
     }
 
@@ -544,22 +544,11 @@ fn is_super(expr: &Expr<'_>) -> bool {
     )
 }
 
-fn is_address_like<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> bool {
+fn is_address_like<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Payable(_) => true,
         ExprKind::Call(callee, _, _) if is_address_type_expr(callee) => true,
-        _ => expr_type(hir, expr).is_some_and(type_is_address_like),
-    }
-}
-
-fn contract_type_expr_id(expr: &Expr<'_>) -> Option<ContractId> {
-    match &expr.peel_parens().kind {
-        ExprKind::Type(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Contract(id)) => Some(*id),
-            _ => None,
-        }),
-        _ => None,
+        _ => semantic_expr_ty(gcx, &gcx.hir, expr).is_some_and(type_is_address_like),
     }
 }
 
@@ -570,111 +559,17 @@ fn is_address_type_expr(expr: &Expr<'_>) -> bool {
     )
 }
 
-const fn type_contract_id(ty: &hir::Type<'_>) -> Option<ContractId> {
-    match ty.kind {
-        TypeKind::Custom(ItemId::Contract(id)) => Some(id),
-        _ => None,
-    }
-}
-
-const fn type_is_address_like(ty: &hir::Type<'_>) -> bool {
-    matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
-}
-
-fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir hir::Type<'hir>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
-            let var_id = res.as_variable()?;
-            Some(&hir.variable(var_id).ty)
-        }),
-        ExprKind::Call(callee, args, _) => single_return_type(hir, callee, args.len()),
-        ExprKind::Index(base, _) => indexed_element_type(hir, base),
-        ExprKind::Member(base, member) => member_type(hir, base, *member),
-        _ => None,
-    }
-}
-
-fn single_return_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    callee: &Expr<'hir>,
-    arity: usize,
-) -> Option<&'hir hir::Type<'hir>> {
-    match &callee.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
-            let Res::Item(ItemId::Function(func_id)) = res else { return None };
-            let func = hir.function(*func_id);
-            let [ret] = func.returns else { return None };
-            Some(&hir.variable(*ret).ty)
-        }),
-        ExprKind::Member(base, member) => member_return_type(hir, base, *member, arity),
-        _ => None,
-    }
-}
-
-fn member_return_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    base: &'hir Expr<'hir>,
-    member: solar::interface::Ident,
-    arity: usize,
-) -> Option<&'hir hir::Type<'hir>> {
-    let contract_id = receiver_contract_id(hir, base)?;
-    let mut ret = None;
-    for item in hir.contract_item_ids(contract_id) {
-        let Some(func_id) = item.as_function() else { continue };
-        let func = hir.function(func_id);
-        if func.name.is_none_or(|name| name.name != member.name) || func.parameters.len() != arity {
-            continue;
-        }
-        let [ret_id] = func.returns else { return None };
-        if ret.replace(&hir.variable(*ret_id).ty).is_some() {
-            return None;
-        }
-    }
-    ret
-}
-
-fn receiver_contract_id<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<ContractId> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Contract(id)) => Some(*id),
-            Res::Item(ItemId::Variable(id)) => type_contract_id(&hir.variable(*id).ty),
-            _ => None,
-        }),
-        ExprKind::Call(callee, _, _) => contract_type_expr_id(callee)
-            .or_else(|| expr_type(hir, expr).and_then(type_contract_id)),
-        ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
-        _ => expr_type(hir, expr).and_then(type_contract_id),
-    }
-}
-
-fn indexed_element_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
-) -> Option<&'hir hir::Type<'hir>> {
-    expr_type(hir, expr).and_then(|ty| match &ty.kind {
-        TypeKind::Array(array) => Some(&array.element),
-        TypeKind::Mapping(mapping) => Some(&mapping.value),
-        _ => None,
-    })
-}
-
-fn member_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
-    member: solar::interface::Ident,
-) -> Option<&'hir hir::Type<'hir>> {
-    expr_type(hir, expr).and_then(|ty| match ty.kind {
-        TypeKind::Custom(ItemId::Struct(struct_id)) => {
-            hir.strukt(struct_id).fields.iter().find_map(|field_id| {
-                let field = hir.variable(*field_id);
-                (field.name?.name == member.name).then_some(&field.ty)
-            })
-        }
-        _ => None,
-    })
+fn type_is_address_like(ty: Ty<'_>) -> bool {
+    matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
 }
 
 fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
+    if !is_super(expr)
+        && let Some(ty) = gcx.type_of_expr(expr.peel_parens().id)
+    {
+        return Some(ty);
+    }
+
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => {
             let res = unique(reses.iter().filter(|res| !matches!(res, Res::Err(_))).copied())

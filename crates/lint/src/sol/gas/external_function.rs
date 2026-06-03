@@ -60,6 +60,7 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
