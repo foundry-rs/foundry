@@ -5,7 +5,7 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    Address, I256, Log, Selector, U256,
+    Address, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
@@ -584,6 +584,10 @@ pub struct TestResult {
     /// Traces
     pub traces: Traces,
 
+    /// Runtime bytecodes for contracts seen in debug traces.
+    #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
+
     /// Additional traces to use for gas report.
     ///
     /// These are cleared after the gas report is analyzed.
@@ -881,6 +885,7 @@ macro_rules! extend {
         $a.logs.extend($b.logs);
         $a.labels.extend($b.labels);
         $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
+        $a.debug_bytecodes.extend($b.debug_bytecodes);
         $a.merge_coverages($b.line_coverage);
     };
 }
@@ -892,6 +897,7 @@ impl TestResult {
             labels: setup.labels.clone(),
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
+            debug_bytecodes: setup.debug_bytecodes.clone(),
             line_coverage: setup.coverage.clone(),
             ..Default::default()
         }
@@ -910,6 +916,7 @@ impl TestResult {
             logs,
             labels,
             traces,
+            debug_bytecodes,
             coverage,
             deployed_libs: _,
             reason,
@@ -921,6 +928,7 @@ impl TestResult {
             reason,
             logs,
             traces,
+            debug_bytecodes,
             line_coverage: coverage,
             labels,
             ..Default::default()
@@ -1450,6 +1458,8 @@ pub struct TestSetup {
     pub labels: AddressHashMap<String>,
     /// Call traces of the setup.
     pub traces: Traces,
+    /// Runtime bytecodes for contracts seen in setup traces.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
     /// Addresses of external libraries deployed during setup.

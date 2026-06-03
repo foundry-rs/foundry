@@ -1396,6 +1396,14 @@ impl TestArgs {
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &mut result.traces {
                     if identify_addresses {
+                        if self.debug && !result.debug_bytecodes.is_empty() {
+                            let mut local_identifier = TraceIdentifiers::new()
+                                .with_local_and_bytecodes(
+                                    &known_contracts,
+                                    &result.debug_bytecodes,
+                                );
+                            decoder.identify(arena, &mut local_identifier);
+                        }
                         decoder.identify(arena, &mut identifier);
                     }
 
