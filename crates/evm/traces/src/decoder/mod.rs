@@ -28,8 +28,8 @@ use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20ChannelReserve, ITIP20Factory,
-    ITIP403Registry, IValidatorConfig,
+    IAccountKeychain, IFeeManager, IReceivePolicyGuard, IStablecoinDEX, ITIP20ChannelReserve,
+    ITIP20Factory, ITIP403Registry, IValidatorConfig, RECEIVE_POLICY_GUARD_ADDRESS,
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS,
@@ -118,9 +118,14 @@ impl CallTraceDecoderBuilder {
         if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
             self.decoder
                 .labels
-                .insert(TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string());
-        } else {
-            self.decoder.labels.remove(&TIP20_CHANNEL_RESERVE_ADDRESS);
+                .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
+                .or_insert_with(|| "TIP20ChannelReserve".to_string());
+        }
+        if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
+            self.decoder
+                .labels
+                .entry(RECEIVE_POLICY_GUARD_ADDRESS)
+                .or_insert_with(|| "ReceivePolicyGuard".to_string());
         }
         self
     }
@@ -258,6 +263,7 @@ impl CallTraceDecoder {
                 .chain(IValidatorConfig::abi::functions().into_values())
                 .chain(IAccountKeychain::abi::functions().into_values())
                 .chain(ITIP20ChannelReserve::abi::functions().into_values())
+                .chain(IReceivePolicyGuard::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
@@ -274,6 +280,7 @@ impl CallTraceDecoder {
                 .chain(IValidatorConfig::abi::events().into_values())
                 .chain(IAccountKeychain::abi::events().into_values())
                 .chain(ITIP20ChannelReserve::abi::events().into_values())
+                .chain(IReceivePolicyGuard::abi::events().into_values())
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
@@ -1590,6 +1597,63 @@ mod tests {
 
         // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_tempo_hardfork_labels_do_not_clobber_user_labels() {
+        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+        let reserve_label = "UserReserve".to_string();
+        let guard_label = "UserGuard".to_string();
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_labels([
+                (TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone()),
+                (RECEIVE_POLICY_GUARD_ADDRESS, guard_label.clone()),
+            ])
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
+        assert_eq!(decoder.labels.get(&RECEIVE_POLICY_GUARD_ADDRESS), Some(&guard_label));
+    }
+
+    #[test]
+    fn test_tempo_hardfork_none_does_not_remove_user_reserve_label() {
+        use foundry_evm_core::tempo::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+        let reserve_label = "UserReserve".to_string();
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_labels([(TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone())])
+            .with_tempo_hardfork(None)
+            .build();
+
+        assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
+    }
+
+    #[tokio::test]
+    async fn test_decode_receive_policy_guard_at_t6() {
+        let function = Function::parse("claim(address,bytes)").unwrap();
+        let data = function
+            .abi_encode_input(&[
+                DynSolValue::Address(Address::from([0x11; 20])),
+                DynSolValue::Bytes(vec![0x12, 0x34]),
+            ])
+            .unwrap();
+        let trace = CallTrace {
+            address: RECEIVE_POLICY_GUARD_ADDRESS,
+            data: data.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(4217))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+        let decoded = decoder.decode_function(&trace).await;
+
+        assert_eq!(decoded.label, Some("ReceivePolicyGuard".to_string()));
+        assert_eq!(decoded.call_data.unwrap().signature, "claim(address,bytes)");
     }
 
     #[test]
