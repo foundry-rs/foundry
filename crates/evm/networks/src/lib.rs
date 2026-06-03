@@ -43,7 +43,24 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
 ];
 
-fn is_tempo_precompile_active(address: Address, hardfork: TempoHardfork) -> bool {
+/// All well-known Tempo precompile addresses.
+pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
+    NONCE_PRECOMPILE_ADDRESS,
+    STABLECOIN_DEX_ADDRESS,
+    TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS,
+    VALIDATOR_CONFIG_ADDRESS,
+    VALIDATOR_CONFIG_V2_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS,
+    SIGNATURE_VERIFIER_ADDRESS,
+    ADDRESS_REGISTRY_ADDRESS,
+    TIP20_CHANNEL_RESERVE_ADDRESS,
+    RECEIVE_POLICY_GUARD_ADDRESS,
+];
+
+/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
+pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
     if address == TIP20_CHANNEL_RESERVE_ADDRESS {
         hardfork.is_t5()
     } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
@@ -51,6 +68,14 @@ fn is_tempo_precompile_active(address: Address, hardfork: TempoHardfork) -> bool
     } else {
         true
     }
+}
+
+/// Returns the well-known Tempo precompile addresses active at `hardfork`.
+pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
+    TEMPO_PRECOMPILE_ADDRESSES
+        .iter()
+        .copied()
+        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
 }
 
 #[derive(
@@ -286,14 +311,9 @@ impl NetworkConfigs {
     }
 
     /// Returns precompiles label for configured networks, to be used in traces.
-    pub fn precompiles_label(self) -> AddressHashMap<String> {
-        self.precompiles_label_at_tempo_hardfork(TempoHardfork::default())
-    }
-
-    /// Returns precompiles label for configured networks at the active Tempo hardfork.
-    pub fn precompiles_label_at_tempo_hardfork(
+    pub fn precompiles_label(
         self,
-        hardfork: TempoHardfork,
+        tempo_hardfork: Option<TempoHardfork>,
     ) -> AddressHashMap<String> {
         let mut labels = AddressHashMap::default();
         if self.celo {
@@ -304,7 +324,11 @@ impl NetworkConfigs {
                 TEMPO_PRECOMPILES
                     .iter()
                     .copied()
-                    .filter(|(_, address)| is_tempo_precompile_active(*address, hardfork))
+                    .filter(|(_, address)| {
+                        tempo_hardfork.is_none_or(|hardfork| {
+                            is_tempo_precompile_active_at(*address, hardfork)
+                        })
+                    })
                     .map(|(label, address)| (address, label.to_string())),
             );
         }
@@ -312,7 +336,7 @@ impl NetworkConfigs {
     }
 
     /// Returns precompiles for configured networks.
-    pub fn precompiles(self) -> BTreeMap<String, Address> {
+    pub fn precompiles(self, tempo_hardfork: Option<TempoHardfork>) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
         if self.celo {
             precompiles
@@ -320,7 +344,15 @@ impl NetworkConfigs {
         }
         if self.is_tempo() {
             precompiles.extend(
-                TEMPO_PRECOMPILES.iter().map(|(label, address)| (label.to_string(), *address)),
+                TEMPO_PRECOMPILES
+                    .iter()
+                    .copied()
+                    .filter(|(_, address)| {
+                        tempo_hardfork.is_none_or(|hardfork| {
+                            is_tempo_precompile_active_at(*address, hardfork)
+                        })
+                    })
+                    .map(|(label, address)| (label.to_string(), address)),
             );
         }
         precompiles
@@ -354,8 +386,8 @@ mod tests {
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
-        assert_eq!(via_new.precompiles(), via_old.precompiles());
-        assert_eq!(via_new.precompiles_label(), via_old.precompiles_label());
+        assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
+        assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
     }
 
     #[test]
@@ -363,21 +395,22 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
 
         assert_eq!(
-            cfg.precompiles().get("TIP20ChannelReserve"),
+            cfg.precompiles(None).get("TIP20ChannelReserve"),
             Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
         );
+        assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("TIP20ChannelReserve"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("ReceivePolicyGuard"));
         assert_eq!(
-            cfg.precompiles_label_at_tempo_hardfork(TempoHardfork::T5)
-                .get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            cfg.precompiles_label(Some(TempoHardfork::T5)).get(&TIP20_CHANNEL_RESERVE_ADDRESS),
             Some(&"TIP20ChannelReserve".to_string())
         );
-        assert!(!cfg.precompiles_label().contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(cfg.precompiles_label(None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(
-            !cfg.precompiles_label_at_tempo_hardfork(TempoHardfork::T5)
+            !cfg.precompiles_label(Some(TempoHardfork::T5))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
         assert!(
-            cfg.precompiles_label_at_tempo_hardfork(TempoHardfork::T6)
+            cfg.precompiles_label(Some(TempoHardfork::T6))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
     }

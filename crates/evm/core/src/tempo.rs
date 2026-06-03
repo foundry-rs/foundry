@@ -11,11 +11,7 @@ use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
-    contracts::ARACHNID_CREATE2_FACTORY_BYTECODE,
-    precompiles::{
-        ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, TIP403_REGISTRY_ADDRESS,
-        VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
-    },
+    contracts::ARACHNID_CREATE2_FACTORY_BYTECODE, precompiles::VALIDATOR_CONFIG_ADDRESS,
 };
 use tempo_precompiles::{
     error::TempoPrecompileError,
@@ -25,6 +21,9 @@ use tempo_precompiles::{
     validator_config,
 };
 
+pub use foundry_evm_networks::{
+    TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
+};
 pub use tempo_contracts::precompiles::{
     ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IFeeManager, ISignatureVerifier, IStablecoinDEX,
     ITIP20ChannelReserve, PATH_USD_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS,
@@ -39,41 +38,6 @@ pub use tempo_precompiles::{
     tip20::is_tip20_prefix,
     tip20_channel_reserve::TIP20ChannelReserve,
 };
-
-/// All well-known Tempo precompile addresses.
-pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
-    NONCE_PRECOMPILE_ADDRESS,
-    STABLECOIN_DEX_ADDRESS,
-    TIP20_FACTORY_ADDRESS,
-    TIP403_REGISTRY_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS,
-    VALIDATOR_CONFIG_V2_ADDRESS,
-    ACCOUNT_KEYCHAIN_ADDRESS,
-    SIGNATURE_VERIFIER_ADDRESS,
-    ADDRESS_REGISTRY_ADDRESS,
-    TIP20_CHANNEL_RESERVE_ADDRESS,
-    RECEIVE_POLICY_GUARD_ADDRESS,
-];
-
-/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
-pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
-    if address == TIP20_CHANNEL_RESERVE_ADDRESS {
-        hardfork.is_t5()
-    } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
-        hardfork.is_t6()
-    } else {
-        true
-    }
-}
-
-/// Returns the well-known Tempo precompile addresses active at `hardfork`.
-pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
-    TEMPO_PRECOMPILE_ADDRESSES
-        .iter()
-        .copied()
-        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
-}
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
 pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];

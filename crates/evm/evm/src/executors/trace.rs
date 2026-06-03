@@ -91,9 +91,9 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
 
         let fork = evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block).unwrap();
         let networks = evm_opts.networks.with_chain_id(evm_env.cfg_env.chain_id);
-        config.labels.extend(
-            networks.precompiles_label_at_tempo_hardfork(config.evm_spec_id::<TempoHardfork>()),
-        );
+        config
+            .labels
+            .extend(networks.precompiles_label(Some(config.evm_spec_id::<TempoHardfork>())));
 
         let chain = tx_env.chain_id().unwrap().into();
         Ok((evm_env, tx_env, fork, chain, networks))

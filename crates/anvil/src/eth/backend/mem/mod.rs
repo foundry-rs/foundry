@@ -588,17 +588,8 @@ impl<N: Network> Backend<N> {
         }
 
         // Extend with configured network precompiles.
-        let mut network_precompiles = self.networks.precompiles();
-        if self.is_tempo() {
-            let hardfork = self.tempo_hardfork();
-            if !hardfork.is_t5() {
-                network_precompiles.remove("TIP20ChannelReserve");
-            }
-            if !hardfork.is_t6() {
-                network_precompiles.remove("ReceivePolicyGuard");
-            }
-        }
-        precompiles_map.extend(network_precompiles);
+        precompiles_map
+            .extend(self.networks.precompiles(self.is_tempo().then(|| self.tempo_hardfork())));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
