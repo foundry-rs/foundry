@@ -1,13 +1,32 @@
 #[cfg(feature = "optimism")]
 use crate::cmd::da_estimate::DAEstimateArgs;
 use crate::cmd::{
-    access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
-    batch_mktx::BatchMakeTxArgs, batch_send::BatchSendArgs, bind::BindArgs, call::CallArgs,
-    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    erc20::Erc20Subcommand, estimate::EstimateArgs, find_block::FindBlockArgs,
-    interface::InterfaceArgs, keychain::KeychainSubcommand, logs::LogsArgs, mktx::MakeTxArgs,
-    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, tempo::TempoSubcommand,
-    tip20::Tip20Subcommand, trace::TraceArgs, txpool::TxPoolSubcommands, vaddr::VaddrSubcommand,
+    access_list::AccessListArgs,
+    artifact::ArtifactArgs,
+    b2e_payload::B2EPayloadArgs,
+    batch_mktx::BatchMakeTxArgs,
+    batch_send::BatchSendArgs,
+    bind::BindArgs,
+    call::CallArgs,
+    constructor_args::ConstructorArgsArgs,
+    create2::Create2Args,
+    creation_code::CreationCodeArgs,
+    erc20::Erc20Subcommand,
+    estimate::EstimateArgs,
+    find_block::FindBlockArgs,
+    interface::InterfaceArgs,
+    keychain::{KeyAuthSubcommand, KeychainSubcommand},
+    logs::LogsArgs,
+    mktx::MakeTxArgs,
+    rpc::RpcArgs,
+    run::RunArgs,
+    send::SendTxArgs,
+    storage::StorageArgs,
+    tempo::TempoSubcommand,
+    tip20::Tip20Subcommand,
+    trace::TraceArgs,
+    txpool::TxPoolSubcommands,
+    vaddr::VaddrSubcommand,
     wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
@@ -1019,6 +1038,50 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
+    /// Compute a Tempo TIP-20 channel reserve channel ID.
+    #[command(name = "channel-id")]
+    ChannelId {
+        /// Channel payer address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payer: NameOrAddress,
+
+        /// Channel payee address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payee: NameOrAddress,
+
+        /// TIP-20 token address locked by the channel.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// User-supplied channel salt.
+        salt: B256,
+
+        /// Optional relayer allowed to submit settlements for the payee.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        operator: Option<NameOrAddress>,
+
+        /// Optional voucher signer. Defaults to the zero address, meaning the payer signs.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        authorized_signer: Option<NameOrAddress>,
+
+        /// Transaction-derived expiring nonce hash from ChannelOpened.
+        #[arg(long, default_value_t = B256::ZERO)]
+        expiring_nonce_hash: B256,
+
+        /// Channel reserve precompile address.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        reserve: Option<NameOrAddress>,
+
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Get the source code of a contract from a block explorer.
     #[command(visible_aliases = &["et", "src"])]
     Source {
@@ -1189,6 +1252,13 @@ pub enum CastSubcommand {
     Keychain {
         #[command(subcommand)]
         command: KeychainSubcommand,
+    },
+
+    /// Tempo key authorization RLP helpers.
+    #[command(name = "key-auth")]
+    KeyAuth {
+        #[command(subcommand)]
+        command: KeyAuthSubcommand,
     },
 
     /// Tempo wallet integration (login, etc.).

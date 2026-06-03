@@ -15,6 +15,7 @@ use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
 use clap::Parser;
 use foundry_cli::{
+    json::{print_json_success, print_scalar},
     opts::RpcOpts,
     utils::{LoadConfig, get_chain, get_provider},
 };
@@ -369,7 +370,7 @@ impl Erc20Subcommand {
                     if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
                 let needs_sponsor_payload = print_sponsor_hash || tempo_sponsor.is_some();
                 if let Some(ts) = expires_at {
-                    sh_println!("Transaction expires at unix timestamp {ts}")?;
+                    sh_status!("Transaction expires at unix timestamp {ts}")?;
                 }
 
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
@@ -422,7 +423,7 @@ impl Erc20Subcommand {
                         $send_tx.confirmations,
                         timeout,
                     )
-                    .await?
+                    .await?;
                 } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
                     let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
                     if let Some(interval) = $send_tx.poll_interval {
@@ -484,7 +485,7 @@ impl Erc20Subcommand {
                         $send_tx.confirmations,
                         timeout,
                     )
-                    .await?
+                    .await?;
                 }
             }};
         }
@@ -504,9 +505,9 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&allowance.to_string())?)?
+                    print_json_success(allowance.to_string())?;
                 } else {
-                    sh_println!("{}", format_uint_exp(allowance))?
+                    sh_println!("{}", format_uint_exp(allowance))?;
                 }
             }
             Self::Balance { token, owner, block, .. } => {
@@ -521,9 +522,9 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&balance.to_string())?)?
+                    print_json_success(balance.to_string())?;
                 } else {
-                    sh_println!("{}", format_uint_exp(balance))?
+                    sh_println!("{balance}")?;
                 }
             }
             Self::Name { token, block, .. } => {
@@ -536,11 +537,7 @@ impl Erc20Subcommand {
                     .call()
                     .await?;
 
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&name)?)?
-                } else {
-                    sh_println!("{}", name)?
-                }
+                print_scalar(name)?;
             }
             Self::Symbol { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -552,11 +549,7 @@ impl Erc20Subcommand {
                     .call()
                     .await?;
 
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&symbol)?)?
-                } else {
-                    sh_println!("{}", symbol)?
-                }
+                print_scalar(symbol)?;
             }
             Self::Decimals { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -567,11 +560,7 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&decimals)?)?
-                } else {
-                    sh_println!("{}", decimals)?
-                }
+                print_scalar(decimals)?;
             }
             Self::TotalSupply { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -584,7 +573,7 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&total_supply.to_string())?)?
+                    print_json_success(total_supply.to_string())?;
                 } else {
                     sh_println!("{}", format_uint_exp(total_supply))?
                 }

@@ -11,7 +11,7 @@ use alloy_network::{
     EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
 };
 use alloy_primitives::{
-    Address, TxHash, TxKind, U256,
+    Address, TxHash, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressHashSet, HashMap},
     utils::format_units,
 };
@@ -33,12 +33,16 @@ use foundry_common::{
     },
 };
 use foundry_config::Config;
-use foundry_evm::core::evm::{FoundryEvmNetwork, TempoEvmNetwork};
+use foundry_evm::core::{
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    evm::{FoundryEvmNetwork, TempoEvmNetwork},
+};
 use foundry_wallets::{
     TempoAccessKeyConfig, WalletSigner, tempo::TempoLookup, wallet_browser::signer::BrowserSigner,
 };
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
+use revm_inspectors::tracing::types::CallKind;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
@@ -974,6 +978,18 @@ impl BundledState<TempoEvmNetwork> {
             });
         }
 
+        // Reject pre-signed transactions: a batch is a single atomic tx from one sender,
+        // so any tx already signed by another key would silently be re-attributed.
+        if let Some((idx, _)) =
+            sequence.transactions().enumerate().find(|(_, tx)| !tx.is_unsigned())
+        {
+            bail!(
+                "--batch cannot include pre-signed transactions (found at position {}); \
+                 batch mode signs a single atomic transaction from one sender.",
+                idx + 1
+            );
+        }
+
         // Collect sender addresses - batch mode requires single sender
         let senders: AddressHashSet = remaining_transactions(sequence)
             .filter(|tx| tx.is_unsigned())
@@ -999,6 +1015,153 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         let provider = Arc::new(ProviderBuilder::<TempoNetwork>::new(sequence.rpc_url()).build()?);
+
+        // Resume detection happens before signer resolution, gas estimation, and sponsor attachment
+        // so that recovering an already-submitted batch tx never requires the original
+        // signer/sponsor or a fresh estimate.
+        //
+        // If the hash is found in the stamped transactions but a receipt cannot be obtained within
+        // the timeout, the tx is assumed dropped. We clear the stamped hashes so that a subsequent
+        // --resume will re-send a replacement instead of waiting on a dead hash.
+        let pending_batch_hash: Option<TxHash> =
+            sequence.transactions.iter().skip(remaining_start).find_map(|tx| tx.hash);
+
+        if let Some(tx_hash) = pending_batch_hash {
+            sh_println!(
+                "Resuming batch: tx {tx_hash:#x} already submitted, waiting for receipt..."
+            )?;
+
+            let timeout = self.script_config.config.transaction_timeout;
+            let receipt_result = tokio::time::timeout(Duration::from_secs(timeout), async {
+                loop {
+                    if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
+                        return Ok::<_, eyre::Error>(Some(receipt));
+                    }
+                    // If the tx has left the mempool without a receipt it was dropped.
+                    if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
+                        return Ok(None);
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            })
+            .await;
+
+            match receipt_result {
+                Ok(Ok(Some(receipt))) => {
+                    // Tx confirmed, process receipt and return without touching signer/sponsor.
+                    let success = receipt.status();
+                    if success {
+                        sh_println!(
+                            "Batch transaction confirmed in block {}",
+                            receipt.block_number.unwrap_or(0)
+                        )?;
+                    } else {
+                        bail!("Batch transaction failed (reverted)");
+                    }
+
+                    let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+                    let remaining_len = sequence.transactions.len() - remaining_start;
+                    let per_tx_addresses: Vec<Option<Address>> = sequence
+                        .transactions
+                        .iter()
+                        .skip(remaining_start)
+                        .map(|tx| match tx.call_kind {
+                            CallKind::Create | CallKind::Create2 => tx.contract_address,
+                            _ => None,
+                        })
+                        .collect();
+
+                    for (idx, addr) in per_tx_addresses.iter().enumerate() {
+                        if let Some(addr) = addr {
+                            sh_println!("  call[{idx}] deployed at: {addr:#x}")?;
+                        }
+                    }
+
+                    for addr in &per_tx_addresses {
+                        let mut tx_receipt = receipt.clone();
+                        tx_receipt.contract_address = *addr;
+                        sequence.receipts.push(tx_receipt);
+                    }
+                    // Clear the pending entry now that we have a receipt.
+                    sequence.remove_pending(tx_hash);
+
+                    let chain = sequence.chain;
+                    let _ = sequence;
+                    self.sequence.save(true, false)?;
+
+                    let total_gas = receipt.gas_used();
+                    let gas_price = receipt.effective_gas_price() as u64;
+                    let total_paid = total_gas * gas_price;
+                    let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
+                    let gas_price_gwei =
+                        format_units(gas_price, 9).unwrap_or_else(|_| "N/A".to_string());
+                    let token_symbol = NamedChain::try_from(chain)
+                        .unwrap_or_default()
+                        .native_currency_symbol()
+                        .unwrap_or("ETH");
+                    sh_println!(
+                        "\nTotal Paid: {} {} ({} gas * {} gwei)\n(resumed from previous run, {} tx(s))",
+                        paid.trim_end_matches('0'),
+                        token_symbol,
+                        total_gas,
+                        gas_price_gwei.trim_end_matches('0').trim_end_matches('.'),
+                        remaining_len,
+                    )?;
+
+                    if !shell::is_json() {
+                        sh_println!("\n\n==========================")?;
+                        sh_println!("\nBATCH EXECUTION COMPLETE & SUCCESSFUL.")?;
+                        sh_println!(
+                            "All {} calls executed atomically in a single transaction.",
+                            remaining_len
+                        )?;
+                    }
+
+                    return Ok(BroadcastedState {
+                        args: self.args,
+                        script_config: self.script_config,
+                        build_data: self.build_data,
+                        sequence: self.sequence,
+                    });
+                }
+                Ok(Ok(None)) => {
+                    // Dropped from mempool, clear stamped hashes so the next --resume re-sends.
+                    sh_println!(
+                        "Batch tx {tx_hash:#x} was dropped from the mempool; will re-send..."
+                    )?;
+                    let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+                    sequence.remove_pending(tx_hash);
+                    for tx in sequence.transactions.iter_mut().skip(remaining_start) {
+                        tx.hash = None;
+                    }
+                    self.sequence.save(true, false)?;
+                    // Fall through to full send path below.
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    // Timeout, clear stamped hashes so the next --resume can re-send rather than
+                    // waiting indefinitely on a potentially dead hash.
+                    sh_println!(
+                        "Timeout waiting for batch tx {tx_hash:#x}; clearing checkpoint so \
+                         --resume can re-send a replacement."
+                    )?;
+                    let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+                    sequence.remove_pending(tx_hash);
+                    for tx in sequence.transactions.iter_mut().skip(remaining_start) {
+                        tx.hash = None;
+                    }
+                    self.sequence.save(true, false)?;
+                    return Err(eyre::eyre!(
+                        "Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). \
+                         The transaction hash has been cleared; run with --resume to retry."
+                    ));
+                }
+            }
+        }
+
+        // Reborrow after the potential save above.
+        let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+
         let tempo_sponsor = self.script_config.tempo.sponsor_config().await?;
 
         // Get wallet for signing
@@ -1034,32 +1197,69 @@ impl BundledState<TempoEvmNetwork> {
             }
         };
 
-        // Collect all transactions into Call structs
-        // Tempo batch transactions support CREATE only as the first call
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
         let mut calls: Vec<Call> = Vec::new();
-        let mut has_create = false;
         for (call_index, tx) in remaining_transactions(sequence).enumerate() {
+            // --batch cannot carry EIP-7702 authorization lists: they require per-tx signing
+            // and cannot be atomically bundled into a Tempo batch.
+            if tx.authorization_list().is_some_and(|l| !l.is_empty()) {
+                bail!(
+                    "--batch does not support EIP-7702 authorization lists \
+                     (found at transaction {}); use regular broadcast instead.",
+                    call_index + 1
+                );
+            }
+            // --batch cannot carry blob sidecars: Tempo batch txs are not blob-carrying txs.
+            if let TransactionMaybeSigned::Unsigned(inner) = tx
+                && inner.blob_sidecar().is_some()
+            {
+                bail!(
+                    "--batch does not support blob (EIP-4844) transactions \
+                     (found at transaction {}); use regular broadcast instead.",
+                    call_index + 1
+                );
+            }
+
+            // CREATEs are rewritten to CREATE2 via the Arachnid factory by the batch
+            // inspector before broadcast, so tx.to() should always be Some here.
             let to = match tx.to() {
                 Some(addr) => TxKind::Call(addr),
-                None => {
-                    if call_index > 0 {
-                        bail!(
-                            "Contract creation must be the first transaction in --batch mode. \
-                             Found CREATE at position {}. Reorder your script or deploy separately.",
-                            call_index + 1
-                        );
-                    }
-                    if has_create {
-                        bail!("Only one contract creation is allowed per --batch transaction.");
-                    }
-                    has_create = true;
-                    TxKind::Create
-                }
+                None => bail!(
+                    "Unexpected raw CREATE in --batch mode at position {} — \
+                     this is a bug; CREATEs should have been rewritten by the inspector.",
+                    call_index + 1
+                ),
             };
             let value = tx.value().unwrap_or(U256::ZERO);
             let input = tx.input().cloned().unwrap_or_default();
 
             calls.push(Call { to, value, input });
+        }
+
+        if calls.is_empty() {
+            sh_println!("No transactions to broadcast in batch mode.")?;
+            return Ok(BroadcastedState {
+                args: self.args,
+                script_config: self.script_config,
+                build_data: self.build_data,
+                sequence: self.sequence,
+            });
+        }
+
+        // CREATE2 deployer must exist on-chain for any rewritten CREATEs.
+        let needs_factory = sequence
+            .transactions
+            .iter()
+            .skip(remaining_start)
+            .any(|tx| matches!(tx.call_kind, CallKind::Create | CallKind::Create2));
+        if needs_factory {
+            let code = provider.get_code_at(create2_deployer).await?;
+            if keccak256(&code) != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                bail!(
+                    "CREATE2 deployer {create2_deployer:#x} is not deployed on this Tempo network; \
+                     --batch requires it. Deploy it first and retry."
+                );
+            }
         }
 
         sh_println!(
@@ -1119,7 +1319,7 @@ impl BundledState<TempoEvmNetwork> {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
         }
 
-        // Sign and send
+        // Sign and send.
         let tx_hash = match batch_signer {
             BatchSigner::Wallet(wallet) => {
                 let provider_with_wallet =
@@ -1152,6 +1352,17 @@ impl BundledState<TempoEvmNetwork> {
 
         sh_println!("Batch transaction sent: {:#x}", tx_hash)?;
 
+        // Checkpoint: stamp the batch hash on all remaining transactions (so that resume
+        // detection finds it regardless of which tx it inspects first), register one entry
+        // in sequence.pending for drop/timeout tracking, then save.
+        for tx in sequence.transactions.iter_mut().skip(remaining_start) {
+            tx.hash = Some(tx_hash);
+        }
+        if !sequence.pending.contains(&tx_hash) {
+            sequence.pending.push(tx_hash);
+        }
+        self.sequence.save(true, false)?;
+
         // Wait for receipt
         let timeout = self.script_config.config.transaction_timeout;
         let receipt = tokio::time::timeout(Duration::from_secs(timeout), async {
@@ -1163,7 +1374,7 @@ impl BundledState<TempoEvmNetwork> {
             }
         })
         .await
-        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt"))??;
+        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??;
 
         let success = receipt.status();
         if success {
@@ -1175,32 +1386,44 @@ impl BundledState<TempoEvmNetwork> {
             bail!("Batch transaction failed (reverted)");
         }
 
-        // For CREATE transactions, compute the deployed contract address
-        let created_address = if has_create {
-            let deployed_addr = sender.create(nonce);
-            sh_println!("Contract deployed at: {:#x}", deployed_addr)?;
-            Some(deployed_addr)
-        } else {
-            None
-        };
+        let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+        sequence.remove_pending(tx_hash);
 
-        // Add receipt to sequence for each original transaction.
-        // In batch mode, all calls share the same receipt. Set contract_address
-        // only for index 0 if CREATE, clear for the rest to prevent the verifier
-        // from attempting to verify the same address multiple times.
-        for idx in 0..calls.len() {
-            let mut tx_receipt = receipt.clone();
-            if idx == 0 && has_create {
-                tx_receipt.contract_address = created_address;
-            } else {
-                tx_receipt.contract_address = None;
+        // Receipts are pushed 1:1 with the remaining (not-yet-receipted) transactions.
+        let remaining_len = sequence.transactions.len() - remaining_start;
+        if calls.len() != remaining_len {
+            bail!(
+                "batch call count ({}) does not match remaining transactions ({}); \
+                 refusing to push misaligned receipts",
+                calls.len(),
+                remaining_len
+            );
+        }
+        // Only carry through contract_address for actual deployments; plain calls also
+        // store the callee in `contract_address`, which would otherwise be copied into
+        // the receipt and treated as a fresh deployment by downstream consumers
+        // (broadcast JSON, verifier).
+        let per_tx_addresses: Vec<Option<Address>> = sequence
+            .transactions
+            .iter()
+            .skip(remaining_start)
+            .map(|tx| match tx.call_kind {
+                CallKind::Create | CallKind::Create2 => tx.contract_address,
+                _ => None,
+            })
+            .collect();
+
+        for (idx, addr) in per_tx_addresses.iter().enumerate() {
+            if let Some(addr) = addr {
+                sh_println!("  call[{idx}] deployed at: {addr:#x}")?;
             }
-            sequence.receipts.push(tx_receipt);
         }
 
-        // Mark all transactions as pending with the batch tx hash
-        for i in remaining_start..total_transactions {
-            sequence.add_pending(i, tx_hash);
+        // gasUsed reflects the whole batch; per-call attribution is unavailable from the receipt.
+        for addr in &per_tx_addresses {
+            let mut tx_receipt = receipt.clone();
+            tx_receipt.contract_address = *addr;
+            sequence.receipts.push(tx_receipt);
         }
 
         let chain = sequence.chain;

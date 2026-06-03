@@ -382,8 +382,6 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             match_sig
         });
 
-        // Invariant testing requires tracing to figure out what contracts were created.
-        // We also want to disable `debug` for setup since we won't be using those traces.
         let invariant_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
 
@@ -412,18 +410,28 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             );
         }
 
+        // Invariant testing requires tracing to figure out what contracts were created.
+        // For regular test runs we disable debug-level setup traces as an optimization.
+        // In `forge test --debug`, keep setup traces in debug mode so setup failures are
+        // inspectable in the debugger.
         let has_invariants = !invariant_fns.is_empty();
 
-        let prev_tracer = self.executor.inspector_mut().tracer.take();
-        if prev_tracer.is_some() || has_invariants {
+        let should_override_setup_tracing =
+            !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
+
+        let prev_tracer = should_override_setup_tracing.then(|| {
+            let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.executor.set_tracing(TraceMode::Call);
-        }
+            prev_tracer
+        });
 
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
-        self.executor.inspector_mut().tracer = prev_tracer;
+        if let Some(prev_tracer) = prev_tracer {
+            self.executor.inspector_mut().tracer = prev_tracer;
+        }
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
@@ -446,7 +454,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             .contract
             .abi
             .functions()
-            .filter(|func| filter.matches_test_function(func))
+            .filter(|func| filter.matches_test_function_in_contract(self.name, func))
             .filter(|func| self.function_matches_network_pass(func))
             .collect::<Vec<_>>();
         debug!(
@@ -834,6 +842,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     )));
                 result.reason = reason;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }
@@ -843,6 +852,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if i == fixtures_len - 1 {
                 result.success = true;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }
@@ -914,9 +924,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Snapshot the per-test corpus dir before `config` is moved into `InvariantExecutor`.
         let resolved_corpus_dir = config.corpus.corpus_dir.clone();
 
-        let mut evm = InvariantExecutor::new(
+        let mut evm = InvariantExecutor::new_with_fuzz_seed(
             executor,
             runner,
+            self.config.fuzz.seed,
             config,
             identified_contracts,
             &self.cr.mcr.known_contracts,
@@ -1092,6 +1103,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
@@ -1174,6 +1186,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
@@ -1201,6 +1214,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     &invariant_result.last_run_inputs,
@@ -1238,6 +1252,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             identified_contracts.clone(),
                             &mut self.result.logs,
                             &mut self.result.traces,
+                            &mut self.result.debug_bytecodes,
                             &mut self.result.line_coverage,
                             &mut self.result.deprecated_cheatcodes,
                             progress.as_ref(),
@@ -1344,6 +1359,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             identified_contracts.clone(),
                             &mut self.result.logs,
                             &mut self.result.traces,
+                            &mut self.result.debug_bytecodes,
                             &mut self.result.line_coverage,
                             &mut self.result.deprecated_cheatcodes,
                             progress.as_ref(),

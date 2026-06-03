@@ -100,7 +100,7 @@ impl VanityArgs {
             };
         }
 
-        sh_println!("Starting to generate vanity address...")?;
+        sh_status!("Starting to generate vanity address...")?;
         let timer = Instant::now();
 
         let wallet = match (left_exact_hex, left_regex, right_exact_hex, right_regex) {

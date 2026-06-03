@@ -5,7 +5,7 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    Address, I256, Log, Selector, U256,
+    Address, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
@@ -54,6 +54,8 @@ pub struct TestOutcome {
     pub known_contracts: Option<ContractsByArtifact>,
     /// The fuzz seed used for the test run.
     pub fuzz_seed: Option<U256>,
+    /// Explicit invariant worker count used for the test run.
+    pub invariant_workers: usize,
 }
 
 impl TestOutcome {
@@ -71,6 +73,7 @@ impl TestOutcome {
             gas_report: None,
             known_contracts,
             fuzz_seed,
+            invariant_workers: 1,
         }
     }
 
@@ -149,6 +152,11 @@ impl TestOutcome {
     /// Returns `true` if any fuzz or invariant test failed.
     pub fn has_fuzz_failures(&self) -> bool {
         self.failures().any(|(_, t)| t.kind.is_fuzz() || t.kind.is_invariant())
+    }
+
+    /// Returns `true` if any invariant test failed.
+    pub fn has_invariant_failures(&self) -> bool {
+        self.failures().any(|(_, t)| t.kind.is_invariant())
     }
 
     /// Sums up all the durations of all individual test suites.
@@ -234,6 +242,13 @@ impl TestOutcome {
                 format!("{seed:#x}").cyan(),
                 "`--fuzz-seed`".cyan()
             )?;
+            if outcome.has_invariant_failures() && outcome.invariant_workers > 1 {
+                sh_println!(
+                    "Invariant workers: {} (use {} to reproduce)",
+                    outcome.invariant_workers,
+                    format!("`--invariant-workers {}`", outcome.invariant_workers).cyan()
+                )?;
+            }
         }
 
         std::process::exit(test_failure_exit_code());
@@ -569,6 +584,10 @@ pub struct TestResult {
     /// Traces
     pub traces: Traces,
 
+    /// Runtime bytecodes for contracts seen in debug traces.
+    #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
+
     /// Additional traces to use for gas report.
     ///
     /// These are cleared after the gas report is analyzed.
@@ -866,6 +885,7 @@ macro_rules! extend {
         $a.logs.extend($b.logs);
         $a.labels.extend($b.labels);
         $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
+        $a.debug_bytecodes.extend($b.debug_bytecodes);
         $a.merge_coverages($b.line_coverage);
     };
 }
@@ -877,6 +897,7 @@ impl TestResult {
             labels: setup.labels.clone(),
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
+            debug_bytecodes: setup.debug_bytecodes.clone(),
             line_coverage: setup.coverage.clone(),
             ..Default::default()
         }
@@ -895,6 +916,7 @@ impl TestResult {
             logs,
             labels,
             traces,
+            debug_bytecodes,
             coverage,
             deployed_libs: _,
             reason,
@@ -906,6 +928,7 @@ impl TestResult {
             reason,
             logs,
             traces,
+            debug_bytecodes,
             line_coverage: coverage,
             labels,
             ..Default::default()
@@ -1435,6 +1458,8 @@ pub struct TestSetup {
     pub labels: AddressHashMap<String>,
     /// Call traces of the setup.
     pub traces: Traces,
+    /// Runtime bytecodes for contracts seen in setup traces.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
     /// Addresses of external libraries deployed during setup.
