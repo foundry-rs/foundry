@@ -2,6 +2,7 @@ use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 
 mod arbitrary_send_erc20;
 mod arbitrary_send_eth;
+mod controlled_delegatecall;
 mod encode_packed_collision;
 mod incorrect_shift;
 mod reentrancy;
@@ -11,6 +12,7 @@ mod unprotected_initializer;
 
 use arbitrary_send_erc20::ARBITRARY_SEND_ERC20;
 use arbitrary_send_eth::ARBITRARY_SEND_ETH;
+use controlled_delegatecall::CONTROLLED_DELEGATECALL;
 use encode_packed_collision::ENCODE_PACKED_COLLISION;
 use incorrect_shift::INCORRECT_SHIFT;
 use reentrancy::{REENTRANCY_ETH, REENTRANCY_NO_ETH};
@@ -21,6 +23,7 @@ use unprotected_initializer::UNPROTECTED_INITIALIZER;
 register_lints!(
     (ArbitrarySendErc20, late, (ARBITRARY_SEND_ERC20)),
     (ArbitrarySendEth, late, (ARBITRARY_SEND_ETH)),
+    (ControlledDelegatecall, late, (CONTROLLED_DELEGATECALL)),
     (EncodedPackedCollision, late, (ENCODE_PACKED_COLLISION)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
     (ReentrancyEth, late, (REENTRANCY_ETH, REENTRANCY_NO_ETH)),
