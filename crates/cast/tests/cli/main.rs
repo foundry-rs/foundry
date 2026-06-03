@@ -4185,6 +4185,168 @@ Transaction successfully executed.
 });
 
 // https://github.com/foundry-rs/foundry/issues/10189
+// `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
+// (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
+// targets the identity precompile so the test needs no deployed contract.
+casttest!(cast_call_debug_trace_call, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x0000000000000000000000000000000000000004",
+            "--data",
+            "0xdeadbeef",
+            "--debug-trace-call",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21160] PRECOMPILES::identity(0xdeadbeef)
+    └─ ← [Return] 0xdeadbeef
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must honour state overrides: here we override the code of an address with a
+// tiny runtime that returns storage slot 0, and override slot 0 itself, then check the traced call
+// returns the overridden value. If the overrides were not forwarded to `debug_traceCall`, the
+// address would have no code and the return would not be the overridden value, so this test can
+// fail.
+casttest!(cast_call_debug_trace_call_applies_overrides, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000aa",
+            "number()(uint256)",
+            "--debug-trace-call",
+            // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            "--override-code",
+            "0x00000000000000000000000000000000000000aa:0x60005460005260206000f3",
+            "--override-state",
+            "0x00000000000000000000000000000000000000aa:0x0:0x1234",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [23182] 0x00000000000000000000000000000000000000AA::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must also forward block overrides: override an address with a runtime that
+// returns `block.number` and pass `--block.number`, then check the traced call returns that number.
+// If `with_block_overrides` were not forwarded to `debug_traceCall`, the call would run at anvil's
+// real block number and the return would differ, so this test can fail.
+casttest!(cast_call_debug_trace_call_applies_block_overrides, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000bb",
+            "number()(uint256)",
+            "--debug-trace-call",
+            // runtime: NUMBER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            "--override-code",
+            "0x00000000000000000000000000000000000000bb:0x4360005260206000f3",
+            "--block.number",
+            "1234",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21160] 0x00000000000000000000000000000000000000bb::number()
+    └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000004d2
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
+// sub-call), exercising the log/sub-call interleaving and nesting through the real pipeline, not
+// just in the unit tests. The overridden runtime emits a LOG0 then STATICCALLs the identity
+// precompile, so the trace has a child call ordered after the log.
+casttest!(cast_call_debug_trace_call_renders_nested_call_and_log, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000cc",
+            "run()",
+            "--debug-trace-call",
+            // runtime: LOG0(0,0); STATICCALL(gas, 0x4, 0,0,0,0); POP; STOP
+            "--override-code",
+            "0x00000000000000000000000000000000000000cc:0x60006000a060006000600060007300000000000000000000000000000000000000045afa5000",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21579] 0x00000000000000000000000000000000000000cc::run()
+    ├─           data: 0x
+    ├─ [15] PRECOMPILES::identity(0x) [staticcall]
+    │   └─ ← [Return] 0x
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// `--debug-trace-call` must render a reverting call as `[Revert]` (success = false), exercising
+// `status_from_frame` and the failure rendering end-to-end. The overridden runtime just reverts.
+casttest!(cast_call_debug_trace_call_renders_revert, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000dd",
+            "run()",
+            "--debug-trace-call",
+            // runtime: PUSH1 0 PUSH1 0 REVERT
+            "--override-code",
+            "0x00000000000000000000000000000000000000dd:0x60006000fd",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21160] 0x00000000000000000000000000000000000000dd::run()
+    └─ ← [Revert] EvmError: Revert
+
+
+[GAS]
+
+"#]]);
+});
+
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
