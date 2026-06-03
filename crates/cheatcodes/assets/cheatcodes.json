@@ -3182,6 +3182,26 @@
     },
     {
       "func": {
+        "id": "assumeImplicitApproval",
+        "description": "Skips a fuzz/invariant input unless `spender` is implicitly approved.",
+        "declaration": "function assumeImplicitApproval(address spender) external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "assumeImplicitApproval(address)",
+        "selector": "0x7c8cd6d2",
+        "selectorBytes": [
+          124,
+          140,
+          214,
+          210
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assumeNoRevert_0",
         "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
         "declaration": "function assumeNoRevert() external pure;",
@@ -6841,6 +6861,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isImplicitlyApproved",
+        "description": "Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,\nmeaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.\nReturns `false` on non-Tempo networks.",
+        "declaration": "function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isImplicitlyApproved(address)",
+        "selector": "0xa8da6aa7",
+        "selectorBytes": [
+          168,
+          218,
+          106,
+          167
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },

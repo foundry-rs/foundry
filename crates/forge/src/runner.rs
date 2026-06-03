@@ -446,7 +446,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             .contract
             .abi
             .functions()
-            .filter(|func| filter.matches_test_function(func))
+            .filter(|func| filter.matches_test_function_in_contract(self.name, func))
             .filter(|func| self.function_matches_network_pass(func))
             .collect::<Vec<_>>();
         debug!(

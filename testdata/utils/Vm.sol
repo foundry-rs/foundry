@@ -152,6 +152,7 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata err) external pure;
     function assume(bool condition) external pure;
+    function assumeImplicitApproval(address spender) external view;
     function assumeNoRevert() external pure;
     function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
     function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
@@ -335,6 +336,7 @@ interface Vm {
     function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external view returns (bool result);
     function isFile(string calldata path) external view returns (bool result);
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
     function isPersistent(address account) external view returns (bool persistent);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);

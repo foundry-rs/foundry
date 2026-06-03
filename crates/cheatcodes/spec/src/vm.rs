@@ -639,6 +639,16 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function setEvmVersion(string calldata evm) external;
 
+    /// Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,
+    /// meaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.
+    /// Returns `false` on non-Tempo networks.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
+
+    /// Skips a fuzz/invariant input unless `spender` is implicitly approved.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeImplicitApproval(address spender) external view;
+
     // -------- Call Manipulation --------
     // --- Mocks ---
 
