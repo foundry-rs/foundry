@@ -49,8 +49,12 @@ pub struct CoverageArgs {
     /// - `2.2`: Changes the format of functions.
     ///
     /// Falls back to the `[profile.<name>.coverage] lcov_version` config value
-    /// when left at the default.
-    #[arg(long, value_parser = parse_lcov_version, default_value = "1")]
+    /// when not provided.
+    #[arg(long = "lcov-version", value_parser = parse_lcov_version)]
+    lcov_version_cli: Option<Version>,
+
+    /// The resolved LCOV version to use after merging CLI and config values.
+    #[arg(skip = Version::new(1, 0, 0))]
     lcov_version: Version,
 
     /// Enable viaIR with minimum optimization
@@ -139,12 +143,8 @@ impl CoverageArgs {
         if self.report.is_empty() {
             self.report.clone_from(&config.report);
         }
-        // CLI default for `lcov_version` matches the config default (`1.0.0`),
-        // so a user passing nothing is indistinguishable from passing `--lcov-version 1`.
-        // In both cases prefer the config value if it differs.
-        if self.lcov_version == Version::new(1, 0, 0) {
-            self.lcov_version.clone_from(&config.lcov_version);
-        }
+        self.lcov_version =
+            self.lcov_version_cli.clone().unwrap_or_else(|| config.lcov_version.clone());
         if !self.ir_minimum {
             self.ir_minimum = config.ir_minimum;
         }
@@ -499,5 +499,35 @@ mod tests {
         assert_eq!(parse_lcov_version("1.0").unwrap(), Version::new(1, 0, 0));
         assert_eq!(parse_lcov_version("1.1").unwrap(), Version::new(1, 1, 0));
         assert_eq!(parse_lcov_version("1.11").unwrap(), Version::new(1, 11, 0));
+    }
+
+    #[test]
+    fn resolve_lcov_version_uses_config_when_cli_absent() {
+        let mut args = CoverageArgs::parse_from(["coverage"]);
+        let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
+
+        args.resolve_with(&config);
+
+        assert_eq!(args.lcov_version, Version::new(2, 2, 0));
+    }
+
+    #[test]
+    fn resolve_lcov_version_keeps_explicit_cli_default() {
+        let mut args = CoverageArgs::parse_from(["coverage", "--lcov-version", "1"]);
+        let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
+
+        args.resolve_with(&config);
+
+        assert_eq!(args.lcov_version, Version::new(1, 0, 0));
+    }
+
+    #[test]
+    fn resolve_lcov_version_keeps_explicit_cli_value() {
+        let mut args = CoverageArgs::parse_from(["coverage", "--lcov-version", "2"]);
+        let config = CoverageConfig { lcov_version: Version::new(2, 2, 0), ..Default::default() };
+
+        args.resolve_with(&config);
+
+        assert_eq!(args.lcov_version, Version::new(2, 0, 0));
     }
 }
