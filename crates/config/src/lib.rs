@@ -116,6 +116,9 @@ pub use invariant::InvariantConfig;
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 
+mod coverage;
+pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
+
 pub mod mutation;
 pub use mutation::{MutationConfig, MutatorType};
 
@@ -369,6 +372,8 @@ pub struct Config {
     pub invariant: InvariantConfig,
     /// Configuration for symbolic testing
     pub symbolic: SymbolicConfig,
+    /// Configuration for `forge coverage`
+    pub coverage: CoverageConfig,
     /// Configuration for mutation testing
     pub mutation: MutationConfig,
     /// Whether to allow ffi cheatcodes in test
@@ -722,6 +727,7 @@ impl Config {
         "doc",
         "fuzz",
         "invariant",
+        "coverage",
         "mutation",
         "labels",
         "dependencies",
@@ -2706,6 +2712,7 @@ impl Default for Config {
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
             symbolic: SymbolicConfig::default(),
+            coverage: CoverageConfig::default(),
             mutation: MutationConfig::default(),
             always_use_create_2_factory: false,
             ffi: false,
@@ -7598,6 +7605,98 @@ mod tests {
             assert_eq!(config.invariant.runs, 375);
             assert_eq!(config.invariant.depth, 500);
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn coverage_section_in_profile() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.coverage]
+                report = ["summary", "lcov"]
+                lcov_version = "2.2.0"
+                ir_minimum = true
+                report_file = "out/lcov.info"
+                include_libs = true
+                exclude_tests = true
+                skip_files = ["test/**", "src/mocks/**"]
+                "#,
+            )?;
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(
+                config.coverage.report,
+                vec![CoverageReportKind::Summary, CoverageReportKind::Lcov]
+            );
+            assert_eq!(config.coverage.lcov_version, semver::Version::new(2, 2, 0));
+            assert!(config.coverage.ir_minimum);
+            assert_eq!(
+                config.coverage.report_file.as_deref(),
+                Some(std::path::Path::new("out/lcov.info"))
+            );
+            assert!(config.coverage.include_libs);
+            assert!(config.coverage.exclude_tests);
+            assert_eq!(
+                config.coverage.skip_files,
+                vec!["test/**".to_string(), "src/mocks/**".to_string()]
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn coverage_standalone_section_falls_back_to_default_profile() {
+        figment::Jail::expect_with(|jail| {
+            // Standalone `[coverage]` should populate the active profile,
+            // matching how `[fuzz]` / `[invariant]` work.
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [coverage]
+                skip_files = ["script/**"]
+                exclude_tests = true
+                "#,
+            )?;
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(config.coverage.skip_files, vec!["script/**".to_string()]);
+            assert!(config.coverage.exclude_tests);
+            // Untouched fields keep their defaults.
+            assert_eq!(config.coverage.report, vec![CoverageReportKind::Summary]);
+            assert_eq!(config.coverage.lcov_version, semver::Version::new(1, 0, 0));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn coverage_per_profile_overrides_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.coverage]
+                skip_files = ["script/**"]
+
+                [profile.ci.coverage]
+                skip_files = ["test/**", "lib/**"]
+                exclude_tests = true
+                "#,
+            )?;
+
+            // Default profile sees the default-profile coverage block.
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(config.coverage.skip_files, vec!["script/**".to_string()]);
+            assert!(!config.coverage.exclude_tests);
+
+            // CI profile sees its own override.
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load_with_root(jail.directory()).unwrap();
+            assert_eq!(
+                config.coverage.skip_files,
+                vec!["test/**".to_string(), "lib/**".to_string()]
+            );
+            assert!(config.coverage.exclude_tests);
             Ok(())
         });
     }

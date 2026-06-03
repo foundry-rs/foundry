@@ -90,31 +90,6 @@ impl TestsProgressState {
         }
     }
 
-    /// Creates progress entry for symbolic tests.
-    pub fn start_symbolic_progress(
-        &mut self,
-        suite_name: &str,
-        test_name: &str,
-        max_queries: u32,
-    ) -> Option<ProgressBar> {
-        if let Some(suite_progress) = self.suites_progress.get(suite_name) {
-            let symbolic_progress =
-                self.multi.insert_after(suite_progress, ProgressBar::new(max_queries as u64));
-            symbolic_progress.set_style(
-                indicatif::ProgressStyle::with_template(
-                    "    ↪ {prefix:.bold.dim}: SMT queries: {pos} {msg}",
-                )
-                .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-            );
-            symbolic_progress.set_prefix(test_name.to_owned());
-            symbolic_progress.enable_steady_tick(Duration::from_millis(100));
-            Some(symbolic_progress)
-        } else {
-            None
-        }
-    }
-
     /// Removes overall test progress.
     pub fn clear(&mut self) {
         self.multi.clear().unwrap();
@@ -143,20 +118,6 @@ pub fn start_fuzz_progress(
 ) -> Option<ProgressBar> {
     if let Some(progress) = tests_progress {
         progress.inner.lock().start_fuzz_progress(suite_name, test_name, timeout, runs)
-    } else {
-        None
-    }
-}
-
-/// Helper function for creating symbolic test progress bar.
-pub fn start_symbolic_progress(
-    tests_progress: Option<&TestsProgress>,
-    suite_name: &str,
-    test_name: &str,
-    max_queries: u32,
-) -> Option<ProgressBar> {
-    if let Some(progress) = tests_progress {
-        progress.inner.lock().start_symbolic_progress(suite_name, test_name, max_queries)
     } else {
         None
     }

@@ -386,8 +386,6 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             match_sig
         });
 
-        // Invariant testing requires tracing to figure out what contracts were created.
-        // We also want to disable `debug` for setup since we won't be using those traces.
         let invariant_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
 
@@ -416,18 +414,28 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             );
         }
 
+        // Invariant testing requires tracing to figure out what contracts were created.
+        // For regular test runs we disable debug-level setup traces as an optimization.
+        // In `forge test --debug`, keep setup traces in debug mode so setup failures are
+        // inspectable in the debugger.
         let has_invariants = !invariant_fns.is_empty();
 
-        let prev_tracer = self.executor.inspector_mut().tracer.take();
-        if prev_tracer.is_some() || has_invariants {
+        let should_override_setup_tracing =
+            !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
+
+        let prev_tracer = should_override_setup_tracing.then(|| {
+            let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.executor.set_tracing(TraceMode::Call);
-        }
+            prev_tracer
+        });
 
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
         debug!("finished setting up in {:?}", setup_time.elapsed());
 
-        self.executor.inspector_mut().tracer = prev_tracer;
+        if let Some(prev_tracer) = prev_tracer {
+            self.executor.inspector_mut().tracer = prev_tracer;
+        }
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
