@@ -842,6 +842,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     )));
                 result.reason = reason;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }
@@ -851,6 +852,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if i == fixtures_len - 1 {
                 result.success = true;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }
@@ -1101,6 +1103,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
@@ -1183,6 +1186,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
@@ -1210,6 +1214,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     &invariant_result.last_run_inputs,
@@ -1247,6 +1252,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             identified_contracts.clone(),
                             &mut self.result.logs,
                             &mut self.result.traces,
+                            &mut self.result.debug_bytecodes,
                             &mut self.result.line_coverage,
                             &mut self.result.deprecated_cheatcodes,
                             progress.as_ref(),
@@ -1353,6 +1359,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             identified_contracts.clone(),
                             &mut self.result.logs,
                             &mut self.result.traces,
+                            &mut self.result.debug_bytecodes,
                             &mut self.result.line_coverage,
                             &mut self.result.deprecated_cheatcodes,
                             progress.as_ref(),
