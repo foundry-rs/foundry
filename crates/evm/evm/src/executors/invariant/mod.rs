@@ -2013,8 +2013,12 @@ mod tests {
 
     #[test]
     fn invariant_worker_count_splits_available_threads_for_auto_workers() {
-        let mut config =
-            InvariantConfig { runs: MIN_RUNS_PER_INVARIANT_WORKER * 4, ..Default::default() };
+        let mut config = InvariantConfig {
+            runs: MIN_RUNS_PER_INVARIANT_WORKER * 4,
+            depth: DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP,
+            workers: foundry_config::InvariantWorkers::Auto,
+            ..Default::default()
+        };
 
         assert_eq!(invariant_worker_count_with_threads(&config, 4, 1), 4);
         assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
