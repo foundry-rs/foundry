@@ -231,6 +231,14 @@ show_metrics = true
 show_solidity = false
 check_interval = 1
 
+[coverage]
+report = ["summary"]
+lcov_version = "1.0.0"
+ir_minimum = false
+include_libs = false
+exclude_tests = false
+skip_files = []
+
 [mutation]
 include_operators = []
 exclude_operators = []
@@ -317,6 +325,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             },
             ..Default::default()
         },
+        coverage: Default::default(),
         mutation: Default::default(),
         ffi: true,
         live_logs: true,
@@ -1423,6 +1432,17 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_time_delay": null,
     "max_block_delay": null,
     "check_interval": 1
+  },
+  "coverage": {
+    "report": [
+      "summary"
+    ],
+    "lcov_version": "1.0.0",
+    "ir_minimum": false,
+    "report_file": null,
+    "include_libs": false,
+    "exclude_tests": false,
+    "skip_files": []
   },
   "mutation": {
     "include_operators": [],
