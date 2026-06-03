@@ -419,13 +419,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let should_override_setup_tracing =
             !self.tcfg.debug && (self.executor.inspector().tracer.is_some() || has_invariants);
 
-        let prev_tracer = if should_override_setup_tracing {
+        let prev_tracer = should_override_setup_tracing.then(|| {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
             self.executor.set_tracing(TraceMode::Call);
-            Some(prev_tracer)
-        } else {
-            None
-        };
+            prev_tracer
+        });
 
         let setup_time = Instant::now();
         let setup = self.setup(call_setup);
