@@ -195,7 +195,12 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         );
         let num_invariant_contracts = contracts
             .iter()
-            .filter(|(_, contract)| contract.abi.functions().any(|func| func.is_invariant_test()))
+            .filter(|(_, contract)| {
+                contract
+                    .abi
+                    .functions()
+                    .any(|func| func.is_invariant_test() && filter.matches_test_function(func))
+            })
             .count();
 
         if show_progress {
@@ -212,7 +217,6 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                         contract,
                         &db,
                         filter,
-                        &tokio_handle,
                         Some(&tests_progress),
                         num_invariant_contracts,
                     );
@@ -234,15 +238,8 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result = self.run_test_suite(
-                    id,
-                    contract,
-                    &db,
-                    filter,
-                    &tokio_handle,
-                    None,
-                    num_invariant_contracts,
-                );
+                let result =
+                    self.run_test_suite(id, contract, &db, filter, None, num_invariant_contracts);
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -256,7 +253,6 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         contract: &TestContract,
         db: &Backend<FEN>,
         filter: &dyn TestFilter,
-        tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
         num_invariant_contracts: usize,
     ) -> SuiteResult {
@@ -283,7 +279,6 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             contract,
             executor,
             progress,
-            tokio_handle,
             span,
             self,
             num_invariant_contracts,

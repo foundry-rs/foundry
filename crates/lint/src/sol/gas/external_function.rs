@@ -287,10 +287,8 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
                     return ControlFlow::Break(());
                 }
             }
-            ExprKind::Delete(inner) => {
-                if expr_root_is_param(inner, self.params) {
-                    return ControlFlow::Break(());
-                }
+            ExprKind::Delete(inner) if expr_root_is_param(inner, self.params) => {
+                return ControlFlow::Break(());
             }
             ExprKind::Unary(op, inner)
                 if matches!(
@@ -298,9 +296,7 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
                     UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
                 ) =>
             {
-                if expr_root_is_param(inner, self.params) {
-                    return ControlFlow::Break(());
-                }
+                return ControlFlow::Break(());
             }
             ExprKind::Call(callee, args, opts) if !is_type_conversion_callee(callee) => {
                 for arg in args.exprs() {

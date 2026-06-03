@@ -1448,12 +1448,11 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
-        let mut invariant_dict = Dict::default();
         if let Some(invariant_workers) = self.invariant_workers {
-            invariant_dict.insert("workers".to_string(), Value::serialize(invariant_workers)?);
-        }
-        if !invariant_dict.is_empty() {
-            dict.insert("invariant".to_string(), invariant_dict.into());
+            dict.insert(
+                "invariant".to_string(),
+                Dict::from([("workers".to_string(), Value::serialize(invariant_workers)?)]).into(),
+            );
         }
 
         if let Some(etherscan_api_key) =

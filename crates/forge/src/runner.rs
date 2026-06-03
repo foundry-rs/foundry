@@ -73,7 +73,7 @@ pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     /// Overall test run progress.
     progress: Option<&'a TestsProgress>,
     /// The handle to the tokio runtime.
-    tokio_handle: &'a tokio::runtime::Handle,
+    tokio_handle: tokio::runtime::Handle,
     /// The span of the contract.
     span: tracing::Span,
     /// The contract-level configuration.
@@ -94,12 +94,11 @@ impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
 }
 
 impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
-    pub const fn new(
+    pub fn new(
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
         progress: Option<&'a TestsProgress>,
-        tokio_handle: &'a tokio::runtime::Handle,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
         num_invariant_contracts: usize,
@@ -109,7 +108,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             contract,
             executor,
             progress,
-            tokio_handle,
+            tokio_handle: tokio::runtime::Handle::current(),
             span,
             tcfg: Cow::Borrowed(&mcr.tcfg),
             mcr,
@@ -1591,7 +1590,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
             &self.tcfg.early_exit,
-            self.cr.tokio_handle,
+            &self.cr.tokio_handle,
         ) {
             Ok(x) => x,
             Err(e) => {

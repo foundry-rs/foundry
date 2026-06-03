@@ -170,15 +170,13 @@ impl InvariantThroughputMetrics {
 }
 
 fn max_invariant_workers_for_campaign(runs: u32, depth: u32) -> usize {
-    let estimated_calls = u64::from(runs).saturating_mul(u64::from(depth.max(1)));
-    let workers = (estimated_calls / MIN_ESTIMATED_CALLS_PER_INVARIANT_WORKER).max(1);
-    usize::try_from(workers).unwrap_or(usize::MAX)
+    let estimated_calls = u64::from(runs) * u64::from(depth.max(1));
+    usize::try_from((estimated_calls / MIN_ESTIMATED_CALLS_PER_INVARIANT_WORKER).max(1))
+        .unwrap_or(usize::MAX)
 }
 
 fn auto_invariant_worker_count(available_threads: usize, invariant_contracts: usize) -> usize {
-    let invariant_contracts = invariant_contracts.max(1);
-    let available_threads = available_threads.max(1);
-    (available_threads / invariant_contracts).max(1).min(available_threads)
+    (available_threads.max(1) / invariant_contracts.max(1)).max(1)
 }
 
 fn invariant_worker_count_with_threads(
