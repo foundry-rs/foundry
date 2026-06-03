@@ -410,9 +410,10 @@ fn write_mod_name(contents: &mut String, name: &str) -> Result<()> {
 /// keeps the generated binding compiling without changing the upstream `sol!` expansion.
 fn qualify_shadowed_sibling_module_paths(mut contents: String) -> String {
     let module_names = top_level_module_names(&contents);
+    let enum_names = public_enum_names(&contents);
 
     for module_name in module_names {
-        if contents.contains(&format!("pub enum {module_name}")) {
+        if enum_names.iter().any(|enum_name| enum_name == &module_name) {
             contents = qualify_unqualified_module_paths(&contents, &module_name);
         }
     }
@@ -451,6 +452,15 @@ fn qualify_unqualified_module_paths(contents: &str, module_name: &str) -> String
 fn top_level_module_names(contents: &str) -> Vec<String> {
     contents
         .split("pub mod ")
+        .skip(1)
+        .filter_map(|rest| rest.split_whitespace().next())
+        .map(|name| name.trim_start_matches("r#").to_string())
+        .collect()
+}
+
+fn public_enum_names(contents: &str) -> Vec<String> {
+    contents
+        .split("pub enum ")
         .skip(1)
         .filter_map(|rest| rest.split_whitespace().next())
         .map(|name| name.trim_start_matches("r#").to_string())

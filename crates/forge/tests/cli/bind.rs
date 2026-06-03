@@ -1,4 +1,19 @@
-use std::process::Command;
+use std::{path::Path, process::Command};
+
+fn assert_bindings_compile(bindings_path: &Path) {
+    let out = Command::new("cargo")
+        .arg("check")
+        .current_dir(bindings_path)
+        .output()
+        .expect("failed to run cargo check");
+
+    assert!(
+        out.status.success(),
+        "generated bindings should compile\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
 
 // <https://github.com/foundry-rs/foundry/issues/9482>
 forgetest!(bind_unlinked_bytecode, |prj, cmd| {
@@ -94,16 +109,33 @@ OK.
 "#]]);
 
     let bindings_path = prj.root().join("out/bindings");
-    let out = Command::new("cargo")
-        .arg("check")
-        .current_dir(&bindings_path)
-        .output()
-        .expect("failed to run cargo check");
+    assert_bindings_compile(&bindings_path);
+});
 
-    assert!(
-        out.status.success(),
-        "generated bindings should compile\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+forgetest!(bind_event_module_prefix_does_not_shadow_aliases, |prj, cmd| {
+    prj.add_source(
+        "alloy_sol_types.sol",
+        r#"
+interface alloy_sol_types {
+    event Ping(address sender);
+}
+"#,
     );
+
+    cmd.args(["bind", "--select", "^alloy_sol_types$", "--optimize"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
+Generating bindings for 1 contracts
+Bindings have been generated to [..]
+
+"#]]);
+
+    let bindings_path = prj.root().join("out/bindings");
+    assert_bindings_compile(&bindings_path);
 });
