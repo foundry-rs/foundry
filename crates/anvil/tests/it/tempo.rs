@@ -35,7 +35,7 @@ use tempo_precompiles::{
 };
 use tempo_primitives::{
     AASigned, TempoSignature, TempoTransaction,
-    transaction::{Call, PrimitiveSignature},
+    transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType},
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
@@ -156,8 +156,12 @@ sol! {
             int16 flipTick;
         }
 
+        function place(address token, uint128 amount, bool isBid, int16 tick) external returns (uint128 orderId);
         function placeFlip(address token, uint128 amount, bool isBid, int16 tick, int16 flipTick) external returns (uint128 orderId);
+        function swapExactAmountIn(address tokenIn, address tokenOut, uint128 amountIn, uint128 minAmountOut) external returns (uint128 amountOut);
         function getOrder(uint128 orderId) external view returns (Order memory);
+
+        event OrderFlipped(uint128 indexed orderId, address indexed maker, address indexed token, uint128 amount, bool isBid, int16 tick, int16 flipTick);
     }
 }
 
@@ -176,6 +180,7 @@ sol! {
 
 sol! {
     #[sol(rpc)]
+    #[allow(clippy::too_many_arguments)]
     interface ITIP20FactoryT5Rpc {
         function createToken(
             string memory name,
@@ -192,13 +197,32 @@ sol! {
 
 sol! {
     #[sol(rpc)]
+    #[allow(clippy::too_many_arguments)]
     interface ITIP20ChannelReserveT5Rpc {
+        struct ChannelDescriptor {
+            address payer;
+            address payee;
+            address operator;
+            address token;
+            bytes32 salt;
+            address authorizedSigner;
+            bytes32 expiringNonceHash;
+        }
+
         struct ChannelState {
             uint96 settled;
             uint96 deposit;
             uint32 closeRequestedAt;
         }
 
+        function open(
+            address payee,
+            address operator,
+            address token,
+            uint96 deposit,
+            bytes32 salt,
+            address authorizedSigner
+        ) external returns (bytes32 channelId);
         function computeChannelId(
             address payer,
             address payee,
@@ -211,6 +235,18 @@ sol! {
         function getChannelState(bytes32 channelId) external view returns (ChannelState memory);
         function getVoucherDigest(bytes32 channelId, uint96 cumulativeAmount) external view returns (bytes32);
         function domainSeparator() external view returns (bytes32);
+
+        event ChannelOpened(
+            bytes32 indexed channelId,
+            address indexed payer,
+            address indexed payee,
+            address operator,
+            address token,
+            address authorizedSigner,
+            bytes32 salt,
+            bytes32 expiringNonceHash,
+            uint96 deposit
+        );
     }
 }
 
@@ -345,7 +381,7 @@ async fn test_tempo_t5_tip20_logo_uri_validation_and_update() {
     assert!(receipt.status(), "setLogoURI should succeed for a valid URI");
     assert_eq!(token.logoURI().call().await.unwrap(), logo_uri);
 
-    let logo_event_topic = alloy_primitives::keccak256("LogoURIUpdated(address,string)".as_bytes());
+    let logo_event_topic = alloy_primitives::keccak256(b"LogoURIUpdated(address,string)");
     assert!(
         receipt
             .inner
@@ -391,7 +427,9 @@ async fn test_tempo_t5_stablecoin_dex_allows_same_tick_flip_order() {
     let (_api, handle) =
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let provider = handle.http_provider();
-    let sender = handle.dev_accounts().next().unwrap();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let taker = accounts[1];
     let dex = IStablecoinDexT5Rpc::new(STABLECOIN_DEX_ADDRESS, &provider);
 
     let t5_call = dex.placeFlip(ALPHA_USD, DEX_MIN_ORDER_AMOUNT, true, tick, tick);
@@ -422,6 +460,47 @@ async fn test_tempo_t5_stablecoin_dex_allows_same_tick_flip_order() {
     assert_eq!(order.tick, tick);
     assert_eq!(order.flipTick, tick);
     assert_eq!(order.remaining, DEX_MIN_ORDER_AMOUNT);
+
+    let fill_call = dex.swapExactAmountIn(ALPHA_USD, PATH_USD, DEX_MIN_ORDER_AMOUNT, 0);
+    let fill_tx = TransactionRequest::default()
+        .from(taker)
+        .to(STABLECOIN_DEX_ADDRESS)
+        .with_input(fill_call.calldata().clone())
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(fill_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "opposite-side order should fill and flip the T5 order");
+
+    let order_flipped_topic = alloy_primitives::keccak256(
+        b"OrderFlipped(uint128,address,address,uint128,bool,int16,int16)",
+    );
+    let flipped_log = receipt
+        .inner
+        .logs()
+        .iter()
+        .find(|log| {
+            log.address() == STABLECOIN_DEX_ADDRESS && log.topics()[0] == order_flipped_topic
+        })
+        .expect("fill should emit OrderFlipped");
+    assert_eq!(
+        flipped_log.topics()[1],
+        B256::from(U256::from(1u64).to_be_bytes::<32>()),
+        "OrderFlipped should preserve the original order ID"
+    );
+
+    let flipped_order = dex.getOrder(1).call().await.unwrap();
+    assert_eq!(flipped_order.orderId, 1);
+    assert_eq!(flipped_order.maker, sender);
+    assert!(!flipped_order.isBid, "filled bid flip order should become an ask");
+    assert!(flipped_order.isFlip);
+    assert_eq!(flipped_order.tick, tick);
+    assert_eq!(flipped_order.flipTick, tick);
+    assert_eq!(flipped_order.remaining, DEX_MIN_ORDER_AMOUNT);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -442,10 +521,20 @@ async fn test_tempo_t5_key_authorization_witness_burn_flow() {
     let account = handle.dev_accounts().next().unwrap();
     let keychain = IAccountKeychainT5Rpc::new(ACCOUNT_KEYCHAIN_ADDRESS, &provider);
 
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let unsigned_without_witness =
+        KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, account);
+    let authorization = unsigned_without_witness.clone().with_witness(witness);
+    assert_eq!(authorization.witness(), Some(witness));
+    assert_ne!(
+        authorization.signature_hash(),
+        unsigned_without_witness.signature_hash(),
+        "witness must be part of the key authorization signing digest"
+    );
+    assert_ne!(authorization.signature_hash(), B256::ZERO);
     assert!(!keychain.isKeyAuthorizationWitnessBurned(account, witness).call().await.unwrap());
 
     let calldata = keychain.burnKeyAuthorizationWitness(witness).calldata().clone();
-    let chain_id = provider.get_chain_id().await.unwrap();
     let base_fee = provider.get_gas_price().await.unwrap();
     let signer = dev_key(0);
     let tempo_tx = TempoTransaction {
@@ -491,6 +580,8 @@ async fn test_tempo_t5_tip20_channel_reserve_basic_views() {
         spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
     let provider = handle.http_provider();
     let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let payer = accounts[0];
+    let payee = accounts[1];
     let reserve = ITIP20ChannelReserveT5Rpc::new(TIP20_CHANNEL_RESERVE_ADDRESS, &provider);
 
     let code = api.get_code(TIP20_CHANNEL_RESERVE_ADDRESS, None).await.unwrap();
@@ -499,15 +590,7 @@ async fn test_tempo_t5_tip20_channel_reserve_basic_views() {
     let salt = B256::repeat_byte(0x34);
     let expiring_nonce_hash = B256::repeat_byte(0x35);
     let channel_id = reserve
-        .computeChannelId(
-            accounts[0],
-            accounts[1],
-            Address::ZERO,
-            PATH_USD,
-            salt,
-            accounts[0],
-            expiring_nonce_hash,
-        )
+        .computeChannelId(payer, payee, Address::ZERO, PATH_USD, salt, payer, expiring_nonce_hash)
         .call()
         .await
         .unwrap();
@@ -521,6 +604,82 @@ async fn test_tempo_t5_tip20_channel_reserve_basic_views() {
         reserve.getVoucherDigest(channel_id, U96::from(1)).call().await.unwrap(),
         B256::ZERO
     );
+
+    let token = ITIP20T5Rpc::new(PATH_USD, &provider);
+    let payer_balance_before = token.balanceOf(payer).call().await.unwrap();
+    let reserve_balance_before =
+        token.balanceOf(TIP20_CHANNEL_RESERVE_ADDRESS).call().await.unwrap();
+    let deposit_amount = U256::from(1_000_000u64);
+    let open_call = reserve.open(
+        payee,
+        Address::ZERO,
+        PATH_USD,
+        U96::from(1_000_000u64),
+        B256::repeat_byte(0x36),
+        Address::ZERO,
+    );
+
+    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+    let signer = dev_key(0);
+    assert_eq!(signer.address(), payer);
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit: T5_PRECOMPILE_GAS,
+        calls: vec![Call {
+            to: TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS),
+            value: U256::ZERO,
+            input: open_call.calldata().clone(),
+        }],
+        access_list: Default::default(),
+        nonce_key: U256::MAX,
+        nonce: 0,
+        fee_payer_signature: None,
+        valid_before: NonZeroU64::new(block.header.timestamp + 25),
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+
+    let sig_hash = tempo_tx.signature_hash();
+    let signature = signer.sign_hash(&sig_hash).await.unwrap();
+    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
+    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
+    let envelope = TempoTxEnvelope::AA(signed_tx);
+
+    let mut encoded = Vec::new();
+    envelope.encode_2718(&mut encoded);
+    let receipt =
+        provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "channel reserve open should succeed at T5");
+
+    let channel_opened_topic = alloy_primitives::keccak256(
+        b"ChannelOpened(bytes32,address,address,address,address,address,bytes32,bytes32,uint96)",
+    );
+    let opened_log = receipt
+        .inner
+        .logs()
+        .iter()
+        .find(|log| {
+            log.address() == TIP20_CHANNEL_RESERVE_ADDRESS
+                && log.topics()[0] == channel_opened_topic
+        })
+        .expect("open should emit ChannelOpened");
+    let opened_channel_id = opened_log.topics()[1];
+    let opened_state = reserve.getChannelState(opened_channel_id).call().await.unwrap();
+    assert_eq!(opened_state.settled, 0);
+    assert_eq!(opened_state.deposit, U96::from(1_000_000u64));
+    assert_eq!(opened_state.closeRequestedAt, 0);
+
+    let payer_balance_after = token.balanceOf(payer).call().await.unwrap();
+    let reserve_balance_after =
+        token.balanceOf(TIP20_CHANNEL_RESERVE_ADDRESS).call().await.unwrap();
+    assert_eq!(payer_balance_before - payer_balance_after, deposit_amount);
+    assert_eq!(reserve_balance_after - reserve_balance_before, deposit_amount);
 }
 
 #[tokio::test(flavor = "multi_thread")]

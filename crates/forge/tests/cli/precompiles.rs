@@ -1,7 +1,7 @@
 //! Contains various tests for `forge test` with precompiles.
 
 use foundry_evm_networks::NetworkConfigs;
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 
 forgetest_init!(precompile_trace_decoding, |prj, cmd| {
     prj.add_test(
@@ -172,7 +172,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
-    "#]]);
+"#]]);
 });
 
 forgetest_init!(tempo_t5_hardfork_precompile_smoke, |prj, cmd| {
@@ -218,7 +218,13 @@ contract TempoT5PrecompileSmokeTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "test_t5_hardfork_precompile_smoke"]).assert_success();
+    let stdout = cmd
+        .args(["test", "--mt", "test_t5_hardfork_precompile_smoke", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("AddressRegistry::isImplicitlyApproved"), "{stdout}");
+    assert!(stdout.contains("TIP20ChannelReserve::domainSeparator"), "{stdout}");
 });
 
 // tests transfer using celo precompile.
