@@ -515,6 +515,12 @@ pub enum CastSubcommand {
     #[command(name = "mktx", visible_alias = "m")]
     MakeTx(MakeTxArgs),
 
+    /// Classify a raw transaction as Tempo T5 payment/general lane.
+    Classify {
+        /// The raw signed transaction.
+        raw_tx: Option<String>,
+    },
+
     /// Calculate the ENS namehash of a name.
     #[command(visible_aliases = &["na", "nh"])]
     Namehash { name: Option<String> },
@@ -540,6 +546,10 @@ pub enum CastSubcommand {
         /// Print the raw RLP encoded transaction.
         #[arg(long, conflicts_with = "field")]
         raw: bool,
+
+        /// Classify the transaction as Tempo T5 payment/general lane.
+        #[arg(long, conflicts_with_all = ["field", "raw", "to_request"])]
+        lane: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
