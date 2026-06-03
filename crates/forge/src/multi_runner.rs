@@ -20,7 +20,7 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
-    executors::{EarlyExit, Executor, ExecutorBuilder},
+    executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
     fork::CreateFork,
     fuzz::strategies::LiteralsDictionary,
     inspectors::CheatsConfig,
@@ -35,7 +35,7 @@ use std::{
     borrow::Borrow,
     collections::BTreeMap,
     ops::{Deref, DerefMut},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc},
     time::Instant,
 };
@@ -103,9 +103,12 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
-        self.matching_contracts(filter)
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| filter.matches_test_function(func))
+        self.matching_contracts(filter).flat_map(move |(id, c)| {
+            let identifier = id.identifier();
+            c.abi
+                .functions()
+                .filter(move |func| filter.matches_test_function_in_contract(&identifier, func))
+        })
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -126,10 +129,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .map(|(id, c)| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
+                let identifier = id.identifier();
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| filter.matches_test_function(func))
+                    .filter(|func| filter.matches_test_function_in_contract(&identifier, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -300,6 +304,25 @@ pub struct MultiNetworkConfig {
     pub pass_network: Option<NetworkVariant>,
 }
 
+/// CLI-only options that switch fuzz/invariant tests into corpus replay
+/// mode that emits AFL-`afl-showmap`-style coverage files.
+#[derive(Clone, Debug)]
+pub struct ShowmapConfig {
+    /// Output root directory for showmap files.
+    pub out_dir: PathBuf,
+    /// Approach name; used as a subdirectory under `out_dir`.
+    pub approach: String,
+    /// Trial identifier embedded in each emitted filename to keep reruns separate.
+    pub trial: String,
+    /// One file per corpus entry instead of one aggregated file per test.
+    pub per_input: bool,
+    /// Which bitmap(s) to dump.
+    pub domain: ShowmapDomain,
+    /// Optional override for the corpus directory to replay from.
+    /// When unset, the per-test corpus dir derived from config is used.
+    pub corpus_dir: Option<PathBuf>,
+}
+
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
@@ -334,6 +357,10 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
 
     /// Multi-network pass configuration. Default = single-pass mode.
     pub multi_network: MultiNetworkConfig,
+
+    /// When set, fuzz/invariant tests run in corpus replay mode and emit
+    /// AFL-`afl-showmap`-style files instead of running a campaign.
+    pub showmap: Option<ShowmapConfig>,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -396,6 +423,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             Some(known_contracts),
             Some(artifact_id.clone()),
             None,
+            false,
         ));
         ExecutorBuilder::default()
             .inspectors(|stack| {
@@ -448,6 +476,8 @@ pub struct MultiContractRunnerBuilder {
     pub fail_fast: bool,
     /// Multi-network pass configuration.
     pub multi_network: MultiNetworkConfig,
+    /// Showmap replay mode (CLI-only, off by default).
+    pub showmap: Option<ShowmapConfig>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -463,7 +493,13 @@ impl MultiContractRunnerBuilder {
             decode_internal: Default::default(),
             fail_fast: false,
             multi_network: Default::default(),
+            showmap: None,
         }
+    }
+
+    pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
+        self.showmap = showmap;
+        self
     }
 
     pub const fn sender(mut self, sender: Address) -> Self {
@@ -626,6 +662,7 @@ impl MultiContractRunnerBuilder {
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
+                showmap: self.showmap,
                 config: self.config,
             },
 
@@ -635,15 +672,18 @@ impl MultiContractRunnerBuilder {
 }
 
 pub fn matches_artifact(filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-    matches_contract(filter, &id.source, &id.name, abi.functions())
+    matches_contract(filter, &id.source, &id.name, &id.identifier(), abi.functions())
 }
 
 pub(crate) fn matches_contract(
     filter: &dyn TestFilter,
     path: &Path,
     contract_name: &str,
+    contract_id: &str,
     functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
-        && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
+        && functions
+            .into_iter()
+            .any(|func| filter.matches_test_function_in_contract(contract_id, func.borrow()))
 }

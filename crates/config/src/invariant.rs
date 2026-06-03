@@ -11,6 +11,11 @@ pub struct InvariantConfig {
     pub runs: u32,
     /// The number of calls executed to attempt to break invariants in one run.
     pub depth: u32,
+    /// Number of workers used to shard invariant runs.
+    ///
+    /// Defaults to `1` to preserve seeded reproducibility unless the user explicitly opts into
+    /// parallel invariant campaigns.
+    pub workers: usize,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
     /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
@@ -33,7 +38,7 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
-    /// Optional timeout (in seconds) for each invariant test.
+    /// Optional campaign-global timeout (in seconds) for each invariant test.
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
@@ -49,10 +54,6 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
-    /// Assert every invariant declared in the current test suite, continuing the campaign after
-    /// the first failure until all invariants have been broken (or normal limits are hit).
-    /// When `false`, the campaign aborts on the first broken invariant (legacy behavior).
-    pub assert_all: bool,
 }
 
 impl Default for InvariantConfig {
@@ -60,6 +61,7 @@ impl Default for InvariantConfig {
         Self {
             runs: 256,
             depth: 500,
+            workers: 1,
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
@@ -74,7 +76,6 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
-            assert_all: true,
         }
     }
 }

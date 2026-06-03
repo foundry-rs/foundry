@@ -30,16 +30,16 @@ use std::path::PathBuf;
 pub enum ContractLanguage {
     /// Solidity programming language
     Solidity,
-    /// Vyper programming language  
+    /// Vyper programming language
     Vyper,
 }
 
 /// Verification provider arguments
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Default, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[arg(long, help_heading = "Verifier options", default_value = "sourcify", value_enum)]
-    pub verifier: VerificationProviderType,
+    #[arg(long, help_heading = "Verifier options", value_enum)]
+    pub verifier: Option<VerificationProviderType>,
 
     /// The verifier API KEY, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_KEY")]
@@ -50,13 +50,48 @@ pub struct VerifierArgs {
     pub verifier_url: Option<String>,
 }
 
-impl Default for VerifierArgs {
-    fn default() -> Self {
-        Self {
-            verifier: VerificationProviderType::Sourcify,
-            verifier_api_key: None,
-            verifier_url: None,
+impl VerifierArgs {
+    /// Returns the effective verifier type, defaulting to Sourcify if not explicitly set.
+    ///
+    /// Note: this is the *defaulted CLI value*, not the actually-selected provider after
+    /// considering `ETHERSCAN_API_KEY` / chain support. Use [`Self::resolve`] for that.
+    pub fn effective_type(&self) -> VerificationProviderType {
+        self.verifier.unwrap_or_default()
+    }
+
+    /// Returns true if `--verifier` was explicitly provided by the user.
+    pub const fn is_explicitly_set(&self) -> bool {
+        self.verifier.is_some()
+    }
+
+    /// Resolves the actual verification provider that will be used at runtime, taking into
+    /// account the explicit `--verifier`, the presence of `ETHERSCAN_API_KEY`, and whether the
+    /// target chain has a known Etherscan API URL.
+    ///
+    /// Resolution rules (mirrors [`VerificationProviderType::client`]):
+    /// 1. If `--verifier` was explicitly set, that wins.
+    /// 2. Otherwise, if an Etherscan API key is set AND the chain is supported (or a custom
+    ///    `--verifier-url` is provided), use Etherscan.
+    /// 3. Otherwise, fall back to Sourcify.
+    pub fn resolve(
+        &self,
+        etherscan_key: Option<&str>,
+        chain: Option<Chain>,
+    ) -> VerificationProviderType {
+        if let Some(v) = self.verifier {
+            return v;
         }
+        let has_key = etherscan_key.is_some_and(|k| !k.is_empty());
+        // Custom-Sourcify chains (e.g. Tempo) register Sourcify-compatible URLs under
+        // etherscan_urls() but are NOT real Etherscan chains. Skip the implicit-Etherscan path
+        // entirely for them; the caller must use `--verifier etherscan` explicitly to override.
+        if has_key && !chain.is_some_and(|c| c.is_custom_sourcify()) {
+            let chain_has_etherscan_url = chain.is_none_or(|c| c.etherscan_urls().is_some());
+            if chain_has_etherscan_url || self.verifier_url.is_some() {
+                return VerificationProviderType::Etherscan;
+            }
+        }
+        VerificationProviderType::Sourcify
     }
 }
 
@@ -139,6 +174,13 @@ pub struct VerifyArgs {
     /// Use the Yul intermediate representation compilation pipeline.
     #[arg(long)]
     pub via_ir: bool,
+
+    /// The Etherscan license type code to include with the verification request.
+    ///
+    /// See Etherscan's supported `licenseType` values. This is only used for Etherscan-style
+    /// verifiers.
+    #[arg(long, value_name = "CODE", help_heading = "Verifier options")]
+    pub license_type: Option<String>,
 
     /// The EVM version to use.
     ///
@@ -247,11 +289,30 @@ impl VerifyArgs {
 
         // Set Etherscan options.
         self.etherscan.chain = Some(chain);
-        self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
+        // `get_etherscan_config_with_chain` returns None for chains with no known Etherscan API
+        // URL (even when a key was explicitly passed), because `ResolvedEtherscanConfig::create`
+        // requires `chain.etherscan_urls()`. Fall back to the raw `etherscan_api_key` from config
+        // so that the key survives for warning/fallback logic in `client()`.
+        self.etherscan.key = config
+            .get_etherscan_config_with_chain(Some(chain))?
+            .map(|c| c.key)
+            .or_else(|| config.etherscan_api_key.clone());
 
-        // For chains with Sourcify-compatible APIs, use the chain's URL from etherscan_urls
-        if self.verifier.verifier.is_sourcify()
-            && self.verifier.verifier_url.is_none()
+        // Capture whether the user explicitly provided a verifier URL *before* any auto-injection.
+        // This is passed to `client()` so that an auto-injected Sourcify URL does not look like a
+        // user-supplied Etherscan-compatible URL and cause the wrong provider to be selected.
+        let had_user_verifier_url = self.verifier.verifier_url.is_some();
+
+        // Resolve provider BEFORE URL injection so that the auto-injected Sourcify URL cannot
+        // influence routing. For custom-Sourcify chains (e.g. Tempo), etherscan_urls() returns
+        // Some but is_custom_sourcify() excludes them from the Etherscan path in resolve().
+        let etherscan_key = self.etherscan.key();
+        let resolved = self.verifier.resolve(etherscan_key.as_deref(), self.etherscan.chain);
+
+        // For chains with Sourcify-compatible APIs, inject their URL only when we've resolved to
+        // Sourcify and the user did not already supply a --verifier-url.
+        if resolved.is_sourcify()
+            && !had_user_verifier_url
             && let Some(url) = sourcify_api_url(chain)
         {
             self.verifier.verifier_url = Some(url);
@@ -266,39 +327,28 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        sh_status!("Start verifying contract `{}` deployed on {chain}", self.address)?;
         if let Some(version) = &self.evm_version {
-            sh_println!("EVM version: {version}")?;
+            sh_status!("EVM version: {version}")?;
         }
         if let Some(version) = &self.compiler_version {
-            sh_println!("Compiler version: {version}")?;
+            sh_status!("Compiler version: {version}")?;
         }
         if let Some(optimizations) = &self.num_of_optimizations {
-            sh_println!("Optimizations:    {optimizations}")?
+            sh_status!("Optimizations:    {optimizations}")?
         }
         if let Some(args) = &self.constructor_args
             && !args.is_empty()
         {
-            sh_println!("Constructor args: {args}")?
+            sh_status!("Constructor args: {args}")?
         }
-        // `client()` picks Etherscan when `--verifier etherscan` is passed, or when
-        // `ETHERSCAN_API_KEY` is set and no other provider was explicitly chosen. This mirrors
-        // that selection closely enough to decide whether the host-only URL hint applies.
-        let etherscan_key = self.etherscan.key();
-        let using_etherscan = self.verifier.verifier.is_etherscan()
-            || (etherscan_key.as_deref().is_some_and(|k| !k.is_empty())
-                && !matches!(
-                    self.verifier.verifier,
-                    VerificationProviderType::Blockscout
-                        | VerificationProviderType::Oklink
-                        | VerificationProviderType::Custom
-                ));
-        self.verifier
-            .verifier
+        let using_etherscan = resolved.is_etherscan();
+        resolved
             .client(
                 etherscan_key.as_deref(),
                 self.etherscan.chain,
-                self.verifier.verifier_url.is_some(),
+                had_user_verifier_url,
+                self.verifier.is_explicitly_set(),
             )?
             .verify(self, context)
             .await
@@ -307,10 +357,11 @@ impl VerifyArgs {
 
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
-        self.verifier.verifier.client(
+        self.verifier.effective_type().client(
             self.etherscan.key().as_deref(),
             self.etherscan.chain,
             self.verifier.verifier_url.is_some(),
+            self.verifier.is_explicitly_set(),
         )
     }
 
@@ -441,7 +492,7 @@ impl VerifyArgs {
             let provider = utils::get_provider(&config)?;
             let code = provider.get_code_at(self.address).await?;
 
-            let output = ProjectCompiler::new().compile(&project)?;
+            let output = ProjectCompiler::new().quiet(true).compile(&project)?;
             let contracts = ContractsByArtifact::new(
                 output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
             );
@@ -506,16 +557,14 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        sh_println!(
-            "Checking verification status on {}",
-            self.etherscan.chain.unwrap_or_default()
-        )?;
+        sh_status!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default())?;
         self.verifier
-            .verifier
+            .effective_type()
             .client(
                 self.etherscan.key().as_deref(),
                 self.etherscan.chain,
                 self.verifier.verifier_url.is_some(),
+                self.verifier.is_explicitly_set(),
             )?
             .check(self)
             .await
@@ -565,8 +614,11 @@ mod tests {
             "0x0000000000000000000000000000000000000000",
             "src/Domains.sol:Domains",
             "--via-ir",
+            "--license-type",
+            "13",
         ]);
         assert!(args.via_ir);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
     }
 
     #[test]
@@ -581,5 +633,92 @@ mod tests {
         ]);
         assert!(args.no_auto_detect);
         assert_eq!(args.use_solc.as_deref(), Some("0.8.23"));
+    }
+
+    #[test]
+    fn resolve_explicit_sourcify_overrides_api_key() {
+        let args = VerifierArgs {
+            verifier: Some(VerificationProviderType::Sourcify),
+            verifier_api_key: None,
+            verifier_url: None,
+        };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::mainnet())),
+            VerificationProviderType::Sourcify,
+        );
+    }
+
+    #[test]
+    fn resolve_explicit_etherscan_is_etherscan() {
+        let args = VerifierArgs {
+            verifier: Some(VerificationProviderType::Etherscan),
+            verifier_api_key: None,
+            verifier_url: None,
+        };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::mainnet())),
+            VerificationProviderType::Etherscan,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_with_key_and_known_chain_uses_etherscan() {
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::mainnet())),
+            VerificationProviderType::Etherscan,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_with_key_and_unknown_chain_falls_back_to_sourcify() {
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::from(3658348u64))),
+            VerificationProviderType::Sourcify,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_with_key_and_unknown_chain_but_url_uses_etherscan() {
+        let args = VerifierArgs {
+            verifier: None,
+            verifier_api_key: None,
+            verifier_url: Some("https://example.com/api".to_string()),
+        };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::from(3658348u64))),
+            VerificationProviderType::Etherscan,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_no_key_falls_back_to_sourcify() {
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(args.resolve(None, Some(Chain::mainnet())), VerificationProviderType::Sourcify,);
+    }
+
+    // Regression: custom-Sourcify chains (e.g. Tempo) register Sourcify-compatible URLs under
+    // etherscan_urls(). An implicit ETHERSCAN_API_KEY must NOT route them to Etherscan.
+    #[test]
+    fn resolve_implicit_with_key_and_custom_sourcify_chain_falls_back_to_sourcify() {
+        let tempo = Chain::from(4217u64); // NamedChain::Tempo
+        assert!(tempo.is_custom_sourcify(), "sanity: Tempo should be is_custom_sourcify");
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(args.resolve(Some("mykey"), Some(tempo)), VerificationProviderType::Sourcify,);
+    }
+
+    // Ensure the is_custom_sourcify() guard holds even when a URL is present (e.g. the URL was
+    // auto-injected by run()). A user-supplied --verifier-url on a custom-Sourcify chain with a
+    // key should still resolve to Sourcify, not Etherscan.
+    #[test]
+    fn resolve_custom_sourcify_chain_with_url_and_key_stays_sourcify() {
+        let tempo = Chain::from(4217u64);
+        let args = VerifierArgs {
+            verifier: None,
+            verifier_api_key: None,
+            verifier_url: Some("https://contracts.tempo.xyz/".to_string()),
+        };
+        assert_eq!(args.resolve(Some("mykey"), Some(tempo)), VerificationProviderType::Sourcify,);
     }
 }

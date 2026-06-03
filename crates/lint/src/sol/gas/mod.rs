@@ -8,6 +8,7 @@ mod immutable;
 mod keccak;
 mod unused_state_variables;
 mod var_read_using_this;
+mod write_after_write;
 use cache_array_length::CACHE_ARRAY_LENGTH;
 use costly_loop::COSTLY_LOOP;
 use custom_errors::CUSTOM_ERRORS;
@@ -16,6 +17,7 @@ use immutable::{COULD_BE_CONSTANT, COULD_BE_IMMUTABLE};
 use keccak::ASM_KECCAK256;
 use unused_state_variables::UNUSED_STATE_VARIABLES;
 use var_read_using_this::VAR_READ_USING_THIS;
+use write_after_write::WRITE_AFTER_WRITE;
 
 register_lints!(
     (AsmKeccak256, late, (ASM_KECCAK256)),
@@ -26,4 +28,5 @@ register_lints!(
     (ExternalFunction, late, (EXTERNAL_FUNCTION)),
     (UnusedStateVariables, late, (UNUSED_STATE_VARIABLES)),
     (VarReadUsingThis, late, (VAR_READ_USING_THIS)),
+    (WriteAfterWrite, late, (WRITE_AFTER_WRITE)),
 );

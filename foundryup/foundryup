@@ -3,7 +3,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.8.3"
+FOUNDRYUP_INSTALLER_VERSION="1.8.5"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -484,10 +484,18 @@ use() {
   if [ -d "$FOUNDRY_VERSION_DIR" ]; then
 
     check_bins_in_use
+    ensure mkdir -p "$FOUNDRY_BIN_DIR"
 
     for bin in "${BINS[@]}"; do
       bin_path="$FOUNDRY_BIN_DIR/$bin"
-      cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
+      # Remove first: `$bin_path` may be a symlink created by a previous
+      # `foundryup --path` invocation, pointing at e.g.
+      # `<repo>/target/release/$bin`. A plain `cp src symlink` follows the
+      # symlink and overwrites the local build artifact, which corrupts the
+      # workspace and silently makes the next `--path` activation use the
+      # downloaded release binary instead of a fresh local build.
+      ensure rm -f "$bin_path"
+      ensure cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
       # Print usage msg
       say "use - $(ensure "$bin_path" -V)"
 
