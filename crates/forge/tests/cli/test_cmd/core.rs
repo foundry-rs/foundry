@@ -427,3 +427,93 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+forgetest_init!(rerun_filters_same_named_tests_by_contract, |prj, cmd| {
+    prj.add_test(
+        "RerunSameName.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FailingSameNameTest is Test {
+    function testSharedName() public {
+        assertTrue(false);
+    }
+}
+
+contract PassingSameNameTest is Test {
+    function testSharedName() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunSameName.t.sol:FailingSameNameTest
+[FAIL: assertion failed] testSharedName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSameName.t.sol:PassingSameNameTest
+[PASS] testSharedName() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+...
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSameName.t.sol:FailingSameNameTest
+[FAIL: assertion failed] testSharedName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+});
+
+forgetest_init!(rerun_with_only_setup_failure_runs_all_tests, |prj, cmd| {
+    prj.add_test(
+        "RerunSetupFail.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract OnlySetupFails is Test {
+    function setUp() public {
+        assertTrue(false);
+    }
+
+    function testA() public {
+        assertTrue(true);
+    }
+}
+
+contract HealthyContract is Test {
+    function testC() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+
+    // With no replayable failures recorded, `--rerun` falls back to a regular run instead of
+    // selecting zero tests.
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSetupFail.t.sol:HealthyContract
+[PASS] testC() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSetupFail.t.sol:OnlySetupFails
+[FAIL: assertion failed] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+...
+"#]]);
+});

@@ -1,4 +1,8 @@
-use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use super::{
+    install,
+    test::filter::{ProjectPathsAwareFilter, RerunFailure, RerunFailures},
+    watch::WatchArgs,
+};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
@@ -405,11 +409,19 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
+        // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
+        // identifiers it constructs are project-relative. Match that here for the filter check
+        // (notably for the `--rerun` failure list, which is persisted relative) but return the
+        // original absolute source paths so downstream compilation can locate them.
         Ok(output
             .artifact_ids()
             .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
             .filter(|(id, abi)| {
-                id.source.starts_with(&config.src) || matches_artifact(test_filter, id, abi)
+                if id.source.starts_with(&config.src) {
+                    return true;
+                }
+                let stripped = id.clone().with_stripped_file_prefixes(&config.root);
+                matches_artifact(test_filter, &stripped, abi)
             })
             .map(|(id, _)| id.source)
             .collect())
@@ -1279,9 +1291,13 @@ impl TestArgs {
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
-        if self.rerun {
-            filter.test_pattern = last_run_failures(config);
-        }
+        let rerun_failures = if self.rerun {
+            let failures = last_run_failures(config);
+            filter.test_pattern = failures.test_pattern;
+            failures.failures
+        } else {
+            None
+        };
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
                 bail!("Can not supply both --match-path and |path|");
@@ -1289,7 +1305,11 @@ impl TestArgs {
         } else {
             filter.path_pattern = self.path.clone();
         }
-        Ok(filter.merge_with_config(config))
+        let mut filter = filter.merge_with_config(config);
+        if let Some(failures) = rerun_failures {
+            filter.set_rerun_failures(failures);
+        }
+        Ok(filter)
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -1519,33 +1539,66 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
     }
 }
 
+struct LastRunFailures {
+    test_pattern: Option<regex::Regex>,
+    failures: Option<Vec<RerunFailure>>,
+}
+
 /// Load persisted filter (with last test run failures) from file.
-fn last_run_failures(config: &Config) -> Option<regex::Regex> {
-    match fs::read_to_string(&config.test_failures_file) {
-        Ok(filter) => Regex::new(&filter)
-            .inspect_err(|e| {
-                _ = sh_warn!(
-                    "failed to parse test filter from {:?}: {e}",
-                    config.test_failures_file
-                )
-            })
-            .ok(),
-        Err(_) => None,
+fn last_run_failures(config: &Config) -> LastRunFailures {
+    let Ok(filter) = fs::read_to_string(&config.test_failures_file) else {
+        return LastRunFailures { test_pattern: None, failures: None };
+    };
+
+    if let Ok(failures) = serde_json::from_str::<RerunFailures>(&filter) {
+        if failures.failures.is_empty() {
+            return LastRunFailures { test_pattern: None, failures: None };
+        }
+        let test_pattern = failures
+            .failures
+            .iter()
+            .map(|failure| regex::escape(&failure.test))
+            .collect::<Vec<_>>()
+            .join("|");
+        let test_pattern = Regex::new(&test_pattern).ok();
+        return LastRunFailures { test_pattern, failures: Some(failures.failures) };
     }
+
+    let test_pattern = Regex::new(&filter)
+        .inspect_err(|e| {
+            _ = sh_warn!("failed to parse test filter from {:?}: {e}", config.test_failures_file)
+        })
+        .ok();
+    LastRunFailures { test_pattern, failures: None }
 }
 
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let filter =
-            outcome.failures().flat_map(rerun_filter_matches).collect::<Vec<_>>().join("|");
-        let _ = fs::write(&config.test_failures_file, filter);
+        let failures = outcome
+            .results
+            .iter()
+            .flat_map(|(contract, suite)| {
+                suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
+                    move |(test_name, test_result)| {
+                        rerun_filter_matches(test_name, test_result)
+                            .map(move |test| RerunFailure { contract: contract.clone(), test })
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let output = serde_json::to_string(&RerunFailures { version: 1, failures });
+        if let Ok(output) = output {
+            let _ = fs::write(&config.test_failures_file, output);
+        }
     }
 }
 
 fn rerun_filter_matches<'a>(
-    (test_name, test_result): (&'a String, &'a TestResult),
-) -> impl Iterator<Item = &'a str> {
+    test_name: &'a str,
+    test_result: &'a TestResult,
+) -> impl Iterator<Item = String> + 'a {
     let has_predicate_failures =
         test_result.invariant_failures.iter().any(|failure| failure.predicate_name().is_some());
     let predicate_failures =
@@ -1553,7 +1606,9 @@ fn rerun_filter_matches<'a>(
 
     let fallback = test_name.is_any_test().then(|| test_name.split('(').next()).flatten();
 
-    predicate_failures.chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
+    predicate_failures
+        .chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
+        .map(str::to_owned)
 }
 
 /// Generate test report in JUnit XML report format.
