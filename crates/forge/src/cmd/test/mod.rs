@@ -486,10 +486,6 @@ impl TestArgs {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
         }
-        if config.invariant.workers == 0 {
-            bail!("`invariant.workers` must be greater than 0");
-        }
-        let invariant_workers = config.invariant.workers;
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
@@ -623,7 +619,6 @@ impl TestArgs {
 
             (libraries, outcome)
         };
-        outcome.invariant_workers = invariant_workers;
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =

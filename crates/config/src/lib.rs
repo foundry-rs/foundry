@@ -111,7 +111,7 @@ mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::InvariantConfig;
+pub use invariant::{InvariantConfig, InvariantWorkers};
 
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
@@ -2958,7 +2958,7 @@ mod tests {
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write};
+    use std::{fs::File, io::Write, num::NonZeroUsize};
     use tempfile::tempdir;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -4996,7 +4996,7 @@ mod tests {
                 InvariantConfig {
                     runs: 512,
                     depth: 10,
-                    workers: 4,
+                    workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
@@ -5029,7 +5029,10 @@ mod tests {
             assert_eq!(config.fmt.line_length, 95);
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
             assert_eq!(config.invariant.depth, 5);
-            assert_eq!(config.invariant.workers, 3);
+            assert_eq!(
+                config.invariant.workers,
+                InvariantWorkers::Fixed(NonZeroUsize::new(3).unwrap())
+            );
 
             Ok(())
         });

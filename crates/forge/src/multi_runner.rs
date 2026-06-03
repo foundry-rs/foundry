@@ -193,6 +193,10 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             self.contracts.len(),
             find_time,
         );
+        let num_invariant_contracts = contracts
+            .iter()
+            .filter(|(_, contract)| contract.abi.functions().any(|func| func.is_invariant_test()))
+            .count();
 
         if show_progress {
             let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
@@ -210,6 +214,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                         filter,
                         &tokio_handle,
                         Some(&tests_progress),
+                        num_invariant_contracts,
                     );
 
                     tests_progress
@@ -229,7 +234,15 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result = self.run_test_suite(id, contract, &db, filter, &tokio_handle, None);
+                let result = self.run_test_suite(
+                    id,
+                    contract,
+                    &db,
+                    filter,
+                    &tokio_handle,
+                    None,
+                    num_invariant_contracts,
+                );
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -245,6 +258,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         filter: &dyn TestFilter,
         tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
+        num_invariant_contracts: usize,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let span_name = if enabled!(tracing::Level::TRACE) {
@@ -272,6 +286,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             tokio_handle,
             span,
             self,
+            num_invariant_contracts,
         );
         let r = runner.run_tests(filter);
 

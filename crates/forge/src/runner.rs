@@ -80,6 +80,8 @@ pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     tcfg: Cow<'a, TestRunnerConfig<FEN>>,
     /// The parent runner.
     mcr: &'a MultiContractRunner<FEN>,
+    /// Number of matching test contracts that contain invariant tests.
+    num_invariant_contracts: usize,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
@@ -100,6 +102,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         tokio_handle: &'a tokio::runtime::Handle,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
+        num_invariant_contracts: usize,
     ) -> Self {
         Self {
             name,
@@ -110,6 +113,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             span,
             tcfg: Cow::Borrowed(&mcr.tcfg),
             mcr,
+            num_invariant_contracts,
         }
     }
 
@@ -921,6 +925,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             config,
             identified_contracts,
             &self.cr.mcr.known_contracts,
+            self.cr.num_invariant_contracts,
         );
 
         // Showmap replay mode: replay the persisted corpus and emit coverage
@@ -1502,6 +1507,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.reverts,
             invariant_result.metrics,
             invariant_result.failed_corpus_replays,
+            invariant_result.workers,
             invariant_result.optimization_best_value,
         );
         self.result

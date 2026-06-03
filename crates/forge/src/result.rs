@@ -54,8 +54,6 @@ pub struct TestOutcome {
     pub known_contracts: Option<ContractsByArtifact>,
     /// The fuzz seed used for the test run.
     pub fuzz_seed: Option<U256>,
-    /// Explicit invariant worker count used for the test run.
-    pub invariant_workers: usize,
 }
 
 impl TestOutcome {
@@ -73,7 +71,6 @@ impl TestOutcome {
             gas_report: None,
             known_contracts,
             fuzz_seed,
-            invariant_workers: 1,
         }
     }
 
@@ -159,6 +156,14 @@ impl TestOutcome {
         self.failures().any(|(_, t)| t.kind.is_invariant())
     }
 
+    fn invariant_workers(&self) -> usize {
+        self.failures()
+            .filter(|(_, result)| result.kind.is_invariant())
+            .map(|(_, result)| result.invariant_workers.max(1))
+            .max()
+            .unwrap_or(1)
+    }
+
     /// Sums up all the durations of all individual test suites.
     ///
     /// Note that this is not necessarily the wall clock time of the entire test run.
@@ -242,11 +247,12 @@ impl TestOutcome {
                 format!("{seed:#x}").cyan(),
                 "`--fuzz-seed`".cyan()
             )?;
-            if outcome.has_invariant_failures() && outcome.invariant_workers > 1 {
+            let invariant_workers = outcome.invariant_workers();
+            if invariant_workers > 1 {
                 sh_println!(
                     "Invariant workers: {} (use {} to reproduce)",
-                    outcome.invariant_workers,
-                    format!("`--invariant-workers {}`", outcome.invariant_workers).cyan()
+                    invariant_workers,
+                    format!("`--invariant-workers {invariant_workers}`").cyan()
                 )?;
             }
         }
@@ -566,6 +572,10 @@ pub struct TestResult {
     /// `Assertion Tests` section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_handler_failures: Vec<InvariantFailure>,
+
+    /// Actual worker count used by this invariant campaign.
+    #[serde(skip)]
+    pub invariant_workers: usize,
 
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
@@ -1095,6 +1105,7 @@ impl TestResult {
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+        workers: usize,
         optimization_best_value: Option<I256>,
     ) {
         self.kind = TestKind::Invariant {
@@ -1116,6 +1127,7 @@ impl TestResult {
         self.invariant_failure_dir = invariant_failure_dir;
         self.invariant_count = invariant_count;
         self.invariant_handler_failures = invariant_handler_failures;
+        self.invariant_workers = workers.max(1);
         // `counterexample` is only used by the renderer for optimization mode (the "best
         // sequence" rendered on success). Invariant check-mode failures live entirely in
         // `invariant_failures`; `reason`/`counterexample` stay `None` for invariant tests.

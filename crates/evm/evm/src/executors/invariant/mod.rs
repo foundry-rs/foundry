@@ -16,7 +16,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     sh_eprintln, sh_println,
 };
-use foundry_config::InvariantConfig;
+use foundry_config::{InvariantConfig, InvariantWorkers};
 use foundry_evm_core::{
     FoundryBlock,
     constants::{
@@ -167,12 +167,24 @@ fn max_invariant_workers_for_runs(runs: u32) -> usize {
     (runs / MIN_RUNS_PER_INVARIANT_WORKER).max(1) as usize
 }
 
-fn invariant_worker_count(config: &InvariantConfig) -> usize {
+fn invariant_worker_count_with_threads(
+    config: &InvariantConfig,
+    available_threads: usize,
+    invariant_contracts: usize,
+) -> usize {
+    let invariant_contracts = invariant_contracts.max(1);
+    let available_threads = available_threads.max(1);
+    let requested = match config.workers {
+        InvariantWorkers::Auto => (available_threads / invariant_contracts).max(1),
+        InvariantWorkers::Fixed(workers) => workers.get(),
+    }
+    .min(available_threads);
+
     if config.timeout.is_some() {
-        return config.workers;
+        return requested;
     }
 
-    config.workers.min(max_invariant_workers_for_runs(config.runs))
+    requested.min(max_invariant_workers_for_runs(config.runs))
 }
 
 fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_count: usize) -> usize {
@@ -513,6 +525,8 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     project_contracts: &'a ContractsByArtifact,
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
+    /// Number of matching test contracts that contain invariant tests.
+    invariant_contracts: usize,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
@@ -524,7 +538,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
     ) -> Self {
-        Self::new_with_fuzz_seed(executor, runner, None, config, setup_contracts, project_contracts)
+        Self::new_with_fuzz_seed(
+            executor,
+            runner,
+            None,
+            config,
+            setup_contracts,
+            project_contracts,
+            1,
+        )
     }
 
     /// Instantiates an invariant executor with the configured fuzz seed for deterministic worker
@@ -536,6 +558,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
+        invariant_contracts: usize,
     ) -> Self {
         Self {
             executor,
@@ -545,6 +568,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
+            invariant_contracts,
         }
     }
 
@@ -580,7 +604,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         >,
     ) -> Result<InvariantFuzzTestResult> {
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
-        let worker_plans = campaign_spec.worker_plans(invariant_worker_count(&self.config))?;
+        let worker_plans = campaign_spec.worker_plans(invariant_worker_count_with_threads(
+            &self.config,
+            rayon::current_num_threads(),
+            self.invariant_contracts,
+        ))?;
         let actual_worker_count = worker_plans.len();
         let campaign_seed =
             self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
@@ -1160,6 +1188,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.line_coverage,
             result.metrics,
             if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
+            1,
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
@@ -1911,24 +1940,43 @@ mod tests {
     fn invariant_worker_count_uses_configured_workers_and_caps_short_campaigns() {
         let mut config = InvariantConfig {
             runs: MIN_RUNS_PER_INVARIANT_WORKER * 4,
-            workers: 4,
+            workers: foundry_config::InvariantWorkers::Fixed(
+                std::num::NonZeroUsize::new(4).unwrap(),
+            ),
             ..Default::default()
         };
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 4);
 
         config.corpus.show_edge_coverage = true;
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 4);
 
         config.corpus.show_edge_coverage = false;
         config.corpus.corpus_dir = Some(std::path::PathBuf::from("corpus"));
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 4);
 
         config.runs = MIN_RUNS_PER_INVARIANT_WORKER - 1;
         config.timeout = None;
-        assert_eq!(invariant_worker_count(&config), 1);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 1);
 
         config.timeout = Some(1);
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 4), 4);
+    }
+
+    #[test]
+    fn invariant_worker_count_splits_available_threads_for_auto_workers() {
+        let mut config =
+            InvariantConfig { runs: MIN_RUNS_PER_INVARIANT_WORKER * 4, ..Default::default() };
+
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 3), 2);
+        assert_eq!(invariant_worker_count_with_threads(&config, 3, 8), 1);
+        assert_eq!(invariant_worker_count_with_threads(&config, 0, 0), 1);
+
+        config.runs = MIN_RUNS_PER_INVARIANT_WORKER - 1;
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 1);
+
+        config.timeout = Some(1);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
     }
 
     #[test]
