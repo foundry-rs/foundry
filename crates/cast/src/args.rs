@@ -63,24 +63,6 @@ pub fn setup() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
-    let raw_tx = hex::decode(raw_tx)?;
-    let mut data = raw_tx.as_slice();
-    let tx =
-        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
-    format_lane_classification(&tx.classify_t5_payment_lane())
-}
-
-pub(crate) fn format_lane_classification(
-    classification: &PaymentLaneClassification,
-) -> Result<String> {
-    if shell::is_json() {
-        Ok(serde_json::to_string_pretty(classification)?)
-    } else {
-        Ok(serde_json::to_string(classification)?)
-    }
-}
-
 /// Run the subcommand.
 #[allow(clippy::large_stack_frames)]
 pub async fn run_command(args: CastArgs) -> Result<()> {
@@ -993,6 +975,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     };
 
     Ok(())
+}
+
+pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
+    let raw_tx = hex::decode(raw_tx)?;
+    let mut data = raw_tx.as_slice();
+    let tx =
+        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
+    format_lane_classification(&tx.classify_t5_payment_lane())
+}
+
+pub(crate) fn format_lane_classification(
+    classification: &PaymentLaneClassification,
+) -> Result<String> {
+    if shell::is_json() {
+        Ok(serde_json::to_string_pretty(classification)?)
+    } else {
+        Ok(serde_json::to_string(classification)?)
+    }
 }
 
 #[cfg(test)]

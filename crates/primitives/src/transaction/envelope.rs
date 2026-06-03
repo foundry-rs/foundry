@@ -19,53 +19,6 @@ use serde::{Deserialize, Serialize};
 use tempo_primitives::{AASigned, TempoTransaction};
 use tempo_revm::TempoTxEnv;
 
-/// Structured T5 payment-lane classification for Foundry-facing APIs.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaymentLaneClassification {
-    /// The classified lane.
-    pub lane: PaymentLane,
-    /// Convenience boolean for consumers that only need the lane predicate.
-    pub payment: bool,
-    /// Structured reason for general-lane classification, when known.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<PaymentLaneReason>,
-}
-
-impl PaymentLaneClassification {
-    /// Constructs a payment-lane classification.
-    pub const fn payment() -> Self {
-        Self { lane: PaymentLane::Payment, payment: true, reason: None }
-    }
-
-    /// Constructs a general-lane classification with a structured reason.
-    pub const fn general(reason: PaymentLaneReason) -> Self {
-        Self { lane: PaymentLane::General, payment: false, reason: Some(reason) }
-    }
-}
-
-/// Payment-lane classifier output lane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaymentLane {
-    Payment,
-    General,
-}
-
-/// Stable Foundry-facing reasons for general-lane classification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaymentLaneReason {
-    /// The active network is not Tempo.
-    NotTempo,
-    /// Tempo is active but the T5 classifier is not active.
-    T5NotActive,
-    /// The transaction type cannot be classified by Tempo's payment-lane classifier.
-    UnsupportedTransactionType,
-    /// Tempo's T5 classifier classified the transaction as general.
-    NotPaymentLane,
-}
-
 //
 /// Container type for signed, typed transactions.
 // NOTE(onbjerg): Boxing `Tempo(AASigned)` breaks `TransactionEnvelope` derive macro trait bounds.
@@ -220,6 +173,53 @@ impl FoundryTxEnvelope {
             PaymentLaneClassification::general(PaymentLaneReason::NotPaymentLane)
         }
     }
+}
+
+/// Structured T5 payment-lane classification for Foundry-facing APIs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentLaneClassification {
+    /// The classified lane.
+    pub lane: PaymentLane,
+    /// Convenience boolean for consumers that only need the lane predicate.
+    pub payment: bool,
+    /// Structured reason for general-lane classification, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<PaymentLaneReason>,
+}
+
+impl PaymentLaneClassification {
+    /// Constructs a payment-lane classification.
+    pub const fn payment() -> Self {
+        Self { lane: PaymentLane::Payment, payment: true, reason: None }
+    }
+
+    /// Constructs a general-lane classification with a structured reason.
+    pub const fn general(reason: PaymentLaneReason) -> Self {
+        Self { lane: PaymentLane::General, payment: false, reason: Some(reason) }
+    }
+}
+
+/// Payment-lane classifier output lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentLane {
+    Payment,
+    General,
+}
+
+/// Stable Foundry-facing reasons for general-lane classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaymentLaneReason {
+    /// The active network is not Tempo.
+    NotTempo,
+    /// Tempo is active but the T5 classifier is not active.
+    T5NotActive,
+    /// The transaction type cannot be classified by Tempo's payment-lane classifier.
+    UnsupportedTransactionType,
+    /// Tempo's T5 classifier classified the transaction as general.
+    NotPaymentLane,
 }
 
 impl TxHashRef for FoundryTxEnvelope {
