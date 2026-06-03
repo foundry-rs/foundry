@@ -28,6 +28,7 @@ pub(crate) async fn handle_traces(
     decode_internal: bool,
     disable_label: bool,
     trace_depth: Option<usize>,
+    tempo_hardfork: Option<TempoHardfork>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         let _ = sh_println!("Compiling project to generate artifacts");
@@ -61,7 +62,10 @@ pub(crate) async fn handle_traces(
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_label_disabled(disable_label)
         .with_chain_id(Some(chain.id()))
-        .with_tempo_hardfork(chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>()));
+        .with_tempo_hardfork(
+            tempo_hardfork
+                .or_else(|| chain.is_tempo().then(|| config.evm_spec_id::<TempoHardfork>())),
+        );
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);

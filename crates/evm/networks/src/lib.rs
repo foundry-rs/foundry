@@ -65,6 +65,8 @@ pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) 
         hardfork.is_t5()
     } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
         hardfork.is_t6()
+    } else if address == ADDRESS_REGISTRY_ADDRESS || address == SIGNATURE_VERIFIER_ADDRESS {
+        hardfork.is_t3()
     } else {
         true
     }
@@ -400,6 +402,16 @@ mod tests {
         );
         assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("TIP20ChannelReserve"));
         assert!(!cfg.precompiles(Some(TempoHardfork::T4)).contains_key("ReceivePolicyGuard"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2)).contains_key("AddressRegistry"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2)).contains_key("SignatureVerifier"));
+        assert_eq!(
+            cfg.precompiles(Some(TempoHardfork::T3)).get("AddressRegistry"),
+            Some(&ADDRESS_REGISTRY_ADDRESS)
+        );
+        assert_eq!(
+            cfg.precompiles(Some(TempoHardfork::T3)).get("SignatureVerifier"),
+            Some(&SIGNATURE_VERIFIER_ADDRESS)
+        );
         assert_eq!(
             cfg.precompiles_label(Some(TempoHardfork::T5)).get(&TIP20_CHANNEL_RESERVE_ADDRESS),
             Some(&"TIP20ChannelReserve".to_string())
