@@ -175,19 +175,23 @@ fn max_invariant_workers_for_campaign(runs: u32, depth: u32) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-fn auto_invariant_worker_count(available_threads: usize, invariant_contracts: usize) -> usize {
-    (available_threads.max(1) / invariant_contracts.max(1)).max(1)
+fn auto_invariant_worker_count(
+    available_threads: usize,
+    invariant_campaign_anchors: usize,
+) -> usize {
+    (available_threads.max(1) / invariant_campaign_anchors.max(1)).max(1)
 }
 
 fn invariant_worker_count_with_threads(
     config: &InvariantConfig,
     available_threads: usize,
-    invariant_contracts: usize,
+    invariant_campaign_anchors: usize,
 ) -> usize {
     match config.workers {
         InvariantWorkers::Fixed(workers) => workers.get(),
         InvariantWorkers::Auto => {
-            let requested = auto_invariant_worker_count(available_threads, invariant_contracts);
+            let requested =
+                auto_invariant_worker_count(available_threads, invariant_campaign_anchors);
             if config.timeout.is_some() {
                 requested
             } else {
@@ -535,8 +539,8 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     project_contracts: &'a ContractsByArtifact,
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
-    /// Number of matching test contracts that contain invariant tests.
-    invariant_contracts: usize,
+    /// Number of matching invariant campaign anchors in the current test pass.
+    invariant_campaign_anchors: usize,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
@@ -568,7 +572,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
-        invariant_contracts: usize,
+        invariant_campaign_anchors: usize,
     ) -> Self {
         Self {
             executor,
@@ -578,7 +582,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
-            invariant_contracts,
+            invariant_campaign_anchors,
         }
     }
 
@@ -617,7 +621,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let worker_plans = campaign_spec.worker_plans(invariant_worker_count_with_threads(
             &self.config,
             rayon::current_num_threads(),
-            self.invariant_contracts,
+            self.invariant_campaign_anchors,
         ))?;
         let actual_worker_count = worker_plans.len();
         let campaign_seed =

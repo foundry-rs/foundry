@@ -1,8 +1,10 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
-    runner::LIBRARY_DEPLOYER,
+    ContractRunner, TestFilter,
+    progress::TestsProgress,
+    result::SuiteResult,
+    runner::{InvariantCampaignScope, LIBRARY_DEPLOYER, count_runnable_invariant_campaign_anchors},
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -193,15 +195,22 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             self.contracts.len(),
             find_time,
         );
-        let num_invariant_contracts = contracts
+        let num_invariant_campaign_anchors = contracts
             .iter()
-            .filter(|(_, contract)| {
-                contract
-                    .abi
-                    .functions()
-                    .any(|func| func.is_invariant_test() && filter.matches_test_function(func))
+            .map(|(id, contract)| {
+                count_runnable_invariant_campaign_anchors(
+                    &contract.abi,
+                    filter,
+                    InvariantCampaignScope {
+                        config: &self.tcfg.config,
+                        inline_config: &self.tcfg.inline_config,
+                        contract_name: &id.identifier(),
+                        all_override_networks: &self.tcfg.multi_network.all_override_networks,
+                        pass_network: self.tcfg.multi_network.pass_network.as_ref(),
+                    },
+                )
             })
-            .count();
+            .sum();
 
         if show_progress {
             let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
@@ -218,7 +227,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                         &db,
                         filter,
                         Some(&tests_progress),
-                        num_invariant_contracts,
+                        num_invariant_campaign_anchors,
                     );
 
                     tests_progress
@@ -238,8 +247,14 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result =
-                    self.run_test_suite(id, contract, &db, filter, None, num_invariant_contracts);
+                let result = self.run_test_suite(
+                    id,
+                    contract,
+                    &db,
+                    filter,
+                    None,
+                    num_invariant_campaign_anchors,
+                );
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -254,7 +269,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         db: &Backend<FEN>,
         filter: &dyn TestFilter,
         progress: Option<&TestsProgress>,
-        num_invariant_contracts: usize,
+        num_invariant_campaign_anchors: usize,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let span_name = if enabled!(tracing::Level::TRACE) {
@@ -281,7 +296,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             progress,
             span,
             self,
-            num_invariant_contracts,
+            num_invariant_campaign_anchors,
         );
         let r = runner.run_tests(filter);
 
