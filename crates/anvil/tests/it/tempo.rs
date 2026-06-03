@@ -6,12 +6,19 @@
 //! - Native value transfer rejection
 //! - Basic transaction behavior in Tempo mode
 
-use std::num::NonZeroU64;
+use std::{
+    net::TcpListener,
+    num::NonZeroU64,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
 
+use crate::utils::http_provider;
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, aliases::U96};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -21,7 +28,11 @@ use alloy_sol_types::sol;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::core::tempo::{PATH_USD_ADDRESS, TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS};
 use tempo_alloy::primitives::TempoTxEnvelope;
-use tempo_precompiles::{DEFAULT_FEE_TOKEN, TIP_FEE_MANAGER_ADDRESS};
+use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_precompiles::{
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN, STABLECOIN_DEX_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+};
 use tempo_primitives::{
     AASigned, TempoSignature, TempoTransaction,
     transaction::{Call, PrimitiveSignature},
@@ -31,9 +42,34 @@ const PATH_USD: Address = PATH_USD_ADDRESS;
 const ALPHA_USD: Address = address!("0x20C0000000000000000000000000000000000001");
 const BETA_USD: Address = address!("0x20C0000000000000000000000000000000000002");
 const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003");
+const TEMPO_ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
+const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 
 /// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
 const TIP20_TRANSFER_GAS: u64 = 300_000;
+const T5_PRECOMPILE_GAS: u64 = 10_000_000;
+
+struct ChildGuard(Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn anvil_binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("CARGO_BIN_EXE_anvil") {
+        return PathBuf::from(path);
+    }
+
+    std::env::current_exe()
+        .expect("test executable path")
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("target/debug directory")
+        .join("anvil")
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
@@ -59,6 +95,7 @@ sol! {
     interface IFeeManagerRpc {
         function userTokens(address user) external view returns (address);
         function validatorTokens(address validator) external view returns (address);
+        function collectedFees(address validator, address token) external view returns (uint256);
 
         struct Pool {
             uint128 reserveUserToken;
@@ -68,6 +105,7 @@ sol! {
         function getPool(address userToken, address validatorToken) external view returns (Pool memory);
         function getPoolId(address userToken, address validatorToken) external pure returns (bytes32);
         function totalSupply(bytes32 poolId) external view returns (uint256);
+        function mint(address userToken, address validatorToken, uint256 amountValidatorToken, address to) external returns (uint256 liquidity);
     }
 }
 
@@ -83,6 +121,96 @@ sol! {
         function allowance(address owner, address spender) external view returns (uint256);
         function approve(address spender, uint256 amount) external returns (bool);
         function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface IAddressRegistryRpc {
+        function isImplicitlyApproved(address precompile) external view returns (bool);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface IAccountKeychainT5Rpc {
+        function burnKeyAuthorizationWitness(bytes32 witness) external;
+        function isKeyAuthorizationWitnessBurned(address account, bytes32 witness) external view returns (bool);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface IStablecoinDexT5Rpc {
+        struct Order {
+            uint128 orderId;
+            address maker;
+            bytes32 bookKey;
+            bool isBid;
+            int16 tick;
+            uint128 amount;
+            uint128 remaining;
+            uint128 prev;
+            uint128 next;
+            bool isFlip;
+            int16 flipTick;
+        }
+
+        function placeFlip(address token, uint128 amount, bool isBid, int16 tick, int16 flipTick) external returns (uint128 orderId);
+        function getOrder(uint128 orderId) external view returns (Order memory);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface ITIP20T5Rpc {
+        function balanceOf(address account) external view returns (uint256);
+        function transfer(address to, uint256 amount) external returns (bool);
+        function mint(address to, uint256 amount) external;
+        function grantRole(bytes32 role, address account) external;
+        function ISSUER_ROLE() external view returns (bytes32);
+        function logoURI() external view returns (string memory);
+        function setLogoURI(string memory logoURI) external;
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface ITIP20FactoryT5Rpc {
+        function createToken(
+            string memory name,
+            string memory symbol,
+            string memory currency,
+            address quoteToken,
+            address admin,
+            bytes32 salt,
+            string memory logoURI
+        ) external returns (address);
+        function getTokenAddress(address sender, bytes32 salt) external pure returns (address);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface ITIP20ChannelReserveT5Rpc {
+        struct ChannelState {
+            uint96 settled;
+            uint96 deposit;
+            uint32 closeRequestedAt;
+        }
+
+        function computeChannelId(
+            address payer,
+            address payee,
+            address operator,
+            address token,
+            bytes32 salt,
+            address authorizedSigner,
+            bytes32 expiringNonceHash
+        ) external pure returns (bytes32);
+        function getChannelState(bytes32 channelId) external view returns (ChannelState memory);
+        function getVoucherDigest(bytes32 channelId, uint96 cumulativeAmount) external view returns (bytes32);
+        function domainSeparator() external view returns (bytes32);
     }
 }
 
@@ -105,6 +233,427 @@ async fn test_tempo_precompiles_have_code() {
         let code = api.get_code(*addr, None).await.unwrap();
         assert!(!code.is_empty(), "Token {addr} should have code deployed");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t5_implicit_approvals_are_hardfork_gated() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T4.into()))).await;
+    let provider = handle.http_provider();
+    let registry = IAddressRegistryRpc::new(ADDRESS_REGISTRY_ADDRESS, &provider);
+
+    let pre_t5_result = registry.isImplicitlyApproved(TIP20_CHANNEL_RESERVE_ADDRESS).call().await;
+    assert!(pre_t5_result.is_err(), "T5 implicit-approval selector should be unavailable at T4");
+
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let registry = IAddressRegistryRpc::new(ADDRESS_REGISTRY_ADDRESS, &provider);
+
+    let code = api.get_code(TIP20_CHANNEL_RESERVE_ADDRESS, None).await.unwrap();
+    assert!(!code.is_empty(), "T5 channel reserve precompile should be registered");
+
+    for approved in [TIP_FEE_MANAGER_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS]
+    {
+        assert!(
+            registry.isImplicitlyApproved(approved).call().await.unwrap(),
+            "{approved} should be implicitly approved at T5"
+        );
+    }
+
+    let random_address = Address::random();
+    assert!(
+        !registry.isImplicitlyApproved(random_address).call().await.unwrap(),
+        "arbitrary addresses should not be implicitly approved"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_cli_tempo_t5_hardfork_precompile_smoke() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let port_arg = port.to_string();
+
+    let mut child = ChildGuard(
+        Command::new(anvil_binary())
+            .args([
+                "--network",
+                "tempo",
+                "--hardfork",
+                "tempo:T5",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port_arg,
+                "-q",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn anvil --hardfork tempo:T5"),
+    );
+
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let provider = http_provider(&endpoint);
+    let mut ready = false;
+    for _ in 0..50 {
+        if provider.get_chain_id().await.is_ok() {
+            ready = true;
+            break;
+        }
+        if let Some(status) = child.0.try_wait().unwrap() {
+            panic!("anvil exited before serving RPC: {status}");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(ready, "anvil --hardfork tempo:T5 should start serving RPC");
+
+    let registry = IAddressRegistryRpc::new(ADDRESS_REGISTRY_ADDRESS, &provider);
+    assert!(registry.isImplicitlyApproved(TIP20_CHANNEL_RESERVE_ADDRESS).call().await.unwrap());
+
+    let reserve = ITIP20ChannelReserveT5Rpc::new(TIP20_CHANNEL_RESERVE_ADDRESS, &provider);
+    assert_ne!(reserve.domainSeparator().call().await.unwrap(), B256::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t5_tip20_logo_uri_validation_and_update() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    api.anvil_set_balance(TEMPO_ADMIN, U256::MAX).await.unwrap();
+    api.anvil_impersonate_account(TEMPO_ADMIN).await.unwrap();
+
+    let token = ITIP20T5Rpc::new(PATH_USD, &provider);
+    assert_eq!(token.logoURI().call().await.unwrap(), "");
+
+    let logo_uri = "https://example.com/pathusd.png".to_string();
+    let tx = TransactionRequest::default()
+        .from(TEMPO_ADMIN)
+        .to(PATH_USD)
+        .with_input(token.setLogoURI(logo_uri.clone()).calldata().clone())
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "setLogoURI should succeed for a valid URI");
+    assert_eq!(token.logoURI().call().await.unwrap(), logo_uri);
+
+    let logo_event_topic = alloy_primitives::keccak256("LogoURIUpdated(address,string)".as_bytes());
+    assert!(
+        receipt
+            .inner
+            .logs()
+            .iter()
+            .any(|log| log.address() == PATH_USD && log.topics()[0] == logo_event_topic),
+        "setLogoURI should emit LogoURIUpdated"
+    );
+
+    let invalid_tx = TransactionRequest::default()
+        .from(TEMPO_ADMIN)
+        .to(PATH_USD)
+        .with_input(
+            token.setLogoURI("ftp://example.com/pathusd.png".to_string()).calldata().clone(),
+        )
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    assert!(
+        provider.call(WithOtherFields::new(invalid_tx)).await.is_err(),
+        "unsupported logoURI schemes should revert"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t5_stablecoin_dex_allows_same_tick_flip_order() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T4.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let dex = IStablecoinDexT5Rpc::new(STABLECOIN_DEX_ADDRESS, &provider);
+
+    let tick = 100i16;
+    let t4_call = dex.placeFlip(ALPHA_USD, DEX_MIN_ORDER_AMOUNT, true, tick, tick);
+    let t4_tx = TransactionRequest::default()
+        .from(sender)
+        .to(STABLECOIN_DEX_ADDRESS)
+        .with_input(t4_call.calldata().clone())
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    assert!(
+        provider.call(WithOtherFields::new(t4_tx)).await.is_err(),
+        "same-tick flip orders should be rejected before T5"
+    );
+
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let dex = IStablecoinDexT5Rpc::new(STABLECOIN_DEX_ADDRESS, &provider);
+
+    let t5_call = dex.placeFlip(ALPHA_USD, DEX_MIN_ORDER_AMOUNT, true, tick, tick);
+    let t5_tx = TransactionRequest::default()
+        .from(sender)
+        .to(STABLECOIN_DEX_ADDRESS)
+        .with_input(t5_call.calldata().clone())
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    provider
+        .call(WithOtherFields::new(t5_tx.clone()))
+        .await
+        .expect("same-tick flip order should be callable at T5");
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(t5_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "same-tick flip order should execute at T5 without approval");
+
+    let order = dex.getOrder(1).call().await.unwrap();
+    assert_eq!(order.orderId, 1);
+    assert_eq!(order.maker, sender);
+    assert!(order.isBid);
+    assert!(order.isFlip);
+    assert_eq!(order.tick, tick);
+    assert_eq!(order.flipTick, tick);
+    assert_eq!(order.remaining, DEX_MIN_ORDER_AMOUNT);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t5_key_authorization_witness_burn_flow() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T4.into()))).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+    let keychain = IAccountKeychainT5Rpc::new(ACCOUNT_KEYCHAIN_ADDRESS, &provider);
+    let witness = B256::repeat_byte(0x53);
+
+    let pre_t5_result = keychain.isKeyAuthorizationWitnessBurned(account, witness).call().await;
+    assert!(pre_t5_result.is_err(), "witness check selector should be unavailable at T4");
+
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+    let keychain = IAccountKeychainT5Rpc::new(ACCOUNT_KEYCHAIN_ADDRESS, &provider);
+
+    assert!(!keychain.isKeyAuthorizationWitnessBurned(account, witness).call().await.unwrap());
+
+    let calldata = keychain.burnKeyAuthorizationWitness(witness).calldata().clone();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+    let signer = dev_key(0);
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit: T5_PRECOMPILE_GAS,
+        calls: vec![Call {
+            to: TxKind::Call(ACCOUNT_KEYCHAIN_ADDRESS),
+            value: U256::ZERO,
+            input: calldata,
+        }],
+        access_list: Default::default(),
+        nonce_key: U256::ZERO,
+        nonce: 0,
+        fee_payer_signature: None,
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+
+    let sig_hash = tempo_tx.signature_hash();
+    let signature = signer.sign_hash(&sig_hash).await.unwrap();
+    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
+    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
+    let envelope = TempoTxEnvelope::AA(signed_tx);
+
+    let mut encoded = Vec::new();
+    envelope.encode_2718(&mut encoded);
+
+    let receipt =
+        provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "burnKeyAuthorizationWitness should succeed at T5");
+
+    assert!(keychain.isKeyAuthorizationWitnessBurned(account, witness).call().await.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t5_tip20_channel_reserve_basic_views() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let reserve = ITIP20ChannelReserveT5Rpc::new(TIP20_CHANNEL_RESERVE_ADDRESS, &provider);
+
+    let code = api.get_code(TIP20_CHANNEL_RESERVE_ADDRESS, None).await.unwrap();
+    assert!(!code.is_empty(), "channel reserve should have sentinel code");
+
+    let salt = B256::repeat_byte(0x34);
+    let expiring_nonce_hash = B256::repeat_byte(0x35);
+    let channel_id = reserve
+        .computeChannelId(
+            accounts[0],
+            accounts[1],
+            Address::ZERO,
+            PATH_USD,
+            salt,
+            accounts[0],
+            expiring_nonce_hash,
+        )
+        .call()
+        .await
+        .unwrap();
+
+    let state = reserve.getChannelState(channel_id).call().await.unwrap();
+    assert_eq!(state.settled, 0);
+    assert_eq!(state.deposit, 0);
+    assert_eq!(state.closeRequestedAt, 0);
+    assert_ne!(reserve.domainSeparator().call().await.unwrap(), B256::ZERO);
+    assert_ne!(
+        reserve.getVoucherDigest(channel_id, U96::from(1)).call().await.unwrap(),
+        B256::ZERO
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t5_fee_amm_two_hop_route_for_local_fees() {
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let validator = accounts[3];
+    let recipient = accounts[1];
+
+    api.anvil_set_coinbase(validator).await.unwrap();
+    api.anvil_set_validator_fee_token(validator, BETA_USD).await.unwrap();
+
+    let factory = ITIP20FactoryT5Rpc::new(TIP20_FACTORY_ADDRESS, &provider);
+    let salt = B256::repeat_byte(0xa5);
+    let fee_token = factory.getTokenAddress(sender, salt).call().await.unwrap();
+
+    let create_tx = TransactionRequest::default()
+        .from(sender)
+        .to(TIP20_FACTORY_ADDRESS)
+        .with_input(
+            factory
+                .createToken(
+                    "RouteUSD".to_string(),
+                    "RouteUSD".to_string(),
+                    "USD".to_string(),
+                    PATH_USD,
+                    sender,
+                    salt,
+                    "https://example.com/routeusd.png".to_string(),
+                )
+                .calldata()
+                .clone(),
+        )
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    provider
+        .call(WithOtherFields::new(create_tx.clone()))
+        .await
+        .expect("T5 factory createToken with logoURI should be callable");
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(create_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "T5 factory createToken with logoURI should succeed");
+
+    let token = ITIP20T5Rpc::new(fee_token, &provider);
+    let issuer_role = token.ISSUER_ROLE().call().await.unwrap();
+    let grant_issuer_tx = TransactionRequest::default()
+        .from(sender)
+        .to(fee_token)
+        .with_input(token.grantRole(issuer_role, sender).calldata().clone())
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(grant_issuer_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "token admin should be able to grant ISSUER_ROLE");
+
+    let mint_tx = TransactionRequest::default()
+        .from(sender)
+        .to(fee_token)
+        .with_input(token.mint(sender, U256::from(u64::MAX)).calldata().clone())
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(mint_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "new TIP-20 fee token mint should succeed");
+
+    let fee_manager = IFeeManagerRpc::new(TIP_FEE_MANAGER_ADDRESS, &provider);
+    let direct_pool_before = fee_manager.getPool(fee_token, BETA_USD).call().await.unwrap();
+    assert_eq!(direct_pool_before.reserveUserToken, 0);
+    assert_eq!(direct_pool_before.reserveValidatorToken, 0);
+
+    let liquidity_amount = U256::from(100_000_000_000_000_000u64);
+    for (user_token, validator_token) in [(fee_token, PATH_USD), (PATH_USD, BETA_USD)] {
+        let mint_liquidity_tx = TransactionRequest::default()
+            .from(sender)
+            .to(TIP_FEE_MANAGER_ADDRESS)
+            .with_input(
+                fee_manager
+                    .mint(user_token, validator_token, liquidity_amount, sender)
+                    .calldata()
+                    .clone(),
+            )
+            .with_gas_limit(T5_PRECOMPILE_GAS);
+        let receipt = provider
+            .send_transaction(WithOtherFields::new(mint_liquidity_tx))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        assert!(receipt.status(), "FeeAMM liquidity mint should succeed");
+    }
+    api.anvil_set_fee_token(sender, fee_token).await.unwrap();
+
+    let collected_before = fee_manager.collectedFees(validator, BETA_USD).call().await.unwrap();
+    let transfer_tx = TransactionRequest::default()
+        .from(sender)
+        .to(fee_token)
+        .with_input(token.transfer(recipient, U256::from(1000)).calldata().clone())
+        .with_gas_limit(T5_PRECOMPILE_GAS);
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(transfer_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "local fee payment should route through the T5 two-hop FeeAMM path");
+
+    let collected_after = fee_manager.collectedFees(validator, BETA_USD).call().await.unwrap();
+    assert!(
+        collected_after > collected_before,
+        "validator should receive BETA fees through feeToken -> PATH -> BETA"
+    );
+
+    let direct_pool_after = fee_manager.getPool(fee_token, BETA_USD).call().await.unwrap();
+    assert_eq!(direct_pool_after.reserveUserToken, 0);
+    assert_eq!(direct_pool_after.reserveValidatorToken, 0);
 }
 
 // ============================================================================
