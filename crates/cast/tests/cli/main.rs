@@ -4,11 +4,12 @@ use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest};
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{
@@ -22,6 +23,7 @@ use foundry_test_utils::{
 };
 use serde_json::json;
 use std::{fs, path::Path, str::FromStr};
+use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::TempoTxEnvelope;
 
 #[macro_use]
@@ -242,6 +244,45 @@ casttest!(block_raw_tempo, |_prj, cmd| {
         hash.to_string(),
         "0xcd6170dc28b888bcb93ed1ad76a6bea4ad9977b678db5d462df83d35ec9b8d15"
     );
+});
+
+casttest!(channel_id_defaults, async |_prj, cmd| {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+
+    let payer = address!("0000000000000000000000000000000000000101");
+    let payee = address!("0000000000000000000000000000000000000202");
+    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
+    let expected = keccak256(
+        (
+            payer,
+            payee,
+            Address::ZERO,
+            PATH_USD_ADDRESS,
+            salt,
+            Address::ZERO,
+            B256::ZERO,
+            TIP20_CHANNEL_RESERVE_ADDRESS,
+            U256::from(chain_id),
+        )
+            .abi_encode(),
+    );
+
+    cmd.args([
+        "channel-id",
+        &payer.to_string(),
+        &payee.to_string(),
+        &PATH_USD_ADDRESS.to_string(),
+        &salt.to_string(),
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(format!("{expected:#x}\n"));
 });
 
 // tests that the `cast find-block` command works correctly

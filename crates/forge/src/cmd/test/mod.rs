@@ -53,6 +53,7 @@ use foundry_evm::{
     },
     executors::ShowmapDomain,
     fuzz::CounterExample,
+    hardforks::TempoHardfork,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -783,13 +784,23 @@ impl TestArgs {
             let sources =
                 ContractSources::from_project_output(output, project_root, Some(&libraries))?;
 
+            // Prefer execution traces for normal debug runs, but when execution never starts
+            // (for example if `setUp()` reverts), fall back to available setup/deployment traces.
+            let traces = {
+                let execution = test_result
+                    .traces
+                    .iter()
+                    .filter(|(kind, _)| kind.is_execution())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if execution.is_empty() { test_result.traces.clone() } else { execution }
+            };
+
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .traces(
-                    test_result.traces.iter().filter(|(t, _)| t.is_execution()).cloned().collect(),
-                )
+                .traces(traces)
                 .sources(sources)
-                .breakpoints(test_result.breakpoints.clone());
+                .breakpoints(test_result.breakpoints);
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
@@ -1248,6 +1259,7 @@ impl TestArgs {
         // In multi-pass mode the per-pass summary is suppressed; the merged summary is
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
+        let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -1273,7 +1285,11 @@ impl TestArgs {
             .with_known_contracts(&known_contracts)
             .with_label_disabled(self.disable_labels)
             .with_verbosity(verbosity)
-            .with_chain_id(remote_chain.map(|c| c.id()));
+            .with_chain_id(remote_chain.map(|c| c.id()))
+            .with_tempo_hardfork(
+                (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
+                    .then(|| config.evm_spec_id::<TempoHardfork>()),
+            );
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
