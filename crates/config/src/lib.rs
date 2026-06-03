@@ -5039,6 +5039,26 @@ mod tests {
     }
 
     #[test]
+    fn test_invariant_workers_env_accepts_auto() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [invariant]
+                workers = 3
+            ",
+            )?;
+
+            jail.set_env("FOUNDRY_INVARIANT_WORKERS", "auto");
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.invariant.workers, InvariantWorkers::Auto);
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_parse_with_profile() {
         let foundry_str = r"
             [profile.default]

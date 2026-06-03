@@ -5,7 +5,7 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{Error, Visitor},
 };
-use std::{fmt, num::NonZeroUsize, path::PathBuf};
+use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 /// Worker selection mode for invariant campaign sharding.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -13,7 +13,7 @@ pub enum InvariantWorkers {
     /// Automatically derive invariant workers from the active `--jobs` / rayon thread pool.
     #[default]
     Auto,
-    /// Explicit user override for the maximum number of invariant workers.
+    /// Explicit user override for invariant campaign sharding.
     Fixed(NonZeroUsize),
 }
 
@@ -38,6 +38,20 @@ impl<'de> Deserialize<'de> for InvariantWorkers {
     }
 }
 
+impl FromStr for InvariantWorkers {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim();
+        if value.eq_ignore_ascii_case("auto") {
+            return Ok(Self::Auto);
+        }
+
+        let workers = value.parse::<usize>().map_err(|err| err.to_string())?;
+        fixed_workers(workers)
+    }
+}
+
 struct InvariantWorkersVisitor;
 
 impl Visitor<'_> for InvariantWorkersVisitor {
@@ -51,13 +65,7 @@ impl Visitor<'_> for InvariantWorkersVisitor {
     where
         E: Error,
     {
-        let value = value.trim();
-        if value.eq_ignore_ascii_case("auto") {
-            return Ok(InvariantWorkers::Auto);
-        }
-
-        let workers = value.parse::<usize>().map_err(E::custom)?;
-        fixed_workers(workers)
+        value.parse().map_err(E::custom)
     }
 
     fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
@@ -65,7 +73,7 @@ impl Visitor<'_> for InvariantWorkersVisitor {
         E: Error,
     {
         let workers = usize::try_from(value).map_err(E::custom)?;
-        fixed_workers(workers)
+        fixed_workers(workers).map_err(E::custom)
     }
 
     fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
@@ -74,14 +82,14 @@ impl Visitor<'_> for InvariantWorkersVisitor {
     {
         let workers =
             usize::try_from(value).map_err(|_| E::custom("invariant workers must be positive"))?;
-        fixed_workers(workers)
+        fixed_workers(workers).map_err(E::custom)
     }
 }
 
-fn fixed_workers<E: Error>(workers: usize) -> Result<InvariantWorkers, E> {
+fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
     NonZeroUsize::new(workers)
         .map(InvariantWorkers::Fixed)
-        .ok_or_else(|| E::custom("invariant workers must be greater than 0"))
+        .ok_or_else(|| "invariant workers must be greater than 0".to_string())
 }
 
 /// Contains for invariant testing
@@ -94,7 +102,7 @@ pub struct InvariantConfig {
     /// Worker selection mode used to shard invariant runs.
     ///
     /// Defaults to `auto`, which derives the worker count from `--jobs`. Use a positive integer
-    /// to force a fixed maximum worker count for reproducibility.
+    /// to request a fixed worker count independent of `--jobs` for reproducibility.
     pub workers: InvariantWorkers,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
@@ -178,6 +186,7 @@ mod tests {
 
     #[test]
     fn invariant_workers_accept_auto_and_fixed_counts() {
+        assert_eq!("AUTO".parse::<InvariantWorkers>().unwrap(), InvariantWorkers::Auto);
         assert_eq!(
             serde_json::from_str::<InvariantWorkers>(r#""auto""#).unwrap(),
             InvariantWorkers::Auto

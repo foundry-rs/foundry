@@ -175,10 +175,11 @@ fn invariant_worker_count_with_threads(
     let invariant_contracts = invariant_contracts.max(1);
     let available_threads = available_threads.max(1);
     let requested = match config.workers {
-        InvariantWorkers::Auto => (available_threads / invariant_contracts).max(1),
+        InvariantWorkers::Auto => {
+            (available_threads / invariant_contracts).max(1).min(available_threads)
+        }
         InvariantWorkers::Fixed(workers) => workers.get(),
-    }
-    .min(available_threads);
+    };
 
     if config.timeout.is_some() {
         return requested;
@@ -1963,10 +1964,24 @@ mod tests {
     }
 
     #[test]
+    fn invariant_worker_count_does_not_cap_configured_workers_by_available_threads() {
+        let config = InvariantConfig {
+            runs: MIN_RUNS_PER_INVARIANT_WORKER * 8,
+            workers: foundry_config::InvariantWorkers::Fixed(
+                std::num::NonZeroUsize::new(8).unwrap(),
+            ),
+            ..Default::default()
+        };
+
+        assert_eq!(invariant_worker_count_with_threads(&config, 4, 1), 8);
+    }
+
+    #[test]
     fn invariant_worker_count_splits_available_threads_for_auto_workers() {
         let mut config =
             InvariantConfig { runs: MIN_RUNS_PER_INVARIANT_WORKER * 4, ..Default::default() };
 
+        assert_eq!(invariant_worker_count_with_threads(&config, 4, 1), 4);
         assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
         assert_eq!(invariant_worker_count_with_threads(&config, 8, 3), 2);
         assert_eq!(invariant_worker_count_with_threads(&config, 3, 8), 1);

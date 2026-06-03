@@ -34,10 +34,10 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, figment,
+    Config, InlineConfig, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
-        value::{Dict, Map},
+        value::{Dict, Map, Value},
     },
     filter::GlobMatcher,
 };
@@ -197,7 +197,7 @@ pub struct TestArgs {
 
     /// Number of workers to use for invariant test campaigns.
     #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
-    pub invariant_workers: Option<usize>,
+    pub invariant_workers: Option<InvariantWorkers>,
 
     /// Run only the fuzz case at the given 1-based run index.
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
@@ -1450,7 +1450,7 @@ impl Provider for TestArgs {
 
         let mut invariant_dict = Dict::default();
         if let Some(invariant_workers) = self.invariant_workers {
-            invariant_dict.insert("workers".to_string(), invariant_workers.into());
+            invariant_dict.insert("workers".to_string(), Value::serialize(invariant_workers)?);
         }
         if !invariant_dict.is_empty() {
             dict.insert("invariant".to_string(), invariant_dict.into());
@@ -1784,10 +1784,51 @@ mod tests {
     #[test]
     fn invariant_workers() {
         let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "4"]);
-        assert_eq!(args.invariant_workers, Some(4));
+        assert_eq!(
+            args.invariant_workers,
+            Some(InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap()))
+        );
 
         let figment = figment::Figment::from(&args);
-        assert_eq!(figment.extract_inner::<usize>("invariant.workers").unwrap(), 4);
+        assert_eq!(
+            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
+            InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap())
+        );
+    }
+
+    #[test]
+    fn invariant_workers_accepts_auto() {
+        let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "auto"]);
+        assert_eq!(args.invariant_workers, Some(InvariantWorkers::Auto));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(
+            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
+            InvariantWorkers::Auto
+        );
+    }
+
+    #[test]
+    fn invariant_workers_env_accepts_auto() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = std::env::var_os("FOUNDRY_INVARIANT_WORKERS");
+        unsafe {
+            std::env::set_var("FOUNDRY_INVARIANT_WORKERS", "auto");
+        }
+
+        let args = TestArgs::try_parse_from(["foundry-cli"]);
+
+        unsafe {
+            if let Some(previous) = previous {
+                std::env::set_var("FOUNDRY_INVARIANT_WORKERS", previous);
+            } else {
+                std::env::remove_var("FOUNDRY_INVARIANT_WORKERS");
+            }
+        }
+
+        assert_eq!(args.unwrap().invariant_workers, Some(InvariantWorkers::Auto));
     }
 
     #[test]
