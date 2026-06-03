@@ -40,7 +40,7 @@ impl<'hir> LateLintPass<'hir> for ReturnBomb {
 /// Returns true for gas-limited calls that return dynamic data.
 fn call_with_gas_returns_dynamic_data<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     is_call_with_gas_limit(expr)
-        && gcx.type_of_expr(expr.peel_parens().id).is_some_and(is_dynamic_ty)
+        && gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| is_dynamic_ty(gcx, ty))
 }
 
 /// Returns true for gas-limited low-level calls that copy unbounded returndata.
@@ -98,13 +98,14 @@ fn ty_is_address(ty: Ty<'_>) -> bool {
     matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
 }
 
-fn is_dynamic_ty(ty: Ty<'_>) -> bool {
-    match ty.peel_refs().kind {
-        TyKind::Elementary(ElementaryType::Bytes | ElementaryType::String)
-        | TyKind::DynArray(_)
-        | TyKind::Slice(_) => true,
-        TyKind::Array(element, _) => is_dynamic_ty(element),
-        TyKind::Tuple(elements) => elements.iter().any(|ty| is_dynamic_ty(*ty)),
-        _ => false,
+fn is_dynamic_ty<'hir>(gcx: Gcx<'hir>, ty: Ty<'hir>) -> bool {
+    let ty = ty.peel_refs();
+    match ty.kind {
+        TyKind::Struct(id) => {
+            ty.is_dynamically_encoded(gcx)
+                || gcx.struct_field_types(id).iter().any(|ty| is_dynamic_ty(gcx, *ty))
+        }
+        TyKind::Tuple(elements) => elements.iter().any(|ty| is_dynamic_ty(gcx, *ty)),
+        _ => ty.is_dynamically_encoded(gcx),
     }
 }
