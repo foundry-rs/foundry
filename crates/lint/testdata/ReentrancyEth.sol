@@ -67,6 +67,13 @@ contract ReentrancyEth {
         balances[receiver] = 0;
     }
 
+    function parenthesizedValueCall(address payable receiver) external {
+        uint256 amount = balances[receiver];
+        (bool ok,) = (receiver.call){value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+        balances[receiver] = 0;
+    }
+
     function modifierStateChangeAfterCall() external recordAfter {
         uint256 amount = balances[msg.sender];
         (bool ok,) = payable(msg.sender).call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated

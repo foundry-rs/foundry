@@ -27,13 +27,14 @@ use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
-    IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20, ITIP20ChannelReserve, ITIP20Factory,
-    ITIP403Registry, IValidatorConfig, TIP20_CHANNEL_RESERVE_ADDRESS,
+    IAccountKeychain, IAddressRegistry, IFeeManager, IReceivePolicyGuard, ISignatureVerifier,
+    IStablecoinDEX, ITIP20ChannelReserve, ITIP20Factory, ITIP403Registry, IValidatorConfig,
 };
 use tempo_precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS, nonce::INonce,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
+    RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
 };
 
 mod precompiles;
@@ -188,6 +189,21 @@ impl CallTraceDecoder {
 
     #[instrument(name = "CallTraceDecoder::init", level = "debug")]
     fn init() -> Self {
+        // Materialized once so the revert decoder can take references below.
+        let tempo_abis = [
+            IFeeManager::abi::contract(),
+            ITIP20::abi::contract(),
+            ITIP403Registry::abi::contract(),
+            ITIP20Factory::abi::contract(),
+            IStablecoinDEX::abi::contract(),
+            INonce::abi::contract(),
+            IValidatorConfig::abi::contract(),
+            IAccountKeychain::abi::contract(),
+            IAddressRegistry::abi::contract(),
+            ITIP20ChannelReserve::abi::contract(),
+            ISignatureVerifier::abi::contract(),
+            IReceivePolicyGuard::abi::contract(),
+        ];
         Self {
             contracts: Default::default(),
             labels: HashMap::from_iter([
@@ -221,7 +237,10 @@ impl CallTraceDecoder {
                 (NONCE_PRECOMPILE_ADDRESS, "Nonce".to_string()),
                 (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
                 (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
+                (ADDRESS_REGISTRY_ADDRESS, "AddressRegistry".to_string()),
                 (TIP20_CHANNEL_RESERVE_ADDRESS, "TIP20ChannelReserve".to_string()),
+                (SIGNATURE_VERIFIER_ADDRESS, "SignatureVerifier".to_string()),
+                (RECEIVE_POLICY_GUARD_ADDRESS, "ReceivePolicyGuard".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
@@ -240,7 +259,10 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::functions().into_values())
                 .chain(IValidatorConfig::abi::functions().into_values())
                 .chain(IAccountKeychain::abi::functions().into_values())
+                .chain(IAddressRegistry::abi::functions().into_values())
                 .chain(ITIP20ChannelReserve::abi::functions().into_values())
+                .chain(ISignatureVerifier::abi::functions().into_values())
+                .chain(IReceivePolicyGuard::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
@@ -256,11 +278,15 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::events().into_values())
                 .chain(IValidatorConfig::abi::events().into_values())
                 .chain(IAccountKeychain::abi::events().into_values())
+                .chain(IAddressRegistry::abi::events().into_values())
                 .chain(ITIP20ChannelReserve::abi::events().into_values())
+                .chain(ISignatureVerifier::abi::events().into_values())
+                .chain(IReceivePolicyGuard::abi::events().into_values())
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
-            revert_decoder: Default::default(),
+            // Decode Tempo precompile custom errors by name in traces.
+            revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
 
             signature_identifier: None,
             verbosity: 0,
