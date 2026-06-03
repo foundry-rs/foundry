@@ -984,7 +984,8 @@ fn indexed_inputs(event: &Event) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::{U256, address, aliases::U96, hex};
+    use alloy_sol_types::{SolCall, SolEvent};
 
     #[test]
     fn test_selector_collision_resolution() {
@@ -1498,6 +1499,194 @@ mod tests {
             let result = Some(decoder.decode_cheatcode_outputs(&function).unwrap_or_default());
             assert_eq!(result, expected, "Output case failed for: {function_signature}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_tempo_decode_preserves_existing_labels() {
+        let decoder = CallTraceDecoder::new();
+        let trace = CallTrace { address: PATH_USD_ADDRESS, success: true, ..Default::default() };
+
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+    }
+
+    #[tokio::test]
+    async fn test_t5_decode_does_not_synthesize_general_target_label() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+        let trace = CallTrace {
+            address: address!("0x0000000000000000000000000000000000000123"),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label, None);
+    }
+
+    #[tokio::test]
+    async fn test_t5_tip20_logo_uri_calls_and_events_decode() {
+        let decoder = CallTraceDecoder::new();
+
+        let call = ITIP20::setLogoURICall { newLogoURI: "https://example.com/logo.png".into() };
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: call.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        let call_data = decoded.call_data.expect("setLogoURI should decode");
+        assert_eq!(call_data.signature, "setLogoURI(string)");
+        assert_eq!(call_data.args, vec!["\"https://example.com/logo.png\"".to_string()]);
+
+        let call = ITIP20::logoURICall {};
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: call.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.call_data.expect("logoURI should decode").signature, "logoURI()");
+
+        let event = ITIP20::LogoURIUpdated {
+            updater: address!("0x0000000000000000000000000000000000000abc"),
+            newLogoURI: "ipfs://logo".into(),
+        };
+        let decoded = decoder.decode_event(&event.encode_log_data()).await;
+        assert_eq!(decoded.name.as_deref(), Some("LogoURIUpdated"));
+        let params = decoded.params.expect("LogoURIUpdated params should decode");
+        assert_eq!(params[0].0, "updater");
+        assert!(
+            params[0].1.to_ascii_lowercase().contains("0000000000000000000000000000000000000abc")
+        );
+        assert_eq!(params[1], ("newLogoURI".into(), "\"ipfs://logo\"".into()));
+    }
+
+    #[tokio::test]
+    async fn test_t5_tip20_factory_create_token_with_logo_decodes() {
+        let decoder = CallTraceDecoder::new();
+        let call = ITIP20Factory::createToken_1Call {
+            name: "Example USD".into(),
+            symbol: "xUSD".into(),
+            currency: "USD".into(),
+            quoteToken: PATH_USD_ADDRESS,
+            admin: address!("0x0000000000000000000000000000000000000abc"),
+            salt: B256::repeat_byte(0x11),
+            logoURI: "https://example.com/xusd.png".into(),
+        };
+        let trace = CallTrace {
+            address: TIP20_FACTORY_ADDRESS,
+            data: call.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        let call_data = decoded.call_data.expect("createToken overload should decode");
+        assert_eq!(
+            call_data.signature,
+            "createToken(string,string,string,address,address,bytes32,string)"
+        );
+        assert_eq!(call_data.args[6], "\"https://example.com/xusd.png\"");
+    }
+
+    #[tokio::test]
+    async fn test_t5_stablecoin_dex_order_flipped_event_decodes() {
+        let decoder = CallTraceDecoder::new();
+        let event = IStablecoinDEX::OrderFlipped {
+            orderId: 42,
+            maker: address!("0x0000000000000000000000000000000000000abc"),
+            token: PATH_USD_ADDRESS,
+            amount: 1_000_000,
+            isBid: false,
+            tick: 100,
+            flipTick: 100,
+        };
+        let decoded = decoder.decode_event(&event.encode_log_data()).await;
+        assert_eq!(decoded.name.as_deref(), Some("OrderFlipped"));
+        let params = decoded.params.expect("OrderFlipped params should decode");
+        assert_eq!(params[0], ("orderId".into(), "42".into()));
+        assert_eq!(params[4], ("isBid".into(), "false".into()));
+        assert_eq!(params[5], ("tick".into(), "100".into()));
+        assert_eq!(params[6], ("flipTick".into(), "100".into()));
+    }
+
+    #[tokio::test]
+    async fn test_t5_channel_reserve_call_and_event_decode() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(4217);
+
+        let open = ITIP20ChannelReserve::openCall {
+            payee: address!("0x0000000000000000000000000000000000000abc"),
+            operator: Address::ZERO,
+            token: PATH_USD_ADDRESS,
+            deposit: U96::from(1_000_000u64),
+            salt: B256::repeat_byte(0x22),
+            authorizedSigner: Address::ZERO,
+        };
+        let trace = CallTrace {
+            address: TIP20_CHANNEL_RESERVE_ADDRESS,
+            data: open.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("TIP20ChannelReserve"));
+        assert_eq!(
+            decoded.call_data.expect("open should decode").signature,
+            "open(address,address,address,uint96,bytes32,address)"
+        );
+
+        let transfer = ITIP20::transferCall {
+            to: address!("0x0000000000000000000000000000000000000def"),
+            amount: U256::from(1_000_000u64),
+        };
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: transfer.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+        let json = serde_json::to_string(&decoded).expect("decoded trace serializes");
+        assert!(json.contains(r#""label":"PathUSD""#));
+        assert!(!json.contains("payment-lane"));
+
+        let balance_of = ITIP20::balanceOfCall {
+            account: address!("0x0000000000000000000000000000000000000def"),
+        };
+        let trace = CallTrace {
+            address: PATH_USD_ADDRESS,
+            data: balance_of.abi_encode().into(),
+            depth: 0,
+            success: true,
+            ..Default::default()
+        };
+        let decoded = decoder.decode_function(&trace).await;
+        assert_eq!(decoded.label.as_deref(), Some("PathUSD"));
+
+        let event = ITIP20ChannelReserve::ChannelOpened {
+            channelId: B256::repeat_byte(0x33),
+            payer: address!("0x0000000000000000000000000000000000000123"),
+            payee: address!("0x0000000000000000000000000000000000000abc"),
+            operator: Address::ZERO,
+            token: PATH_USD_ADDRESS,
+            authorizedSigner: Address::ZERO,
+            salt: B256::repeat_byte(0x22),
+            expiringNonceHash: B256::repeat_byte(0x44),
+            deposit: U96::from(1_000_000u64),
+        };
+        let decoded = decoder.decode_event(&event.encode_log_data()).await;
+        assert_eq!(decoded.name.as_deref(), Some("ChannelOpened"));
+        let params = decoded.params.expect("ChannelOpened params should decode");
+        assert_eq!(params[0].0, "channelId");
+        assert_eq!(params[8].0, "deposit");
+        assert!(params[8].1.starts_with("1000000"));
     }
 
     // A mock identifier that records which addresses it was asked to identify.
