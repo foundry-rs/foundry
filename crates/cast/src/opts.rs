@@ -1167,6 +1167,14 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["decode-auth"])]
     RecoverAuthority { auth: String },
 
+    /// Recover an EIP-7702 authority and exit non-zero if it has the TIP-20
+    /// reserved prefix (TIP-1047). Accepts the same JSON as `cast recover-authority`.
+    #[command(name = "check-auth", visible_aliases = &["7702-check"])]
+    CheckAuth {
+        /// SignedAuthorization JSON (same shape as `cast recover-authority`).
+        auth: String,
+    },
+
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]
     Selectors {

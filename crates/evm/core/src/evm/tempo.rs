@@ -148,7 +148,13 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
         Ok(frame_result)
     }
 
-    fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, EVMError<DatabaseError>> {
+    fn transact_raw(
+        &mut self,
+        mut tx: Self::Tx,
+    ) -> Result<ResultAndState, EVMError<DatabaseError>> {
+        if self.ctx.cfg.spec.is_t5() {
+            crate::tempo::mask_tip20_prefixed_authorizations(&mut tx);
+        }
         self.set_tx(tx);
 
         let mut handler = TempoEvmHandler::new();

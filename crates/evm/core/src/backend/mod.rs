@@ -817,6 +817,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind());
+        if FEN::is_t5_active(evm_env.cfg_env.spec) {
+            tx_env.mask_tip20_prefixed_authorizations();
+        }
         let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
             self,
             evm_env.to_owned(),

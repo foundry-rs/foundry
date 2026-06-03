@@ -688,6 +688,8 @@ impl<N: Network> Backend<N> {
             tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
+            // TIP-1047: mask prefix-colliding authorities on Tempo T5+.
+            skip_tip20_prefixed_authorizations: self.is_tempo_hardfork_active(TempoHardfork::T5),
         }
     }
 
@@ -766,7 +768,8 @@ impl<N: Network> Backend<N> {
 
     /// Builds [`Inspector`] with the configured options.
     fn build_inspector(&self) -> AnvilInspector {
-        let mut inspector = AnvilInspector::default();
+        let tip20_guard = self.is_tempo_hardfork_active(TempoHardfork::T5);
+        let mut inspector = AnvilInspector::default().with_tip20_create_guard(tip20_guard);
 
         if self.print_logs {
             inspector = inspector.with_log_collector();
@@ -780,7 +783,9 @@ impl<N: Network> Backend<N> {
 
     /// Builds an inspector configured for block mining (tracing always enabled).
     fn build_mining_inspector(&self) -> AnvilInspector {
-        let mut inspector = AnvilInspector::default().with_tracing();
+        let tip20_guard = self.is_tempo_hardfork_active(TempoHardfork::T5);
+        let mut inspector =
+            AnvilInspector::default().with_tracing().with_tip20_create_guard(tip20_guard);
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
         }
@@ -1253,8 +1258,15 @@ impl<N: Network> Backend<N> {
             let result = self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx)?;
             return Ok((result, base));
         }
-        let tx_env: TxEnv =
+        let mut tx_env: TxEnv =
             FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+        // Eth envelopes (e.g. EIP-7702) may execute on a Tempo node; mask prefixed
+        // authorities here since the Eth path doesn't go through Tempo helpers.
+        if self.is_tempo_hardfork_active(TempoHardfork::T5) {
+            foundry_evm::core::tempo::mask_tip20_prefixed_eth_authorizations(
+                &mut tx_env.authorization_list,
+            );
+        }
         let base = tx_env.clone();
         let result = self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)?;
         Ok((result, base))
@@ -1266,7 +1278,7 @@ impl<N: Network> Backend<N> {
         db: &'db DB,
         evm_env: &EvmEnv,
         inspector: &mut I,
-        tx_env: TempoTxEnv,
+        mut tx_env: TempoTxEnv,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
@@ -1274,10 +1286,23 @@ impl<N: Network> Backend<N> {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let hardfork = self.tempo_hardfork();
+        let t5 = self.is_tempo_hardfork_active(TempoHardfork::T5);
+        if t5 {
+            foundry_evm::core::tempo::mask_tip20_prefixed_authorizations(&mut tx_env);
+        }
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
         );
+        // Wrap arbitrary inspectors (e.g. replay/debug tracers) so the CREATE/CREATE2
+        // guard fires even when `AnvilInspector` is not in the pipeline.
+        let mut guarded;
+        let inspector: &mut dyn Inspector<TempoContext<WrapDatabaseRef<&'db DB>>> = if t5 {
+            guarded = foundry_evm::core::tempo::Tip1047CreateGuard::new(inspector);
+            &mut guarded
+        } else {
+            inspector
+        };
         let mut evm = TempoEvmFactory::default().create_evm_with_inspector(
             WrapDatabaseRef(db),
             tempo_env,

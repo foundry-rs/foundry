@@ -328,6 +328,9 @@ pub struct PoolTxGasConfig {
     pub tx_gas_limit_cap_resolved: u64,
     pub max_blob_gas_per_block: u64,
     pub is_cancun: bool,
+    /// When `true`, mask TIP-20-prefixed EIP-7702 / AA authorities (TIP-1047) on each
+    /// tx env before execution. Set on Tempo T5+; ignored elsewhere.
+    pub skip_tip20_prefixed_authorizations: bool,
 }
 
 /// Executes pool transactions against a block executor, handling validation,
@@ -387,8 +390,12 @@ where
             }
         };
 
-        let tx_env =
+        let mut tx_env =
             build_tx_env_for_pending::<B::Transaction, <B::Evm as Evm>::Tx>(pending, cheats);
+
+        if gas_config.skip_tip20_prefixed_authorizations {
+            tx_env.mask_tip20_prefixed_authorizations();
+        }
 
         // Gas limit checks
         let cumulative_gas =

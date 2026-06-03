@@ -5,8 +5,23 @@
 //!
 //! It includes the shared genesis initialization function used by both anvil and forge.
 
-use alloy_primitives::{Address, Bytes, U256, address};
-use revm::state::Bytecode;
+use alloy_primitives::{Address, Bytes, Log, U256, address};
+use revm::{
+    Inspector,
+    context::{
+        ContextTr, JournalTr,
+        either::Either,
+        transaction::{
+            Authorization, RecoveredAuthority, RecoveredAuthorization, SignedAuthorization,
+        },
+    },
+    context_interface::CreateScheme,
+    interpreter::{
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Gas, InstructionResult, Interpreter,
+        InterpreterResult, InterpreterTypes,
+    },
+    state::Bytecode,
+};
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
@@ -23,6 +38,7 @@ use tempo_precompiles::{
     tip20_factory::TIP20Factory,
     validator_config,
 };
+use tempo_primitives::transaction::RecoveredTempoAuthorization;
 
 pub use tempo_contracts::precompiles::{
     ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IFeeManager, ISignatureVerifier, IStablecoinDEX,
@@ -207,4 +223,195 @@ fn create_and_mint_token(
     }
 
     Ok(token_address)
+}
+
+// TIP-1047 prefix guard.
+
+/// Predicts the address a CREATE / CREATE2 frame would deploy to, using the
+/// caller's pre-bump nonce. Returns `None` for `CreateScheme::Custom`.
+pub fn predicted_create_address(inputs: &CreateInputs, caller_nonce: u64) -> Option<Address> {
+    match inputs.scheme() {
+        CreateScheme::Create | CreateScheme::Create2 { .. } => {
+            Some(inputs.created_address(caller_nonce))
+        }
+        CreateScheme::Custom { .. } => None,
+    }
+}
+
+/// Revert `CreateOutcome` for the prefix guard; short-circuits revm before
+/// nonce bump, value transfer, and init-code execution.
+pub fn tip20_prefix_revert(inputs: &CreateInputs, addr: Address) -> CreateOutcome {
+    CreateOutcome {
+        result: InterpreterResult {
+            result: InstructionResult::Revert,
+            output: Bytes::from(
+                format!("TIP-20 prefix create address forbidden: {addr}").into_bytes(),
+            ),
+            gas: Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit(), inputs.reservoir()),
+        },
+        address: None,
+    }
+}
+
+/// Whether `addr` is rejected by the prefix guard. Honors
+/// [`test_seam::TIP20_PREFIX_OVERRIDE`] for tests.
+pub fn is_tip20_prefix_for_guard(addr: Address) -> bool {
+    if let Some(p) = test_seam::TIP20_PREFIX_OVERRIDE.with(|c| c.get()) {
+        return addr.as_slice().starts_with(&p);
+    }
+    is_tip20_prefix(addr)
+}
+
+/// Marks prefix-colliding EIP-7702 entries as `RecoveredAuthority::Invalid`,
+/// preserving list length so intrinsic gas is unaffected.
+pub fn mask_tip20_prefixed_eth_authorizations(
+    auths: &mut [Either<SignedAuthorization, RecoveredAuthorization>],
+) {
+    for slot in auths.iter_mut() {
+        let needs_mask = match slot {
+            Either::Left(signed) => {
+                signed.recover_authority().ok().is_some_and(is_tip20_prefix_for_guard)
+            }
+            Either::Right(recovered) => {
+                recovered.authority().is_some_and(is_tip20_prefix_for_guard)
+            }
+        };
+        if !needs_mask {
+            continue;
+        }
+        let inner = match slot {
+            Either::Left(signed) => Authorization {
+                chain_id: signed.inner().chain_id,
+                address: signed.inner().address,
+                nonce: signed.inner().nonce,
+            },
+            Either::Right(recovered) => Authorization {
+                chain_id: recovered.chain_id,
+                address: recovered.address,
+                nonce: recovered.nonce,
+            },
+        };
+        *slot = Either::Right(RecoveredAuthorization::new_unchecked(
+            inner,
+            RecoveredAuthority::Invalid,
+        ));
+    }
+}
+
+/// Same as [`mask_tip20_prefixed_eth_authorizations`] for the Tempo AA list.
+pub fn mask_tip20_prefixed_tempo_authorizations(
+    auths: &mut [tempo_primitives::transaction::RecoveredTempoAuthorization],
+) {
+    for slot in auths.iter_mut() {
+        if !slot.authority().is_some_and(is_tip20_prefix_for_guard) {
+            continue;
+        }
+        let signed = slot.signed().clone();
+        *slot = RecoveredTempoAuthorization::new_unchecked(signed, RecoveredAuthority::Invalid);
+    }
+}
+
+/// Masks both the standard EIP-7702 list and the Tempo AA list of a `TempoTxEnv`.
+pub fn mask_tip20_prefixed_authorizations(tx_env: &mut tempo_revm::TempoTxEnv) {
+    mask_tip20_prefixed_eth_authorizations(&mut tx_env.inner.authorization_list);
+    if let Some(aa_env) = tx_env.tempo_tx_env.as_mut() {
+        mask_tip20_prefixed_tempo_authorizations(&mut aa_env.tempo_authorization_list);
+    }
+}
+
+/// Wraps any inspector to add the TIP-1047 CREATE / CREATE2 guard, delegating all
+/// other hooks to inner. Use on Tempo T5+ replay/debug paths whose inspectors
+/// (e.g. `TracingInspector`, `JsInspector`) don't carry the guard themselves.
+pub struct Tip1047CreateGuard<'a, I> {
+    inner: &'a mut I,
+}
+
+impl<'a, I> Tip1047CreateGuard<'a, I> {
+    pub const fn new(inner: &'a mut I) -> Self {
+        Self { inner }
+    }
+}
+
+impl<CTX, INTR, I> Inspector<CTX, INTR> for Tip1047CreateGuard<'_, I>
+where
+    CTX: ContextTr,
+    INTR: InterpreterTypes,
+    I: Inspector<CTX, INTR>,
+{
+    fn initialize_interp(&mut self, interp: &mut Interpreter<INTR>, ctx: &mut CTX) {
+        self.inner.initialize_interp(interp, ctx);
+    }
+    fn step(&mut self, interp: &mut Interpreter<INTR>, ctx: &mut CTX) {
+        self.inner.step(interp, ctx);
+    }
+    fn step_end(&mut self, interp: &mut Interpreter<INTR>, ctx: &mut CTX) {
+        self.inner.step_end(interp, ctx);
+    }
+    fn log(&mut self, ctx: &mut CTX, log: Log) {
+        self.inner.log(ctx, log);
+    }
+    fn log_full(&mut self, interp: &mut Interpreter<INTR>, ctx: &mut CTX, log: Log) {
+        self.inner.log_full(interp, ctx, log);
+    }
+    fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        self.inner.call(ctx, inputs)
+    }
+    fn call_end(&mut self, ctx: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
+        self.inner.call_end(ctx, inputs, outcome);
+    }
+    fn create(&mut self, ctx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+        // Inner first so traces still see the attempted CREATE/CREATE2.
+        if let Some(out) = self.inner.create(ctx, inputs) {
+            return Some(out);
+        }
+        let caller = inputs.caller();
+        let nonce = ctx.journal_mut().load_account(caller).ok().map(|a| a.info.nonce);
+        if let Some(n) = nonce
+            && let Some(addr) = predicted_create_address(inputs, n)
+            && is_tip20_prefix_for_guard(addr)
+        {
+            return Some(tip20_prefix_revert(inputs, addr));
+        }
+        None
+    }
+    fn create_end(&mut self, ctx: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
+        self.inner.create_end(ctx, inputs, outcome);
+    }
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        Inspector::<CTX, INTR>::selfdestruct(self.inner, contract, target, value);
+    }
+}
+
+/// Test-only seam: override the prefix used by [`is_tip20_prefix_for_guard`].
+/// Default `None`; exposed for cross-crate tests, not a stable API.
+#[doc(hidden)]
+pub mod test_seam {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub static TIP20_PREFIX_OVERRIDE: Cell<Option<[u8; 12]>> = const { Cell::new(None) };
+    }
+
+    /// RAII handle: installs an override on construction, restores on drop.
+    pub struct OverrideGuard {
+        prev: Option<[u8; 12]>,
+    }
+
+    impl OverrideGuard {
+        pub fn new(prefix: [u8; 12]) -> Self {
+            let prev = TIP20_PREFIX_OVERRIDE.with(|c| {
+                let prev = c.get();
+                c.set(Some(prefix));
+                prev
+            });
+            Self { prev }
+        }
+    }
+
+    impl Drop for OverrideGuard {
+        fn drop(&mut self) {
+            let prev = self.prev;
+            TIP20_PREFIX_OVERRIDE.with(|c| c.set(prev));
+        }
+    }
 }

@@ -63,6 +63,9 @@ uuid.workspace = true
 rayon.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+tempo-revm.workspace = true
+
 [features]
 default = ["optimism"]
 optimism = [

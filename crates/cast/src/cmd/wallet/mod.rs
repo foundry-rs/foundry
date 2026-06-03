@@ -165,6 +165,11 @@ pub enum WalletSubcommands {
         #[arg(long, conflicts_with = "nonce")]
         self_broadcast: bool,
 
+        /// Exit non-zero before signing if the signer (authority) has the reserved
+        /// TIP-20 prefix (TIP-1047).
+        #[arg(long)]
+        check: bool,
+
         #[command(flatten)]
         wallet: WalletOpts,
     },
@@ -650,8 +655,23 @@ impl WalletSubcommands {
                     sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
                 }
             }
-            Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast } => {
+            Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast, check } => {
                 let wallet = wallet.signer().await?;
+                // TIP-1047 preflight on the signer (the EIP-7702 authority). With
+                // `--check` this bails; otherwise it warns.
+                if tempo_primitives::is_tip20_prefix(wallet.address()) {
+                    let msg = format!(
+                        "EIP-7702 authority {} has the reserved TIP-20 prefix \
+                         (0x20C0000000000000000000); on Tempo T5+ this authorization is \
+                         silently skipped (no nonce bump, no code installation)",
+                        wallet.address()
+                    );
+                    if check {
+                        eyre::bail!(msg);
+                    } else {
+                        sh_warn!("{msg}")?;
+                    }
+                }
                 let provider = utils::get_provider(&rpc.load_config()?)?;
                 let nonce = if let Some(nonce) = nonce {
                     nonce

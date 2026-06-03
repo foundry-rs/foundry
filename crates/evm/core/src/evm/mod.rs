@@ -58,6 +58,12 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
             ReceiptResponse: FoundryReceiptResponse,
         >;
     type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
+
+    /// Whether Tempo T5 (TIP-1047 prefix guard) is active for `spec`. `false` for
+    /// non-Tempo networks.
+    fn is_t5_active(_spec: <Self::EvmFactory as EvmFactory>::Spec) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -72,6 +78,10 @@ pub struct TempoEvmNetwork;
 impl FoundryEvmNetwork for TempoEvmNetwork {
     type Network = TempoNetwork;
     type EvmFactory = TempoEvmFactory;
+
+    fn is_t5_active(spec: foundry_evm_hardforks::TempoHardfork) -> bool {
+        spec.is_t5()
+    }
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].

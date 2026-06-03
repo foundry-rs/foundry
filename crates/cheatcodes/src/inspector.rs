@@ -2003,7 +2003,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // Apply EIP-2930 access list
         self.apply_accesslist(ecx);
 
-        // Apply our broadcast
+        // Apply broadcast; defer the queue push until after the TIP-1047 guard below.
+        let mut should_queue_broadcast_create = false;
         if let Some(broadcast) = &mut self.broadcast
             && curr_depth >= broadcast.depth
             && input.caller() == broadcast.original_caller
@@ -2022,29 +2023,47 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             ecx.tx_mut().set_caller(broadcast.new_origin);
 
             if curr_depth == broadcast.depth || broadcast.deploy_from_code {
-                // Reset deploy from code flag for upcoming calls;
+                // Consume the deploy-from-code marker regardless of guard outcome.
                 broadcast.deploy_from_code = false;
 
                 input.set_caller(broadcast.new_origin);
-
-                let rpc = ecx.db().active_fork_url();
-                let account = &ecx.journal().evm_state()[&broadcast.new_origin];
-                let mut tx_req = TransactionRequestFor::<FEN>::default()
-                    .with_from(broadcast.new_origin)
-                    .with_kind(TxKind::Create)
-                    .with_value(input.value())
-                    .with_input(input.init_code())
-                    .with_nonce(account.info.nonce);
-                if let Some(fee_token) = self.config.fee_token {
-                    tx_req.set_fee_token(fee_token);
-                }
-                self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                    rpc,
-                    transaction: TransactionMaybeSigned::new(tx_req),
-                });
-
-                input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
+                should_queue_broadcast_create = true;
             }
+        }
+
+        // TIP-1047 guard, after caller mutations and before queueing the broadcast tx.
+        // Also covers `vm.deployCode` (nested EVM with only `Cheatcodes` as inspector).
+        if FEN::is_t5_active(ecx.cfg().spec) {
+            let caller = input.caller();
+            let caller_nonce =
+                ecx.journal_mut().load_account(caller).ok().map(|acc| acc.info.nonce);
+            if let Some(nonce) = caller_nonce
+                && let Some(addr) = foundry_evm_core::tempo::predicted_create_address(input, nonce)
+                && foundry_evm_core::tempo::is_tip20_prefix_for_guard(addr)
+            {
+                return Some(foundry_evm_core::tempo::tip20_prefix_revert(input, addr));
+            }
+        }
+
+        if should_queue_broadcast_create {
+            let from = input.caller();
+            let rpc = ecx.db().active_fork_url();
+            let account = &ecx.journal().evm_state()[&from];
+            let mut tx_req = TransactionRequestFor::<FEN>::default()
+                .with_from(from)
+                .with_kind(TxKind::Create)
+                .with_value(input.value())
+                .with_input(input.init_code())
+                .with_nonce(account.info.nonce);
+            if let Some(fee_token) = self.config.fee_token {
+                tx_req.set_fee_token(fee_token);
+            }
+            self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                rpc,
+                transaction: TransactionMaybeSigned::new(tx_req),
+            });
+
+            input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
         }
 
         // Allow cheatcodes from the address of the new contract

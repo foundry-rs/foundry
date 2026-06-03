@@ -261,6 +261,12 @@ pub trait FoundryTransaction: Transaction {
 
     /// Sets the fee payer for this transaction.
     fn set_fee_payer(&mut self, _payer: Option<Option<Address>>) {}
+
+    /// Marks TIP-20-prefixed EIP-7702 (and, for Tempo, AA) authorities as
+    /// `RecoveredAuthority::Invalid`, preserving list length. Call only on Tempo T5+.
+    fn mask_tip20_prefixed_authorizations(&mut self) {
+        crate::tempo::mask_tip20_prefixed_eth_authorizations(self.authorization_list_mut());
+    }
 }
 
 impl FoundryTransaction for TxEnv {
@@ -392,6 +398,11 @@ impl FoundryTransaction for TempoTxEnv {
 
     fn set_fee_payer(&mut self, payer: Option<Option<Address>>) {
         self.fee_payer = payer;
+    }
+
+    fn mask_tip20_prefixed_authorizations(&mut self) {
+        // Also masks the Tempo AA `tempo_authorization_list`.
+        crate::tempo::mask_tip20_prefixed_authorizations(self);
     }
 }
 

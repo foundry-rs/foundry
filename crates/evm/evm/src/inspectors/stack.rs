@@ -1142,6 +1142,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             let gas_limit = inputs.gas_limit();
             let create2_deployer = self.create2_deployer();
 
+            // TIP-1047 guard on the factory's CREATE2 result, before factory validation.
+            if FEN::is_t5_active(ecx.cfg().spec) {
+                let factory_addr =
+                    create2_deployer.create2(salt.to_be_bytes::<32>(), inputs.init_code_hash());
+                if foundry_evm_core::tempo::is_tip20_prefix_for_guard(factory_addr) {
+                    self.inner.pending_create2_error =
+                        Some(foundry_evm_core::tempo::tip20_prefix_revert(inputs, factory_addr));
+                    return None;
+                }
+            }
+
             // Validate deployer before rewriting.
             let code_hash = ecx.journal_mut().load_account(create2_deployer).ok()?.info.code_hash;
             if code_hash == KECCAK_EMPTY {
@@ -1360,16 +1371,36 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             self.top_level_frame_start(ecx);
         }
 
+        // Tracer + coverage first so the attempt shows in traces; then return any
+        // frame_start error before cheatcodes runs, so a rejected factory-rewrite
+        // CREATE2 cannot queue a broadcast tx or record other cheatcode side effects.
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.line_coverage, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.line_coverage],
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
-        // If frame_start detected an invalid CREATE2 deployer, return the error here
-        // (after sub-inspectors have been notified) so tracing stays balanced.
         if let Some(error) = self.inner.pending_create2_error.take() {
             return Some(error);
+        }
+
+        if let Some(c) = &mut self.cheatcodes
+            && let Some(outcome) = c.create(ecx, create)
+        {
+            return Some(outcome);
+        }
+
+        // Short-circuit before nonce bump / value transfer / init-code execution.
+        if FEN::is_t5_active(ecx.cfg().spec) {
+            let caller = create.caller();
+            let caller_nonce =
+                ecx.journal_mut().load_account(caller).ok().map(|acc| acc.info.nonce);
+            if let Some(nonce) = caller_nonce
+                && let Some(addr) = foundry_evm_core::tempo::predicted_create_address(create, nonce)
+                && foundry_evm_core::tempo::is_tip20_prefix_for_guard(addr)
+            {
+                return Some(foundry_evm_core::tempo::tip20_prefix_revert(create, addr));
+            }
         }
 
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })

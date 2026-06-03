@@ -63,6 +63,7 @@ tempo-alloy.workspace = true
 tempo-contracts.workspace = true
 tempo-evm.workspace = true
 tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
 
 auto_impl.workspace = true
 eyre.workspace = true

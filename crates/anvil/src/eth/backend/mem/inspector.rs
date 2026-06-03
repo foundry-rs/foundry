@@ -4,6 +4,7 @@ use crate::eth::macros::node_info;
 use alloy_primitives::{Address, Log, U256};
 use foundry_evm::{
     call_inspectors,
+    core::tempo::{is_tip20_prefix_for_guard, predicted_create_address, tip20_prefix_revert},
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     traces::{
@@ -13,7 +14,7 @@ use foundry_evm::{
 };
 use revm::{
     Inspector,
-    context::ContextTr,
+    context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
@@ -32,6 +33,9 @@ pub struct AnvilInspector {
     pub log_collector: Option<LogCollector>,
     /// Collects all internal ETH transfers as ERC20 transfer events.
     pub transfer: Option<TransferInspector>,
+    /// Whether the TIP-1047 CREATE / CREATE2 prefix guard is active. Used by mining /
+    /// pool / `inspect_tx` paths; replay/debug paths wrap via `Tip1047CreateGuard`.
+    pub tip20_create_guard_t5: bool,
 }
 
 /// Configuration for per-transaction inspector lifecycle.
@@ -135,6 +139,12 @@ impl AnvilInspector {
         self.tracer = Some(TracingInspector::new(TracingInspectorConfig::all().with_state_diffs()));
         self
     }
+
+    /// Enables the TIP-1047 CREATE / CREATE2 prefix guard. Pass `true` on Tempo T5+.
+    pub const fn with_tip20_create_guard(mut self, enabled: bool) -> Self {
+        self.tip20_create_guard_t5 = enabled;
+        self
+    }
 }
 
 /// Prints the traces for the inspector
@@ -210,11 +220,34 @@ where
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.transfer],
-            |inspector| inspector.create(ecx, inputs).map(Some),
-        );
+        // Tracer runs first so the rejected attempt is still visible in traces.
+        if let Some(tracer) = &mut self.tracer
+            && let Some(out) = tracer.create(ecx, inputs)
+        {
+            return Some(out);
+        }
+
+        // Guard runs before `TransferInspector` so a rejected CREATE/CREATE2 cannot
+        // leak a synthetic Transfer log (`insert_logs: true` is not journal-tracked
+        // and would not be rolled back when we revert the frame).
+        if self.tip20_create_guard_t5 {
+            let caller = inputs.caller();
+            let caller_nonce =
+                ecx.journal_mut().load_account(caller).ok().map(|acc| acc.info.nonce);
+            if let Some(nonce) = caller_nonce
+                && let Some(addr) = predicted_create_address(inputs, nonce)
+                && is_tip20_prefix_for_guard(addr)
+            {
+                return Some(tip20_prefix_revert(inputs, addr));
+            }
+        }
+
+        if let Some(transfer) = &mut self.transfer
+            && let Some(out) = transfer.create(ecx, inputs)
+        {
+            return Some(out);
+        }
+
         None
     }
 

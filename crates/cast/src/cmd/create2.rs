@@ -3,10 +3,17 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use regex::RegexSetBuilder;
-use std::time::Instant;
+use std::{sync::LazyLock, time::Instant};
+use tempo_contracts::precompiles::PATH_USD_ADDRESS;
+use tempo_primitives::is_tip20_prefix;
 
 // https://etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
 const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+
+/// Canonical TIP-20 reserved prefix as lowercase hex, derived from `PATH_USD_ADDRESS`
+/// (the first 12 bytes of any canonical TIP-20 address are exactly the prefix).
+static TIP20_PREFIX_HEX: LazyLock<String> =
+    LazyLock::new(|| hex::encode(&PATH_USD_ADDRESS.as_slice()[..12]));
 
 /// CLI arguments for `cast create2`.
 #[derive(Clone, Debug, Parser)]
@@ -81,6 +88,12 @@ pub struct Create2Args {
     /// Don't initialize the salt with a random value, and instead use the default value of 0.
     #[arg(long, conflicts_with = "seed")]
     no_random: bool,
+
+    /// Reject addresses with the TIP-20 reserved prefix (`0x20C0…`, TIP-1047).
+    /// In salt mode this exits non-zero on collision; in mining mode it filters
+    /// colliding candidates.
+    #[arg(long, visible_alias = "no-tip20")]
+    avoid_tip20_prefix: bool,
 }
 
 pub struct Create2Output {
@@ -103,6 +116,7 @@ impl Create2Args {
             caller,
             seed,
             no_random,
+            avoid_tip20_prefix,
         } = self;
 
         let init_code_hash = if let Some(init_code_hash) = init_code_hash {
@@ -113,9 +127,31 @@ impl Create2Args {
             unreachable!();
         }?;
 
+        // Bail when `--starts-with` already includes the full TIP-20 prefix; every
+        // candidate would collide and mining can never succeed.
+        if avoid_tip20_prefix && let Some(prefix) = starts_with.as_ref() {
+            let p = prefix.strip_prefix("0x").unwrap_or(prefix).to_ascii_lowercase();
+            let tip20 = TIP20_PREFIX_HEX.as_str();
+            if p.starts_with(tip20) {
+                eyre::bail!(
+                    "--starts-with {prefix:?} is incompatible with --avoid-tip20-prefix: \
+                     every address starting with {prefix:?} also has the reserved TIP-20 \
+                     prefix ({tip20})"
+                );
+            }
+        }
+
         if let Some(salt) = salt {
             let salt = hex::FromHex::from_hex(salt)?;
             let address = deployer.create2(salt, init_code_hash);
+            if avoid_tip20_prefix && is_tip20_prefix(address) {
+                let tip20 = TIP20_PREFIX_HEX.as_str();
+                eyre::bail!(
+                    "address {address} for the supplied --salt has the reserved TIP-20 prefix \
+                     ({tip20}); on Tempo T5+ this CREATE2 would be rejected. \
+                     Pick a different salt or omit --avoid-tip20-prefix to proceed anyway."
+                );
+            }
             sh_println!("{address}\t{salt}")?;
             return Ok(Create2Output { address, salt });
         }
@@ -196,6 +232,10 @@ impl Create2Args {
         let (address, salt) = super::miner::mine_salt(salt, n_threads, move |salt| {
             #[expect(clippy::needless_borrows_for_generic_args)]
             let addr = deployer.create2(&salt, &init_code_hash);
+            // TIP-1047 filter: skip TIP-20-prefixed candidates before regex matching.
+            if avoid_tip20_prefix && is_tip20_prefix(addr) {
+                return None;
+            }
             // Use checksum format only when case_sensitive is enabled — it requires an extra
             // keccak256 call, so we fall back to plain hex when case sensitivity is off.
             let s = if case_sensitive {

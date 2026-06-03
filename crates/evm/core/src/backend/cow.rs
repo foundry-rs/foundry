@@ -2,7 +2,7 @@
 
 use super::BackendError;
 use crate::{
-    FoundryInspectorExt,
+    FoundryInspectorExt, FoundryTransaction,
     backend::{
         Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
         diagnostic::RevertDiagnostic,
@@ -90,6 +90,10 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
+
+        if FEN::is_t5_active(evm_env.cfg_env.spec) {
+            tx_env.mask_tip20_prefixed_authorizations();
+        }
 
         let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
             self,

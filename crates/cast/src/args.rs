@@ -909,6 +909,20 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = auth.recover_authority()?.to_string();
             print_scalar(out)?;
         }
+        CastSubcommand::CheckAuth { auth } => {
+            // TIP-1047 preflight: exit non-zero when the recovered authority has the
+            // reserved TIP-20 prefix (silently invalidated on Tempo T5+).
+            let auth: SignedAuthorization = serde_json::from_str(&auth)?;
+            let authority = auth.recover_authority()?;
+            if tempo_primitives::is_tip20_prefix(authority) {
+                eyre::bail!(
+                    "EIP-7702 authority {authority} has the reserved TIP-20 prefix \
+                     (0x20C0000000000000000000); on Tempo T5+ this delegation is silently \
+                     skipped (no nonce bump, no code installation)"
+                );
+            }
+            sh_println!("ok: {authority}")?;
+        }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
