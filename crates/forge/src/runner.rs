@@ -340,6 +340,12 @@ pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     num_invariant_campaign_anchors: usize,
 }
 
+pub(crate) struct ContractRunnerContext<'a> {
+    pub(crate) progress: Option<&'a TestsProgress>,
+    pub(crate) tokio_handle: tokio::runtime::Handle,
+    pub(crate) num_invariant_campaign_anchors: usize,
+}
+
 impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
     type Target = Cow<'a, TestRunnerConfig<FEN>>;
 
@@ -350,25 +356,24 @@ impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
 }
 
 impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
-    pub fn new(
+    pub(crate) fn new(
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
-        progress: Option<&'a TestsProgress>,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
-        num_invariant_campaign_anchors: usize,
+        context: ContractRunnerContext<'a>,
     ) -> Self {
         Self {
             name,
             contract,
             executor,
-            progress,
-            tokio_handle: tokio::runtime::Handle::current(),
+            progress: context.progress,
+            tokio_handle: context.tokio_handle,
             span,
             tcfg: Cow::Borrowed(&mcr.tcfg),
             mcr,
-            num_invariant_campaign_anchors,
+            num_invariant_campaign_anchors: context.num_invariant_campaign_anchors,
         }
     }
 

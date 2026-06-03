@@ -156,12 +156,13 @@ impl TestOutcome {
         self.failures().any(|(_, t)| t.kind.is_invariant())
     }
 
-    fn invariant_workers(&self) -> usize {
-        self.failures()
+    fn invariant_workers_hint(&self) -> Option<usize> {
+        let mut workers = self
+            .failures()
             .filter(|(_, result)| result.kind.is_invariant())
-            .map(|(_, result)| result.invariant_workers.max(1))
-            .max()
-            .unwrap_or(1)
+            .map(|(_, result)| result.invariant_workers.max(1));
+        let first = workers.next()?;
+        (first > 1 && workers.all(|workers| workers == first)).then_some(first)
     }
 
     /// Sums up all the durations of all individual test suites.
@@ -247,8 +248,7 @@ impl TestOutcome {
                 format!("{seed:#x}").cyan(),
                 "`--fuzz-seed`".cyan()
             )?;
-            let invariant_workers = outcome.invariant_workers();
-            if invariant_workers > 1 {
+            if let Some(invariant_workers) = outcome.invariant_workers_hint() {
                 sh_println!(
                     "Invariant workers: {} (use {} to reproduce)",
                     invariant_workers,
@@ -276,6 +276,55 @@ impl TestOutcome {
 /// Process exit code emitted when at least one test failed.
 fn test_failure_exit_code() -> i32 {
     if foundry_cli::is_machine() { foundry_cli::ExitCode::TestFailure.to_i32() } else { 1 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome_with_failed_invariant_workers(workers: &[usize]) -> TestOutcome {
+        let test_results = workers
+            .iter()
+            .enumerate()
+            .map(|(idx, workers)| {
+                (
+                    format!("invariant{idx}()"),
+                    TestResult {
+                        status: TestStatus::Failure,
+                        kind: TestKind::Invariant {
+                            runs: 0,
+                            calls: 0,
+                            reverts: 0,
+                            metrics: Map::new(),
+                            failed_corpus_replays: 0,
+                            optimization_best_value: None,
+                        },
+                        invariant_workers: *workers,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        TestOutcome::new(
+            None,
+            BTreeMap::from([(
+                "suite".to_string(),
+                SuiteResult::new(Duration::ZERO, test_results, Vec::new()),
+            )]),
+            false,
+            None,
+        )
+    }
+
+    #[test]
+    fn invariant_workers_hint_requires_matching_parallel_worker_counts() {
+        assert_eq!(
+            outcome_with_failed_invariant_workers(&[3, 3]).invariant_workers_hint(),
+            Some(3)
+        );
+        assert_eq!(outcome_with_failed_invariant_workers(&[2, 3]).invariant_workers_hint(), None);
+        assert_eq!(outcome_with_failed_invariant_workers(&[1]).invariant_workers_hint(), None);
+    }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.

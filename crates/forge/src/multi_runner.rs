@@ -4,7 +4,10 @@ use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
     result::SuiteResult,
-    runner::{InvariantCampaignScope, LIBRARY_DEPLOYER, count_runnable_invariant_campaign_anchors},
+    runner::{
+        ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
+        count_runnable_invariant_campaign_anchors,
+    },
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -226,8 +229,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                         contract,
                         &db,
                         filter,
-                        Some(&tests_progress),
-                        num_invariant_campaign_anchors,
+                        ContractRunnerContext {
+                            progress: Some(&tests_progress),
+                            tokio_handle: tokio_handle.clone(),
+                            num_invariant_campaign_anchors,
+                        },
                     );
 
                     tests_progress
@@ -252,8 +258,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                     contract,
                     &db,
                     filter,
-                    None,
-                    num_invariant_campaign_anchors,
+                    ContractRunnerContext {
+                        progress: None,
+                        tokio_handle: tokio_handle.clone(),
+                        num_invariant_campaign_anchors,
+                    },
                 );
                 let _ = tx.send((id.identifier(), result));
             })
@@ -268,8 +277,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         contract: &TestContract,
         db: &Backend<FEN>,
         filter: &dyn TestFilter,
-        progress: Option<&TestsProgress>,
-        num_invariant_campaign_anchors: usize,
+        context: ContractRunnerContext<'_>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let span_name = if enabled!(tracing::Level::TRACE) {
@@ -289,15 +297,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             artifact_id,
             db.clone(),
         );
-        let runner = ContractRunner::new(
-            &identifier,
-            contract,
-            executor,
-            progress,
-            span,
-            self,
-            num_invariant_campaign_anchors,
-        );
+        let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
         let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");

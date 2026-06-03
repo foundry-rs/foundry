@@ -8,13 +8,18 @@ use serde::{
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 /// Worker selection mode for invariant campaign sharding.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InvariantWorkers {
     /// Automatically derive invariant workers from the active `--jobs` / rayon thread pool.
-    #[default]
     Auto,
     /// Explicit user override for invariant campaign sharding.
     Fixed(NonZeroUsize),
+}
+
+impl Default for InvariantWorkers {
+    fn default() -> Self {
+        Self::Fixed(NonZeroUsize::MIN)
+    }
 }
 
 impl Serialize for InvariantWorkers {
@@ -101,8 +106,8 @@ pub struct InvariantConfig {
     pub depth: u32,
     /// Worker selection mode used to shard invariant runs.
     ///
-    /// Defaults to `auto`, which derives the worker count from `--jobs`. Use a positive integer
-    /// to request a fixed worker count independent of `--jobs` for reproducibility.
+    /// Defaults to `1` for reproducible seeded campaigns. Use `auto` to derive the worker count
+    /// from `--jobs`, or a positive integer for an explicit worker count.
     pub workers: InvariantWorkers,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
@@ -149,7 +154,7 @@ impl Default for InvariantConfig {
         Self {
             runs: 256,
             depth: 500,
-            workers: InvariantWorkers::Auto,
+            workers: InvariantWorkers::default(),
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
@@ -199,6 +204,12 @@ mod tests {
             serde_json::from_str::<InvariantWorkers>(r#""4""#).unwrap(),
             InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap())
         );
+    }
+
+    #[test]
+    fn invariant_workers_default_to_one() {
+        assert_eq!(InvariantWorkers::default(), InvariantWorkers::Fixed(NonZeroUsize::MIN));
+        assert_eq!(InvariantConfig::default().workers, InvariantWorkers::Fixed(NonZeroUsize::MIN));
     }
 
     #[test]

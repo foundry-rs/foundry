@@ -195,7 +195,7 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
-    /// Number of workers to use for invariant test campaigns.
+    /// Number of workers to use for invariant test campaigns, or `auto` to derive from `--jobs`.
     #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
     pub invariant_workers: Option<InvariantWorkers>,
 
