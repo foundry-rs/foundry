@@ -66,6 +66,32 @@ fn debugger_dump_hint() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{TuiFallbackReason, debugger_dump_hint, non_interactive_debugger_message};
+    use crate::{DebugNode, Debugger};
+    use std::{env, ffi::OsString};
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = env::var_os(key);
+            unsafe { env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.previous {
+                    Some(value) => env::set_var(self.key, value),
+                    None => env::remove_var(self.key),
+                }
+            }
+        }
+    }
 
     #[test]
     fn fallback_message_includes_reason() {
@@ -77,5 +103,21 @@ mod tests {
     #[test]
     fn dump_hint_includes_dump_flag() {
         assert!(debugger_dump_hint().contains("--dump <PATH>"));
+    }
+
+    #[test]
+    fn debugger_tui_falls_back_in_ci_with_dump_hint() {
+        let _ci = EnvVarGuard::set("CI", "1");
+        let mut debugger = Debugger::new(
+            vec![DebugNode::default()],
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+
+        let message = debugger.try_run_tui().unwrap_err().to_string();
+
+        assert!(message.contains("running in CI"));
+        assert!(message.contains("--dump <PATH>"));
     }
 }
