@@ -7,6 +7,11 @@ interface OrdinaryDelegatecall {
     function delegatecall(bytes calldata data) external returns (bool);
 }
 
+interface OverloadedDelegatecallFactory {
+    function target(uint256 id) external returns (address);
+    function target(bytes calldata data) external returns (OrdinaryDelegatecall);
+}
+
 contract ControlledDelegatecall {
     struct OrdinaryDelegatecallHolder {
         OrdinaryDelegatecall target;
@@ -18,6 +23,7 @@ contract ControlledDelegatecall {
     mapping(address => address) public plugins;
     OrdinaryDelegatecallHolder ordinaryHolder;
     OrdinaryDelegatecall[] ordinaryTargets;
+    OverloadedDelegatecallFactory overloadedFactory;
 
     constructor(address _trusted) {
         trustedImplementation = _trusted;
@@ -96,6 +102,10 @@ contract ControlledDelegatecall {
 
     function ordinaryDelegatecallFromArray(uint256 index, bytes calldata data) external returns (bool ok) {
         ok = ordinaryTargets[index].delegatecall(data);
+    }
+
+    function ordinaryDelegatecallFromOverload(bytes calldata data) external returns (bool ok) {
+        ok = overloadedFactory.target(data).delegatecall(data);
     }
 
     function delegateToGuarded(address target, bytes calldata data) external returns (bool ok) {
@@ -278,6 +288,14 @@ contract ControlledDelegatecall {
             target = TRUSTED;
         } while (false);
         (ok,) = target.delegatecall(data);
+    }
+
+    function delegateAfterDoWhileConditionSideEffect(bytes calldata data) external returns (bool ok) {
+        address target;
+        do {
+            target = TRUSTED;
+        } while ((target = msg.sender) != address(0));
+        (ok,) = target.delegatecall(data); //~WARN: delegatecall target is not provably trusted
     }
 
     modifier onlyOwner() {

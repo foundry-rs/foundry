@@ -414,6 +414,9 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                             break;
                         }
                     }
+                    if let Some(cond) = do_while_lowered_condition(block.stmts) {
+                        let _ = self.visit_expr(cond);
+                    }
                 } else {
                     self.visit_isolated(block.stmts);
                 }
@@ -609,6 +612,7 @@ fn expr_type<'hir>(
         ExprKind::Payable(_) => Some(TypeKind::Elementary(ElementaryType::Address(true))),
         ExprKind::Lit(lit) => match &lit.kind {
             LitKind::Address(_) => Some(TypeKind::Elementary(ElementaryType::Address(false))),
+            LitKind::Bool(_) => Some(TypeKind::Elementary(ElementaryType::Bool)),
             _ => None,
         },
         ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
@@ -655,12 +659,12 @@ fn expr_type<'hir>(
                 }
                 match expr_type(hir, contract, base)? {
                     TypeKind::Custom(ItemId::Contract(cid)) => {
-                        let arity = args.len();
-                        let contract = hir.contract(cid);
-                        let bases: &[hir::ContractId] = if contract.linearization_failed() {
+                        let receiver_contract = hir.contract(cid);
+                        let bases: &[hir::ContractId] = if receiver_contract.linearization_failed()
+                        {
                             std::slice::from_ref(&cid)
                         } else {
-                            contract.linearized_bases
+                            receiver_contract.linearized_bases
                         };
                         let mut fallback: Option<TypeKind<'_>> = None;
                         for &bid in bases {
@@ -668,7 +672,7 @@ fn expr_type<'hir>(
                                 let func = hir.function(fid);
                                 if func.name.is_none_or(|n| n.name != member.name)
                                     || func.returns.len() != 1
-                                    || func.parameters.len() != arity
+                                    || !args_match(hir, contract, args, func.parameters)
                                 {
                                     continue;
                                 }
@@ -758,7 +762,13 @@ fn member_call_return_type<'hir>(
         let ty = match res {
             Res::Builtin(Builtin::This) => {
                 let cid = contract?;
-                named_single_return_type(hir, std::slice::from_ref(&cid), member.name, args.len())
+                named_single_return_type(
+                    hir,
+                    contract,
+                    std::slice::from_ref(&cid),
+                    member.name,
+                    args,
+                )
             }
             Res::Builtin(Builtin::Super) => {
                 let cid = contract?;
@@ -768,14 +778,19 @@ fn member_call_return_type<'hir>(
                 }
                 named_single_return_type(
                     hir,
+                    contract,
                     &call_site.linearized_bases[1..],
                     member.name,
-                    args.len(),
+                    args,
                 )
             }
-            Res::Item(ItemId::Contract(cid)) => {
-                named_single_return_type(hir, std::slice::from_ref(cid), member.name, args.len())
-            }
+            Res::Item(ItemId::Contract(cid)) => named_single_return_type(
+                hir,
+                contract,
+                std::slice::from_ref(cid),
+                member.name,
+                args,
+            ),
             _ => continue,
         };
         if let Some(ty) = ty {
@@ -787,22 +802,85 @@ fn member_call_return_type<'hir>(
 
 fn named_single_return_type<'hir>(
     hir: &'hir hir::Hir<'hir>,
+    call_site_contract: Option<hir::ContractId>,
     contracts: &[hir::ContractId],
     name: Symbol,
-    arity: usize,
+    args: &CallArgs<'hir>,
 ) -> Option<hir::TypeKind<'hir>> {
     for &cid in contracts {
         for fid in hir.contract(cid).all_functions() {
             let func = hir.function(fid);
             if func.name.is_some_and(|n| n.name == name)
                 && func.returns.len() == 1
-                && func.parameters.len() == arity
+                && args_match(hir, call_site_contract, args, func.parameters)
             {
                 return Some(hir.variable(func.returns[0]).ty.kind.clone());
             }
         }
     }
     None
+}
+
+fn args_match<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    contract: Option<hir::ContractId>,
+    args: &CallArgs<'hir>,
+    params: &[hir::VariableId],
+) -> bool {
+    if args.len() != params.len() {
+        return false;
+    }
+    let compatible = |arg: &hir::Expr<'hir>, param: hir::VariableId| -> bool {
+        match expr_type(hir, contract, arg) {
+            Some(arg_ty) => types_compatible(&arg_ty, &hir.variable(param).ty.kind),
+            None => true,
+        }
+    };
+    match &args.kind {
+        hir::CallArgsKind::Unnamed(exprs) => {
+            exprs.iter().zip(params.iter()).all(|(arg, &param)| compatible(arg, param))
+        }
+        hir::CallArgsKind::Named(named) => named.iter().all(|arg| {
+            let Some(&param) = params
+                .iter()
+                .find(|&&param| hir.variable(param).name.is_some_and(|n| n.name == arg.name.name))
+            else {
+                return false;
+            };
+            compatible(&arg.value, param)
+        }),
+    }
+}
+
+fn types_compatible(arg: &hir::TypeKind<'_>, param: &hir::TypeKind<'_>) -> bool {
+    match (arg, param) {
+        (
+            TypeKind::Elementary(ElementaryType::Address(arg_payable)),
+            TypeKind::Elementary(ElementaryType::Address(param_payable)),
+        ) => !param_payable || *arg_payable,
+        (
+            TypeKind::Custom(ItemId::Contract(_)),
+            TypeKind::Elementary(ElementaryType::Address(_)),
+        ) => true,
+        (TypeKind::Array(arg), TypeKind::Array(param)) => {
+            arg.size.is_some() == param.size.is_some()
+                && types_compatible(&arg.element.kind, &param.element.kind)
+        }
+        (TypeKind::Mapping(arg), TypeKind::Mapping(param)) => {
+            types_compatible(&arg.key.kind, &param.key.kind)
+                && types_compatible(&arg.value.kind, &param.value.kind)
+        }
+        (TypeKind::Function(arg), TypeKind::Function(param)) => {
+            arg.visibility == param.visibility
+                && arg.state_mutability == param.state_mutability
+                && arg.parameters.len() == param.parameters.len()
+                && arg.returns.len() == param.returns.len()
+        }
+        (TypeKind::Elementary(arg), TypeKind::Elementary(param)) => arg == param,
+        (TypeKind::Custom(arg), TypeKind::Custom(param)) => arg == param,
+        (TypeKind::Err(_), _) | (_, TypeKind::Err(_)) => true,
+        _ => false,
+    }
 }
 
 fn callee_no_arg_returns(
@@ -1107,6 +1185,15 @@ fn do_while_user_stmts<'a, 'hir>(stmts: &'a [hir::Stmt<'hir>]) -> &'a [hir::Stmt
         return rest;
     }
     stmts
+}
+
+fn do_while_lowered_condition<'hir>(
+    stmts: &'hir [hir::Stmt<'hir>],
+) -> Option<&'hir hir::Expr<'hir>> {
+    let last = stmts.last()?;
+    let StmtKind::If(cond, then_stmt, else_stmt) = &last.kind else { return None };
+    (is_break_stmt(then_stmt) || else_stmt.as_ref().is_some_and(|stmt| is_break_stmt(stmt)))
+        .then_some(*cond)
 }
 
 fn is_break_stmt(stmt: &hir::Stmt<'_>) -> bool {
