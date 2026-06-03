@@ -32,27 +32,40 @@ Matching EIP-3156 flash-loan repayments (`onFlashLoan` followed by a pull-back o
 
 ### Scope
 
-The check is intraprocedural and same-variable. It flags one permit-then-`transferFrom`
-flow inside a single function body and correlates the token, owner, and spender by the
-underlying variable, with the following normalisations applied to both sides of the
-correlation:
+The check is intraprocedural. It flags one permit-then-`transferFrom` flow inside a
+single function body and correlates the token, owner, and spender by the underlying
+variable, with the following normalisations applied to both sides of the correlation:
 
 - elementary type casts (`address(x)`), interface / contract casts (`IERC20(rawToken)`),
   `payable(...)` wraps, and parentheses are stripped;
+- local var-to-var copies (`IERC20 t = token; ...`, `address from2 = from; ...`) are
+  tracked as aliases, so the permit and the sink still correlate when one side is a copy;
 - local aliases of `address(this)` (e.g. `address self = address(this); permit(..., self, ...)`)
-  are recognised as the permit spender;
+  and no-arg helpers whose body is `return address(this);` are recognised as the permit
+  spender;
 - the `using SafeTransferLib for address` member form is treated as a sink.
 
-Dead code after a top-level `return` / `revert` is skipped, and inline
+Dead code after a top-level `return` / `revert` is skipped — including function bodies
+whose modifier prefix definitely exits before `_;`. Inline
 `// forge-lint: disable-next-line(arbitrary-send-erc20-permit)` suppresses a single sink.
 
-Patterns the check does **not** classify as the permit-variant (the underlying call
-may still be reported by `arbitrary-send-erc20` when the sink itself is unguarded)
-include: copies of the token or owner into another variable
-(`IERC20 t = token; ...`, `address from2 = from; ...`), permits issued from a
-struct / array / mapping receiver (`cfg.token.permit(...)`), permits issued through
-a library wrapper (`SafeERC20.safePermit(...)`), and permits issued inside a called
-helper / modifier / parent contract.
+Additionally supported correlations:
+
+- struct-field token receivers (`cfg.token.permit(...)` then `cfg.token.transferFrom(...)`)
+  match via a `(base var, field name)` key;
+- the library wrapper `SafeERC20.safePermit(token, ...)` is treated as an EIP-2612
+  permit on the `token` argument when the receiver is a library;
+- immutable / constant state vars proven equal to `address(this)` or `msg.sender`
+  by their declaration initializer or constructor body are recognised as such at
+  the start of every function;
+- internal calls to functions of the same contract drop facts about every state
+  variable the callee (or one nested level of internal callees) assigns to, so a
+  prior permit is no longer trusted after the receiver may have been swapped.
+
+Patterns the check still does **not** classify as the permit-variant (the
+underlying call may still be reported by `arbitrary-send-erc20` when the sink
+itself is unguarded) include permits issued inside a called helper / modifier /
+parent contract.
 
 Permits inside `for` / `while` loop bodies do **not** establish facts visible after
 the loop (the analyzer treats their execution count as possibly zero), so a

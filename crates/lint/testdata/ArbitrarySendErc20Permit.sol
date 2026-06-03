@@ -67,6 +67,10 @@ library SafeTransferLib {
     }
 }
 
+struct Config {
+    IERC20 token;
+}
+
 contract ArbitrarySendErc20Permit {
     using SafeERC20 for IERC20;
     using SafeTransferLib for address;
@@ -76,13 +80,20 @@ contract ArbitrarySendErc20Permit {
     IERC721 public nft;
     address public owner;
     address public immutable trustedOwner;
+    address public immutable vault;
+    Config public cfg;
 
     constructor(address _trustedOwner) {
         trustedOwner = _trustedOwner;
+        vault = address(this);
     }
 
     function _msgSender() internal view returns (address) {
         return msg.sender;
+    }
+
+    function _self() internal view returns (address) {
+        return address(this);
     }
 
     modifier onlySelf(address f) {
@@ -98,6 +109,12 @@ contract ArbitrarySendErc20Permit {
     // Rewrites its param: the local fact must NOT be hoisted to the caller's var.
     modifier rewriteSpender(address spender) {
         spender = address(this);
+        _;
+    }
+
+    // Prefix definitely exits — the wrapped function body is unreachable.
+    modifier neverRunsBody() {
+        return;
         _;
     }
 
@@ -1021,5 +1038,209 @@ contract ArbitrarySendErc20Permit {
         token.permit(from, address(this), a, deadline, v, r, s);
         // forge-lint: disable-next-line(arbitrary-send-erc20-permit)
         token.transferFrom(from, to, a);
+    }
+
+    // Every catch always reverts, so post-try retains the permit set by `t.expr`.
+    function badPermitTryAllCatchesRevert(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        try token.permit(from, address(this), a, deadline, v, r, s) {} catch {
+            revert("permit failed");
+        }
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // do-while runs at least once and the only exit is after the permit.
+    function badPermitDoWhileBreakAfterPermit(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        do {
+            token.permit(from, address(this), a, deadline, v, r, s);
+            break;
+        } while (true);
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // Permit's owner is a local alias of the sink's `from`.
+    function badPermitOwnerAlias(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        address ownerAlias = from;
+        token.permit(ownerAlias, address(this), a, deadline, v, r, s);
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // Reverse: sink's `from` is the alias of the permit's owner.
+    function badPermitOwnerAliasReverse(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        address from2 = from;
+        token.permit(from, address(this), a, deadline, v, r, s);
+        token.transferFrom(from2, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // Sink receiver `t` is a local alias of the permit's token.
+    function badPermitTokenAlias(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        IERC20 t = token;
+        token.permit(from, address(this), a, deadline, v, r, s);
+        t.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // No-arg helper returning `address(this)` is recognised as the permit spender.
+    function badPermitHelperSelfSpender(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        token.permit(from, _self(), a, deadline, v, r, s);
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // Modifier prefix definitely exits; body is unreachable.
+    function okModifierKillsBody(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public neverRunsBody {
+        token.permit(from, address(this), a, deadline, v, r, s);
+        token.transferFrom(from, to, a);
+    }
+
+    // `repayment = amount + fee` satisfies the flash-repayment consumer as a sum-alias.
+    function okPermitFlashRepaymentSumAlias(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        uint256 repayment = amount + fee;
+        token.permit(address(receiver), address(this), repayment, deadline, v, r, s);
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), repayment);
+    }
+
+    // Reassigning the alias kills it; sink no longer correlates with the permit.
+    function okPermitOwnerAliasReassigned(
+        address from,
+        address other,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        address ownerAlias = from;
+        token.permit(ownerAlias, address(this), a, deadline, v, r, s);
+        ownerAlias = other;
+        token.transferFrom(ownerAlias, to, a);
+    }
+
+    // Permit and sink both go through `cfg.token` (struct-field token receiver).
+    function badPermitStructFieldToken(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        cfg.token.permit(from, address(this), a, deadline, v, r, s);
+        cfg.token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // Library wrapper `SafeERC20.safePermit(token, ...)`; later raw transferFrom on the
+    // same token must correlate via the library-form permit match.
+    function badPermitSafeWrapperFollowedBySink(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        SafeERC20.safePermit(token, from, address(this), a, deadline, v, r, s);
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+    }
+
+    // Internal call reassigns the token state var; the prior permit no longer covers it.
+    function _switchToken() internal {
+        token = other;
+    }
+    function okPermitInternalCallSwitchesToken(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        token.permit(from, address(this), a, deadline, v, r, s);
+        _switchToken();
+        token.transferFrom(from, to, a);
+    }
+
+    // Immutable seeded from constructor with `address(this)`; flash-loan repayment
+    // to that immutable must be accepted as self.
+    function okPermitFlashRepaymentToVault(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        token.permit(address(receiver), address(this), amount + fee, deadline, v, r, s);
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), vault, amount + fee);
     }
 }
