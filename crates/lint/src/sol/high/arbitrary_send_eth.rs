@@ -1201,7 +1201,7 @@ impl<'hir> SelfAliasAnalysis<'hir> {
         for bid in contract_ids {
             let fids: Vec<_> = self.hir.contract(bid).all_functions().collect();
             for fid in fids {
-                if !self.hir.function(fid).name.is_some_and(|n| n.name == member.name) {
+                if self.hir.function(fid).name.is_none_or(|n| n.name != member.name) {
                     continue;
                 }
                 if function_no_arg_returns(self.hir, fid, &mut |e| {
