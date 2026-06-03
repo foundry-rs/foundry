@@ -524,16 +524,19 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
-    /// Applies Tempo's safe default beneficiary for forked nodes when the user
-    /// has not supplied a genesis coinbase.
+    /// Applies Tempo's safe default beneficiary for forked nodes while preserving
+    /// explicit coinbase selections.
     pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
-        if self.networks.is_tempo() && !self.fork_urls.is_empty() && self.genesis.is_none() {
+        if self.networks.is_tempo()
+            && !self.fork_urls.is_empty()
+            && evm_env.block_env.beneficiary.is_zero()
+        {
             // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
             // Forked transactions with the default zero beneficiary can therefore
             // fail fee collection before producing a receipt. Use the same neutral
             // fee-recipient sentinel as Tempo's simulation path so validator token
-            // lookup falls back to the default PathUSD token unless the user
-            // explicitly supplied a genesis coinbase.
+            // lookup falls back to the default PathUSD token unless the user has
+            // explicitly supplied a non-zero coinbase.
             evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
         }
     }
@@ -1216,6 +1219,8 @@ impl NodeConfig {
             }
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
+
+        self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let genesis = GenesisConfig {
             number: self.get_genesis_number(),

@@ -10,6 +10,7 @@ use std::num::NonZeroU64;
 
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
+use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address};
 use alloy_provider::{Provider, ext::TxPoolApi};
@@ -74,6 +75,51 @@ async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
     }))
     .await
     .unwrap();
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_reset_to_fork_preserves_explicit_coinbase() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let custom_coinbase = address!("0x1111111111111111111111111111111111111111");
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_set_coinbase(custom_coinbase).await.unwrap();
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, custom_coinbase);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_with_default_genesis_uses_fee_manager_beneficiary() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_genesis(Some(Genesis::default())),
+    )
+    .await;
 
     api.mine_one().await;
     let latest_block = handle
