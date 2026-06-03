@@ -23,7 +23,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
-    fn check_function_with_gcx(
+    fn check_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,

@@ -7,6 +7,7 @@ use solar::{
     ast::{self, LitKind},
     interface::{Span, Symbol, data_structures::Never, kw, sym},
     sema::{
+        Gcx,
         builtins::Builtin,
         hir::{
             self, CallArgs, ElementaryType, ExprKind, FunctionId, FunctionKind, ItemId, LoopSource,
@@ -27,6 +28,7 @@ impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
     fn check_function(
         &mut self,
         ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -572,10 +574,10 @@ const fn var_is_address_like(var: &hir::Variable<'_>) -> bool {
     )
 }
 
-fn receiver_is_address(
-    hir: &hir::Hir<'_>,
+fn receiver_is_address<'hir>(
+    hir: &'hir hir::Hir<'hir>,
     contract: Option<hir::ContractId>,
-    expr: &hir::Expr<'_>,
+    expr: &'hir hir::Expr<'hir>,
 ) -> bool {
     matches!(expr_type(hir, contract, expr), Some(TypeKind::Elementary(ElementaryType::Address(_))))
 }
@@ -883,10 +885,10 @@ fn types_compatible(arg: &hir::TypeKind<'_>, param: &hir::TypeKind<'_>) -> bool 
     }
 }
 
-fn callee_no_arg_returns(
-    hir: &hir::Hir<'_>,
-    callee: &hir::Expr<'_>,
-    pred: impl Fn(&hir::Expr<'_>) -> bool,
+fn callee_no_arg_returns<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    callee: &'hir hir::Expr<'hir>,
+    mut pred: impl FnMut(&'hir hir::Expr<'hir>) -> bool,
 ) -> bool {
     let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
     let fids: Vec<_> = reses
@@ -897,16 +899,17 @@ fn callee_no_arg_returns(
         })
         .collect();
     let [fid] = fids.as_slice() else { return false };
-    function_is_statically_trusted(hir.function(*fid)) && function_no_arg_returns(hir, *fid, pred)
+    function_is_statically_trusted(hir.function(*fid))
+        && function_no_arg_returns(hir, *fid, &mut pred)
 }
 
 const fn function_is_statically_trusted(func: &hir::Function<'_>) -> bool {
     !func.virtual_ && !func.override_
 }
 
-fn collect_modifier_safety(
-    hir: &hir::Hir<'_>,
-    invocation: &hir::Modifier<'_>,
+fn collect_modifier_safety<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    invocation: &'hir hir::Modifier<'hir>,
     out_safe: &mut HashSet<hir::VariableId>,
 ) {
     let ItemId::Function(fid) = invocation.id else { return };
@@ -1045,10 +1048,10 @@ impl<'hir> Visit<'hir> for AssignedParamCollector<'_, 'hir> {
     }
 }
 
-fn function_no_arg_returns(
-    hir: &hir::Hir<'_>,
+fn function_no_arg_returns<'hir>(
+    hir: &'hir hir::Hir<'hir>,
     fid: FunctionId,
-    pred: impl Fn(&hir::Expr<'_>) -> bool,
+    pred: &mut impl FnMut(&'hir hir::Expr<'hir>) -> bool,
 ) -> bool {
     let func = hir.function(fid);
     let Some(body) = func.body else { return false };
@@ -1147,7 +1150,7 @@ fn expr_has_fact_side_effect(expr: &hir::Expr<'_>) -> bool {
             expr_has_fact_side_effect(callee)
                 || args.exprs().any(expr_has_fact_side_effect)
                 || options.is_some_and(|options| {
-                    options.iter().any(|arg| expr_has_fact_side_effect(&arg.value))
+                    options.args.iter().any(|arg| expr_has_fact_side_effect(&arg.value))
                 })
         }
         ExprKind::Index(base, index) => {
@@ -1158,7 +1161,9 @@ fn expr_has_fact_side_effect(expr: &hir::Expr<'_>) -> bool {
                 || start.is_some_and(expr_has_fact_side_effect)
                 || end.is_some_and(expr_has_fact_side_effect)
         }
-        ExprKind::Member(base, _) | ExprKind::Payable(base) => expr_has_fact_side_effect(base),
+        ExprKind::Member(base, _) | ExprKind::Payable(base) | ExprKind::YulMember(base, _) => {
+            expr_has_fact_side_effect(base)
+        }
         ExprKind::Ternary(cond, then_expr, else_expr) => {
             expr_has_fact_side_effect(cond)
                 || expr_has_fact_side_effect(then_expr)
