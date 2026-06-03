@@ -9,7 +9,11 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-use std::{io::Write, path::PathBuf, str::FromStr};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 mod core;
 mod fuzz;
@@ -2695,6 +2699,14 @@ contract ForkDebugTest {{
         target.set(7);
         require(target.value() == 7, "value");
     }}
+
+    /// forge-config: default.fuzz.runs = 1
+    function testDebugForkTargetFuzz(uint256 newValue) public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(newValue);
+        require(target.value() == newValue, "value");
+    }}
 }}
 "#
         ),
@@ -2704,22 +2716,37 @@ contract ForkDebugTest {{
     cmd.forge_fuse().args([
         "test",
         "--mt",
-        "testDebugForkTarget",
+        "^testDebugForkTarget\\(\\)$",
         "--debug",
         "--dump",
         dump_path.to_str().unwrap(),
     ]);
     cmd.assert_success();
+    assert_debug_dump_identifies_contract(&dump_path, &deployed, "ForkDebugTarget");
 
+    let fuzz_dump_path = prj.root().join("fuzz_dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^testDebugForkTargetFuzz\\(uint256\\)$",
+        "--debug",
+        "--dump",
+        fuzz_dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&fuzz_dump_path, &deployed, "ForkDebugTarget");
+});
+
+fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
     let dump: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
     let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
-    let target_identified = identified.iter().any(|(address, name)| {
-        address.eq_ignore_ascii_case(&deployed)
-            && name.as_str().is_some_and(|name| name == "ForkDebugTarget")
+    let target_identified = identified.iter().any(|(identified_address, name)| {
+        identified_address.eq_ignore_ascii_case(address)
+            && name.as_str().is_some_and(|name| name == contract_name)
     });
     assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
-});
+}
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
