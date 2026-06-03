@@ -114,7 +114,7 @@ mod invariant;
 pub use invariant::InvariantConfig;
 
 mod coverage;
-pub use coverage::{CoverageConfig, CoverageReportKind};
+pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
 
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};

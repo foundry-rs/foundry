@@ -14,11 +14,11 @@ use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
 };
-use foundry_config::{Config, CoverageConfig, CoverageReportKind};
+use foundry_config::{Config, CoverageConfig, CoverageReportKind, parse_lcov_version};
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
-use semver::{Version, VersionReq};
+use semver::Version;
 use std::path::{Path, PathBuf};
 
 // Loads project's figment and merges the build cli arguments into it
@@ -472,20 +472,6 @@ impl BytecodeData {
     pub fn find_anchors(&self, source_analysis: &SourceAnalysis) -> Vec<ItemAnchor> {
         find_anchors(&self.bytecode, &self.source_map, &self.ic_pc_map, source_analysis)
     }
-}
-
-fn parse_lcov_version(s: &str) -> Result<Version, String> {
-    let vr = VersionReq::parse(&format!("={s}")).map_err(|e| e.to_string())?;
-    let [c] = &vr.comparators[..] else {
-        return Err("invalid version".to_string());
-    };
-    if c.op != semver::Op::Exact {
-        return Err("invalid version".to_string());
-    }
-    if !c.pre.is_empty() {
-        return Err("pre-releases are not supported".to_string());
-    }
-    Ok(Version::new(c.major, c.minor.unwrap_or(0), c.patch.unwrap_or(0)))
 }
 
 #[cfg(test)]
