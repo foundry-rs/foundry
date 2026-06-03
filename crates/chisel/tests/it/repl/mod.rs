@@ -47,6 +47,8 @@ repl_test!(hex_string_interpretation, |repl| {
 repl_test!(hex_literal_inspection_type, |repl| {
     repl.sendln("hex\"6869\"");
     repl.expect("Type: dynamic bytes");
+    repl.sendln("(hex\"6869\")");
+    repl.expect("Type: dynamic bytes");
 });
 
 // Test cheatcodes availability.

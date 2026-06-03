@@ -415,6 +415,7 @@ fn solar_expr_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, expr: &Expr<'_>) -> 
     // `expr` is the inspected expression inside Chisel's generated `abi.encode(...)` call. Solar
     // currently reports hex string literals as `StringLiteral`, but solc ABI-encodes
     // `hex"..."` literals as dynamic bytes in that context.
+    let expr = expr.peel_parens();
     if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..)))
     {
         return Some(DynSolType::Bytes);
