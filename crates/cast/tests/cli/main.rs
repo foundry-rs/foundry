@@ -3458,6 +3458,7 @@ contract LocalProjectScript is Script {
 
     cmd.args([
         "script",
+        "--no-dynamic-test-linking",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",

@@ -394,7 +394,9 @@ contract InvariantSequenceLenTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 ...
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 1)

@@ -4225,9 +4225,15 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
         config.fuzz.runs = 1;
     });
 
-    cmd.args(["test", "--match-test", "test_Increment", "--gas-report"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "test",
+        "--match-test",
+        "test_Increment",
+        "--gas-report",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
 ╭----------------------------------+-----------------+-------+--------+-------+---------╮
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
