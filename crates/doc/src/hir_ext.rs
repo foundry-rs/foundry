@@ -604,7 +604,10 @@ fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
                     last_section = Some(LastSection::Param);
                 }
                 NatSpecKind::Return { name } => {
-                    result.returns.push((name.as_str().to_string(), content));
+                    result.returns.push((
+                        name.map(|name| name.as_str().to_string()).unwrap_or_default(),
+                        content,
+                    ));
                     last_section = Some(LastSection::Return);
                 }
                 _ => {}

@@ -777,7 +777,10 @@ fn collect_comments(
                     last_section = Some(LastSection::Param);
                 }
                 NatSpecKind::Return { name } => {
-                    data.returns.push((name.as_str().to_string(), content));
+                    data.returns.push((
+                        name.map(|name| name.as_str().to_string()).unwrap_or_default(),
+                        content,
+                    ));
                     last_section = Some(LastSection::Return);
                 }
                 NatSpecKind::Inheritdoc { .. } => {} // resolved separately via HIR
