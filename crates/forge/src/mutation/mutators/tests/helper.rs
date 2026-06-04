@@ -47,6 +47,7 @@ pub trait MutatorTester {
             )?;
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
+            drop(parser);
 
             let mut mutant_visitor = MutantVisitor::new_with_mutators(
                 PathBuf::from("test.sol"),

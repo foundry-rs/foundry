@@ -270,6 +270,7 @@ contract Test {
                 })
                 .unwrap();
             let ast = parser.parse_file().map_err(|e| e.emit()).unwrap();
+            drop(parser);
             let mut visitor = MutantVisitor::new_with_mutators(
                 path,
                 vec![Box::new(FailingExprMutator), Box::new(PassingExprMutator)],
