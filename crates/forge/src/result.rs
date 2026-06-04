@@ -157,10 +157,7 @@ impl TestOutcome {
     }
 
     fn invariant_workers_hint(&self) -> Option<usize> {
-        let mut workers = self
-            .failures()
-            .filter(|(_, result)| result.kind.is_invariant())
-            .map(|(_, result)| result.invariant_workers.max(1));
+        let mut workers = self.failures().filter_map(|(_, result)| result.kind.invariant_workers());
         let first = workers.next()?;
         (first > 1 && workers.all(|workers| workers == first)).then_some(first)
     }
@@ -295,11 +292,11 @@ mod tests {
                             runs: 0,
                             calls: 0,
                             reverts: 0,
+                            workers: *workers,
                             metrics: Map::new(),
                             failed_corpus_replays: 0,
                             optimization_best_value: None,
                         },
-                        invariant_workers: *workers,
                         ..Default::default()
                     },
                 )
@@ -621,10 +618,6 @@ pub struct TestResult {
     /// `Assertion Tests` section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_handler_failures: Vec<InvariantFailure>,
-
-    /// Actual worker count used by this invariant campaign.
-    #[serde(skip)]
-    pub invariant_workers: usize,
 
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
@@ -1093,6 +1086,7 @@ impl TestResult {
             runs: 1,
             calls: 1,
             reverts: 1,
+            workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
@@ -1117,6 +1111,7 @@ impl TestResult {
             runs: 1,
             calls: 1,
             reverts: 1,
+            workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
@@ -1138,6 +1133,7 @@ impl TestResult {
             runs: 0,
             calls: 0,
             reverts: 0,
+            workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
@@ -1169,6 +1165,7 @@ impl TestResult {
             runs: cases.len(),
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
             reverts,
+            workers: workers.max(1),
             metrics,
             failed_corpus_replays,
             optimization_best_value,
@@ -1184,7 +1181,6 @@ impl TestResult {
         self.invariant_failure_dir = invariant_failure_dir;
         self.invariant_count = invariant_count;
         self.invariant_handler_failures = invariant_handler_failures;
-        self.invariant_workers = workers.max(1);
         // `counterexample` is only used by the renderer for optimization mode (the "best
         // sequence" rendered on success). Invariant check-mode failures live entirely in
         // `invariant_failures`; `reason`/`counterexample` stay `None` for invariant tests.
@@ -1433,6 +1429,9 @@ pub enum TestKind {
         runs: usize,
         calls: usize,
         reverts: usize,
+        /// Actual worker count used by this invariant campaign.
+        #[serde(default = "default_invariant_workers")]
+        workers: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
@@ -1461,6 +1460,14 @@ impl TestKind {
         matches!(self, Self::Invariant { .. })
     }
 
+    /// Actual invariant campaign worker count, if this is an invariant test.
+    pub const fn invariant_workers(&self) -> Option<usize> {
+        match self {
+            Self::Invariant { workers, .. } => Some(*workers),
+            _ => None,
+        }
+    }
+
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
         match self {
@@ -1477,6 +1484,7 @@ impl TestKind {
                 runs,
                 calls,
                 reverts,
+                workers: _,
                 metrics: _,
                 failed_corpus_replays,
                 optimization_best_value,
@@ -1500,6 +1508,10 @@ impl TestKind {
             }
         }
     }
+}
+
+const fn default_invariant_workers() -> usize {
+    1
 }
 
 /// The result of a test setup.
