@@ -71,6 +71,47 @@ contract RecursiveCacheKeyRepro {
     }
 }
 
+contract ModifierArgReachabilityRepro {
+    event Tick();
+
+    bool flag;
+
+    function ext() external returns (bool) {
+        flag = true;
+        return true;
+    }
+
+    modifier m(bool ok) {
+        _;
+    }
+
+    function entry(uint256 depth, bool useCache) external {
+        if (useCache) {
+            f(depth);
+            return;
+        }
+        c(depth);
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function f(uint256 depth) internal {
+        if (depth > 0) {
+            c(depth - 1);
+        }
+        hh();
+    }
+
+    function hh() internal m(this.ext()) {}
+
+    function c(uint256 depth) internal {
+        h(depth);
+    }
+
+    function h(uint256 depth) internal {
+        f(depth);
+    }
+}
+
 library NotifyLib {
     function notifyVia(IExternal d, uint256 v) internal {
         d.notify(v);

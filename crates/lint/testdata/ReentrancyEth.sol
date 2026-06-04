@@ -238,3 +238,33 @@ contract ReentrancyEthNameOnlyGuard {
         _;
     }
 }
+
+contract ReentrancyEthRecursiveStackRepro {
+    uint256 x;
+
+    function entry(bool flag) public {
+        if (flag) {
+            a(1);
+            return;
+        }
+        c(1);
+        x = 1;
+    }
+
+    function a(uint256 depth) internal {
+        if (depth > 0) {
+            c(depth - 1);
+        }
+        uint256 y = x;
+        (bool ok,) = msg.sender.call{value: y}(""); //~WARN: uncapped ETH transfer can be reentered before `x` is updated
+        require(ok);
+    }
+
+    function c(uint256 depth) internal {
+        h(depth);
+    }
+
+    function h(uint256 depth) internal {
+        a(depth);
+    }
+}

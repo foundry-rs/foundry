@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::helper_cache::HelperAnalysisCache},
+    sol::{
+        Severity, SolLint,
+        analysis::helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
+    },
 };
 use solar::{
     ast::LitKind,
@@ -20,8 +23,6 @@ use solar::{
     },
 };
 use std::collections::{HashMap, HashSet};
-
-const INLINE_HELPER_CACHE_LIMIT: usize = 4096;
 
 declare_forge_lint!(
     REENTRANCY_EVENTS,
@@ -159,7 +160,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             hir,
             enclosing_contract,
             call_stack: Vec::new(),
-            inline_cache: HelperAnalysisCache::new(INLINE_HELPER_CACHE_LIMIT),
+            inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
             external_call_reachability: HashMap::new(),
             emitted: HashSet::new(),
             suppress_inline_reports: false,
@@ -611,6 +612,18 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let mut may_reach = false;
         let mut cut_recursive_edge = false;
         for modifier in func.modifiers {
+            for arg in modifier.args.exprs() {
+                let (arg_may_reach, arg_cut_recursive_edge) =
+                    self.expr_may_reach_external_call(arg, seen);
+                cut_recursive_edge |= arg_cut_recursive_edge;
+                if arg_may_reach {
+                    may_reach = true;
+                    break;
+                }
+            }
+            if may_reach {
+                break;
+            }
             if let Some(modifier_id) = modifier.id.as_function() {
                 let (modifier_may_reach, modifier_cut_recursive_edge) =
                     self.helper_may_reach_external_call_inner(modifier_id, seen);
@@ -842,7 +855,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         (false, cut_recursive_edge)
     }
 
-    fn any_may_reach_external_call<const N: usize>(results: [(bool, bool); N]) -> (bool, bool) {
+    fn any_may_reach_external_call(
+        results: impl IntoIterator<Item = (bool, bool)>,
+    ) -> (bool, bool) {
         let mut cut_recursive_edge = false;
         for (may_reach, result_cut_recursive_edge) in results {
             cut_recursive_edge |= result_cut_recursive_edge;

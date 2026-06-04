@@ -3,6 +3,8 @@ use std::{
     hash::Hash,
 };
 
+pub const DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT: usize = 65_536;
+
 /// Bounded memo table for lint analyses that inline internal helper calls.
 #[derive(Debug)]
 pub struct HelperAnalysisCache<K, V> {
