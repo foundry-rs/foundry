@@ -159,7 +159,7 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
@@ -183,6 +183,7 @@ use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
+    extend_tempo_precompiles,
     storage::StorageCtx,
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
@@ -587,7 +588,8 @@ impl<N: Network> Backend<N> {
         }
 
         // Extend with configured network precompiles.
-        precompiles_map.extend(self.networks.precompiles());
+        precompiles_map
+            .extend(self.networks.precompiles(self.is_tempo().then(|| self.tempo_hardfork())));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
@@ -1169,6 +1171,15 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    fn inject_tempo_precompiles(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        cfg_env: &CfgEnv<TempoHardfork>,
+    ) {
+        self.inject_precompiles(precompiles);
+        extend_tempo_precompiles(precompiles, cfg_env);
+    }
+
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
     /// to [`HaltReason`] so all call sites share a single halt-reason type.
     fn transact_with_inspector_ref<'db, I, DB>(
@@ -1283,7 +1294,8 @@ impl<N: Network> Backend<N> {
             tempo_env,
             inspector,
         );
-        self.inject_precompiles(evm.precompiles_mut());
+        let cfg = evm.cfg.clone();
+        self.inject_tempo_precompiles(evm.precompiles_mut(), &cfg);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {

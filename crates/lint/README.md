@@ -12,6 +12,8 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
   - `arbitrary-send-erc20`: Flags `transferFrom`/`safeTransferFrom` calls whose `from` argument is not provably `msg.sender` or `address(this)`.
+  - `arbitrary-send-erc20-permit`: Flags arbitrary `transferFrom` calls preceded by a covering `permit`; on non-permit tokens with a fallback (e.g. WETH) the permit silently succeeds and previously-approved tokens can be drained.
+  - `controlled-delegatecall`: Flags `delegatecall` calls whose target is not provably trusted.
   - `encode-packed-collision`: Flags `abi.encodePacked()` calls with multiple dynamic-type arguments (`string`, `bytes`, dynamic arrays) that can produce hash collisions.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-eth`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
@@ -23,6 +25,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
+  - `reentrancy-no-eth`: Flags non-ETH external calls followed by writes to state that was read before the call.
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.

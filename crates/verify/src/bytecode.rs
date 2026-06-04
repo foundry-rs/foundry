@@ -214,7 +214,7 @@ impl VerifyBytecodeArgs {
         }
 
         if !shell::is_json() {
-            sh_println!(
+            sh_status!(
                 "Verifying bytecode for contract {} at address {}",
                 self.contract.name,
                 self.address

@@ -19,7 +19,10 @@ use alloy_primitives::{
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
     EvmEnv, FoundryBlock, FoundryTransaction,
-    backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
+    backend::{
+        Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
+        GLOBAL_FAIL_SLOT,
+    },
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
@@ -556,12 +559,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
         };
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
             stack,
             result,
-            backend.has_state_snapshot_failure(),
+            &backend,
+            has_state_snapshot_failure,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -588,12 +593,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
         };
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
             stack,
             result,
-            backend.has_state_snapshot_failure(),
+            &*backend,
+            has_state_snapshot_failure,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -984,6 +991,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub labels: AddressHashMap<String>,
     /// The traces of the call
     pub traces: Option<SparsedTraceArena>,
+    /// Runtime bytecodes for contracts seen in the trace, used by debug source mapping.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// The line coverage info collected during the call
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
@@ -1025,6 +1034,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             logs: Vec::new(),
             labels: HashMap::default(),
             traces: None,
+            debug_bytecodes: HashMap::default(),
             line_coverage: None,
             edge_coverage: None,
             evm_cmp_values: None,
@@ -1250,6 +1260,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     tx_env: TxEnvFor<FEN>,
     inspector: InspectorStack<FEN>,
     ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
+    db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult<FEN>> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
@@ -1284,6 +1295,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         chisel_state,
         reverter,
     } = inspector.collect();
+    let debug_bytecodes = collect_debug_bytecodes(traces.as_ref(), db);
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -1305,6 +1317,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         logs,
         labels,
         traces,
+        debug_bytecodes,
         line_coverage,
         edge_coverage,
         evm_cmp_values,
@@ -1319,6 +1332,32 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         chisel_state,
         reverter,
     })
+}
+
+fn collect_debug_bytecodes(
+    traces: Option<&SparsedTraceArena>,
+    db: &dyn DatabaseRef<Error = DatabaseError>,
+) -> AddressHashMap<Bytes> {
+    let mut bytecodes = HashMap::default();
+    let Some(traces) = traces else { return bytecodes };
+
+    for node in traces.arena.nodes() {
+        let address = node.trace.address;
+        if bytecodes.contains_key(&address) {
+            continue;
+        }
+
+        let Ok(Some(account)) = db.basic_ref(address) else { continue };
+        let code: Option<Bytecode> =
+            account.code.or_else(|| db.code_by_hash_ref(account.code_hash).ok());
+        let code: Bytes = code.map(|code| code.original_bytes()).unwrap_or_default();
+
+        if !code.is_empty() {
+            bytecodes.insert(address, code);
+        }
+    }
+
+    bytecodes
 }
 
 /// Timer for a fuzz test.

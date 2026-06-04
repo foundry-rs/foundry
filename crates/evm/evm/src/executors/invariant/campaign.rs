@@ -1,9 +1,20 @@
-use super::{InvariantFuzzError, InvariantFuzzTestResult, InvariantMetrics};
+use super::{
+    FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
+    InvariantFuzzTestResult, InvariantMetrics,
+};
+use crate::executors::{EarlyExit, corpus::CampaignCorpusEntry};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 /// Immutable plan-level description for an invariant campaign.
 ///
@@ -60,6 +71,124 @@ pub struct InvariantWorkerPlan {
     pub runs: u32,
 }
 
+/// Shared state used only to coordinate invariant worker execution.
+pub struct InvariantCampaignState {
+    started_at: Instant,
+    timeout: Option<Duration>,
+    total_runs: AtomicU32,
+    total_txs: AtomicU64,
+    total_gas: AtomicU64,
+    terminal_stop: AtomicBool,
+    global_early_exit: EarlyExit,
+    last_metrics_report: Mutex<Instant>,
+    failure_metrics: Mutex<CampaignFailureMetrics>,
+}
+
+#[derive(Default)]
+struct CampaignFailureMetrics {
+    metrics: InvariantFailureMetrics,
+    handler_sites: HashSet<(Address, Selector)>,
+}
+
+impl InvariantCampaignState {
+    pub fn new(early_exit: EarlyExit, timeout: Option<u32>) -> Self {
+        let started_at = Instant::now();
+        Self {
+            started_at,
+            timeout: timeout.map(|timeout| Duration::from_secs(timeout.into())),
+            total_runs: AtomicU32::new(0),
+            total_txs: AtomicU64::new(0),
+            total_gas: AtomicU64::new(0),
+            terminal_stop: AtomicBool::new(false),
+            global_early_exit: early_exit,
+            last_metrics_report: Mutex::new(started_at),
+            failure_metrics: Mutex::new(CampaignFailureMetrics::default()),
+        }
+    }
+
+    pub fn increment_runs(&self) -> u32 {
+        self.total_runs.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    #[cfg(test)]
+    pub fn total_runs(&self) -> u32 {
+        self.total_runs.load(Ordering::Relaxed)
+    }
+
+    pub fn record_call(&self, gas_used: u64) {
+        self.total_txs.fetch_add(1, Ordering::Relaxed);
+        self.total_gas.fetch_add(gas_used, Ordering::Relaxed);
+    }
+
+    pub fn throughput_totals(&self) -> (u64, u64) {
+        (self.total_txs.load(Ordering::Relaxed), self.total_gas.load(Ordering::Relaxed))
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        self.started_at.elapsed()
+    }
+
+    pub const fn is_timed_campaign(&self) -> bool {
+        self.timeout.is_some()
+    }
+
+    pub fn is_timed_out(&self) -> bool {
+        self.timeout.is_some_and(|duration| self.elapsed() > duration)
+    }
+
+    pub fn should_stop(&self) -> bool {
+        self.global_early_exit.should_stop()
+            || self.terminal_stop.load(Ordering::Relaxed)
+            || self.is_timed_out()
+    }
+
+    pub fn request_terminal_stop(&self) {
+        self.terminal_stop.store(true, Ordering::Relaxed);
+    }
+
+    pub fn should_emit_metrics_report(&self, interval: Duration) -> bool {
+        let mut last_report =
+            self.last_metrics_report.lock().expect("metrics report lock poisoned");
+        if last_report.elapsed() <= interval {
+            return false;
+        }
+
+        *last_report = Instant::now();
+        true
+    }
+
+    pub(super) fn record_invariant_failure(
+        &self,
+        invariant_name: &str,
+        target: &str,
+        reason: &str,
+    ) {
+        let mut failure_metrics =
+            self.failure_metrics.lock().expect("failure metrics lock poisoned");
+        if !failure_metrics.metrics.unique_failures.contains(invariant_name) {
+            failure_metrics.metrics.record_failure(invariant_name, target, reason);
+        }
+    }
+
+    pub(super) fn sync_handler_failures(&self, failures: &InvariantFailures) {
+        let mut failure_metrics =
+            self.failure_metrics.lock().expect("failure metrics lock poisoned");
+        for key in failures.failures.keys() {
+            let FailureKey::Handler(addr, selector) = key else { continue };
+            failure_metrics.handler_sites.insert((*addr, *selector));
+        }
+        failure_metrics.metrics.broken_handlers = failure_metrics.handler_sites.len();
+    }
+
+    pub(super) fn failure_metrics(&self) -> InvariantFailureMetrics {
+        self.failure_metrics.lock().expect("failure metrics lock poisoned").metrics.clone()
+    }
+
+    pub const fn early_exit(&self) -> &EarlyExit {
+        &self.global_early_exit
+    }
+}
+
 /// Output produced by one invariant worker.
 ///
 /// This is a data envelope for aggregation only. It does not imply that this module executed the
@@ -68,11 +197,13 @@ pub struct InvariantWorkerPlan {
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
     pub result: InvariantFuzzTestResult,
+    pub corpus_entries: Vec<CampaignCorpusEntry>,
 }
 
 impl InvariantWorkerOutput {
+    #[cfg(test)]
     pub const fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
-        Self { plan, result }
+        Self { plan, result, corpus_entries: Vec::new() }
     }
 }
 
@@ -103,50 +234,83 @@ impl InvariantCampaignAggregator {
     }
 
     /// Validates the collected worker ranges and folds them into one logical campaign result.
-    pub fn finish(mut self) -> Result<InvariantFuzzTestResult> {
+    #[cfg(test)]
+    pub fn finish(self) -> Result<InvariantFuzzTestResult> {
+        Ok(self.finish_with_corpus_entries()?.0)
+    }
+
+    /// Validates the collected worker ranges and folds them into one logical campaign result with
+    /// corpus artifacts selected in logical worker order.
+    pub fn finish_with_corpus_entries(
+        mut self,
+    ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
         ensure_outputs_cover_campaign(self.spec, &self.outputs)?;
-        ensure_master_only_fields(&self.outputs)?;
+        fold_outputs(self.outputs)
+    }
 
-        let mut errors = HashMap::default();
-        let mut handler_errors = HashMap::default();
-        let mut cases = Vec::new();
-        let mut reverts = 0;
-        let mut last_run_inputs = Vec::new();
-        let mut gas_report_traces = Vec::new();
-        let mut line_coverage = None;
-        let mut metrics = HashMap::default();
-        let failed_corpus_replays = self
-            .outputs
-            .iter()
-            .find(|output| output.plan.worker_id == 0)
-            .expect("master worker output was validated")
-            .result
-            .failed_corpus_replays;
-        let mut optimization_best = None;
+    /// Folds timeout worker outputs without requiring full logical campaign coverage.
+    ///
+    /// Timeout campaigns share a wall-clock deadline across workers. When the deadline hits, any
+    /// worker may have completed fewer than its assigned runs, so the original static ranges can
+    /// contain gaps. The merge still validates worker identity and preserves deterministic worker
+    /// order, but final run count is derived from the completed cases.
+    pub fn finish_partial_with_corpus_entries(
+        mut self,
+    ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+        ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
-        for InvariantWorkerOutput { result, .. } in self.outputs {
-            for (invariant, error) in result.errors {
-                errors.entry(invariant).or_insert(error);
-            }
-            merge_handler_errors(&mut handler_errors, result.handler_errors);
-            cases.extend(result.cases);
-            reverts += result.reverts;
-            last_run_inputs = result.last_run_inputs;
-            gas_report_traces.extend(result.gas_report_traces);
-            HitMaps::merge_opt(&mut line_coverage, result.line_coverage);
-            merge_metrics(&mut metrics, result.metrics);
-            merge_optimization(
-                &mut optimization_best,
-                result.optimization_best_value,
-                result.optimization_best_sequence,
-            );
+        self.outputs.sort_by_key(|output| output.plan.first_global_run);
+        ensure_worker_ids_are_valid(&self.outputs)?;
+        fold_outputs(self.outputs)
+    }
+}
+
+fn fold_outputs(
+    outputs: Vec<InvariantWorkerOutput>,
+) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+    let workers = outputs.len();
+    let mut errors = HashMap::default();
+    let mut handler_errors = HashMap::default();
+    let mut cases = Vec::new();
+    let mut reverts = 0;
+    let mut last_run_inputs = Vec::new();
+    let mut gas_report_traces = Vec::new();
+    let mut line_coverage = None;
+    let mut metrics = HashMap::default();
+    let mut corpus_entries = Vec::new();
+    let mut failed_corpus_replays = 0;
+    let mut optimization_best = None;
+
+    for InvariantWorkerOutput { plan, result, corpus_entries: worker_entries } in outputs {
+        if plan.worker_id == 0 {
+            failed_corpus_replays = result.failed_corpus_replays;
         }
-        let (optimization_best_value, optimization_best_sequence) =
-            optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
-        Ok(InvariantFuzzTestResult::new(
+        for (invariant, error) in result.errors {
+            errors.entry(invariant).or_insert(error);
+        }
+        merge_handler_errors(&mut handler_errors, result.handler_errors);
+        corpus_entries.extend(worker_entries);
+        cases.extend(result.cases);
+        reverts += result.reverts;
+        if !result.last_run_inputs.is_empty() {
+            last_run_inputs = result.last_run_inputs;
+        }
+        gas_report_traces.extend(result.gas_report_traces);
+        HitMaps::merge_opt(&mut line_coverage, result.line_coverage);
+        merge_metrics(&mut metrics, result.metrics);
+        merge_optimization(
+            &mut optimization_best,
+            result.optimization_best_value,
+            result.optimization_best_sequence,
+        );
+    }
+    let (optimization_best_value, optimization_best_sequence) =
+        optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
+    Ok((
+        InvariantFuzzTestResult::new(
             errors,
             handler_errors,
             cases,
@@ -156,10 +320,12 @@ impl InvariantCampaignAggregator {
             line_coverage,
             metrics,
             failed_corpus_replays,
+            workers,
             optimization_best_value,
             optimization_best_sequence,
-        ))
-    }
+        ),
+        corpus_entries,
+    ))
 }
 
 fn ensure_outputs_cover_campaign(
@@ -208,16 +374,6 @@ fn ensure_worker_ids_are_valid(outputs: &[InvariantWorkerOutput]) -> Result<()> 
     }
 
     ensure!(seen.contains(&0), "missing invariant master worker output");
-    Ok(())
-}
-
-fn ensure_master_only_fields(outputs: &[InvariantWorkerOutput]) -> Result<()> {
-    for output in outputs {
-        ensure!(
-            output.plan.worker_id == 0 || output.result.failed_corpus_replays == 0,
-            "non-master invariant worker reported failed corpus replays"
-        );
-    }
     Ok(())
 }
 
@@ -294,6 +450,7 @@ mod tests {
             None,
             HashMap::default(),
             failed_corpus_replays,
+            1,
             None,
             Vec::new(),
         )
@@ -450,6 +607,31 @@ mod tests {
     }
 
     #[test]
+    fn campaign_state_stops_after_terminal_request() {
+        let state = InvariantCampaignState::new(EarlyExit::new(false), None);
+        assert!(!state.should_stop());
+
+        state.request_terminal_stop();
+
+        assert!(state.should_stop());
+    }
+
+    #[test]
+    fn campaign_state_uses_shared_timeout_and_global_throughput() {
+        let state = InvariantCampaignState::new(EarlyExit::new(false), Some(0));
+        std::thread::sleep(Duration::from_millis(1));
+
+        assert!(state.is_timed_campaign());
+        assert!(state.should_stop());
+
+        state.record_call(20);
+        state.record_call(30);
+        assert_eq!(state.throughput_totals(), (2, 50));
+        assert_eq!(state.increment_runs(), 1);
+        assert_eq!(state.total_runs(), 1);
+    }
+
+    #[test]
     fn aggregator_returns_single_worker_result_without_rewriting() {
         let spec = InvariantCampaignSpec::new(1);
         let worker = InvariantWorkerOutput::new(one_worker_plan(1), empty_result(2, 3));
@@ -541,6 +723,67 @@ mod tests {
         let coverage = result.line_coverage.unwrap();
         assert_eq!(coverage.get(&B256::ZERO).unwrap().get(7).unwrap().get(), 6);
         assert_eq!(result.failed_corpus_replays, 4);
+    }
+
+    #[test]
+    fn timeout_aggregator_accepts_partial_outputs_with_range_gaps() {
+        fn result_with_cases(
+            gases: &[u64],
+            failed_corpus_replays: usize,
+        ) -> InvariantFuzzTestResult {
+            let mut result = empty_result(0, failed_corpus_replays);
+            result.cases = gases
+                .iter()
+                .map(|&gas| FuzzedCases::new(vec![FuzzCase { gas, stipend: 0 }]))
+                .collect();
+            result.last_run_inputs = gases.last().map_or_else(Vec::new, |_| vec![basic_tx(0x44)]);
+            result
+        }
+
+        let spec = InvariantCampaignSpec::new(10);
+        let outputs = [
+            InvariantWorkerOutput::new(
+                InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 2 },
+                result_with_cases(&[10, 11], 5),
+            ),
+            InvariantWorkerOutput::new(
+                InvariantWorkerPlan { worker_id: 1, first_global_run: 4, runs: 0 },
+                result_with_cases(&[], 0),
+            ),
+            InvariantWorkerOutput::new(
+                InvariantWorkerPlan { worker_id: 2, first_global_run: 7, runs: 1 },
+                result_with_cases(&[20], 0),
+            ),
+        ];
+
+        let mut strict = InvariantCampaignAggregator::new(spec);
+        for output in outputs {
+            strict.push(output);
+        }
+        let err = strict.finish().unwrap_err();
+        assert!(err.to_string().contains("do not cover the logical campaign"));
+
+        let mut partial = InvariantCampaignAggregator::new(spec);
+        partial.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 2 },
+            result_with_cases(&[10, 11], 5),
+        ));
+        partial.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 4, runs: 0 },
+            result_with_cases(&[], 0),
+        ));
+        partial.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 2, first_global_run: 7, runs: 1 },
+            result_with_cases(&[20], 0),
+        ));
+
+        let (result, corpus_entries) = partial.finish_partial_with_corpus_entries().unwrap();
+
+        let merged_case_gas =
+            result.cases.iter().map(|cases| cases.last().unwrap().gas).collect::<Vec<_>>();
+        assert_eq!(merged_case_gas, vec![10, 11, 20]);
+        assert_eq!(result.failed_corpus_replays, 5);
+        assert!(corpus_entries.is_empty());
     }
 
     #[test]
@@ -735,7 +978,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregator_rejects_failed_corpus_replays_from_non_master_worker() {
+    fn aggregator_uses_master_failed_corpus_replays() {
         let spec = InvariantCampaignSpec::new(2);
         let plans = [
             InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
@@ -743,15 +986,15 @@ mod tests {
         ];
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator.push(InvariantWorkerOutput::new(plans[0], empty_result(0, 0)));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], empty_result(0, 7)));
         aggregator.push(InvariantWorkerOutput::new(plans[1], empty_result(0, 1)));
-        let err = aggregator.finish().unwrap_err();
+        let result = aggregator.finish().unwrap();
 
-        assert!(err.to_string().contains("non-master invariant worker reported"));
+        assert_eq!(result.failed_corpus_replays, 7);
     }
 
     #[test]
-    fn aggregator_takes_failed_corpus_replays_from_master_worker() {
+    fn aggregator_uses_master_failed_corpus_replays_independent_of_output_order() {
         let spec = InvariantCampaignSpec::new(2);
         let plans = [
             InvariantWorkerPlan { worker_id: 1, first_global_run: 0, runs: 1 },

@@ -26,6 +26,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_nested_contract(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _id: hir::ContractId,
     ) {
@@ -54,6 +55,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_contract(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _contract: &'hir hir::Contract<'hir>,
     ) {
@@ -61,18 +63,10 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_function(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _func: &'hir hir::Function<'hir>,
     ) {
-    }
-    fn check_function_with_gcx(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
-    ) {
-        self.check_function(ctx, hir, func);
     }
     fn check_modifier(
         &mut self,
@@ -91,6 +85,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_expr(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _expr: &'hir hir::Expr<'hir>,
     ) {
@@ -105,6 +100,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_stmt(
         &mut self,
         _ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _stmt: &'hir hir::Stmt<'hir>,
     ) {
@@ -166,7 +162,7 @@ where
 
     fn visit_nested_contract(&mut self, id: hir::ContractId) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_nested_contract(self.ctx, self.hir, id);
+            pass.check_nested_contract(self.ctx, self.gcx, self.hir, id);
         }
         self.walk_nested_contract(id)
     }
@@ -190,14 +186,14 @@ where
         contract: &'hir hir::Contract<'hir>,
     ) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_contract(self.ctx, self.hir, contract);
+            pass.check_contract(self.ctx, self.gcx, self.hir, contract);
         }
         self.walk_contract(contract)
     }
 
     fn visit_function(&mut self, func: &'hir hir::Function<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_function_with_gcx(self.ctx, self.gcx, self.hir, func);
+            pass.check_function(self.ctx, self.gcx, self.hir, func);
         }
         self.walk_function(func)
     }
@@ -228,7 +224,7 @@ where
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_expr(self.ctx, self.hir, expr);
+            pass.check_expr(self.ctx, self.gcx, self.hir, expr);
         }
         self.walk_expr(expr)
     }
@@ -245,7 +241,7 @@ where
 
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_stmt(self.ctx, self.hir, stmt);
+            pass.check_stmt(self.ctx, self.gcx, self.hir, stmt);
         }
         self.walk_stmt(stmt)
     }
@@ -303,6 +299,7 @@ mod tests {
         fn check_nested_contract(
             &mut self,
             _ctx: &LintContext,
+            _gcx: solar::sema::Gcx<'hir>,
             _hir: &'hir hir::Hir<'hir>,
             _id: hir::ContractId,
         ) {

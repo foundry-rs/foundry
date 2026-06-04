@@ -205,6 +205,23 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     );
 });
 
+forgetest_init!(machine_mode_rejects_mutation_testing, |_prj, cmd| {
+    let assert = cmd.args(["--machine", "test", "--mutate"]).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--mutate"), "missing --mutate mention: {envelope}");
+    assert_eq!(
+        envelope["errors"][0]["details"]["unsupported_flags"],
+        serde_json::json!(["--mutate"]),
+        "missing structured unsupported_flags details: {envelope}"
+    );
+});
+
 // `--allow-failure`: success envelope with `data.failed > 0` and exit 0.
 forgetest_init!(machine_mode_allow_failure_emits_success_envelope, |prj, cmd| {
     prj.add_test(
@@ -425,5 +442,95 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
+"#]]);
+});
+
+forgetest_init!(rerun_filters_same_named_tests_by_contract, |prj, cmd| {
+    prj.add_test(
+        "RerunSameName.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract FailingSameNameTest is Test {
+    function testSharedName() public {
+        assertTrue(false);
+    }
+}
+
+contract PassingSameNameTest is Test {
+    function testSharedName() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/RerunSameName.t.sol:FailingSameNameTest
+[FAIL: assertion failed] testSharedName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSameName.t.sol:PassingSameNameTest
+[PASS] testSharedName() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+...
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSameName.t.sol:FailingSameNameTest
+[FAIL: assertion failed] testSharedName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+...
+"#]]);
+});
+
+forgetest_init!(rerun_with_only_setup_failure_runs_all_tests, |prj, cmd| {
+    prj.add_test(
+        "RerunSetupFail.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract OnlySetupFails is Test {
+    function setUp() public {
+        assertTrue(false);
+    }
+
+    function testA() public {
+        assertTrue(true);
+    }
+}
+
+contract HealthyContract is Test {
+    function testC() public {
+        assertTrue(true);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-j1"]).assert_failure();
+
+    // With no replayable failures recorded, `--rerun` falls back to a regular run instead of
+    // selecting zero tests.
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/RerunSetupFail.t.sol:HealthyContract
+[PASS] testC() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/RerunSetupFail.t.sol:OnlySetupFails
+[FAIL: assertion failed] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+...
 "#]]);
 });
