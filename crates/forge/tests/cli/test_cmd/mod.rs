@@ -665,6 +665,77 @@ contract MultiTest is Test {
     );
 });
 
+// Regression: a `setUp()` failure in one suite must trip the global fail-fast flag so that
+// long-running invariant campaigns in sibling suites (dispatched in parallel via rayon) exit
+// at their next run boundary instead of running to their configured timeout.
+forgetest_init!(fail_fast_cancels_invariant_after_setup_failure, |prj, cmd| {
+    // Need at least 2 worker threads so the two suites run concurrently.
+    if std::thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+
+    // Use a very large invariant timeout so the with-fix vs without-fix behavior is
+    // dramatically different: with the fix the campaign sees `should_stop()` and exits within
+    // one fuzz sequence (~seconds); without the fix it would run for the full timeout. Same
+    // canary pattern as `test_fail_fast_config`.
+    prj.update_config(|config| {
+        config.invariant.timeout = Some(3600);
+    });
+
+    prj.add_test(
+        "BrokenSetup.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BrokenSetupTest is Test {
+    function setUp() public pure {
+        require(false, "setUp failure");
+    }
+
+    function test_Noop() public pure {}
+}
+"#,
+    );
+
+    prj.add_test(
+        "LongInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Target {
+    uint256 public x;
+    function bump() external { x += 1; }
+}
+
+contract LongInvariantTest is Test {
+    Target internal target;
+
+    function setUp() public {
+        target = new Target();
+        targetContract(address(target));
+    }
+
+    function invariant_alwaysTrue() public view {
+        require(true);
+    }
+}
+"#,
+    );
+
+    let started = std::time::Instant::now();
+    cmd.args(["test", "--fail-fast", "--mc", "BrokenSetupTest|LongInvariantTest"]).assert_failure();
+    let elapsed = started.elapsed();
+
+    // The two suites run in parallel; the broken `setUp()` reverts within milliseconds and must
+    // cancel the in-flight invariant campaign almost immediately. The 1h invariant timeout above
+    // gives us a huge margin: with the fix elapsed is ~seconds; without it elapsed approaches
+    // 1h. 60s is generous slack for CI but still catches the regression unambiguously.
+    assert!(
+        elapsed < std::time::Duration::from_secs(60),
+        "fail-fast did not cancel the in-flight invariant campaign: elapsed {elapsed:?}",
+    );
+});
+
 // https://github.com/foundry-rs/foundry/pull/6531
 forgetest_init!(fork_traces, |prj, cmd| {
     let endpoint = rpc::next_http_archive_rpc_url();
