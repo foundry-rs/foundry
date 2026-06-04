@@ -587,6 +587,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
+            // Trip the global fail-fast flag so sibling parallel suites (notably long-running
+            // invariant campaigns) observe `should_stop()` and exit at their next run boundary
+            // instead of running to their timeout.
+            self.tcfg.early_exit.record_failure();
             return SuiteResult::new(
                 start.elapsed(),
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
@@ -600,6 +604,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.contract.abi.functions().filter(|func| func.name.is_after_invariant()).collect();
         if after_invariant_fns.len() > 1 {
             // Return a single test result failure if multiple functions declared.
+            self.tcfg.early_exit.record_failure();
             return SuiteResult::new(
                 start.elapsed(),
                 [(
@@ -642,6 +647,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             })
             .collect();
         if !invalid_invariants.is_empty() {
+            self.tcfg.early_exit.record_failure();
             return SuiteResult::new(
                 start.elapsed(),
                 invalid_invariants.into_iter().collect(),
@@ -679,6 +685,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             } else {
                 "setUp()".to_string()
             };
+            self.tcfg.early_exit.record_failure();
             return SuiteResult::new(
                 start.elapsed(),
                 [(fail_msg, TestResult::setup_result(setup))].into(),
@@ -714,6 +721,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 TestResult::fail("`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string())
             };
             let test_results = test_fail_functions.map(|func| (func.signature(), fail())).collect();
+            self.tcfg.early_exit.record_failure();
             return SuiteResult::new(start.elapsed(), test_results, warnings);
         }
 
