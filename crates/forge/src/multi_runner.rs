@@ -627,7 +627,10 @@ impl MultiContractRunnerBuilder {
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                && abi.functions().any(|func| func.name.is_any_test())
+                && abi.functions().any(|func| {
+                    func.name.is_any_test()
+                        || self.config.symbolic.enabled && is_symbolic_entrypoint(func)
+                })
             {
                 linker.ensure_linked(contract, id)?;
 
