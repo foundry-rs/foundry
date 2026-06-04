@@ -119,6 +119,23 @@ additional_compiler_profiles = []
 compilation_restrictions = []
 script_execution_protection = true
 
+[profile.default.symbolic]
+enabled = false
+solver = "z3"
+timeout = 30
+max_depth = 10000
+max_paths = 1024
+invariant_depth = 10
+exploration_order = "bfs"
+max_solver_queries = 10000
+default_dynamic_length = 2
+max_dynamic_length = 256
+array_lengths = []
+max_calldata_bytes = 4096
+symbolic_call_targets = false
+dump_smt = false
+storage_layout = "solidity"
+
 [profile.default.rpc_storage_caching]
 chains = "all"
 endpoints = "all"
@@ -1458,22 +1475,6 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_block_delay": null,
     "check_interval": 1
   },
-  "coverage": {
-    "report": [
-      "summary"
-    ],
-    "lcov_version": "1.0.0",
-    "ir_minimum": false,
-    "report_file": null,
-    "include_libs": false,
-    "exclude_tests": false,
-    "skip_files": []
-  },
-  "mutation": {
-    "include_operators": [],
-    "exclude_operators": [],
-    "timeout": null
-  },
   "symbolic": {
     "enabled": false,
     "solver": "z3",
@@ -1490,6 +1491,22 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "symbolic_call_targets": false,
     "dump_smt": false,
     "storage_layout": "solidity"
+  },
+  "coverage": {
+    "report": [
+      "summary"
+    ],
+    "lcov_version": "1.0.0",
+    "ir_minimum": false,
+    "report_file": null,
+    "include_libs": false,
+    "exclude_tests": false,
+    "skip_files": []
+  },
+  "mutation": {
+    "include_operators": [],
+    "exclude_operators": [],
+    "timeout": null
   },
   "ffi": false,
   "live_logs": false,
