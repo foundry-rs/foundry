@@ -589,8 +589,9 @@ impl SessionProvider {
         // fail loudly rather than send legacy calldata to the precompile.
         if is_precompile_escrow(entry.escrow_contract) {
             return Err(MppError::InvalidConfig(
-                "precompile escrow top-up is not yet supported; raise initial deposit via \
-                 MPP_DEPOSIT"
+                "T5 precompile escrow top-up is not supported. Close the channel (or wait \
+                 for expiry) and re-run with a larger MPP_DEPOSIT. T5 cumulative_amount is \
+                 capped at uint96."
                     .to_string(),
             ));
         }
@@ -1209,16 +1210,135 @@ mod tests {
         assert!((u128::MAX - 1).checked_add(5).is_none());
     }
 
-    /// Live T5 acceptance probe. Skipped unless `FOUNDRY_MPP_T5_RPC_URL`
-    /// is set; full e2e wiring deferred until a concrete endpoint exists.
+    /// Precompile open carries the key-auth witness iff the key is not yet
+    /// provisioned (otherwise the tx reverts with "access key already exists").
     #[tokio::test]
-    #[ignore = "integration-only: requires FOUNDRY_MPP_T5_RPC_URL"]
+    async fn precompile_open_key_auth_tracks_provisioned_flag() {
+        use alloy_eips::eip2718::Decodable2718;
+        use tempo_primitives::transaction::TempoTxEnvelope;
+
+        async fn key_auth_present(provisioned: bool) -> bool {
+            let signer = mpp::PrivateKeySigner::random();
+            let signing_mode = TempoSigningMode::Keychain {
+                wallet: Address::repeat_byte(0xAA),
+                key_authorization: Some(Box::new(test_key_authorization())),
+                version: KeychainVersion::V2,
+            };
+            let provider =
+                SessionProvider::new(signer, unique_origin()).with_signing_mode(signing_mode);
+            provider.set_key_provisioned(provisioned);
+
+            let payer = provider.funding_wallet_address();
+            let opts = OpenPayloadOptions {
+                authorized_signer: None,
+                escrow_contract: TIP20_CHANNEL_RESERVE_ADDRESS,
+                payee: Address::repeat_byte(0x11),
+                currency: Address::repeat_byte(0x22),
+                deposit: 100_000,
+                initial_amount: 1_000,
+                chain_id: 4217,
+                fee_payer: false,
+            };
+            let (_entry, payload) =
+                provider.create_open_tx(payer, opts, Address::ZERO).await.expect("precompile open");
+            let SessionCredentialPayload::Open { transaction, .. } = payload else {
+                panic!("expected Open payload");
+            };
+            let tx_bytes = alloy_primitives::hex::decode(&transaction).expect("hex tx");
+            let envelope =
+                TempoTxEnvelope::decode_2718(&mut tx_bytes.as_slice()).expect("decode envelope");
+            let TempoTxEnvelope::AA(aa_signed) = envelope else {
+                panic!("expected AA envelope (0x76)");
+            };
+            aa_signed.strip_signature().key_authorization.is_some()
+        }
+
+        assert!(key_auth_present(false).await, "must include witness when not provisioned");
+        assert!(!key_auth_present(true).await, "must omit witness once provisioned");
+    }
+
+    /// Live T5 probe: pays one challenge fetched from
+    /// `FOUNDRY_MPP_T5_RPC_URL` with `FOUNDRY_MPP_T5_PRIVATE_KEY`.
+    #[tokio::test]
+    #[ignore = "integration-only: requires FOUNDRY_MPP_T5_RPC_URL + FOUNDRY_MPP_T5_PRIVATE_KEY"]
     async fn integration_pay_t5_precompile_endpoint() {
+        use mpp::protocol::core::parse_www_authenticate_all;
+
         let Ok(url) = std::env::var("FOUNDRY_MPP_T5_RPC_URL") else {
             let _ = crate::sh_eprintln!("skip: set FOUNDRY_MPP_T5_RPC_URL");
             return;
         };
-        let _ = crate::sh_eprintln!("would exercise SessionProvider::pay against {url}");
+        let Ok(key_hex) = std::env::var("FOUNDRY_MPP_T5_PRIVATE_KEY") else {
+            let _ = crate::sh_eprintln!("skip: set FOUNDRY_MPP_T5_PRIVATE_KEY");
+            return;
+        };
+
+        let signer: mpp::PrivateKeySigner = key_hex.parse().expect("invalid private key");
+        let deposit: u128 =
+            std::env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(100_000);
+        let provider = SessionProvider::new(signer, url.clone()).with_default_deposit(deposit);
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_blockNumber",
+            "params": []
+        });
+        let resp = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .body(serde_json::to_vec(&body).unwrap())
+            .send()
+            .await
+            .expect("request");
+
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            "endpoint did not return 402; not MPP-gated?"
+        );
+        let www: Vec<_> = resp
+            .headers()
+            .get_all("www-authenticate")
+            .into_iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect();
+        // Only accept a T5 precompile-escrow session challenge: filtering on
+        // `supports()` alone would pass against a legacy session endpoint.
+        let challenge = parse_www_authenticate_all(www)
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .find(|c| {
+                if c.intent.as_str() != "session"
+                    || !provider.supports(c.method.as_str(), c.intent.as_str())
+                {
+                    return false;
+                }
+                let Ok(req) = c.request.decode::<mpp::protocol::intents::SessionRequest>() else {
+                    return false;
+                };
+                req.escrow_contract().ok().and_then(|s| s.parse::<Address>().ok())
+                    == Some(TIP20_CHANNEL_RESERVE_ADDRESS)
+            })
+            .expect("no T5 precompile session challenge offered by endpoint");
+
+        let credential = provider.pay(&challenge).await.expect("pay must succeed");
+        let payload: mpp::protocol::methods::tempo::session::SessionCredentialPayload =
+            credential.payload_as().expect("session payload");
+        match payload {
+            mpp::protocol::methods::tempo::session::SessionCredentialPayload::Open {
+                channel_id,
+                ..
+            }
+            | mpp::protocol::methods::tempo::session::SessionCredentialPayload::Voucher {
+                channel_id,
+                ..
+            } => {
+                assert!(channel_id.starts_with("0x") && channel_id.len() == 66, "{channel_id}");
+            }
+            other => panic!("unexpected payload variant: {other:?}"),
+        }
     }
 
     /// `channel_key` scopes by escrow + operator so cached channels can't be
