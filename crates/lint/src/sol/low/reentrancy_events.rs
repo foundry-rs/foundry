@@ -561,7 +561,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let prev_suppress = self.suppress_inline_reports;
         self.suppress_inline_reports = suppress_inline_reports;
 
-        self.inline_cache.start(key.clone());
+        self.inline_cache.start(key);
         self.call_stack.push(func_id);
         let summary = self.analyze_callable(func, body, state.clone());
         self.call_stack.pop();
