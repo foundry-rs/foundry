@@ -228,12 +228,6 @@ async fn handle_revoke_error(
         .unwrap_or(false)
     {
         let _ = update_session_status(session_id, SessionStatus::Revoked);
-    } else if !matches!(
-        read_session_entry(session_id).ok().flatten().map(|entry| entry.status),
-        Some(SessionStatus::Revoked)
-    ) {
-        let _ =
-            update_session_status_if(session_id, SessionStatus::Revoking, SessionStatus::Failed);
     }
 }
 
@@ -486,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn revoke_submit_error_marks_revoking_session_failed() {
+    fn revoke_submit_error_keeps_revoking_session_retryable() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
@@ -510,8 +504,8 @@ mod tests {
                 handle_revoke_error(&provider, session_id, &entry).await;
 
                 let session = read_session_entry(session_id).unwrap().unwrap();
-                assert_eq!(session.status, SessionStatus::Failed);
-                assert!(session.key.is_none());
+                assert_eq!(session.status, SessionStatus::Revoking);
+                assert!(session.key.is_some());
             });
         });
     }
@@ -602,10 +596,7 @@ mod tests {
 
     fn sample_session_entry(session_id: B256, status: SessionStatus) -> SessionEntry {
         let key = match status {
-            SessionStatus::Revoking
-            | SessionStatus::Revoked
-            | SessionStatus::Expired
-            | SessionStatus::Failed => None,
+            SessionStatus::Revoked | SessionStatus::Expired | SessionStatus::Failed => None,
             _ => Some(foundry_common::tempo::SessionKeyMaterial {
                 key_type: foundry_common::tempo::KeyType::Secp256k1,
                 key: ROOT_PRIVATE_KEY.to_string(),
