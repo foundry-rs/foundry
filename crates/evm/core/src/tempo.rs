@@ -82,6 +82,34 @@ pub fn initialize_tempo_genesis_inner(
     recipient: Address,
     hardfork: TempoHardfork,
 ) -> Result<(), TempoPrecompileError> {
+    initialize_tempo_genesis_inner_with_precompiles(
+        admin,
+        recipient,
+        active_tempo_precompile_addresses(hardfork),
+    )
+}
+
+/// Inner genesis initialization for Forge's local test EVM.
+///
+/// Forge tests use sentinel bytecode to identify well-known Tempo precompile accounts, even when
+/// the current setup spec is earlier than the precompile's activation hardfork. This does not
+/// affect hardfork-aware execution, which remains handled by the precompile lookup.
+pub fn initialize_tempo_test_genesis_inner(
+    admin: Address,
+    recipient: Address,
+) -> Result<(), TempoPrecompileError> {
+    initialize_tempo_genesis_inner_with_precompiles(
+        admin,
+        recipient,
+        TEMPO_PRECOMPILE_ADDRESSES.iter().copied(),
+    )
+}
+
+fn initialize_tempo_genesis_inner_with_precompiles(
+    admin: Address,
+    recipient: Address,
+    precompiles: impl IntoIterator<Item = Address>,
+) -> Result<(), TempoPrecompileError> {
     // Idempotent: PATH_USD is the first token created during genesis; if it already exists, skip.
     if TIP20Factory::new().is_tip20(PATH_USD_ADDRESS)? {
         return Ok(());
@@ -91,7 +119,7 @@ pub fn initialize_tempo_genesis_inner(
 
     // Set sentinel bytecode for precompile addresses
     let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-    for precompile in active_tempo_precompile_addresses(hardfork) {
+    for precompile in precompiles {
         ctx.set_code(precompile, sentinel.clone())?;
     }
 
