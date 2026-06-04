@@ -23,6 +23,21 @@ contract Other {
     }
 }
 
+contract SuperTransferBase {
+    function transfer(IExternal d) public virtual {
+        d.notify(0);
+    }
+}
+
+contract SuperTransferChild is SuperTransferBase {
+    event Tick();
+
+    function emitAfterSuperTransfer(IExternal d) external {
+        super.transfer(d);
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+}
+
 library NotifyLib {
     function notifyVia(IExternal d, uint256 v) internal {
         d.notify(v);
@@ -123,6 +138,20 @@ contract ReentrancyEvents {
     }
 
     function emitAfterHelperWithCall() external {
+        _doExternalWork();
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterHelperHeavyFanout() external {
+        _doExternalWork();
+        _doExternalWork();
+        _doExternalWork();
+        _doExternalWork();
+        _doExternalWork();
+        _doExternalWork();
+        _doExternalWork();
+        _doExternalWork();
+        _doExternalWork();
         _doExternalWork();
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }

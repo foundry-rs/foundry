@@ -1,7 +1,7 @@
 use super::ReentrancyEth;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::helper_cache::HelperAnalysisCache},
 };
 use solar::{
     ast::{
@@ -18,6 +18,8 @@ use solar::{
     },
 };
 use std::collections::{BTreeSet, HashSet};
+
+const INLINE_HELPER_CACHE_LIMIT: usize = 4096;
 
 declare_forge_lint!(
     REENTRANCY_ETH,
@@ -69,20 +71,20 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
     func.kind.is_function() && matches!(func.visibility, Visibility::Public | Visibility::External)
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 struct FlowState {
     state_reads: BTreeSet<VariableId>,
     pending_calls: Vec<PendingCall>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct PendingCall {
     span: Span,
     kind: ReentrantCallKind,
     state_reads: BTreeSet<VariableId>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ReentrantCallKind {
     Eth,
     NoEth,
@@ -118,8 +120,15 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     emitted: HashSet<Span>,
     call_stack: Vec<FunctionId>,
+    inline_cache: HelperAnalysisCache<InlineCallKey, FlowState>,
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct InlineCallKey {
+    func_id: FunctionId,
+    state: FlowState,
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
@@ -130,6 +139,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             hir,
             emitted: HashSet::new(),
             call_stack: Vec::new(),
+            inline_cache: HelperAnalysisCache::new(INLINE_HELPER_CACHE_LIMIT),
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
         }
@@ -415,9 +425,23 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
+        let key = InlineCallKey { func_id, state: state.clone() };
+        if self.inline_cache.is_in_progress(&key) {
+            return;
+        }
+        if let Some(cached) = self.inline_cache.get(&key) {
+            *state = cached.clone();
+            return;
+        }
+
+        let mut after = state.clone();
+        self.inline_cache.start(key.clone());
         self.call_stack.push(func_id);
-        self.analyze_callable(func, body, state);
+        self.analyze_callable(func, body, &mut after);
         self.call_stack.pop();
+
+        self.inline_cache.finish(key, after.clone());
+        *state = after;
     }
 
     fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) {

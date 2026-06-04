@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::helper_cache::HelperAnalysisCache},
 };
 use solar::{
     ast::LitKind,
@@ -20,6 +20,8 @@ use solar::{
     },
 };
 use std::collections::HashSet;
+
+const INLINE_HELPER_CACHE_LIMIT: usize = 4096;
 
 declare_forge_lint!(
     REENTRANCY_EVENTS,
@@ -113,6 +115,13 @@ const fn merge_opt(dst: &mut Option<FlowState>, src: Option<FlowState>) {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct InlineCallKey {
+    func_id: FunctionId,
+    external_call_seen: bool,
+    suppress_inline_reports: bool,
+}
+
 struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
     gcx: Gcx<'hir>,
@@ -122,6 +131,9 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     enclosing_contract: Option<ContractId>,
     /// Call stack to break recursion when inlining internal helpers and modifiers.
     call_stack: Vec<FunctionId>,
+    /// Cached summaries for transitive helper analysis. This keeps shared helper graphs from
+    /// being rescanned for every call edge in a function.
+    inline_cache: HelperAnalysisCache<InlineCallKey, Exits>,
     /// Spans already reported, to dedupe diagnostics across paths/iterations.
     emitted: HashSet<Span>,
     /// When `true`, suppress emit diagnostics: we are inside an inlined helper that was
@@ -145,6 +157,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             hir,
             enclosing_contract,
             call_stack: Vec::new(),
+            inline_cache: HelperAnalysisCache::new(INLINE_HELPER_CACHE_LIMIT),
             emitted: HashSet::new(),
             suppress_inline_reports: false,
             expr_aborted: false,
@@ -518,18 +531,40 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
+        let suppress_inline_reports = self.suppress_inline_reports || !state.external_call_seen;
+        let key = InlineCallKey {
+            func_id,
+            external_call_seen: state.external_call_seen,
+            suppress_inline_reports,
+        };
+
+        if self.inline_cache.is_in_progress(&key) {
+            return;
+        }
+
+        if let Some(summary) = self.inline_cache.get(&key).cloned() {
+            self.apply_inline_summary(summary, state);
+            return;
+        }
+
         // Suppress diagnostics inside helpers entered with a clean state — the helper's
         // own self-pass will independently catch any intra-helper taint, avoiding
         // duplicate reports across callers.
         let prev_suppress = self.suppress_inline_reports;
-        self.suppress_inline_reports = prev_suppress || !state.external_call_seen;
+        self.suppress_inline_reports = suppress_inline_reports;
 
+        self.inline_cache.start(key);
         self.call_stack.push(func_id);
         let summary = self.analyze_callable(func, body, state.clone());
         self.call_stack.pop();
+        self.inline_cache.finish(key, summary.clone());
 
         self.suppress_inline_reports = prev_suppress;
 
+        self.apply_inline_summary(summary, state);
+    }
+
+    fn apply_inline_summary(&mut self, summary: Exits, state: &mut FlowState) {
         // Caller inherits the state of paths that return normally. If the callee has no
         // normal exits (always aborts), signal abort to the enclosing statement.
         let any_normal = summary.fallthrough.is_some() || summary.return_.is_some();

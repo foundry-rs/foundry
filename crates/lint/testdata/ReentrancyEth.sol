@@ -60,6 +60,21 @@ contract ReentrancyEth {
         balances[receiver] = 0;
     }
 
+    function helperHeavyCallThenWrite(address payable receiver) external {
+        uint256 amount = balances[receiver];
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        balances[receiver] = 0;
+    }
+
     function gasleftIsNotACap(address payable receiver) external {
         uint256 amount = balances[receiver];
         (bool ok,) = receiver.call{value: amount, gas: gasleft()}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
@@ -195,6 +210,11 @@ contract ReentrancyEth {
     }
 
     function sendValue(address payable receiver, uint256 amount) internal {
+        (bool ok,) = receiver.call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+    }
+
+    function sendValueHeavy(address payable receiver, uint256 amount) internal {
         (bool ok,) = receiver.call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
         require(ok, "transfer failed");
     }
