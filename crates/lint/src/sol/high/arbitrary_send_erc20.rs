@@ -6,9 +6,13 @@ use crate::{
 use solar::{
     ast,
     interface::{Span, data_structures::Never, kw, sym},
-    sema::hir::{
-        self, ContractKind, ElementaryType, ExprKind, ItemId, LoopSource, Res, StmtKind, StructId,
-        TypeKind, Visit,
+    sema::{
+        Gcx,
+        hir::{
+            self, ContractKind, ElementaryType, ExprKind, ItemId, LoopSource, Res, StmtKind,
+            TypeKind, Visit,
+        },
+        ty::{Ty, TyKind},
     },
 };
 use std::{
@@ -34,7 +38,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -58,15 +62,22 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         if func.modifiers.iter().any(|m| modifier_prefix_always_exits(hir, m)) {
             return;
         }
-        let mut a = Analyzer::new(hir, has_solady_lib);
+        let mut a = Analyzer::new(gcx, hir, has_solady_lib);
         // Seed `self_vars` / `safe_vars` with immutable/constant state vars proven
         // equal to `address(this)` / `msg.sender` by their declaration initializer
         // or the contract's constructor.
         if let Some(cid) = func.contract {
-            seed_immutable_facts(hir, has_solady_lib, cid, &mut a);
+            seed_immutable_facts(gcx, hir, has_solady_lib, cid, &mut a);
         }
         for m in func.modifiers {
-            collect_modifier_safety(hir, has_solady_lib, m, &mut a.safe_vars, &mut a.self_vars);
+            collect_modifier_safety(
+                gcx,
+                hir,
+                has_solady_lib,
+                m,
+                &mut a.safe_vars,
+                &mut a.self_vars,
+            );
         }
         for stmt in body.stmts {
             let _ = a.visit_stmt(stmt);
@@ -124,6 +135,7 @@ struct PendingRepayment {
 }
 
 struct Analyzer<'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     /// Variables proven safe (equal to `msg.sender` or `address(this)`) on this path.
     /// Function-locals and `immutable`/`constant` state vars only — mutable storage may be
@@ -208,8 +220,9 @@ impl FlowState {
 const HELPER_DEPTH: u8 = 3;
 
 impl<'hir> Analyzer<'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>, has_solady_lib: bool) -> Self {
+    fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>, has_solady_lib: bool) -> Self {
         Self {
+            gcx,
             hir,
             safe_vars: HashSet::new(),
             self_vars: HashSet::new(),
@@ -383,7 +396,7 @@ impl<'hir> Analyzer<'hir> {
     /// Matches EIP-2612 `token.permit(owner, <self>, value, deadline, v, r, s)`, plus
     /// the library form `Lib.safePermit(token, owner, <self>, value, deadline, v, r, s)`
     /// (OpenZeppelin-style wrapper that delegates to `token.permit`).
-    fn match_permit_call(&self, expr: &hir::Expr<'_>) -> Option<PermitRecord> {
+    fn match_permit_call(&self, expr: &'hir hir::Expr<'hir>) -> Option<PermitRecord> {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
         let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
         let name = ident.name.as_str();
@@ -416,7 +429,7 @@ impl<'hir> Analyzer<'hir> {
                 ],
             )
             && self.is_self_expr(canonical[2])
-            && let Some(cid) = receiver_contract_id(self.hir, recv)
+            && let Some(cid) = receiver_contract_id(self.gcx, recv)
             && self.hir.contract(cid).kind == ContractKind::Library
         {
             return Some(PermitRecord {
@@ -986,11 +999,12 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
             }
             ExprKind::Call(callee, ..) => {
                 // EIP-3156: a matching repayment sink consumes the recorded obligation.
-                if let Some(rep) = match_flash_loan_call(self.hir, expr) {
+                if let Some(rep) = match_flash_loan_call(self.gcx, self.hir, expr) {
                     *self.repayments.entry(rep).or_insert(0) += 1;
                 } else if let Some(p) = self.match_permit_call(expr) {
                     self.permits.insert(p);
-                } else if let Some((from, token)) = match_sink(self.hir, self.has_solady_lib, expr)
+                } else if let Some((from, token)) =
+                    match_sink(self.gcx, self.hir, self.has_solady_lib, expr)
                     && !self.is_safe(from)
                     && !self.consume_repayment(expr, from, token)
                 {
@@ -1030,7 +1044,11 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
 /// EIP-3156 `onFlashLoan(address,address,uint256,uint256,bytes) returns (bytes32)`. Only
 /// returns a record when the receiver type declares the exact sig and every tracked arg
 /// resolves to a `VariableId`; literal args yield `None`.
-fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<PendingRepayment> {
+fn match_flash_loan_call<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &hir::Hir<'hir>,
+    expr: &hir::Expr<'hir>,
+) -> Option<PendingRepayment> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     if ident.name.as_str() != "onFlashLoan" {
@@ -1038,7 +1056,7 @@ fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<Pen
     }
     let args =
         canonical_args(args.kind, &[&["initiator"], &["token"], &["amount"], &["fee"], &["data"]])?;
-    let cid = receiver_contract_id(hir, recv)?;
+    let cid = receiver_contract_id(gcx, recv)?;
     if !contract_has_function(
         hir,
         cid,
@@ -1076,6 +1094,7 @@ fn is_amount_plus_fee(expr: &hir::Expr<'_>, amount: hir::VariableId, fee: hir::V
 ///   same-named, no-return overload is excluded).
 /// - `Lib.safeTransferFrom(token, from, to, amt)` library form.
 fn match_sink<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     has_solady_lib: bool,
     expr: &'hir hir::Expr<'hir>,
@@ -1089,7 +1108,7 @@ fn match_sink<'hir>(
             canonical_args(args.kind, &[&["from"], &["to"], &["value", "amount"]])
     {
         // Contract-typed receiver: must actually declare ERC20's `transferFrom`.
-        if let Some(cid) = receiver_contract_id(hir, recv)
+        if let Some(cid) = receiver_contract_id(gcx, recv)
             && contract_has_function(
                 hir,
                 cid,
@@ -1103,7 +1122,7 @@ fn match_sink<'hir>(
         // `addr.safeTransferFrom(...)` via `using SafeTransferLib for address`. HIR doesn't
         // expose `using-for` bindings, so we proxy by requiring `SafeTransferLib` to be
         // declared in the compiled sources.
-        if name == "safeTransferFrom" && has_solady_lib && expr_is_address(hir, recv) {
+        if name == "safeTransferFrom" && has_solady_lib && expr_is_address(gcx, recv) {
             return Some((canonical[0], token_key(recv)));
         }
     }
@@ -1111,7 +1130,7 @@ fn match_sink<'hir>(
     if name == "safeTransferFrom"
         && let Some(canonical) =
             canonical_args(args.kind, &[&["token"], &["from"], &["to"], &["value", "amount"]])
-        && let Some(cid) = receiver_contract_id(hir, recv)
+        && let Some(cid) = receiver_contract_id(gcx, recv)
         && hir.contract(cid).kind == ContractKind::Library
         && library_has_safe_transfer_from(hir, cid)
     {
@@ -1141,6 +1160,7 @@ fn token_key(expr: &hir::Expr<'_>) -> Option<TokenKey> {
 /// prefix (statements before `_;`) to the caller's argument. `out_self` receives params
 /// proven equal to `address(this)`.
 fn collect_modifier_safety<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     has_solady_lib: bool,
     invocation: &hir::Modifier<'hir>,
@@ -1191,7 +1211,7 @@ fn collect_modifier_safety<'hir>(
         return;
     }
 
-    let mut a = Analyzer::new(hir, has_solady_lib);
+    let mut a = Analyzer::new(gcx, hir, has_solady_lib);
     for stmt in &body.stmts[..placeholder_idx] {
         let _ = a.visit_stmt(stmt);
     }
@@ -1213,6 +1233,7 @@ fn collect_modifier_safety<'hir>(
 /// Harvests `self_vars` / `safe_vars` facts about immutable / constant state vars
 /// of `cid`: both declaration initializers and direct constructor assignments.
 fn seed_immutable_facts<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     has_solady_lib: bool,
     cid: hir::ContractId,
@@ -1241,7 +1262,7 @@ fn seed_immutable_facts<'hir>(
             continue;
         }
         let Some(body) = f.body else { continue };
-        let mut ctor = Analyzer::new(hir, has_solady_lib);
+        let mut ctor = Analyzer::new(gcx, hir, has_solady_lib);
         for stmt in body.stmts {
             let _ = ctor.visit_stmt(stmt);
             if branch_always_exits(stmt) {
@@ -1484,88 +1505,31 @@ fn is_cast_callee(callee: &hir::Expr<'_>) -> bool {
     }
 }
 
-/// Resolves the static contract type of `recv`: a contract-typed variable, a direct contract
-/// reference (e.g. a library), an `IERC20(addr)` interface wrap, a struct field, or an
-/// array/mapping element of contract type.
-fn receiver_contract_id(hir: &hir::Hir<'_>, recv: &hir::Expr<'_>) -> Option<hir::ContractId> {
-    let recv = recv.peel_parens();
-    match &recv.kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
-            Res::Item(ItemId::Variable(vid)) => match hir.variable(*vid).ty.kind {
-                TypeKind::Custom(ItemId::Contract(cid)) => Some(cid),
-                _ => None,
-            },
-            Res::Item(ItemId::Contract(cid)) => Some(*cid),
-            _ => None,
-        }),
-        ExprKind::Call(callee, ..) => match &callee.peel_parens().kind {
-            ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
-                Res::Item(ItemId::Contract(cid)) => Some(*cid),
-                _ => None,
-            }),
-            _ => None,
-        },
-        // `cfg.token.transferFrom(...)`.
-        ExprKind::Member(base, ident) => {
-            let sid = struct_of(hir, base)?;
-            let strukt = hir.strukt(sid);
-            strukt.fields.iter().find_map(|fid| {
-                let v = hir.variable(*fid);
-                if v.name.is_some_and(|n| n.as_str() == ident.as_str())
-                    && let TypeKind::Custom(ItemId::Contract(cid)) = v.ty.kind
-                {
-                    Some(cid)
-                } else {
-                    None
-                }
-            })
-        }
-        // `tokens[i].transferFrom(...)`, `tokenMap[k].transferFrom(...)`. Direct-ident bases only.
-        ExprKind::Index(base, _) => {
-            let ExprKind::Ident(reses) = &base.peel_parens().kind else { return None };
-            let var = reses.iter().find_map(|r| match r {
-                Res::Item(ItemId::Variable(vid)) => Some(hir.variable(*vid)),
-                _ => None,
-            })?;
-            let element = match &var.ty.kind {
-                TypeKind::Array(arr) => &arr.element.kind,
-                TypeKind::Mapping(m) => &m.value.kind,
-                _ => return None,
-            };
-            match element {
-                TypeKind::Custom(ItemId::Contract(cid)) => Some(*cid),
-                _ => None,
-            }
-        }
+/// Resolves the static contract type of `recv`: a contract-typed expression, a direct contract
+/// reference (e.g. a library), or an interface/contract cast.
+fn receiver_contract_id<'hir>(gcx: Gcx<'hir>, recv: &hir::Expr<'hir>) -> Option<hir::ContractId> {
+    expr_contract_id(gcx, recv).or_else(|| direct_contract_id(recv))
+}
+
+fn expr_contract_id<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> Option<hir::ContractId> {
+    expr_ty(gcx, expr).and_then(ty_contract_id)
+}
+
+fn ty_contract_id(ty: Ty<'_>) -> Option<hir::ContractId> {
+    match ty.peel_refs().kind {
+        TyKind::Contract(id) => Some(id),
+        TyKind::Type(ty) => ty_contract_id(ty),
         _ => None,
     }
 }
 
-/// Returns the [`StructId`] of `expr` when it is a (possibly chained) struct value.
-fn struct_of(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<StructId> {
-    let expr = expr.peel_parens();
-    match &expr.kind {
+fn direct_contract_id(expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
+    match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
-            Res::Item(ItemId::Variable(vid)) => match hir.variable(*vid).ty.kind {
-                TypeKind::Custom(ItemId::Struct(sid)) => Some(sid),
-                _ => None,
-            },
+            Res::Item(ItemId::Contract(cid)) => Some(*cid),
             _ => None,
         }),
-        ExprKind::Member(inner, member) => {
-            let sid = struct_of(hir, inner)?;
-            let strukt = hir.strukt(sid);
-            strukt.fields.iter().find_map(|fid| {
-                let v = hir.variable(*fid);
-                if v.name.is_some_and(|n| n.as_str() == member.as_str())
-                    && let TypeKind::Custom(ItemId::Struct(inner_sid)) = v.ty.kind
-                {
-                    Some(inner_sid)
-                } else {
-                    None
-                }
-            })
-        }
+        ExprKind::Call(callee, ..) => direct_contract_id(callee),
         _ => None,
     }
 }
@@ -1629,19 +1593,17 @@ fn is_address(hir: &hir::Hir<'_>, id: hir::VariableId) -> bool {
     matches!(hir.variable(id).ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
 
-/// True when `expr`'s static type is `address` / `address payable`. Covers bare idents,
-/// `address(...)` / `payable(...)` casts, and parenthesised wraps.
-fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().any(|r| {
-            matches!(
-                r, Res::Item(ItemId::Variable(vid)) if is_address(hir, *vid)
-            )
-        }),
-        ExprKind::Call(callee, _, _) if is_address_cast(callee) => true,
-        ExprKind::Payable(_) => true,
-        _ => false,
-    }
+/// True when `expr`'s static type is `address` / `address payable`.
+fn expr_is_address<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> bool {
+    expr_ty(gcx, expr).is_some_and(ty_is_address)
+}
+
+fn expr_ty<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> Option<Ty<'hir>> {
+    gcx.type_of_expr(expr.peel_parens().id)
+}
+
+fn ty_is_address(ty: Ty<'_>) -> bool {
+    matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
 }
 
 fn is_elementary(hir: &hir::Hir<'_>, id: hir::VariableId, abi: &str) -> bool {
