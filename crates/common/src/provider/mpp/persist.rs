@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, B256};
 use foundry_wallets::{Channel, ChannelDb};
-use mpp::client::channel_ops::ChannelEntry;
+use mpp::client::channel_ops::{ChannelEntry, is_precompile_escrow};
 use std::{
     collections::HashMap,
     sync::OnceLock,
@@ -67,6 +67,12 @@ fn channel_key_from_persisted(ch: &Channel) -> String {
         Address::ZERO,
     )
     .to_lowercase()
+}
+
+/// Precompile channels aren't persisted: the `Channel` schema has no column for
+/// their `operator`, so they'd reload under a wrong `operator=ZERO` key.
+fn is_precompile_channel(ch: &Channel) -> bool {
+    matches!(ch.escrow_contract.parse::<Address>(), Ok(addr) if is_precompile_escrow(addr))
 }
 
 /// Whether a channel can still be used (active and not fully spent).
@@ -147,7 +153,7 @@ pub fn load_channels() -> HashMap<String, Channel> {
 
     let usable: HashMap<String, Channel> = channels
         .into_iter()
-        .filter(is_usable)
+        .filter(|ch| is_usable(ch) && !is_precompile_channel(ch))
         .map(|ch| {
             let key = channel_key_from_persisted(&ch);
             (key, ch)
@@ -164,12 +170,15 @@ pub fn save_channels(channels: &HashMap<String, Channel>) {
         return;
     };
 
-    for ch in channels.values() {
+    let mut saved = 0;
+    for ch in channels.values().filter(|ch| !is_precompile_channel(ch)) {
         if let Err(e) = db.upsert(ch) {
             warn!(%e, channel_id = %ch.channel_id, "failed to save channel");
+        } else {
+            saved += 1;
         }
     }
-    debug!(count = channels.len(), "saved MPP channels");
+    debug!(count = saved, "saved MPP channels");
 }
 
 /// Delete a channel from the database by its channel ID.
@@ -278,8 +287,7 @@ mod tests {
         assert!(find_channel(&channels, "missing").is_none());
     }
 
-    /// Persisted key must match the 8-field runtime shape with operator=ZERO
-    /// so legacy channels rehydrate under the same key `pay_session()` looks up.
+    /// Persisted key must match the 8-field runtime shape (operator=ZERO).
     #[test]
     fn persisted_key_matches_runtime_legacy_shape() {
         let ch = test_channel("active", "1000", "100000");
@@ -287,5 +295,14 @@ mod tests {
 
         assert_eq!(key.split(':').count(), 8);
         assert!(key.ends_with(":0x0000000000000000000000000000000000000000"));
+    }
+
+    #[test]
+    fn precompile_channels_are_not_persisted() {
+        let mut ch = test_channel("active", "1000", "100000");
+        assert!(!is_precompile_channel(&ch));
+
+        ch.escrow_contract = "0x4D50500000000000000000000000000000000000".to_string();
+        assert!(is_precompile_channel(&ch));
     }
 }

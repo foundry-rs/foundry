@@ -730,19 +730,24 @@ impl SessionProvider {
             .map_err(|_e| MppError::InvalidConfig("invalid currency address".to_string()))?;
         let amount: u128 = session_req.parse_amount()?;
 
-        // Precompile-only operator from methodDetails; missing → ZERO,
-        // malformed → error. Parsed before the cache lookup since operator
-        // participates in `channel_key`.
-        let operator = match session_req.method_details.as_ref().and_then(|v| v.get("operator")) {
-            None => Address::ZERO,
-            Some(v) => {
-                let s = v.as_str().ok_or_else(|| {
-                    MppError::InvalidConfig("methodDetails.operator must be a string".to_string())
-                })?;
-                s.parse::<Address>().map_err(|_| {
-                    MppError::InvalidConfig(format!("invalid operator address: {s}"))
-                })?
+        // Operator only applies to precompile escrow; legacy escrow forces ZERO
+        // so a stray `methodDetails.operator` can't fragment the cache key.
+        let operator = if is_precompile_escrow(escrow_contract) {
+            match session_req.method_details.as_ref().and_then(|v| v.get("operator")) {
+                None => Address::ZERO,
+                Some(v) => {
+                    let s = v.as_str().ok_or_else(|| {
+                        MppError::InvalidConfig(
+                            "methodDetails.operator must be a string".to_string(),
+                        )
+                    })?;
+                    s.parse::<Address>().map_err(|_| {
+                        MppError::InvalidConfig(format!("invalid operator address: {s}"))
+                    })?
+                }
             }
+        } else {
+            Address::ZERO
         };
 
         let payer = self.signing_mode.from_address(self.signer.address());
