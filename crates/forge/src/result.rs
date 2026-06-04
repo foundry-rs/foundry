@@ -322,6 +322,23 @@ mod tests {
         assert_eq!(outcome_with_failed_invariant_workers(&[2, 3]).invariant_workers_hint(), None);
         assert_eq!(outcome_with_failed_invariant_workers(&[1]).invariant_workers_hint(), None);
     }
+
+    #[test]
+    fn invariant_kind_deserializes_legacy_payload_without_workers() {
+        let kind = serde_json::from_value::<TestKind>(serde_json::json!({
+            "Invariant": {
+                "runs": 4,
+                "calls": 10,
+                "reverts": 0,
+                "metrics": {},
+                "failed_corpus_replays": 0,
+                "optimization_best_value": null
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(kind.invariant_workers(), Some(1));
+    }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
