@@ -4275,7 +4275,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--match-test", "test_Increment", "--gas-report", "--md"])
+        .args([
+            "test",
+            "--match-test",
+            "test_Increment",
+            "--gas-report",
+            "--md",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -4304,7 +4311,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--mt", "test_Increment", "--gas-report", "--json"])
+        .args([
+            "test",
+            "--mt",
+            "test_Increment",
+            "--gas-report",
+            "--json",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(
             str![[r#"

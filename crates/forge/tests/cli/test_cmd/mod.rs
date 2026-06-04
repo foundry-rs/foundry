@@ -2605,7 +2605,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
     // Check consistent traces for running with no metadata.
     cmd.forge_fuse()
-        .args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-metadata"])
+        .args([
+            "test",
+            "--mt",
+            "test_proxy_trace",
+            "-vvvv",
+            "--no-metadata",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3488,7 +3495,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
     // Show traces and logs for all tests.
     cmd.forge_fuse()
-        .args(["test", "--mc", "SuppressTracesTest", "-vvvv"])
+        .args(["test", "--mc", "SuppressTracesTest", "-vvvv", "--no-dynamic-test-linking"])
         .assert_failure()
         .stdout_eq(str![[r#"
 No files changed, compilation skipped
