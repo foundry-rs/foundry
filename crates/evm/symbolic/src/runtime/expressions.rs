@@ -1169,7 +1169,17 @@ impl BoolExpr {
     }
 
     /// Implements the `cmp` symbolic expression helper.
-    pub(crate) const fn cmp(op: BoolExprOp, left: Expr, right: Expr) -> Self {
+    pub(crate) fn cmp(op: BoolExprOp, left: Expr, right: Expr) -> Self {
+        if let (Expr::Const(left), Expr::Const(right)) = (&left, &right) {
+            return Self::Const(match op {
+                BoolExprOp::Ult => left < right,
+                BoolExprOp::Ugt => left > right,
+                BoolExprOp::Ule => left <= right,
+                BoolExprOp::Uge => left >= right,
+                BoolExprOp::Slt => slt(*left, *right),
+                BoolExprOp::Sgt => slt(*right, *left),
+            });
+        }
         Self::Cmp(op, left, right)
     }
 

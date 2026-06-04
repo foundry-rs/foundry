@@ -574,7 +574,7 @@ fn collect_cache_key_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
 }
 
 /// Returns a conservative canonical comparison for cache-key equality.
-const fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
+fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
     match op {
         BoolExprOp::Ugt => BoolExpr::cmp(BoolExprOp::Ult, right, left),
         BoolExprOp::Uge => BoolExpr::cmp(BoolExprOp::Ule, right, left),
