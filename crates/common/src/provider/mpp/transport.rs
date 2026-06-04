@@ -982,9 +982,6 @@ pub(crate) trait ResolveProvider {
     }
     fn resolve_for(&self, opts: DiscoverOptions) -> TransportResult<Self::Provider>;
     fn set_key_provisioned(&self, _provisioned: bool) {}
-    fn is_key_provisioned(&self) -> bool {
-        true
-    }
     fn clear_channels(&self) {}
     fn flush_pending(&self) {}
     fn rollback_pending(&self) {}
@@ -1038,9 +1035,6 @@ impl ResolveProvider for LazySessionProvider {
     }
     fn set_key_provisioned(&self, provisioned: bool) {
         Self::set_key_provisioned(self, provisioned)
-    }
-    fn is_key_provisioned(&self) -> bool {
-        self.inner.lock().unwrap().as_ref().is_none_or(|p| p.is_key_provisioned())
     }
     fn clear_channels(&self) {
         Self::clear_channels(self)
