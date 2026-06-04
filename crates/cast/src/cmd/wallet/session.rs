@@ -111,21 +111,23 @@ impl SessionArgs {
             root_account.ok_or_else(|| eyre::eyre!("cast wallet session requires --root"))?;
         let expires =
             expires.ok_or_else(|| eyre::eyre!("cast wallet session requires --expires"))?;
-        let for_command =
+        let command =
             for_command.ok_or_else(|| eyre::eyre!("cast wallet session requires --for"))?;
+        let command = InnerCommand::parse(command)?;
+        let scope = session_scope(scope, target, selectors)?;
         let send_tx = *send_tx;
         let chain_id = resolve_session_chain_id(&send_tx).await?;
 
-        run_for_command(
+        run_for_command(SessionRunRequest {
             root_account,
             chain_id,
             expires,
-            session_scope(scope, target, selectors)?,
+            scope,
             spend_limits,
-            for_command,
-            *tx,
+            command,
+            tx: *tx,
             send_tx,
-        )
+        })
         .await
     }
 }
@@ -190,17 +192,29 @@ impl SessionSubcommands {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_for_command(
+struct SessionRunRequest {
     root_account: Address,
     chain_id: u64,
     expires: u64,
     scope: Vec<CallScope>,
     spend_limits: Vec<SessionSpendLimit>,
-    for_command: String,
+    command: InnerCommand,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
-) -> Result<()> {
+}
+
+async fn run_for_command(request: SessionRunRequest) -> Result<()> {
+    let SessionRunRequest {
+        root_account,
+        chain_id,
+        expires,
+        scope,
+        spend_limits,
+        command,
+        tx,
+        send_tx,
+    } = request;
+
     if tx.tempo.print_sponsor_hash {
         eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
     }
@@ -217,45 +231,68 @@ async fn run_for_command(
     let session_id = entry.session_id;
     upsert_session_entry(entry)?;
 
-    let child_result = run_inner_command(&for_command, session_id);
+    let child_result = command.run(session_id);
     let revoke_result = run_revoke(session_id, false, tx, send_tx).await;
 
-    let revoke_err = revoke_result.err();
+    finish_session_run(session_id, child_result, revoke_result)
+}
 
-    match (child_result, revoke_err) {
-        (Ok(status), None) if status.success() => Ok(()),
-        (Ok(status), None) => Err(inner_command_status_error(&for_command, status)),
-        (Err(child_err), None) => Err(child_err),
-        (Ok(status), Some(revoke_err)) if status.success() => {
+fn finish_session_run(
+    session_id: B256,
+    child_result: Result<()>,
+    revoke_result: Result<()>,
+) -> Result<()> {
+    match (child_result, revoke_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(child_err), Ok(())) => Err(child_err),
+        (Ok(()), Err(revoke_err)) => {
             Err(revoke_err.wrap_err("failed to revoke Tempo session after inner command"))
         }
-        (Ok(status), Some(revoke_err)) => Err(inner_command_status_error(&for_command, status)
-            .wrap_err(format!("also failed to revoke Tempo session {session_id:?}: {revoke_err}"))),
-        (Err(child_err), Some(revoke_err)) => Err(child_err
-            .wrap_err(format!("also failed to revoke Tempo session {session_id:?}: {revoke_err}"))),
+        (Err(child_err), Err(revoke_err)) => {
+            Err(child_err.wrap_err(revoke_failure_context(session_id, &revoke_err)))
+        }
     }
 }
 
-fn run_inner_command(command: &str, session_id: B256) -> Result<ExitStatus> {
-    inner_command(command, session_id)?
-        .status()
-        .wrap_err_with(|| format!("failed to run inner command `{command}`"))
+fn revoke_failure_context(session_id: B256, err: &eyre::Report) -> String {
+    format!("also failed to revoke Tempo session {session_id:?}: {err}")
 }
 
-fn inner_command(command: &str, session_id: B256) -> Result<Command> {
-    let argv = split_for_command(command)?;
-    let (program, args) =
-        argv.split_first().ok_or_else(|| eyre::eyre!("--for command cannot be empty"))?;
-
-    let mut command = Command::new(program);
-    command.args(args).env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
-    Ok(command)
+#[derive(Debug)]
+struct InnerCommand {
+    raw: String,
+    program: String,
+    args: Vec<String>,
 }
 
-fn inner_command_status_error(command: &str, status: ExitStatus) -> eyre::Report {
-    match status.code() {
-        Some(code) => eyre::eyre!("inner command `{command}` exited with code {code}"),
-        None => eyre::eyre!("inner command `{command}` terminated by a signal"),
+impl InnerCommand {
+    fn parse(raw: String) -> Result<Self> {
+        let mut argv = split_for_command(&raw)?.into_iter();
+        let program = argv.next().ok_or_else(|| eyre::eyre!("--for command cannot be empty"))?;
+        let args = argv.collect();
+        Ok(Self { raw, program, args })
+    }
+
+    fn run(&self, session_id: B256) -> Result<()> {
+        let status = self
+            .command(session_id)
+            .status()
+            .wrap_err_with(|| format!("failed to run inner command `{}`", self.raw))?;
+
+        if status.success() { Ok(()) } else { Err(self.status_error(status)) }
+    }
+
+    fn command(&self, session_id: B256) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.args).env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
+        command
+    }
+
+    fn status_error(&self, status: ExitStatus) -> eyre::Report {
+        match status.code() {
+            Some(code) => eyre::eyre!("inner command `{}` exited with code {code}", self.raw),
+            None => eyre::eyre!("inner command `{}` terminated by a signal", self.raw),
+        }
     }
 }
 
@@ -362,10 +399,6 @@ fn split_for_command(command: &str) -> Result<Vec<String>> {
     if in_token {
         args.push(current);
     }
-    if args.is_empty() {
-        eyre::bail!("--for command cannot be empty");
-    }
-
     Ok(args)
 }
 
@@ -693,6 +726,29 @@ mod tests {
         let limit = parse_spend_limit("PathUSD=0").unwrap();
         assert_eq!(limit.token, PATH_USD_ADDRESS);
         assert_eq!(limit.amount, U256::ZERO);
+    }
+
+    #[test]
+    fn inner_command_parse_preserves_literal_argv() {
+        let raw =
+            r#"forge script "Deploy Script" --sig 'run(uint256)' value\ with\ spaces #literal"#;
+        let command = InnerCommand::parse(raw.to_string()).unwrap();
+
+        assert_eq!(command.raw, raw);
+        assert_eq!(command.program, "forge");
+        assert_eq!(
+            command.args,
+            ["script", "Deploy Script", "--sig", "run(uint256)", "value with spaces", "#literal",]
+        );
+    }
+
+    #[test]
+    fn inner_command_parse_rejects_invalid_input() {
+        let err = InnerCommand::parse("   ".to_string()).unwrap_err();
+        assert!(err.to_string().contains("--for command cannot be empty"), "{err}");
+
+        let err = InnerCommand::parse("forge 'script".to_string()).unwrap_err();
+        assert!(err.to_string().contains("unterminated"), "{err}");
     }
 
     #[test]
