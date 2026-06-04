@@ -50,18 +50,21 @@ fn global_db() -> Option<&'static ChannelDb> {
 
 /// Reconstruct the composite HashMap key from a persisted `Channel`.
 ///
-/// Mirrors `SessionProvider::channel_key()` in session.rs.
+/// Mirrors `SessionProvider::channel_key()` in session.rs. The persisted
+/// schema has no `operator` column, so we always emit `Address::ZERO` as the
+/// operator component — correct for legacy escrow rows.
 fn channel_key_from_persisted(ch: &Channel) -> String {
     let origin_hash = &alloy_primitives::keccak256(ch.origin.as_bytes()).to_string()[..18];
     format!(
-        "{}:{}:{}:{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}:{}:{}:{}",
         origin_hash,
         ch.chain_id,
         ch.payer,
         ch.authorized_signer,
         ch.payee,
         ch.token,
-        ch.escrow_contract
+        ch.escrow_contract,
+        Address::ZERO,
     )
     .to_lowercase()
 }
@@ -273,5 +276,16 @@ mod tests {
         assert!(find_channel(&channels, "usable").is_some());
         assert!(find_channel(&channels, "spent").is_none());
         assert!(find_channel(&channels, "missing").is_none());
+    }
+
+    /// Persisted key must match the 8-field runtime shape with operator=ZERO
+    /// so legacy channels rehydrate under the same key `pay_session()` looks up.
+    #[test]
+    fn persisted_key_matches_runtime_legacy_shape() {
+        let ch = test_channel("active", "1000", "100000");
+        let key = channel_key_from_persisted(&ch);
+
+        assert_eq!(key.split(':').count(), 8);
+        assert!(key.ends_with(":0x0000000000000000000000000000000000000000"));
     }
 }
