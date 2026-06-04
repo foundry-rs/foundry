@@ -13,6 +13,7 @@ use solar::{
             self, CallArgs, ElementaryType, ExprKind, FunctionId, FunctionKind, ItemId, LoopSource,
             Res, StmtKind, TypeKind, Visit,
         },
+        ty::{Ty, TyKind},
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -28,14 +29,14 @@ impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
-        let mut analyzer = Analyzer::new(hir, func.contract);
+        let mut analyzer = Analyzer::new(gcx, hir);
         for modifier in func.modifiers {
-            collect_modifier_safety(hir, modifier, &mut analyzer.safe_vars);
+            collect_modifier_safety(gcx, hir, modifier, &mut analyzer.safe_vars);
         }
         for stmt in body.stmts {
             let _ = analyzer.visit_stmt(stmt);
@@ -50,8 +51,8 @@ impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
 }
 
 struct Analyzer<'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
-    contract: Option<hir::ContractId>,
     safe_vars: HashSet<hir::VariableId>,
     hits: Vec<Span>,
 }
@@ -78,8 +79,8 @@ impl FlowState {
 const HELPER_DEPTH: u8 = 3;
 
 impl<'hir> Analyzer<'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>, contract: Option<hir::ContractId>) -> Self {
-        Self { hir, contract, safe_vars: HashSet::new(), hits: Vec::new() }
+    fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
+        Self { gcx, hir, safe_vars: HashSet::new(), hits: Vec::new() }
     }
 
     fn snapshot(&self) -> FlowState {
@@ -198,7 +199,7 @@ impl<'hir> Analyzer<'hir> {
             return false;
         };
         member.name == kw::Delegatecall
-            && receiver_is_address(self.hir, self.contract, receiver)
+            && receiver_is_address(self.gcx, receiver)
             && !self.is_trusted_target(receiver)
     }
 
@@ -574,12 +575,8 @@ const fn var_is_address_like(var: &hir::Variable<'_>) -> bool {
     )
 }
 
-fn receiver_is_address<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    contract: Option<hir::ContractId>,
-    expr: &'hir hir::Expr<'hir>,
-) -> bool {
-    matches!(expr_type(hir, contract, expr), Some(TypeKind::Elementary(ElementaryType::Address(_))))
+fn receiver_is_address<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+    gcx.type_of_expr(expr.peel_parens().id).is_some_and(ty_is_address)
 }
 
 fn is_address_like_cast_callee(callee: &hir::Expr<'_>) -> bool {
@@ -605,284 +602,8 @@ fn is_numeric_cast_callee(callee: &hir::Expr<'_>) -> bool {
     }
 }
 
-fn expr_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    contract: Option<hir::ContractId>,
-    expr: &hir::Expr<'hir>,
-) -> Option<hir::TypeKind<'hir>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Payable(_) => Some(TypeKind::Elementary(ElementaryType::Address(true))),
-        ExprKind::Lit(lit) => match &lit.kind {
-            LitKind::Address(_) => Some(TypeKind::Elementary(ElementaryType::Address(false))),
-            LitKind::Bool(_) => Some(TypeKind::Elementary(ElementaryType::Bool)),
-            _ => None,
-        },
-        ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
-            ExprKind::Type(ty) => Some(ty.kind.clone()),
-            ExprKind::New(ty) => Some(ty.kind.clone()),
-            ExprKind::Member(base, member)
-                if member.name == sym::decode && is_builtin(base, sym::abi) && args.len() == 2 =>
-            {
-                let mut args = args.exprs();
-                let _data = args.next()?;
-                let ty_arg = args.next()?;
-                let ty_expr = match &ty_arg.peel_parens().kind {
-                    ExprKind::Tuple(elems) if elems.len() == 1 => elems[0]?,
-                    _ => ty_arg,
-                };
-                match &ty_expr.peel_parens().kind {
-                    ExprKind::Type(ty) => Some(ty.kind.clone()),
-                    ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-                        Res::Item(ItemId::Contract(cid)) => {
-                            Some(TypeKind::Custom(ItemId::Contract(*cid)))
-                        }
-                        _ => None,
-                    }),
-                    _ => None,
-                }
-            }
-            ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-                Res::Item(ItemId::Contract(cid)) => Some(TypeKind::Custom(ItemId::Contract(*cid))),
-                Res::Item(ItemId::Function(fid)) => {
-                    let func = hir.function(*fid);
-                    (func.returns.len() == 1).then(|| hir.variable(func.returns[0]).ty.kind.clone())
-                }
-                Res::Item(ItemId::Variable(vid)) => match &hir.variable(*vid).ty.kind {
-                    TypeKind::Function(function) if function.returns.len() == 1 => {
-                        Some(hir.variable(function.returns[0]).ty.kind.clone())
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }),
-            ExprKind::Member(base, member) => {
-                if let Some(ty) = member_call_return_type(hir, contract, base, *member, args) {
-                    return Some(ty);
-                }
-                match expr_type(hir, contract, base)? {
-                    TypeKind::Custom(ItemId::Contract(cid)) => {
-                        let receiver_contract = hir.contract(cid);
-                        let bases: &[hir::ContractId] = if receiver_contract.linearization_failed()
-                        {
-                            std::slice::from_ref(&cid)
-                        } else {
-                            receiver_contract.linearized_bases
-                        };
-                        let mut fallback: Option<TypeKind<'_>> = None;
-                        for &bid in bases {
-                            for fid in hir.contract(bid).all_functions() {
-                                let func = hir.function(fid);
-                                if func.name.is_none_or(|n| n.name != member.name)
-                                    || func.returns.len() != 1
-                                    || !args_match(hir, contract, args, func.parameters)
-                                {
-                                    continue;
-                                }
-                                let ret = hir.variable(func.returns[0]).ty.kind.clone();
-                                if matches!(
-                                    ret,
-                                    TypeKind::Elementary(ElementaryType::Address(_))
-                                        | TypeKind::Custom(ItemId::Contract(_))
-                                ) {
-                                    return Some(ret);
-                                }
-                                fallback = fallback.or(Some(ret));
-                            }
-                        }
-                        fallback
-                    }
-                    _ => None,
-                }
-            }
-            _ => match expr_type(hir, contract, callee)? {
-                TypeKind::Function(function) if function.returns.len() == 1 => {
-                    Some(hir.variable(function.returns[0]).ty.kind.clone())
-                }
-                _ => None,
-            },
-        },
-        ExprKind::New(ty) => Some(ty.kind.clone()),
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Variable(id)) => Some(hir.variable(*id).ty.kind.clone()),
-            Res::Item(ItemId::Contract(id)) => Some(TypeKind::Custom(ItemId::Contract(*id))),
-            Res::Builtin(Builtin::This | Builtin::Super) => {
-                contract.map(|id| TypeKind::Custom(ItemId::Contract(id)))
-            }
-            _ => None,
-        }),
-        ExprKind::Member(base, member) => {
-            if let ExprKind::Ident(reses) = &base.peel_parens().kind
-                && reses.iter().any(|res| {
-                    let Res::Builtin(builtin) = res else { return false };
-                    matches!(
-                        (builtin.name(), member.name),
-                        (sym::msg, sym::sender)
-                            | (sym::tx, kw::Origin)
-                            | (sym::block, kw::Coinbase)
-                    )
-                })
-            {
-                return Some(TypeKind::Elementary(ElementaryType::Address(false)));
-            }
-            match expr_type(hir, contract, base)? {
-                TypeKind::Custom(ItemId::Struct(sid)) => {
-                    hir.strukt(sid).fields.iter().find_map(|&field| {
-                        let var = hir.variable(field);
-                        (var.name?.name == member.name).then(|| var.ty.kind.clone())
-                    })
-                }
-                _ => None,
-            }
-        }
-        ExprKind::Index(base, _) => match &base.peel_parens().kind {
-            ExprKind::Array(elems) => elems.first().and_then(|expr| expr_type(hir, contract, expr)),
-            _ => match expr_type(hir, contract, base)? {
-                TypeKind::Mapping(mapping) => Some(mapping.value.kind.clone()),
-                TypeKind::Array(array) => Some(array.element.kind.clone()),
-                _ => None,
-            },
-        },
-        ExprKind::Ternary(_, then_expr, else_expr) => {
-            expr_type(hir, contract, then_expr).or_else(|| expr_type(hir, contract, else_expr))
-        }
-        ExprKind::Assign(lhs, _, rhs) => {
-            expr_type(hir, contract, rhs).or_else(|| expr_type(hir, contract, lhs))
-        }
-        _ => None,
-    }
-}
-
-fn member_call_return_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    contract: Option<hir::ContractId>,
-    base: &hir::Expr<'hir>,
-    member: solar::interface::Ident,
-    args: &CallArgs<'hir>,
-) -> Option<hir::TypeKind<'hir>> {
-    let ExprKind::Ident(reses) = &base.peel_parens().kind else { return None };
-    for res in *reses {
-        let ty = match res {
-            Res::Builtin(Builtin::This) => {
-                let cid = contract?;
-                named_single_return_type(
-                    hir,
-                    contract,
-                    std::slice::from_ref(&cid),
-                    member.name,
-                    args,
-                )
-            }
-            Res::Builtin(Builtin::Super) => {
-                let cid = contract?;
-                let call_site = hir.contract(cid);
-                if call_site.linearization_failed() || call_site.linearized_bases.len() <= 1 {
-                    return None;
-                }
-                named_single_return_type(
-                    hir,
-                    contract,
-                    &call_site.linearized_bases[1..],
-                    member.name,
-                    args,
-                )
-            }
-            Res::Item(ItemId::Contract(cid)) => named_single_return_type(
-                hir,
-                contract,
-                std::slice::from_ref(cid),
-                member.name,
-                args,
-            ),
-            _ => continue,
-        };
-        if let Some(ty) = ty {
-            return Some(ty);
-        }
-    }
-    None
-}
-
-fn named_single_return_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    call_site_contract: Option<hir::ContractId>,
-    contracts: &[hir::ContractId],
-    name: Symbol,
-    args: &CallArgs<'hir>,
-) -> Option<hir::TypeKind<'hir>> {
-    for &cid in contracts {
-        for fid in hir.contract(cid).all_functions() {
-            let func = hir.function(fid);
-            if func.name.is_some_and(|n| n.name == name)
-                && func.returns.len() == 1
-                && args_match(hir, call_site_contract, args, func.parameters)
-            {
-                return Some(hir.variable(func.returns[0]).ty.kind.clone());
-            }
-        }
-    }
-    None
-}
-
-fn args_match<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    contract: Option<hir::ContractId>,
-    args: &CallArgs<'hir>,
-    params: &[hir::VariableId],
-) -> bool {
-    if args.len() != params.len() {
-        return false;
-    }
-    let compatible = |arg: &hir::Expr<'hir>, param: hir::VariableId| -> bool {
-        match expr_type(hir, contract, arg) {
-            Some(arg_ty) => types_compatible(&arg_ty, &hir.variable(param).ty.kind),
-            None => true,
-        }
-    };
-    match &args.kind {
-        hir::CallArgsKind::Unnamed(exprs) => {
-            exprs.iter().zip(params.iter()).all(|(arg, &param)| compatible(arg, param))
-        }
-        hir::CallArgsKind::Named(named) => named.iter().all(|arg| {
-            let Some(&param) = params
-                .iter()
-                .find(|&&param| hir.variable(param).name.is_some_and(|n| n.name == arg.name.name))
-            else {
-                return false;
-            };
-            compatible(&arg.value, param)
-        }),
-    }
-}
-
-fn types_compatible(arg: &hir::TypeKind<'_>, param: &hir::TypeKind<'_>) -> bool {
-    match (arg, param) {
-        (
-            TypeKind::Elementary(ElementaryType::Address(arg_payable)),
-            TypeKind::Elementary(ElementaryType::Address(param_payable)),
-        ) => !param_payable || *arg_payable,
-        (
-            TypeKind::Custom(ItemId::Contract(_)),
-            TypeKind::Elementary(ElementaryType::Address(_)),
-        ) => true,
-        (TypeKind::Array(arg), TypeKind::Array(param)) => {
-            arg.size.is_some() == param.size.is_some()
-                && types_compatible(&arg.element.kind, &param.element.kind)
-        }
-        (TypeKind::Mapping(arg), TypeKind::Mapping(param)) => {
-            types_compatible(&arg.key.kind, &param.key.kind)
-                && types_compatible(&arg.value.kind, &param.value.kind)
-        }
-        (TypeKind::Function(arg), TypeKind::Function(param)) => {
-            arg.visibility == param.visibility
-                && arg.state_mutability == param.state_mutability
-                && arg.parameters.len() == param.parameters.len()
-                && arg.returns.len() == param.returns.len()
-        }
-        (TypeKind::Elementary(arg), TypeKind::Elementary(param)) => arg == param,
-        (TypeKind::Custom(arg), TypeKind::Custom(param)) => arg == param,
-        (TypeKind::Err(_), _) | (_, TypeKind::Err(_)) => true,
-        _ => false,
-    }
+fn ty_is_address(ty: Ty<'_>) -> bool {
+    matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
 }
 
 fn callee_no_arg_returns<'hir>(
@@ -908,6 +629,7 @@ const fn function_is_statically_trusted(func: &hir::Function<'_>) -> bool {
 }
 
 fn collect_modifier_safety<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     invocation: &'hir hir::Modifier<'hir>,
     out_safe: &mut HashSet<hir::VariableId>,
@@ -932,7 +654,7 @@ fn collect_modifier_safety<'hir>(
         let _ = collector.visit_stmt(stmt);
     }
 
-    let mut analyzer = Analyzer::new(hir, modifier.contract);
+    let mut analyzer = Analyzer::new(gcx, hir);
     for stmt in &prefix {
         let _ = analyzer.visit_stmt(stmt);
         if branch_always_exits(stmt) {
