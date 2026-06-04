@@ -14,7 +14,7 @@ use solar::{
         hir::{
             self, CallArgs, CallArgsKind, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId,
         },
-        ty::TyKind,
+        ty::{TyFnKind, TyKind},
     },
 };
 use std::collections::{BTreeSet, HashSet};
@@ -34,7 +34,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for ReentrancyEth {
-    fn check_function_with_gcx(
+    fn check_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
@@ -289,7 +289,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     true
                 }
             }
-            StmtKind::Err(_) => true,
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
         }
     }
 
@@ -331,7 +331,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, state);
                     }
                 }
@@ -403,7 +403,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     }
                 }
             }
-            ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -486,7 +486,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         &self,
         callee: &'hir hir::Expr<'hir>,
         args: &CallArgs<'hir>,
-        opts: Option<&'hir [hir::NamedArg<'hir>]>,
+        opts: Option<&hir::CallOptions<'hir>>,
     ) -> Option<ReentrantCallKind> {
         if self.reentrancy_eth_enabled && is_uncapped_value_call(self.hir, callee, opts) {
             return Some(ReentrantCallKind::Eth);
@@ -525,7 +525,7 @@ impl FlowState {
 fn is_uncapped_value_call(
     hir: &hir::Hir<'_>,
     callee: &hir::Expr<'_>,
-    opts: Option<&[hir::NamedArg<'_>]>,
+    opts: Option<&hir::CallOptions<'_>>,
 ) -> bool {
     let Some(opts) = opts else { return false };
     let ExprKind::Member(_, member) = &callee.peel_parens().kind else { return false };
@@ -535,7 +535,7 @@ fn is_uncapped_value_call(
 
     let mut value = None;
     let mut gas = None;
-    for opt in opts {
+    for opt in opts.args {
         if opt.name.name == sym::value {
             value = Some(&opt.value);
         } else if opt.name.name == kw::Gas {
@@ -551,7 +551,7 @@ fn is_no_eth_reentrant_call<'hir>(
     hir: &'hir hir::Hir<'hir>,
     callee: &'hir hir::Expr<'hir>,
     args: &CallArgs<'hir>,
-    opts: Option<&'hir [hir::NamedArg<'hir>]>,
+    opts: Option<&hir::CallOptions<'hir>>,
 ) -> bool {
     if call_sends_eth(hir, opts) {
         return false;
@@ -567,9 +567,9 @@ fn is_no_eth_reentrant_call<'hir>(
     }
 }
 
-fn call_sends_eth(hir: &hir::Hir<'_>, opts: Option<&[hir::NamedArg<'_>]>) -> bool {
+fn call_sends_eth(hir: &hir::Hir<'_>, opts: Option<&hir::CallOptions<'_>>) -> bool {
     opts.is_some_and(|opts| {
-        opts.iter().any(|opt| opt.name.name == sym::value && !is_zero_value(hir, &opt.value))
+        opts.args.iter().any(|opt| opt.name.name == sym::value && !is_zero_value(hir, &opt.value))
     })
 }
 
@@ -586,7 +586,6 @@ fn external_member_call_can_reenter<'hir>(
 
     let Some(receiver_ty) = expr_ty(gcx, hir, receiver) else { return false };
     gcx.members_of(receiver_ty, base_item_source(hir, receiver), base_contract(hir, receiver))
-        .iter()
         .filter(|candidate| candidate.name == member)
         .any(|candidate| match (candidate.res, candidate.ty.kind) {
             (Some(Res::Item(ItemId::Function(function_id))), _) => {
@@ -595,8 +594,8 @@ fn external_member_call_can_reenter<'hir>(
                     && args_match_function(gcx, hir, args, function.parameters)
                     && function.mutates_state()
             }
-            (_, TyKind::FnPtr(function)) => {
-                is_externally_callable_fn_ptr(function.visibility)
+            (_, TyKind::Fn(function)) => {
+                is_externally_callable_fn_kind(function.kind)
                     && args_match_types(gcx, hir, args, function.parameters)
                     && !matches!(
                         function.state_mutability,
@@ -614,8 +613,8 @@ fn external_function_pointer_can_reenter<'hir>(
     args: &CallArgs<'hir>,
 ) -> bool {
     let Some(ty) = expr_ty(gcx, hir, callee) else { return false };
-    let TyKind::FnPtr(function) = ty.kind else { return false };
-    function.visibility == Visibility::External
+    let TyKind::Fn(function) = ty.kind else { return false };
+    function.kind == TyFnKind::External
         && args_match_types(gcx, hir, args, function.parameters)
         && !matches!(function.state_mutability, StateMutability::Pure | StateMutability::View)
 }
@@ -624,8 +623,8 @@ const fn is_externally_callable(func: &hir::Function<'_>) -> bool {
     matches!(func.visibility, Visibility::Public | Visibility::External)
 }
 
-const fn is_externally_callable_fn_ptr(visibility: Visibility) -> bool {
-    matches!(visibility, Visibility::Public | Visibility::External)
+const fn is_externally_callable_fn_kind(kind: TyFnKind) -> bool {
+    matches!(kind, TyFnKind::External | TyFnKind::Declaration | TyFnKind::DelegateCall)
 }
 
 fn args_match_function<'hir>(
@@ -721,11 +720,11 @@ fn expr_ty<'hir>(
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<Ty<'hir>> {
     match &expr.peel_parens().kind {
-        ExprKind::Array(_) => None,
+        ExprKind::Array(_) | ExprKind::YulMember(..) => None,
         ExprKind::Call(callee, args, _) => {
             let callee_ty = expr_ty(gcx, hir, callee)?;
             match callee_ty.kind {
-                TyKind::FnPtr(func) => fn_call_return_type(gcx, func.returns),
+                TyKind::Fn(func) => fn_call_return_type(gcx, func.returns),
                 TyKind::Type(to) => Some(explicit_cast_ty(gcx, to, args)),
                 _ => None,
             }
@@ -830,7 +829,6 @@ fn member_ty<'hir>(
     let base_ty = expr_ty(gcx, hir, base)?;
     unique(
         gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-            .iter()
             .filter(|member| member.name == member_name)
             .map(|member| member.ty),
     )
@@ -890,9 +888,7 @@ fn referenced_item(expr: &hir::Expr<'_>) -> Option<ItemId> {
 
 fn variable_data_location(hir: &hir::Hir<'_>, var_id: VariableId) -> Option<DataLocation> {
     let var = hir.variable(var_id);
-    var.data_location.or_else(|| {
-        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
-    })
+    var.data_location.or_else(|| var.kind.is_state().then_some(DataLocation::Storage))
 }
 
 fn is_this(expr: &hir::Expr<'_>) -> bool {

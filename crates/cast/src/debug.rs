@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use alloy_chains::Chain;
-use alloy_primitives::{Address, Bytes, map::HashMap};
+use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler, shell};
 use foundry_config::Config;
@@ -21,7 +21,7 @@ pub(crate) async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
     chain: Chain,
-    contracts_bytecode: &HashMap<Address, Bytes>,
+    contracts_bytecode: &AddressHashMap<Bytes>,
     labels: Vec<String>,
     with_local_artifacts: bool,
     debug: bool,

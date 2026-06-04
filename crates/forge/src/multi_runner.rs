@@ -4,7 +4,10 @@ use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
     result::SuiteResult,
-    runner::{LIBRARY_DEPLOYER, is_symbolic_entrypoint},
+    runner::{
+        ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
+        count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
+    },
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -214,6 +217,22 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             self.contracts.len(),
             find_time,
         );
+        let num_invariant_campaign_anchors = contracts
+            .iter()
+            .map(|(id, contract)| {
+                count_runnable_invariant_campaign_anchors(
+                    &contract.abi,
+                    filter,
+                    InvariantCampaignScope {
+                        config: &self.tcfg.config,
+                        inline_config: &self.tcfg.inline_config,
+                        contract_name: &id.identifier(),
+                        all_override_networks: &self.tcfg.multi_network.all_override_networks,
+                        pass_network: self.tcfg.multi_network.pass_network.as_ref(),
+                    },
+                )
+            })
+            .sum();
 
         if show_progress {
             let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
@@ -229,8 +248,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                         contract,
                         &db,
                         filter,
-                        &tokio_handle,
-                        Some(&tests_progress),
+                        ContractRunnerContext {
+                            progress: Some(&tests_progress),
+                            tokio_handle: tokio_handle.clone(),
+                            num_invariant_campaign_anchors,
+                        },
                     );
 
                     tests_progress
@@ -250,7 +272,17 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result = self.run_test_suite(id, contract, &db, filter, &tokio_handle, None);
+                let result = self.run_test_suite(
+                    id,
+                    contract,
+                    &db,
+                    filter,
+                    ContractRunnerContext {
+                        progress: None,
+                        tokio_handle: tokio_handle.clone(),
+                        num_invariant_campaign_anchors,
+                    },
+                );
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -264,8 +296,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         contract: &TestContract,
         db: &Backend<FEN>,
         filter: &dyn TestFilter,
-        tokio_handle: &tokio::runtime::Handle,
-        progress: Option<&TestsProgress>,
+        context: ContractRunnerContext<'_>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let span_name = if enabled!(tracing::Level::TRACE) {
@@ -285,15 +316,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             artifact_id,
             db.clone(),
         );
-        let runner = ContractRunner::new(
-            &identifier,
-            contract,
-            executor,
-            progress,
-            tokio_handle,
-            span,
-            self,
-        );
+        let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
         let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");

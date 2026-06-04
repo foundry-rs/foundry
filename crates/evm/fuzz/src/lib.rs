@@ -349,6 +349,9 @@ pub struct FuzzTestResult {
     /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
     pub breakpoints: Option<Breakpoints>,
 
+    /// Runtime bytecodes for contracts seen in the debug trace.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
+
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 

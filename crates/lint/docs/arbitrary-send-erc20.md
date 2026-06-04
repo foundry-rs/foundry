@@ -36,30 +36,18 @@ Safety is established by:
 - Inline equality guards in the prefix of a modifier body (statements
   strictly before its single top-level `_;` placeholder), mapped back to
   the caller's argument variables.
-- A prior EIP-2612 `permit(owner, address(this), …)` on the same token
-  variable, on the **same execution path** as the sink, with the sink's
-  `from` variable matching the permit's `owner`. The record is invalidated
-  if either the token variable or the owner variable is reassigned before
-  the sink.
 
 Branch joins recognise `return`, custom-error `revert`, the `revert(...)`
 builtin, and `assert(false)` / `require(false, ...)` as always-exiting:
 facts proven on the surviving branch propagate past the `if`.
 
-## Limitations
+## Related
 
-The permit suppression is a precision relaxation, not a proof. It matches
-the 7-argument `permit(...)` shape on a member call but does **not**:
-
-- verify the receiver type statically declares the EIP-2612 `permit`
-  signature (any same-named 7-arg method silences the lint),
-- correlate the receiver type between the permit and the sink (only the
-  underlying variable is compared),
-- model the permit's allowance / value against the sink's amount.
-
-False negatives are possible when a non-EIP-2612 contract exposes a
-matching `permit(...)` method. The canonical arbitrary-send pattern (no
-preceding permit) is unaffected.
+A prior EIP-2612 `permit(owner, address(this), …)` does **not** suppress
+this lint — the sink is instead reported as
+[`arbitrary-send-erc20-permit`](./arbitrary-send-erc20-permit.md), since
+non-EIP-2612 tokens with a fallback can silently accept the permit and
+let any prior allowance be drained.
 
 ## Why is this bad?
 

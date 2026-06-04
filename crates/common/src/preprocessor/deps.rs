@@ -6,7 +6,7 @@ use foundry_compilers::Updates;
 use itertools::Itertools;
 use solar::sema::{
     Gcx, Hir,
-    hir::{CallArgs, ContractId, Expr, ExprKind, NamedArg, Stmt, StmtKind, TypeKind, Visit},
+    hir::{CallArgs, CallOptions, ContractId, Expr, ExprKind, Stmt, StmtKind, TypeKind, Visit},
     interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
 use std::{
@@ -293,7 +293,7 @@ fn handle_call_expr(
     parent_expr: &Expr<'_>,
     call_expr: &Expr<'_>,
     call_args: &CallArgs<'_>,
-    named_args: &Option<&[NamedArg<'_>]>,
+    call_options: &Option<&CallOptions<'_>>,
 ) -> Option<BytecodeDependency> {
     if let ExprKind::New(ty_new) = &call_expr.kind
         && let TypeKind::Custom(item_id) = ty_new.kind
@@ -305,7 +305,7 @@ fn handle_call_expr(
         // Calculate offset to remove named args, e.g. for an expression like
         // `new Counter {value: 333} (  address(this))`
         // the offset will be used to replace `{value: 333} (  ` with `(`
-        let call_args_offset = if named_args.is_some() && !call_args.is_empty() {
+        let call_args_offset = if call_options.is_some() && !call_args.is_empty() {
             (call_args.span.lo() - ty_new.span.hi()).to_usize()
         } else {
             0
@@ -317,8 +317,8 @@ fn handle_call_expr(
                 name: name.to_string(),
                 args_length: args_len.to_usize(),
                 call_args_offset,
-                value: named_arg(src, named_args, "value", source_map),
-                salt: named_arg(src, named_args, "salt", source_map),
+                value: named_arg(src, call_options, "value", source_map),
+                salt: named_arg(src, call_options, "salt", source_map),
                 try_stmt: None,
             },
             loc: span_to_range(source_map, call_expr.span),
@@ -331,16 +331,19 @@ fn handle_call_expr(
 /// Helper function to extract value of a given named arg.
 fn named_arg(
     src: &str,
-    named_args: &Option<&[NamedArg<'_>]>,
+    call_options: &Option<&CallOptions<'_>>,
     arg: &str,
     source_map: &SourceMap,
 ) -> Option<String> {
-    named_args.unwrap_or_default().iter().find(|named_arg| named_arg.name.as_str() == arg).map(
-        |named_arg| {
+    call_options
+        .map(|options| options.args)
+        .unwrap_or_default()
+        .iter()
+        .find(|named_arg| named_arg.name.as_str() == arg)
+        .map(|named_arg| {
             let named_arg_loc = span_to_range(source_map, named_arg.value.span);
             src[named_arg_loc].to_string()
-        },
-    )
+        })
 }
 
 /// Goes over all test/script files and replaces bytecode dependencies with cheatcode
@@ -372,7 +375,7 @@ pub(crate) fn remove_bytecode_dependencies(
         let updates = updates.entry(path.clone()).or_default();
         let mut used_helpers = BTreeSet::new();
 
-        let vm_interface_name = format!("VmContractHelper{}", contract_id.get());
+        let vm_interface_name = format!("VmContractHelper{}", contract_id.index());
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
         let mut try_catch_helpers: HashSet<&str> = HashSet::default();
@@ -405,7 +408,7 @@ pub(crate) fn remove_bytecode_dependencies(
                         if *has_ret {
                             // try this.addressToCounter1() returns (Counter c)
                             try_catch_helpers.insert(name);
-                            (format!("this.addressTo{name}{id}(", id = contract_id.get()), "}))")
+                            (format!("this.addressTo{name}{id}(", id = contract_id.index()), "}))")
                         } else {
                             (String::new(), "})")
                         }
@@ -432,7 +435,7 @@ pub(crate) fn remove_bytecode_dependencies(
                         update.push_str(", ");
                         update.push_str(&format!(
                             "_args: encodeArgs{id}(DeployHelper{id}.FoundryPpConstructorArgs",
-                            id = dep.referenced_contract.get()
+                            id = dep.referenced_contract.index()
                         ));
                         updates.insert((dep.loc.start, dep.loc.end + call_args_offset, update));
 
@@ -464,7 +467,7 @@ pub(crate) fn remove_bytecode_dependencies(
                                 return {ty}(addr);
                             }}
                         "#,
-                        id = contract_id.get()
+                        id = contract_id.index()
                     )
                 })
                 .collect::<String>();
@@ -473,7 +476,7 @@ pub(crate) fn remove_bytecode_dependencies(
         }
 
         let helper_imports = used_helpers.into_iter().map(|id| {
-            let id = id.get();
+            let id = id.index();
             format!(
                 "import {{DeployHelper{id}, encodeArgs{id}}} from \"foundry-pp/DeployHelper{id}.sol\";",
             )

@@ -486,6 +486,7 @@ impl MutationHandler {
                 e.emit();
                 failed_to_parse(path)
             })?;
+            drop(parser);
 
             let operators = self.config.mutation.enabled_operators();
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)

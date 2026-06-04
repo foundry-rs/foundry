@@ -60,6 +60,7 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
@@ -305,7 +306,7 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
                     }
                 }
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         if expr_root_is_param(&opt.value, self.params) {
                             return ControlFlow::Break(());
                         }

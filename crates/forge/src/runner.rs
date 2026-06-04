@@ -12,12 +12,12 @@ use crate::{
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
-use alloy_json_abi::Function;
+use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
+use foundry_config::{Config, FuzzCorpusConfig, InlineConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
@@ -39,6 +39,7 @@ use foundry_evm::{
     revm::primitives::hardfork::SpecId,
     traces::{TraceKind, TraceMode, load_contracts},
 };
+use foundry_evm_networks::NetworkVariant;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::prelude::*;
@@ -66,6 +67,261 @@ pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
 }
 
+pub(crate) struct InvariantCampaignScope<'a> {
+    pub config: &'a Config,
+    pub inline_config: &'a InlineConfig,
+    pub contract_name: &'a str,
+    pub all_override_networks: &'a [NetworkVariant],
+    pub pass_network: Option<&'a NetworkVariant>,
+}
+
+struct InvariantCampaignSelection<'a> {
+    matched_boolean_invariant_fns: Vec<&'a Function>,
+    merge_boolean_suite: bool,
+    boolean_suite_anchor: Option<&'a Function>,
+    optimization_anchors: usize,
+}
+
+impl InvariantCampaignSelection<'_> {
+    const fn anchor_count(&self) -> usize {
+        self.optimization_anchors
+            + if self.matched_boolean_invariant_fns.is_empty() {
+                0
+            } else if self.merge_boolean_suite {
+                1
+            } else {
+                self.matched_boolean_invariant_fns.len()
+            }
+    }
+}
+
+pub(crate) fn count_runnable_invariant_campaign_anchors(
+    abi: &JsonAbi,
+    filter: &dyn TestFilter,
+    scope: InvariantCampaignScope<'_>,
+) -> usize {
+    let invariant_fns = abi.functions().filter(|func| func.is_invariant_test()).collect::<Vec<_>>();
+    if invariant_fns.iter().any(|func| !func.inputs.is_empty()) {
+        return 0;
+    }
+
+    let functions = abi
+        .functions()
+        .filter(|func| filter.matches_test_function(func))
+        .filter(|func| {
+            function_matches_network_pass(
+                scope.all_override_networks,
+                scope.pass_network,
+                scope.inline_config.network_for(
+                    &scope.config.profile,
+                    scope.contract_name,
+                    &func.name,
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    select_invariant_campaigns(
+        &invariant_fns,
+        &functions,
+        scope.config,
+        scope.inline_config,
+        scope.contract_name,
+    )
+    .anchor_count()
+}
+
+fn function_matches_network_pass(
+    all_override_networks: &[NetworkVariant],
+    pass_network: Option<&NetworkVariant>,
+    func_network: Option<NetworkVariant>,
+) -> bool {
+    if all_override_networks.is_empty() {
+        return true;
+    }
+    match pass_network {
+        None => func_network.is_none_or(|network| !all_override_networks.contains(&network)),
+        Some(target) => func_network.as_ref() == Some(target),
+    }
+}
+
+fn inline_config_for(
+    config: &Config,
+    inline_config: &InlineConfig,
+    contract_name: &str,
+    func: Option<&Function>,
+) -> Result<Config> {
+    let function = func.map(|f| f.name.as_str()).unwrap_or("");
+    Ok(config.merge_inline_provider(inline_config.provide(contract_name, function))?)
+}
+
+fn invariant_suite_configs_match(
+    config: &Config,
+    inline_config: &InlineConfig,
+    contract_name: &str,
+    funcs: &[&Function],
+) -> bool {
+    let Some((anchor, rest)) = funcs.split_first() else {
+        return true;
+    };
+    let anchor_config = match inline_config_for(config, inline_config, contract_name, Some(anchor))
+    {
+        Ok(config) => config.invariant,
+        Err(_) => return false,
+    };
+    rest.iter().all(|func| {
+        inline_config_for(config, inline_config, contract_name, Some(func))
+            .map(|config| config.invariant == anchor_config)
+            .unwrap_or(false)
+    })
+}
+
+fn select_invariant_campaigns<'a>(
+    invariant_fns: &[&'a Function],
+    functions: &[&'a Function],
+    config: &Config,
+    inline_config: &InlineConfig,
+    contract_name: &str,
+) -> InvariantCampaignSelection<'a> {
+    let boolean_invariant_fns =
+        invariant_fns.iter().copied().filter(|func| !is_optimization_invariant(func));
+    let matched_boolean_invariant_fns = functions
+        .iter()
+        .copied()
+        .filter(|func| func.is_invariant_test() && !is_optimization_invariant(func))
+        .collect::<Vec<_>>();
+    let optimization_anchors = functions
+        .iter()
+        .filter(|func| func.is_invariant_test() && is_optimization_invariant(func))
+        .count();
+
+    // The boolean invariant campaign is contract-level. Test filters only select which predicates
+    // are evaluated/reported inside that campaign; they must not decide the corpus/failure
+    // namespace. Use the canonical anchor when it is part of the filtered set, but preserve
+    // `--mt`/`--nmt` isolation when the filter deliberately excludes it.
+    let canonical_boolean_anchor = boolean_invariant_fns.into_iter().next();
+    let merge_boolean_suite = !matched_boolean_invariant_fns.is_empty()
+        && invariant_suite_configs_match(
+            config,
+            inline_config,
+            contract_name,
+            &matched_boolean_invariant_fns,
+        );
+    let boolean_suite_anchor = merge_boolean_suite
+        .then(|| {
+            canonical_boolean_anchor
+                .filter(|anchor| matched_boolean_invariant_fns.contains(anchor))
+                .or_else(|| matched_boolean_invariant_fns.first().copied())
+        })
+        .flatten();
+
+    InvariantCampaignSelection {
+        matched_boolean_invariant_fns,
+        merge_boolean_suite,
+        boolean_suite_anchor,
+        optimization_anchors,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_common::EmptyTestFilter;
+    use foundry_config::NatSpec;
+
+    const CONTRACT_NAME: &str = "src/Test.t.sol:InvariantTest";
+
+    fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
+        let config = Config::default();
+        count_runnable_invariant_campaign_anchors(
+            abi,
+            &EmptyTestFilter::default(),
+            InvariantCampaignScope {
+                config: &config,
+                inline_config,
+                contract_name: CONTRACT_NAME,
+                all_override_networks: &[],
+                pass_network: None,
+            },
+        )
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_merges_boolean_suite_and_counts_optimizations() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+            "function invariantOptimizeA() external returns (int256)",
+            "function invariantOptimizeB() external returns (int256)",
+        ])
+        .unwrap();
+
+        assert_eq!(count_anchors(&abi, &InlineConfig::new()), 3);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_splits_boolean_suite_when_configs_differ() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+        ])
+        .unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTwo".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.depth = 1".to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(count_anchors(&abi, &inline_config), 2);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_respects_network_pass() {
+        let abi = JsonAbi::parse(["function invariantTempoOnly() external"]).unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTempoOnly".to_string()),
+                line: "1:1".to_string(),
+                docs: r#"forge-config: default.networks.network = "tempo""#.to_string(),
+            })
+            .unwrap();
+        let config = Config::default();
+        let override_networks = [NetworkVariant::Tempo];
+
+        let default_pass = count_runnable_invariant_campaign_anchors(
+            &abi,
+            &EmptyTestFilter::default(),
+            InvariantCampaignScope {
+                config: &config,
+                inline_config: &inline_config,
+                contract_name: CONTRACT_NAME,
+                all_override_networks: &override_networks,
+                pass_network: None,
+            },
+        );
+        let tempo_pass = count_runnable_invariant_campaign_anchors(
+            &abi,
+            &EmptyTestFilter::default(),
+            InvariantCampaignScope {
+                config: &config,
+                inline_config: &inline_config,
+                contract_name: CONTRACT_NAME,
+                all_override_networks: &override_networks,
+                pass_network: Some(&NetworkVariant::Tempo),
+            },
+        );
+
+        assert_eq!(default_pass, 0);
+        assert_eq!(tempo_pass, 1);
+    }
+}
+
 /// A type that executes all tests of a contract
 pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     /// The name of the contract.
@@ -77,13 +333,21 @@ pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     /// Overall test run progress.
     progress: Option<&'a TestsProgress>,
     /// The handle to the tokio runtime.
-    tokio_handle: &'a tokio::runtime::Handle,
+    tokio_handle: tokio::runtime::Handle,
     /// The span of the contract.
     span: tracing::Span,
     /// The contract-level configuration.
     tcfg: Cow<'a, TestRunnerConfig<FEN>>,
     /// The parent runner.
     mcr: &'a MultiContractRunner<FEN>,
+    /// Number of matching invariant campaign anchors in the current test pass.
+    num_invariant_campaign_anchors: usize,
+}
+
+pub(crate) struct ContractRunnerContext<'a> {
+    pub(crate) progress: Option<&'a TestsProgress>,
+    pub(crate) tokio_handle: tokio::runtime::Handle,
+    pub(crate) num_invariant_campaign_anchors: usize,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
@@ -96,24 +360,24 @@ impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
 }
 
 impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
-    pub const fn new(
+    pub(crate) fn new(
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
-        progress: Option<&'a TestsProgress>,
-        tokio_handle: &'a tokio::runtime::Handle,
         span: Span,
         mcr: &'a MultiContractRunner<FEN>,
+        context: ContractRunnerContext<'a>,
     ) -> Self {
         Self {
             name,
             contract,
             executor,
-            progress,
-            tokio_handle,
+            progress: context.progress,
+            tokio_handle: context.tokio_handle,
             span,
             tcfg: Cow::Borrowed(&mcr.tcfg),
             mcr,
+            num_invariant_campaign_anchors: context.num_invariant_campaign_anchors,
         }
     }
 
@@ -124,16 +388,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     /// - Default pass (`pass_network = None`): includes functions *without* an override annotation.
     /// - Override pass (`pass_network = Some(v)`): includes only functions annotated with `v`.
     fn function_matches_network_pass(&self, func: &Function) -> bool {
-        let multi = &self.mcr.tcfg.multi_network;
-        if multi.all_override_networks.is_empty() {
-            return true;
-        }
-        let profile = &self.tcfg.config.profile;
-        let func_network = self.mcr.inline_config.network_for(profile, self.name, &func.name);
-        match &multi.pass_network {
-            None => func_network.is_none_or(|n| !multi.all_override_networks.contains(&n)),
-            Some(target) => func_network.as_ref() == Some(target),
-        }
+        function_matches_network_pass(
+            &self.mcr.tcfg.multi_network.all_override_networks,
+            self.mcr.tcfg.multi_network.pass_network.as_ref(),
+            self.mcr.inline_config.network_for(&self.tcfg.config.profile, self.name, &func.name),
+        )
     }
 
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
@@ -254,27 +513,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
     /// Returns the configuration for a contract or function.
     fn inline_config(&self, func: Option<&Function>) -> Result<Config> {
-        let function = func.map(|f| f.name.as_str()).unwrap_or("");
-        let config = self
-            .config
-            .merge_inline_provider(self.mcr.inline_config.provide(self.name, function))?;
-        Ok(config)
-    }
-
-    /// Returns true if all invariant functions share the same effective inline invariant config.
-    fn invariant_suite_configs_match(&self, funcs: &[&Function]) -> bool {
-        let Some((anchor, rest)) = funcs.split_first() else {
-            return true;
-        };
-        let anchor_config = match self.inline_config(Some(anchor)) {
-            Ok(config) => config.invariant,
-            Err(_) => return false,
-        };
-        rest.iter().all(|func| {
-            self.inline_config(Some(func))
-                .map(|config| config.invariant == anchor_config)
-                .unwrap_or(false)
-        })
+        inline_config_for(&self.config, &self.mcr.inline_config, self.name, func)
     }
 
     /// Collect fixtures from test contract.
@@ -499,31 +738,19 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
-        // Keep only boolean invariants; optimization invariants stay isolated per function.
-        let boolean_invariant_fns = invariant_fns
-            .iter()
-            .copied()
-            .filter(|func| !is_optimization_invariant(func))
-            .collect::<Vec<_>>();
-        let matched_boolean_invariant_fns = functions
-            .iter()
-            .copied()
-            .filter(|func| func.is_invariant_test() && !is_optimization_invariant(func))
-            .collect::<Vec<_>>();
-        // The boolean invariant campaign is contract-level. Test filters only select which
-        // predicates are evaluated/reported inside that campaign; they must not decide the
-        // corpus/failure namespace. Use the canonical anchor when it is part of the filtered
-        // set, but preserve `--mt`/`--nmt` isolation when the filter deliberately excludes it.
-        let canonical_boolean_anchor = boolean_invariant_fns.first().copied();
-        let merge_invariant_suite = !matched_boolean_invariant_fns.is_empty()
-            && self.invariant_suite_configs_match(&matched_boolean_invariant_fns);
-        let invariant_suite_anchor = merge_invariant_suite
-            .then(|| {
-                canonical_boolean_anchor
-                    .filter(|anchor| matched_boolean_invariant_fns.contains(anchor))
-                    .or_else(|| matched_boolean_invariant_fns.first().copied())
-            })
-            .flatten();
+        let invariant_campaigns = select_invariant_campaigns(
+            &invariant_fns,
+            &functions,
+            &self.config,
+            &self.mcr.inline_config,
+            self.name,
+        );
+        let InvariantCampaignSelection {
+            matched_boolean_invariant_fns,
+            merge_boolean_suite: merge_invariant_suite,
+            boolean_suite_anchor: invariant_suite_anchor,
+            optimization_anchors: _,
+        } = invariant_campaigns;
 
         let test_results = functions
             .par_iter()
@@ -853,6 +1080,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     )));
                 result.reason = reason;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }
@@ -862,6 +1090,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if i == fixtures_len - 1 {
                 result.success = true;
                 result.traces = raw_call_result.traces;
+                result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
                 return self.result;
             }
@@ -940,6 +1169,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             config,
             identified_contracts,
             &self.cr.mcr.known_contracts,
+            self.cr.num_invariant_campaign_anchors,
         );
 
         // Showmap replay mode: replay the persisted corpus and emit coverage
@@ -1112,6 +1342,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
@@ -1194,6 +1425,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
@@ -1221,6 +1453,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
+                    &mut self.result.debug_bytecodes,
                     &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     &invariant_result.last_run_inputs,
@@ -1258,6 +1491,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             identified_contracts.clone(),
                             &mut self.result.logs,
                             &mut self.result.traces,
+                            &mut self.result.debug_bytecodes,
                             &mut self.result.line_coverage,
                             &mut self.result.deprecated_cheatcodes,
                             progress.as_ref(),
@@ -1364,6 +1598,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             identified_contracts.clone(),
                             &mut self.result.logs,
                             &mut self.result.traces,
+                            &mut self.result.debug_bytecodes,
                             &mut self.result.line_coverage,
                             &mut self.result.deprecated_cheatcodes,
                             progress.as_ref(),
@@ -1521,6 +1756,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.reverts,
             invariant_result.metrics,
             invariant_result.failed_corpus_replays,
+            invariant_result.workers,
             invariant_result.optimization_best_value,
         );
         self.result
@@ -1604,7 +1840,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
             &self.tcfg.early_exit,
-            self.cr.tokio_handle,
+            &self.cr.tokio_handle,
         ) {
             Ok(x) => x,
             Err(e) => {

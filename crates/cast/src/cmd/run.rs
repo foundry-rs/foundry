@@ -8,7 +8,7 @@ use alloy_evm::FromRecoveredTx;
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
-    map::{AddressSet, HashMap},
+    map::{AddressHashMap, AddressSet},
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
@@ -359,8 +359,8 @@ impl RunArgs {
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,
-) -> Result<HashMap<Address, Bytes>> {
-    let mut contracts_bytecode = HashMap::default();
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
     if let Some(ref traces) = result.traces {
         contracts_bytecode.extend(gather_trace_addresses(traces).filter_map(|addr| {
             // All relevant bytecodes should already be cached in the executor.
