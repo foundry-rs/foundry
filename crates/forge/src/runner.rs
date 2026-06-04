@@ -39,6 +39,7 @@ use foundry_evm::{
     revm::primitives::hardfork::SpecId,
     traces::{TraceKind, TraceMode, load_contracts},
 };
+use foundry_evm_symbolic::{SymbolicExecutor, SymbolicRunInput, SymbolicRunResult};
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::prelude::*;
@@ -566,7 +567,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = func.test_function_kind();
+                let kind = if symbolic_enabled && is_symbolic_entrypoint(func) {
+                    TestFunctionKind::SymbolicTest
+                } else {
+                    func.test_function_kind()
+                };
 
                 let _guard = debug_span!(
                     "test",
@@ -677,6 +682,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::TableTest => self.run_table_test(func),
+            TestFunctionKind::SymbolicTest => self.run_symbolic_test(func),
             TestFunctionKind::InvariantTest => {
                 let fail_on_revert_for = |f: &Function| {
                     if self.inline_config.contains_function(self.cr.name, &f.name)
@@ -1625,6 +1631,105 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         self.result.fuzz_result(result);
+        self.result
+    }
+
+    /// Runs a single stateless symbolic test.
+    ///
+    /// Symbolic execution produces either a proof within the configured bounds, an incomplete
+    /// result, or a candidate counterexample. Candidate counterexamples are replayed through the
+    /// normal concrete executor before they are reported.
+    fn run_symbolic_test(mut self, func: &Function) -> TestResult {
+        if self.prepare_test(func).is_err() {
+            return self.result;
+        }
+
+        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        if self.config.symbolic.dump_smt {
+            symbolic.capture_diagnostics();
+        }
+
+        let result = symbolic.run(SymbolicRunInput {
+            executor: &self.executor,
+            target: self.address,
+            sender: self.sender,
+            function: func,
+            value: U256::ZERO,
+            ffi_enabled: self.config.ffi,
+        });
+        self.result.symbolic_portfolio_diagnostics = symbolic.portfolio_diagnostics();
+        self.result.symbolic_diagnostics = symbolic.take_diagnostics();
+
+        match result {
+            SymbolicRunResult::Safe(stats) => {
+                self.result.symbolic_result(true, None, None, stats);
+            }
+            SymbolicRunResult::Incomplete { kind, reason, stats } => {
+                self.result.symbolic_result(
+                    false,
+                    Some(format!("incomplete symbolic execution ({kind:?}): {reason}")),
+                    None,
+                    stats,
+                );
+            }
+            SymbolicRunResult::Counterexample { args, calldata, stats } => {
+                let (mut raw_call_result, reason) = match self.executor.call(
+                    self.sender,
+                    self.address,
+                    func,
+                    &args,
+                    U256::ZERO,
+                    Some(self.revert_decoder()),
+                ) {
+                    Ok(res) => (res.raw, None),
+                    Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
+                    Err(EvmError::Skip(reason)) => {
+                        self.result.symbolic_result(
+                            false,
+                            Some(format!(
+                                "symbolic counterexample replay skipped unexpectedly: {reason}"
+                            )),
+                            None,
+                            stats,
+                        );
+                        return self.result;
+                    }
+                    Err(err) => {
+                        self.result.symbolic_result(
+                            false,
+                            Some(format!("symbolic counterexample replay failed: {err}")),
+                            None,
+                            stats,
+                        );
+                        return self.result;
+                    }
+                };
+
+                let replay_failed = !self.executor.is_raw_call_mut_success(
+                    self.address,
+                    &mut raw_call_result,
+                    false,
+                );
+                let counterexample = replay_failed.then(|| {
+                    CounterExample::Single(BaseCounterExample::from_fuzz_call(
+                        calldata,
+                        args,
+                        raw_call_result.traces.clone(),
+                    ))
+                });
+                self.result.symbolic_result(
+                    false,
+                    reason.or_else(|| {
+                        (!replay_failed).then(|| {
+                            "symbolic counterexample did not replay concretely".to_string()
+                        })
+                    }),
+                    counterexample,
+                    stats,
+                );
+            }
+        }
+
         self.result
     }
 
