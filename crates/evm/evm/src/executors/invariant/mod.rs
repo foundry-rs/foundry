@@ -528,6 +528,19 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             optimization_prefix_len: 0,
         }
     }
+
+    /// Releases per-run corpus payloads once the worker corpus manager has consumed them.
+    ///
+    /// Successful runs only need `fuzz_runs`, traces, and created-contract bookkeeping for final
+    /// reporting. Counterexample inputs are copied into `InvariantTestData::last_run_inputs`
+    /// before this point, so retaining the full per-run input/cmp buffers until `end_run` only
+    /// extends peak memory in long invariant campaigns.
+    fn drop_corpus_payloads(&mut self) {
+        self.inputs.clear();
+        self.inputs.shrink_to_fit();
+        self.cmp_seq.clear();
+        self.cmp_seq.shrink_to_fit();
+    }
 }
 
 /// Wrapper around any [`Executor`] implementer which provides fuzzing support using [`proptest`].
@@ -1122,6 +1135,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
+            current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
             runs += 1;
             let total_runs = campaign_state.increment_runs();
@@ -1204,7 +1218,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             campaign_state.early_exit(),
         );
 
-        let result = invariant_test.test_data;
+        // Move out the final test data and drop worker-local fuzz state before returning this
+        // worker's aggregate output. Long invariant campaigns can leave large dictionaries and
+        // target state behind; once shrinking is complete, only `test_data` is needed.
+        let InvariantTest { fuzz_state: _, targeted_contracts: _, test_data: result } =
+            invariant_test;
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
         let worker_result = InvariantFuzzTestResult::new(
@@ -1221,6 +1239,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
+        drop(corpus_manager);
         let reported_plan = if campaign_state.is_timed_campaign() {
             InvariantWorkerPlan { runs, ..plan }
         } else {
