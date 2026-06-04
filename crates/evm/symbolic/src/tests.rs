@@ -1969,6 +1969,23 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
         Expr::op(ExprOp::And, Expr::Var("x".to_string()), Expr::Const(U256::MAX)),
         Expr::Var("x".to_string())
     );
+    assert_eq!(Expr::op(ExprOp::And, x.clone(), x.clone()), x);
+    assert_eq!(
+        Expr::op(
+            ExprOp::And,
+            Expr::op(
+                ExprOp::And,
+                Expr::Var("x".to_string()),
+                Expr::Const((U256::from(1) << 160) - U256::from(1))
+            ),
+            Expr::Const((U256::from(1) << 160) - U256::from(1))
+        ),
+        Expr::op(
+            ExprOp::And,
+            Expr::Var("x".to_string()),
+            Expr::Const((U256::from(1) << 160) - U256::from(1))
+        )
+    );
     assert_eq!(
         Expr::op(ExprOp::Mul, Expr::Const(U256::from(6)), Expr::Const(U256::from(7))),
         Expr::Const(U256::from(42))

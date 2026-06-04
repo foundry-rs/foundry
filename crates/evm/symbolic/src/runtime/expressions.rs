@@ -985,6 +985,10 @@ impl Expr {
             {
                 expr
             }
+            (ExprOp::And, left, right) if left == right => left,
+            (ExprOp::And, Self::Const(mask), expr) | (ExprOp::And, expr, Self::Const(mask)) => {
+                Self::and_const(expr, mask)
+            }
             (ExprOp::Or | ExprOp::Xor, Self::Const(value), expr)
             | (ExprOp::Or | ExprOp::Xor, expr, Self::Const(value))
                 if value.is_zero() =>
@@ -1000,6 +1004,32 @@ impl Expr {
                 Self::Const(U256::ZERO)
             }
             (op, left, right) => Self::Op(op, Box::new(left), Box::new(right)),
+        }
+    }
+
+    fn and_const(expr: Self, mask: U256) -> Self {
+        if mask.is_zero() {
+            return Self::Const(U256::ZERO);
+        }
+        if mask == U256::MAX {
+            return expr;
+        }
+
+        match expr {
+            Self::Op(ExprOp::And, left, right) => match (*left, *right) {
+                (Self::Const(existing), inner) | (inner, Self::Const(existing))
+                    if existing == mask =>
+                {
+                    Self::and_const(inner, mask)
+                }
+                (left, right) if left == right => Self::and_const(left, mask),
+                (left, right) => Self::Op(
+                    ExprOp::And,
+                    Box::new(Self::Op(ExprOp::And, Box::new(left), Box::new(right))),
+                    Box::new(Self::Const(mask)),
+                ),
+            },
+            expr => Self::Op(ExprOp::And, Box::new(expr), Box::new(Self::Const(mask))),
         }
     }
 
