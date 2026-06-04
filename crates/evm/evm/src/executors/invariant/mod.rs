@@ -1,7 +1,7 @@
 use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
-        corpus::{DynamicTargetCtx, WorkerCorpus, WorkerCorpusSeed},
+        corpus::{DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed},
     },
     inspectors::Fuzzer,
 };
@@ -737,20 +737,20 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             aggregator.finish_with_corpus_entries()?
         };
         if corpus_persistence.is_deferred() {
-            let corpus_entries = corpus_seed.filter_campaign_entries(
-                &corpus_entries,
-                &self.executor,
-                None,
-                Some(&replay_targets),
-                Some(self.dynamic_target_ctx()),
-            )?;
-            WorkerCorpus::persist_campaign_outputs(
+            let dynamic_target_ctx = self.dynamic_target_ctx();
+            corpus_seed.persist_filtered_campaign_outputs(
                 &self.config.corpus,
-                &corpus_entries,
+                corpus_entries,
+                &self.executor,
+                ReplayTarget {
+                    fuzzed_function: None,
+                    fuzzed_contracts: Some(&replay_targets),
+                    dynamic: Some(&dynamic_target_ctx),
+                },
                 result
                     .optimization_best_value
                     .map(|value| (value, result.optimization_best_sequence.as_slice())),
-            );
+            )?;
         }
         Ok(result)
     }
