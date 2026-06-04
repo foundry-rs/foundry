@@ -2,9 +2,12 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
-use clap::Parser;
+use clap::{Args, Parser};
 use eyre::{Context, Result};
-use foundry_cli::{opts::TransactionOpts, utils::LoadConfig};
+use foundry_cli::{
+    opts::{TEMPO_SESSION_ID_ENV, TransactionOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{
     provider::ProviderBuilder,
     sh_println, shell,
@@ -18,6 +21,7 @@ use foundry_wallets::{WalletOpts, WalletSigner};
 use serde_json::json;
 use std::{
     num::NonZeroU64,
+    process::{Command, ExitStatus},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
@@ -29,12 +33,102 @@ use crate::{
         keychain::{
             KeychainTxOutcome, resolve_keychain_root_signer, send_keychain_tx_with_root_signer,
         },
-        tempo_policy_args::{parse_period, parse_policy_token, parse_scope as parse_policy_scope},
+        tempo_policy_args::{
+            parse_period, parse_policy_token, parse_scope as parse_policy_scope,
+            parse_selector_bytes,
+        },
     },
     tx::SendTxOpts,
 };
 
 const PRINT_SPONSOR_HASH_REVOKE_ERROR: &str = "--tempo.print-sponsor-hash only prints a sponsor hash and does not revoke the session on-chain";
+
+/// Arguments for `cast wallet session`.
+///
+/// Without a subcommand, this runs an issue-style temporary session around `--for <COMMAND>`.
+/// The existing `create` and `revoke` subcommands remain explicit lifecycle operations.
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct SessionArgs {
+    #[command(subcommand)]
+    pub command: Option<SessionSubcommands>,
+
+    /// Root account that will authorize the temporary session.
+    #[arg(long = "root", value_name = "ADDRESS")]
+    pub root_account: Option<Address>,
+
+    /// Session lifetime, expressed as a duration like `10m`, `2h`, or `7d`.
+    #[arg(long = "expires", id = "session_expires", value_name = "DURATION", value_parser = parse_period)]
+    pub expires: Option<u64>,
+
+    /// Allowed call scope, in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+    #[arg(long = "scope", value_parser = parse_scope)]
+    pub scope: Vec<CallScope>,
+
+    /// Allowed call target for issue-style `--target ... --selector ...` input.
+    #[arg(long = "target", value_name = "ADDRESS")]
+    pub target: Option<Address>,
+
+    /// Function selector allowed for `--target`, such as `register(address)`.
+    #[arg(long = "selector", value_name = "SELECTOR")]
+    pub selectors: Vec<String>,
+
+    /// Token spend limit, in `TOKEN:AMOUNT` or `TOKEN=AMOUNT` format.
+    #[arg(long = "spend-limit", value_parser = parse_spend_limit)]
+    pub spend_limits: Vec<SessionSpendLimit>,
+
+    /// Command to run with the temporary Tempo session.
+    #[arg(long = "for", value_name = "COMMAND")]
+    pub for_command: Option<String>,
+
+    #[command(flatten)]
+    pub tx: Box<TransactionOpts>,
+
+    #[command(flatten)]
+    pub send_tx: Box<SendTxOpts>,
+}
+
+impl SessionArgs {
+    pub async fn run(self) -> Result<()> {
+        let Self {
+            command,
+            root_account,
+            expires,
+            scope,
+            target,
+            selectors,
+            spend_limits,
+            for_command,
+            tx,
+            send_tx,
+        } = self;
+
+        if let Some(command) = command {
+            return command.run().await;
+        }
+
+        let root_account =
+            root_account.ok_or_else(|| eyre::eyre!("cast wallet session requires --root"))?;
+        let expires =
+            expires.ok_or_else(|| eyre::eyre!("cast wallet session requires --expires"))?;
+        let for_command =
+            for_command.ok_or_else(|| eyre::eyre!("cast wallet session requires --for"))?;
+        let send_tx = *send_tx;
+        let chain_id = resolve_session_chain_id(&send_tx).await?;
+
+        run_for_command(
+            root_account,
+            chain_id,
+            expires,
+            session_scope(scope, target, selectors)?,
+            spend_limits,
+            for_command,
+            *tx,
+            send_tx,
+        )
+        .await
+    }
+}
 
 /// Tempo wallet session lifecycle commands.
 #[derive(Debug, Parser)]
@@ -94,6 +188,201 @@ impl SessionSubcommands {
             }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_for_command(
+    root_account: Address,
+    chain_id: u64,
+    expires: u64,
+    scope: Vec<CallScope>,
+    spend_limits: Vec<SessionSpendLimit>,
+    for_command: String,
+    tx: TransactionOpts,
+    send_tx: SendTxOpts,
+) -> Result<()> {
+    if tx.tempo.print_sponsor_hash {
+        eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+    }
+
+    let entry = build_session_entry(
+        root_account,
+        chain_id,
+        expires,
+        scope,
+        spend_limits,
+        send_tx.eth.wallet.clone(),
+    )
+    .await?;
+    let session_id = entry.session_id;
+    upsert_session_entry(entry)?;
+
+    let child_result = run_inner_command(&for_command, session_id);
+    let revoke_result = run_revoke(session_id, false, tx, send_tx).await;
+
+    match (child_result, revoke_result) {
+        (Ok(status), Ok(())) if status.success() => Ok(()),
+        (Ok(status), Ok(())) => Err(inner_command_status_error(&for_command, status)),
+        (Err(child_err), Ok(())) => Err(child_err),
+        (Ok(status), Err(revoke_err)) if status.success() => {
+            mark_session_failed(session_id);
+            Err(revoke_err.wrap_err("failed to revoke Tempo session after inner command"))
+        }
+        (Ok(status), Err(revoke_err)) => {
+            mark_session_failed(session_id);
+            Err(inner_command_status_error(&for_command, status).wrap_err(format!(
+                "also failed to revoke Tempo session {session_id:?}: {revoke_err}"
+            )))
+        }
+        (Err(child_err), Err(revoke_err)) => {
+            mark_session_failed(session_id);
+            Err(child_err.wrap_err(format!(
+                "also failed to revoke Tempo session {session_id:?}: {revoke_err}"
+            )))
+        }
+    }
+}
+
+fn run_inner_command(command: &str, session_id: B256) -> Result<ExitStatus> {
+    inner_command(command, session_id)?
+        .status()
+        .wrap_err_with(|| format!("failed to run inner command `{command}`"))
+}
+
+fn inner_command(command: &str, session_id: B256) -> Result<Command> {
+    let argv = split_for_command(command)?;
+    let (program, args) =
+        argv.split_first().ok_or_else(|| eyre::eyre!("--for command cannot be empty"))?;
+
+    let mut command = Command::new(program);
+    command.args(args).env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
+    Ok(command)
+}
+
+fn inner_command_status_error(command: &str, status: ExitStatus) -> eyre::Report {
+    match status.code() {
+        Some(code) => eyre::eyre!("inner command `{command}` exited with code {code}"),
+        None => eyre::eyre!("inner command `{command}` terminated by a signal"),
+    }
+}
+
+fn mark_session_failed(session_id: B256) {
+    if !matches!(
+        read_session_entry(session_id).ok().flatten().map(|entry| entry.status),
+        Some(SessionStatus::Revoked)
+    ) {
+        let _ = update_session_status(session_id, SessionStatus::Failed);
+    }
+}
+
+async fn resolve_session_chain_id(send_tx: &SendTxOpts) -> Result<u64> {
+    let config = send_tx.eth.load_config()?;
+    if let Some(chain) = config.chain {
+        return Ok(chain.id());
+    }
+
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    provider.get_chain_id().await.wrap_err(
+        "failed to resolve session chain id from RPC; pass --chain/--chain-id or --rpc-url",
+    )
+}
+
+fn session_scope(
+    mut scope: Vec<CallScope>,
+    target: Option<Address>,
+    selectors: Vec<String>,
+) -> Result<Vec<CallScope>> {
+    if !selectors.is_empty() && target.is_none() {
+        eyre::bail!("--selector requires --target");
+    }
+
+    if let Some(target) = target {
+        let selector_rules = selectors
+            .into_iter()
+            .map(|selector| {
+                parse_selector_bytes(&selector)
+                    .map(|selector| SelectorRule { selector, recipients: vec![] })
+                    .map_err(|err| eyre::eyre!("{err}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        scope.push(CallScope { target, selector_rules });
+    }
+
+    if scope.is_empty() {
+        eyre::bail!("cast wallet session requires --scope or --target");
+    }
+
+    Ok(scope)
+}
+
+fn split_for_command(command: &str) -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut in_token = false;
+
+    for ch in command.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            in_token = true;
+            continue;
+        }
+
+        match quote {
+            Some('\'') => {
+                if ch == '\'' {
+                    quote = None;
+                } else {
+                    current.push(ch);
+                }
+            }
+            Some('"') => {
+                if ch == '"' {
+                    quote = None;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else {
+                    current.push(ch);
+                }
+            }
+            Some(_) => unreachable!(),
+            None if ch.is_whitespace() => {
+                if in_token {
+                    args.push(std::mem::take(&mut current));
+                    in_token = false;
+                }
+            }
+            None if ch == '\'' || ch == '"' => {
+                quote = Some(ch);
+                in_token = true;
+            }
+            None if ch == '\\' => {
+                escaped = true;
+                in_token = true;
+            }
+            None => {
+                current.push(ch);
+                in_token = true;
+            }
+        }
+    }
+
+    if escaped {
+        eyre::bail!("unterminated escape in --for command");
+    }
+    if let Some(quote) = quote {
+        eyre::bail!("unterminated {quote} quote in --for command");
+    }
+    if in_token {
+        args.push(current);
+    }
+    if args.is_empty() {
+        eyre::bail!("--for command cannot be empty");
+    }
+
+    Ok(args)
 }
 
 /// Creates a signed session entry and stores it in the local registry.
