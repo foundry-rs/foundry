@@ -4,11 +4,12 @@ use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest};
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{
@@ -22,6 +23,7 @@ use foundry_test_utils::{
 };
 use serde_json::json;
 use std::{fs, path::Path, str::FromStr};
+use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::TempoTxEnvelope;
 
 #[macro_use]
@@ -193,6 +195,31 @@ casttest!(block_raw, |_prj, cmd| {
     );
 });
 
+casttest!(block_json_wraps_raw_and_scalar_field_outputs, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    let raw_output = cmd
+        .args(["block", "22934900", "--rpc-url", eth_rpc_url.as_str(), "--raw", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let raw_envelope: serde_json::Value = serde_json::from_str(raw_output.trim()).unwrap();
+    assert_eq!(raw_envelope["schema_version"], 1);
+    assert!(raw_envelope["success"].as_bool().unwrap());
+    assert!(raw_envelope["data"].as_str().unwrap().starts_with("0x"));
+
+    let field_output = cmd
+        .cast_fuse()
+        .args(["block", "0x123", "--field", "number", "--rpc-url", eth_rpc_url.as_str(), "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
+    assert_eq!(field_envelope["schema_version"], 1);
+    assert!(field_envelope["success"].as_bool().unwrap());
+    assert_eq!(field_envelope["data"], 291);
+});
+
 casttest!(block_raw_tempo, |_prj, cmd| {
     // https://explore.tempo.xyz/block/8386710
     let output = cmd
@@ -219,6 +246,45 @@ casttest!(block_raw_tempo, |_prj, cmd| {
     );
 });
 
+casttest!(channel_id_defaults, async |_prj, cmd| {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+
+    let payer = address!("0000000000000000000000000000000000000101");
+    let payee = address!("0000000000000000000000000000000000000202");
+    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
+    let expected = keccak256(
+        (
+            payer,
+            payee,
+            Address::ZERO,
+            PATH_USD_ADDRESS,
+            salt,
+            Address::ZERO,
+            B256::ZERO,
+            TIP20_CHANNEL_RESERVE_ADDRESS,
+            U256::from(chain_id),
+        )
+            .abi_encode(),
+    );
+
+    cmd.args([
+        "channel-id",
+        &payer.to_string(),
+        &payee.to_string(),
+        &PATH_USD_ADDRESS.to_string(),
+        &salt.to_string(),
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(format!("{expected:#x}\n"));
+});
+
 // tests that the `cast find-block` command works correctly
 casttest!(finds_block, |_prj, cmd| {
     // Construct args
@@ -237,7 +303,13 @@ casttest!(finds_block, |_prj, cmd| {
 
 // tests that we can create a new wallet
 casttest!(new_wallet, |_prj, cmd| {
-    cmd.args(["wallet", "new"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["wallet", "new"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]	0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Successfully created new keypair.
 [ADDRESS]
 [PRIVATE_KEY]
@@ -247,7 +319,13 @@ Successfully created new keypair.
 
 // tests that we can create a new wallet (verbose variant)
 casttest!(new_wallet_verbose, |_prj, cmd| {
-    cmd.args(["wallet", "new", "-v"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["wallet", "new", "-v"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]	0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Successfully created new keypair.
 [ADDRESS]
 [PUBLIC_KEY]
@@ -263,6 +341,7 @@ casttest!(new_wallet_json, |_prj, cmd| {
 [
   {
     "address": "{...}",
+    "public_key": "{...}",
     "private_key": "{...}"
   }
 ]
@@ -272,7 +351,7 @@ casttest!(new_wallet_json, |_prj, cmd| {
     );
 });
 
-// tests that we can create a new wallet with json output (verbose variant)
+// tests that `--json -v` does not alter stdout (verbosity is stderr-only)
 casttest!(new_wallet_json_verbose, |_prj, cmd| {
     cmd.args(["wallet", "new", "--json", "-v"]).assert_success().stdout_eq(
         str![[r#"
@@ -289,11 +368,53 @@ casttest!(new_wallet_json_verbose, |_prj, cmd| {
     );
 });
 
+// tests that keystore `--json` output includes address, public_key, path
+casttest!(new_wallet_keystore_json, |_prj, cmd| {
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "address": "{...}",
+    "public_key": "{...}",
+    "path": "{...}"
+  }
+]
+
+"#]]
+            .is_json(),
+        );
+});
+
+// tests that keystore `--json -v` does not alter stdout (verbosity is stderr-only)
+casttest!(new_wallet_keystore_json_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--json", "-v"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+[
+  {
+    "address": "{...}",
+    "public_key": "{...}",
+    "path": "{...}"
+  }
+]
+
+"#]]
+            .is_json(),
+        );
+});
+
 // tests that we can create a new wallet with keystore
 casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 
@@ -305,6 +426,10 @@ casttest!(new_wallet_keystore_with_password_verbose, |_prj, cmd| {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-v"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 [PUBLIC_KEY]
@@ -323,10 +448,12 @@ casttest!(new_wallet_keystore_overwrite_protection, |prj, cmd| {
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
         .stdin("n\n")
         .assert_failure()
+        .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 The following keystore file(s) already exist:
    - test-account
-Error: Operation cancelled. No keystores were modified.
+
+Do you want to overwrite all 1 file(s)? [y/N]: Error: Operation cancelled. No keystores were modified.
 
 "#]]);
 });
@@ -342,6 +469,10 @@ casttest!(new_wallet_keystore_overwrite_force, |prj, cmd| {
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "--force"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 
@@ -360,24 +491,30 @@ casttest!(new_wallet_keystore_overwrite_protection_multiple, |prj, cmd| {
         .args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-n", "2"])
         .stdin("n\n")
         .assert_failure()
+        .stdout_eq(str![""])
         .stderr_eq(str![[r#"
 The following keystore file(s) already exist:
    - test-account_1
    - test-account_2
-Error: Operation cancelled. No keystores were modified.
+
+Do you want to overwrite all 2 file(s)? [y/N]: Error: Operation cancelled. No keystores were modified.
 
 "#]]);
 });
 
 // tests that we can create a new wallet with default keystore location
 casttest!(new_wallet_default_keystore, |_prj, cmd| {
-    cmd.args(["wallet", "new", "--unsafe-password", "test"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.args(["wallet", "new", "--unsafe-password", "test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 
-"#
-    ]]);
+"#]]);
 
     // Verify the default keystore directory was created
     let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");
@@ -387,7 +524,14 @@ Created new encrypted keystore file: [..]
 
 // tests that we can outputting multiple keys without a keystore path
 casttest!(new_wallet_multiple_keys, |_prj, cmd| {
-    cmd.args(["wallet", "new", "-n", "2"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["wallet", "new", "-n", "2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]	0x[..]
+0x[..]	0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Successfully created new keypair.
 [ADDRESS]
 [PRIVATE_KEY]
@@ -503,6 +647,27 @@ Validation succeeded. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf signed 
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: Validation failed. Address 0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf did not sign this message.
+
+"#]]);
+});
+
+// tests that `cast wallet sign --json` outputs JSON on stdout regardless of verbosity
+casttest!(wallet_sign_message_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--json",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "test",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "message": "test",
+  "address": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+  "signature": "fe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c"
+}
 
 "#]]);
 });
@@ -808,6 +973,19 @@ casttest!(wallet_list_local_accounts, |prj, cmd| {
         .args(["wallet", "new", "keystore", "-n", "10", "--unsafe-password", "test"])
         .assert_success()
         .stdout_eq(str![[r#"
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
 Created new encrypted keystore file: [..]
@@ -1495,25 +1673,31 @@ casttest!(rpc_format_as_json, |_prj, cmd| {
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false", "--json"])
     .assert_json_stdout(str![[r#"
 {
-  "hash": "0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524",
-  "parentHash": "0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017",
-  "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-  "miner": "0xbb7b8287f3f0a933474a79eae42cbca977791171",
-  "stateRoot": "0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4",
-  "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-  "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-  "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-  "difficulty": "0x494433b31",
-  "number": "0x123",
-  "gasLimit": "0x1388",
-  "gasUsed": "0x0",
-  "timestamp": "0x55ba4564",
-  "extraData": "0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32",
-  "mixHash": "0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0",
-  "nonce": "0x29d6547c196e00e0",
-  "size": "0x220",
-  "uncles": [],
-  "transactions": []
+  "schema_version": 1,
+  "success": true,
+  "data": {
+    "hash": "0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524",
+    "parentHash": "0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017",
+    "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+    "miner": "0xbb7b8287f3f0a933474a79eae42cbca977791171",
+    "stateRoot": "0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4",
+    "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "difficulty": "0x494433b31",
+    "number": "0x123",
+    "gasLimit": "0x1388",
+    "gasUsed": "0x0",
+    "timestamp": "0x55ba4564",
+    "extraData": "0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32",
+    "mixHash": "0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0",
+    "nonce": "0x29d6547c196e00e0",
+    "size": "0x220",
+    "uncles": [],
+    "transactions": []
+  },
+  "errors": [],
+  "warnings": []
 }
 
 "#]]);
@@ -1858,6 +2042,38 @@ casttest!(logs_chunked_large_range, |_prj, cmd| {
         "0xA0b86a33E6441d02dd8C6B2b7E5D1E3eD7F73b4b",
     ])
     .assert_success();
+});
+
+// tests that `cast create2` writes `address\tsalt` to stdout and prose to stderr
+casttest!(create2_output_channels, |_prj, cmd| {
+    cmd.args([
+        "create2",
+        "--starts-with",
+        "cc",
+        "--init-code-hash",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]	0x[..]
+
+"#]]);
+});
+
+// tests that `cast create2 --salt` writes `address\tsalt` to stdout
+casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
+    cmd.args([
+        "create2",
+        "--salt",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--init-code-hash",
+        "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]	0x0000000000000000000000000000000000000000000000000000000000000001
+
+"#]]);
 });
 
 casttest!(mktx, |_prj, cmd| {
@@ -2973,11 +3189,22 @@ casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    let tx_json: serde_json::Value = serde_json::from_str(&tx_output).unwrap();
-    let auth_list = tx_json["authorizationList"].as_array().unwrap();
+    let tx_envelope: serde_json::Value = serde_json::from_str(&tx_output).unwrap();
+    let auth_list = tx_envelope["data"]["authorizationList"].as_array().unwrap();
 
     // Verify we have 2 authorizations
     assert_eq!(auth_list.len(), 2, "Expected 2 authorizations in the transaction");
+
+    let field_output = cmd
+        .cast_fuse()
+        .args(["tx", tx_hash, "authorizationList", "--rpc-url", &endpoint, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
+    let field_auth_list = field_envelope["data"].as_array().unwrap();
+    assert_eq!(field_auth_list.len(), 2, "Expected authorizationList field data to be an array");
 });
 
 // Test that multiple address-based authorizations are rejected
@@ -3155,13 +3382,18 @@ casttest!(flaky_test_non_mainnet_traces, |prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [33841] FiatTokenProxy::fallback(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8])
     ├─ [26673] FiatTokenV2_2::approve(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8]) [delegatecall]
     │   ├─ emit Approval(owner: 0x9a95Af47C51562acfb2107F44d7967DF253197df, spender: 0x111111125421cA6dc452d289314280a0f8842A65, amount: 164054805 [1.64e8])
     │   └─ ← [Return] true
     └─ ← [Return] true
+...
+
+"#]])
+    .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
 ...
 
 "#]]);
@@ -3248,9 +3480,14 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Compiling project to generate artifacts
 Nothing to compile
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 
@@ -3262,7 +3499,6 @@ Nothing to compile
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
@@ -3273,6 +3509,12 @@ Traces:
 Transaction successfully executed.
 [GAS]
 
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
+
 "#]]);
 
     // Assert cast with local artifacts can decode traces.
@@ -3280,7 +3522,6 @@ Transaction successfully executed.
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
@@ -3291,6 +3532,12 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 });
@@ -3345,7 +3592,6 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -3355,6 +3601,12 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 });
@@ -3517,6 +3769,11 @@ forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
+    assert_eq!(
+        envelope["errors"][0]["details"]["unsupported_flags"],
+        serde_json::json!(["--trace"]),
+        "missing structured unsupported_flags details: {envelope}"
+    );
 });
 
 // Transport/connectivity failures (here: unreachable RPC URL) emit a typed
@@ -4128,7 +4385,11 @@ casttest!(
         cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
             .assert_success()
             .stdout_eq(str![[r#"
-Estimated data availability size for block 30558838 with 225 transactions: 52916546100
+52916546100
+
+"#]])
+            .stderr_eq(str![[r#"
+Estimated data availability size for block 30558838 with 225 transactions:
 
 "#]]);
     }
@@ -4832,10 +5093,10 @@ casttest!(correct_json_serialization, |_prj, cmd| {
         [true, "0x0000000000000000000000000000000000000000000000000000000000000012"],
         [true, "0x0000000000000000000000000000000000000000000000000000000000000012"]
     ]]);
-    let decoded: serde_json::Value =
+    let output: serde_json::Value =
         serde_json::from_slice(&cmd.args(args).assert_success().get_output().stdout)
             .expect("not valid json");
-    assert_eq!(decoded, expected_output);
+    assert_eq!(output, expected_output);
 });
 
 // Test cast abi-encode-event with indexed parameters
@@ -4985,7 +5246,6 @@ forgetest_async!(cast_send_with_data, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -4995,6 +5255,12 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
 
 "#]]);
 });
@@ -5272,7 +5538,8 @@ casttest!(vaddr_create_json_output, |_prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    let v: serde_json::Value = serde_json::from_str(out.trim()).expect("valid JSON");
+    let envelope: serde_json::Value = serde_json::from_str(out.trim()).expect("valid JSON");
+    let v = &envelope["data"];
     assert_eq!(v["salt"], "0x0000000000000000000000000000000000000000000000003ee0a78d00000000");
     assert_eq!(
         v["registration_hash"],
@@ -5375,6 +5642,40 @@ mod vaddr_e2e {
             })
             .unwrap_or_else(|| panic!("could not parse vaddr from create output:\n{out}"))
     }
+
+    casttest!(vaddr_create_register_json_includes_tx_hash, async |_prj, cmd| {
+        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+        let rpc = handle.http_endpoint();
+        let owner = handle.dev_wallets().next().unwrap();
+        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+        let owner_addr = format!("{:#x}", owner.address());
+
+        let out = cmd
+            .cast_fuse()
+            .args([
+                "--json",
+                "vaddr",
+                "create",
+                "--owner",
+                &owner_addr,
+                "--private-key",
+                &owner_pk,
+                "-j",
+                &mining_threads(),
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+
+        let envelope: serde_json::Value =
+            serde_json::from_str(out.trim()).expect("create --json output is valid JSON");
+        let tx_hash = envelope["data"]["registration_tx_hash"]
+            .as_str()
+            .expect("registration_tx_hash is a string");
+        B256::from_str(tx_hash).expect("registration_tx_hash is a valid tx hash");
+    });
 
     // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,
     // and `cast vaddr resolve` returns the registered owner.

@@ -13,13 +13,23 @@ use std::sync::Arc;
 mod keystore;
 mod registry;
 mod session;
+mod session_policy;
 #[cfg(test)]
 mod test_utils;
+mod tip20;
 
 pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use keystore::*;
 pub use session::*;
+pub use session_policy::{
+    GeneratedSessionKey, PreparedSessionAuthorization, SessionAuthorizationRequest,
+    SessionSpendLimit,
+};
+pub use tip20::{
+    TIP20_ALLOWED_LOGO_URI_SCHEMES, TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError,
+    validate_tip20_logo_uri,
+};
 
 #[cfg(test)]
 pub(crate) use test_utils::{test_env_mutex, with_tempo_home};

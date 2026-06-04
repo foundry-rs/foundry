@@ -60,6 +60,7 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
@@ -287,20 +288,16 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
                     return ControlFlow::Break(());
                 }
             }
-            ExprKind::Delete(inner) => {
-                if expr_root_is_param(inner, self.params) {
-                    return ControlFlow::Break(());
-                }
+            ExprKind::Delete(inner) if expr_root_is_param(inner, self.params) => {
+                return ControlFlow::Break(());
             }
             ExprKind::Unary(op, inner)
                 if matches!(
                     op.kind,
                     UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-                ) =>
+                ) && expr_root_is_param(inner, self.params) =>
             {
-                if expr_root_is_param(inner, self.params) {
-                    return ControlFlow::Break(());
-                }
+                return ControlFlow::Break(());
             }
             ExprKind::Call(callee, args, opts) if !is_type_conversion_callee(callee) => {
                 for arg in args.exprs() {
@@ -309,7 +306,7 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
                     }
                 }
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         if expr_root_is_param(&opt.value, self.params) {
                             return ControlFlow::Break(());
                         }

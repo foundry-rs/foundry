@@ -30,6 +30,7 @@ use crate::FoundryNetwork;
 /// - **Tempo**: When `feeToken` or `nonceKey` fields are present, or transaction type is
 ///   `TEMPO_TX_TYPE_ID`
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum FoundryTransactionRequest {
     Ethereum(TransactionRequest),
     #[cfg(feature = "optimism")]

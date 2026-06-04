@@ -1,7 +1,7 @@
-# Reentrancy through unlimited-gas ETH calls
+# ETH reentrancy through uncapped calls
 
 **Severity**: `High`
-**ID**: `reentrancy-unlimited-gas`
+**ID**: `reentrancy-eth`
 
 Flags uncapped ETH-transferring low-level `call` operations when state read before the call is
 written after the call.
@@ -11,7 +11,8 @@ written after the call.
 Warns when a function performs `.call{value: ...}(...)` without a concrete gas cap, or with
 `gas: gasleft()`, and later writes a state variable that was read before the call on the same
 reachable path. Local internal helper calls and modifiers are analyzed when their bodies are
-available.
+available. This uses Slither's `reentrancy-eth` detector name, while intentionally narrowing
+reporting to uncapped ETH-transferring low-level calls.
 
 ## Why is this bad?
 

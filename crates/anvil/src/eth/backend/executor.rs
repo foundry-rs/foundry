@@ -17,8 +17,7 @@ use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, GasOutput, OnStateHook, StateChangePreBlockSource, StateChangeSource,
-        StateDB, TxResult,
+        ExecutableTx, GasOutput, OnStateHook, StateDB, TxResult,
     },
     eth::{
         EthTxResult,
@@ -177,10 +176,7 @@ where
                 .map_err(BlockExecutionError::other)?;
 
             if let Some(hook) = &mut self.state_hook {
-                hook.on_state(
-                    StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
-                    &result.state,
-                );
+                hook.on_state(&result.state);
             }
             self.evm.db_mut().commit(result.state);
         }
@@ -227,7 +223,7 @@ where
         } = output;
 
         if let Some(hook) = &mut self.state_hook {
-            hook.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
+            hook.on_state(&state);
         }
 
         let gas_used = result.tx_gas_used();
@@ -291,10 +287,6 @@ where
                 blob_gas_used: self.blob_gas_used,
             },
         ))
-    }
-
-    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
-        self.state_hook = hook;
     }
 
     fn evm_mut(&mut self) -> &mut Self::Evm {

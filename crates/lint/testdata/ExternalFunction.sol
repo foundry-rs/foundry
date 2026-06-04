@@ -42,6 +42,12 @@ contract ExternalFunction {
         stored = payload;
     }
 
+    function localUnaryStillExternal(bytes memory data) public { //~NOTE: public function can be declared external
+        uint256 i = 0;
+        i++;
+        stored = data;
+    }
+
     // SHOULD PASS:
 
     // Already external.
