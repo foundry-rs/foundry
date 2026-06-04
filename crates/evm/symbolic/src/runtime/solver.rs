@@ -526,7 +526,7 @@ impl SmtLibSubprocessSolver {
 
 /// Returns a structural key for normalized solver cache lookups.
 fn constraint_cache_key(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
-    let mut key = Vec::new();
+    let mut key = Vec::with_capacity(constraints.len());
     for constraint in constraints.iter().cloned().map(cache_key_bool) {
         collect_cache_key_conjunct(constraint, &mut key);
     }
