@@ -128,6 +128,9 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct InlineCallKey {
     func_id: FunctionId,
+    /// Distinguishes top-level helper summaries from summaries computed while a caller is
+    /// on the recursion stack, without keying on the full stack in helper-heavy graphs.
+    caller: Option<FunctionId>,
     state: FlowState,
 }
 
@@ -425,7 +428,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
-        let key = InlineCallKey { func_id, state: state.clone() };
+        let key = InlineCallKey {
+            func_id,
+            caller: self.call_stack.last().copied(),
+            state: state.clone(),
+        };
         if self.inline_cache.is_in_progress(&key) {
             return;
         }

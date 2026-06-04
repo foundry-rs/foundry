@@ -17,6 +17,10 @@ interface IBus {
     function peek(uint256, uint256) external view returns (uint256);
 }
 
+interface ICall {
+    function poke() external;
+}
+
 contract Other {
     function action(uint256) external returns (bool) {
         return true;
@@ -35,6 +39,35 @@ contract SuperTransferChild is SuperTransferBase {
     function emitAfterSuperTransfer(IExternal d) external {
         super.transfer(d);
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+}
+
+contract RecursiveCacheKeyRepro {
+    event Tick();
+
+    ICall ext;
+    bool once;
+
+    function entry(bool flag) external {
+        once = false;
+        if (flag) {
+            helperA();
+            return;
+        }
+        noOp();
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function noOp() internal {
+        if (!once) {
+            once = true;
+            helperA();
+        }
+    }
+
+    function helperA() internal {
+        noOp();
+        ext.poke();
     }
 }
 
