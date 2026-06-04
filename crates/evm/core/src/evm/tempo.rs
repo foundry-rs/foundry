@@ -24,9 +24,7 @@ use crate::{
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
     evm::{FoundryEvmFactory, NestedEvm},
-    tempo::{
-        TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses, initialize_tempo_genesis_inner,
-    },
+    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
 // Will be removed when the next revm release includes bluealloy/revm#3518.
@@ -53,15 +51,15 @@ pub(crate) fn initialize_tempo_evm<
             // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
             let mut sctx = StorageCtx;
             let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-            for addr in active_tempo_precompile_addresses(ctx.cfg.spec)
-                .chain(TEMPO_TIP20_TOKENS.iter().copied())
+            for addr in
+                TEMPO_PRECOMPILE_ADDRESSES.iter().copied().chain(TEMPO_TIP20_TOKENS.iter().copied())
             {
                 sctx.set_code(addr, sentinel.clone())
                     .expect("failed to warm tempo precompile address");
             }
         } else {
             // In non-fork mode, run full genesis initialization.
-            initialize_tempo_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER, ctx.cfg.spec)
+            initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
                 .expect("tempo genesis initialization failed");
         }
     });
