@@ -70,11 +70,25 @@ const VALID_BEFORE_SECS: u64 = 25;
 /// Default gas limit for session open transactions.
 const SESSION_OPEN_GAS_LIMIT: u64 = 10_000_000;
 
+/// Gas limit for session open transactions when the sponsor pays
+/// (`feePayer: true`). Set to the mpp-rs `FeePayerPolicy::max_gas` ceiling
+/// (`MAX_FEE_PAYER_GAS_LIMIT = 2_000_000`, inclusive); exceeding it causes the
+/// sponsor to reject the tx with `verification-failed`. The previous value of
+/// 1M was too tight for Tempo mainnet passkey-wallet `escrow.open`, which
+/// together with the inner `approve` consumes ~1.2M gas and ran out of gas
+/// on-chain (tx reverted, sponsor returned generic `verification-failed`).
+const SESSION_OPEN_FEE_PAYER_GAS_LIMIT: u64 = 2_000_000;
+
 /// Max fee per gas (20 gwei — Tempo's fixed base fee).
 const MAX_FEE_PER_GAS: u128 = 20_000_000_000;
 
 /// Max priority fee per gas.
 const MAX_PRIORITY_FEE_PER_GAS: u128 = 20_000_000_000;
+
+/// Priority fee per gas when the sponsor pays (`feePayer: true`). Must stay
+/// under the server-enforced `MAX_PRIORITY_FEE_PER_GAS_DEFAULT` (10 gwei)
+/// defined by the mpp-rs `FeePayerPolicy`.
+const MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER: u128 = 1_000_000_000;
 
 /// Tempo session provider using expiring nonces.
 ///
@@ -412,9 +426,17 @@ impl SessionProvider {
                 fee_token: options.currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if options.fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if options.fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer: options.fee_payer,
                 valid_before,
                 key_authorization: (!*self.key_provisioned.lock().unwrap())
@@ -516,9 +538,17 @@ impl SessionProvider {
                 fee_token: currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer,
                 valid_before,
                 key_authorization: None,

@@ -609,10 +609,12 @@ where
                 }
             }
 
-            // Retry with key_authorization when the error explicitly indicates
-            // the access key is not provisioned on-chain, or when verification
-            // failed and the key appears provisioned (first-time provisioning
-            // where key_auth was stripped but not yet provisioned on-chain).
+            // Retry with key_authorization only when the error explicitly
+            // indicates the access key is not provisioned on-chain. Retrying on
+            // a generic verification-failed is unsafe: if the key is already
+            // provisioned, including a fresh key_authorization causes the chain
+            // to reject the open with KeyAlreadyExists, masking the real first-
+            // attempt failure.
             //
             // We fetch a fresh challenge because the server may have consumed
             // the original challenge ID on first use.
@@ -620,14 +622,10 @@ where
                 || detail.contains("access key does not exist")
                 || detail.contains("key is not provisioned");
 
-            let needs_verification_retry = (problem_type.ends_with("/verification-failed")
-                || detail.contains("verification-failed"))
-                && self.provider.is_key_provisioned();
-
-            if needs_key_provisioning || needs_verification_retry {
+            if needs_key_provisioning {
                 debug!(
                     problem_type,
-                    "MPP 402 key not provisioned/verification-failed, retrying with key_authorization"
+                    "MPP 402 key not provisioned, retrying with key_authorization"
                 );
                 self.provider.set_key_provisioned(false);
                 self.provider.rollback_pending();
