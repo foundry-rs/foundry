@@ -87,6 +87,11 @@ const SESSION_OPEN_GAS_LIMIT: u64 = 10_000_000;
 /// on-chain (tx reverted, sponsor returned generic `verification-failed`).
 const SESSION_OPEN_FEE_PAYER_GAS_LIMIT: u64 = 2_000_000;
 
+/// Gas limit for sponsored session top-up transactions. Top-up still includes
+/// an inner `approve`, but does not need the first-open headroom required by
+/// the passkey-wallet `escrow.open` path above.
+const SESSION_TOPUP_FEE_PAYER_GAS_LIMIT: u64 = 1_000_000;
+
 /// Max fee per gas (20 gwei — Tempo's fixed base fee).
 const MAX_FEE_PER_GAS: u128 = 20_000_000_000;
 
@@ -669,7 +674,7 @@ impl SessionProvider {
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
                 gas_limit: if fee_payer {
-                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                    SESSION_TOPUP_FEE_PAYER_GAS_LIMIT
                 } else {
                     SESSION_OPEN_GAS_LIMIT
                 },
@@ -1130,6 +1135,10 @@ mod tests {
         let topup_payload =
             provider.create_topup_tx(&entry, 1_000_000, DEFAULT_FEE_TOKEN, true).await.unwrap();
         assert_eq!(payload_transaction_type(&topup_payload), 0x78);
+        assert!(
+            SESSION_TOPUP_FEE_PAYER_GAS_LIMIT < SESSION_OPEN_FEE_PAYER_GAS_LIMIT,
+            "sponsored top-up should not inherit the sponsored open policy ceiling"
+        );
 
         let (_, open_without_fee_payer) = provider
             .create_open_tx(
