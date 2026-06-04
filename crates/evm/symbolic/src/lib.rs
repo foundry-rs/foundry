@@ -205,6 +205,9 @@ pub struct SymbolicStats {
     pub paths: usize,
     /// Number of normalized solver queries issued during the run.
     pub solver_queries: usize,
+    /// Number of queries sent to the SMT backend after local fast paths.
+    #[serde(default)]
+    pub smt_queries: usize,
     /// Number of satisfiability checks requested by the executor.
     #[serde(default)]
     pub sat_queries: usize,
@@ -217,6 +220,9 @@ pub struct SymbolicStats {
     /// Number of model requests served from the normalized model cache.
     #[serde(default)]
     pub model_cache_hits: usize,
+    /// Number of satisfiable witnesses produced by local hard-arithmetic search.
+    #[serde(default)]
+    pub heuristic_witnesses: usize,
     /// Wall-clock time spent waiting on backend solver subprocesses, in milliseconds.
     #[serde(default)]
     pub solver_time_ms: u64,

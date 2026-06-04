@@ -158,6 +158,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     model_queries: usize,
     sat_cache_hits: usize,
     model_cache_hits: usize,
+    smt_queries: usize,
     solver_time: Duration,
 }
 
@@ -186,6 +187,7 @@ impl SmtLibSubprocessSolver {
             model_queries: 0,
             sat_cache_hits: 0,
             model_cache_hits: 0,
+            smt_queries: 0,
             solver_time: Duration::ZERO,
         }
     }
@@ -207,10 +209,12 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         SymbolicStats {
             paths: 0,
             solver_queries: self.queries,
+            smt_queries: self.smt_queries,
             sat_queries: self.sat_queries,
             model_queries: self.model_queries,
             sat_cache_hits: self.sat_cache_hits,
             model_cache_hits: self.model_cache_hits,
+            heuristic_witnesses: self.heuristic_witnesses,
             solver_time_ms: self.solver_time.as_millis().try_into().unwrap_or(u64::MAX),
         }
     }
@@ -474,6 +478,7 @@ impl SmtLibSubprocessSolver {
         model: bool,
         model_constraints: &[BoolExpr],
     ) -> Result<String, SymbolicError> {
+        self.smt_queries += 1;
         let mut vars = BTreeSet::new();
         for constraint in smt_constraints {
             constraint.collect_vars(&mut vars);

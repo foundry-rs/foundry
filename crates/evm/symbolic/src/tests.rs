@@ -2034,6 +2034,31 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
 }
 
 #[test]
+/// Regression coverage for normalized constraint batches being compact and order-stable.
+fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let a = BoolExpr::cmp(BoolExprOp::Ult, x.clone(), Expr::Const(U256::from(10)));
+    let b = BoolExpr::eq(y.clone(), Expr::Const(U256::from(3)));
+    let grouped = vec![
+        BoolExpr::And(vec![b.clone(), BoolExpr::Const(true), a.clone()]),
+        a.clone(),
+        BoolExpr::And(vec![b.clone()]),
+    ];
+
+    let normalized = normalize_constraints_for_solver(&grouped);
+
+    assert_eq!(normalized, vec![b, a]);
+
+    let unsat = normalize_constraints_for_solver(&[
+        BoolExpr::eq(x, y),
+        BoolExpr::Const(false),
+        BoolExpr::Const(true),
+    ]);
+    assert_eq!(unsat, vec![BoolExpr::Const(false)]);
+}
+
+#[test]
 /// Regression coverage for ERC4626-style share predicates losing `bvudiv` before SMT.
 fn solver_normalizes_erc4626_style_share_zero_predicate() {
     let assets = Expr::Var("assets".to_string());
@@ -2531,6 +2556,63 @@ fn counted_solver_command(marker: &Path, response: &'static str) -> SolverComman
 /// Returns how many times a counted fake solver command was invoked.
 fn counted_solver_invocations(marker: &Path) -> usize {
     std::fs::read_to_string(marker).ok().and_then(|count| count.parse().ok()).unwrap_or_default()
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for hard-arithmetic `is_sat` fast-path witnesses.
+fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
+    let marker = portfolio_test_marker("hard-arith-is-sat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let constraints = vec![
+        BoolExpr::cmp(BoolExprOp::Ugt, x.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::cmp(BoolExprOp::Ugt, y.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::eq(Expr::op(ExprOp::Mul, x, y), Expr::Const(U256::from(4))),
+    ];
+    let normalized = normalize_constraints_for_solver(&constraints);
+    let model = hard_arith_fallback_model(&normalized).unwrap();
+
+    assert!(normalized.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(solver.is_sat(&constraints).unwrap());
+    assert!(solver.is_sat(&constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(solver.heuristic_witnesses(), 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for hard-arithmetic `is_sat` preserving solver `unsat`.
+fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
+    let marker = portfolio_test_marker("hard-arith-is-sat-unsat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let constraints = vec![
+        BoolExpr::eq(x.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::eq(Expr::op(ExprOp::Mul, x, y), Expr::Const(U256::from(1))),
+    ];
+    let normalized = normalize_constraints_for_solver(&constraints);
+
+    assert!(hard_arith_fallback_model(&normalized).is_none());
+    assert!(!solver.is_sat(&constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 1);
+    assert_eq!(stats.sat_cache_hits, 0);
+    assert_eq!(solver.heuristic_witnesses(), 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
 }
 
 #[cfg(unix)]
