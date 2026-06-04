@@ -2874,6 +2874,21 @@ fn model_query_populates_sat_cache() {
     let _ = std::fs::remove_file(&marker);
 }
 
+#[test]
+/// Regression coverage for direct contradictions avoiding SMT calls.
+fn direct_contradiction_is_sat_short_circuits_locally() {
+    let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
+    let constraint = BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)));
+    let constraints = vec![constraint.clone(), constraint.not()];
+
+    assert!(!solver.is_sat(&constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(stats.sat_queries, 1);
+}
+
 #[cfg(unix)]
 #[test]
 /// Regression coverage for satisfiability cache unsat results short-circuiting model queries.

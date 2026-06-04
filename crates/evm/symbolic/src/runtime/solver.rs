@@ -288,6 +288,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
+        if constraints_are_directly_unsat(&smt_constraints) {
+            trace!("is_sat: direct contradiction");
+            self.cache_sat_result(cache_key, false);
+            return Ok(false);
+        }
         if product_monotonic_unsat_normalized(&smt_constraints) {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
@@ -538,6 +543,15 @@ fn constraint_cache_key(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
     key.sort();
     key.dedup();
     key
+}
+
+/// Returns whether normalized conjunctive constraints contain a direct contradiction.
+fn constraints_are_directly_unsat(constraints: &[BoolExpr]) -> bool {
+    constraints.iter().any(|constraint| match constraint {
+        BoolExpr::Const(false) => true,
+        BoolExpr::Not(inner) => constraints.binary_search(inner.as_ref()).is_ok(),
+        constraint => constraints.binary_search(&constraint.clone().not()).is_ok(),
+    })
 }
 
 /// Returns a conservative canonical boolean expression for cache-key equality.
