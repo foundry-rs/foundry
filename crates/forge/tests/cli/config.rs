@@ -40,7 +40,7 @@ auto_detect_remappings = true
 libraries = []
 cache = true
 cache_path = "cache"
-dynamic_test_linking = false
+dynamic_test_linking = true
 snapshots = "snapshots"
 gas_snapshot_check = false
 gas_snapshot_emit = true
@@ -269,7 +269,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
-        dynamic_test_linking: false,
+        dynamic_test_linking: true,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -1320,7 +1320,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "libraries": [],
   "cache": true,
   "cache_path": "cache",
-  "dynamic_test_linking": false,
+  "dynamic_test_linking": true,
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
   "gas_snapshot_emit": true,
