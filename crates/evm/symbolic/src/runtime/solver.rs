@@ -484,7 +484,7 @@ impl SmtLibSubprocessSolver {
         let commands =
             ordered_commands.iter().map(|(_, command)| command.clone()).collect::<Vec<_>>();
 
-        let mut smt = String::new();
+        let mut smt = String::with_capacity(256 + smt_constraints.len().saturating_mul(192));
         smt.push_str("(set-logic QF_BV)\n");
         if commands.iter().all(|command| command.smt_timeout)
             && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
