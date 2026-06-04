@@ -6,10 +6,10 @@ use crate::{
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
 };
-use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
+use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -17,12 +17,12 @@ use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    json::print_json_success,
+    json::{print_json_object, print_json_value_or_scalar, print_list, print_scalar, print_tokens},
     utils::{self, LoadConfig},
 };
 use foundry_common::{
     abi::{get_error, get_event},
-    fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
+    fmt::format_uint_exp,
     fs,
     provider::ProviderBuilder,
     selectors::{
@@ -33,10 +33,12 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
+use foundry_primitives::{FoundryTxEnvelope, PaymentLaneClassification};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
+use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -242,11 +244,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         // envelope
         CastSubcommand::AbiEncodeEvent { sig, args } => {
             let log_data = SimpleCast::abi_encode_event(&sig, &args)?;
-            for (i, topic) in log_data.topics().iter().enumerate() {
-                sh_println!("[topic{}]: {}", i, topic)?;
-            }
-            if !log_data.data.is_empty() {
-                sh_println!("[data]: {}", hex::encode_prefixed(log_data.data))?;
+            if shell::is_json() {
+                #[derive(serde::Serialize)]
+                struct EncodedEvent {
+                    topics: Vec<String>,
+                    data: String,
+                }
+                let encoded = EncodedEvent {
+                    topics: log_data.topics().iter().map(|t| t.to_string()).collect(),
+                    data: hex::encode_prefixed(&log_data.data),
+                };
+                print_json_object(encoded)?;
+            } else {
+                for (i, topic) in log_data.topics().iter().enumerate() {
+                    sh_println!("[topic{}]: {}", i, topic)?;
+                }
+                if !log_data.data.is_empty() {
+                    sh_println!("[data]: {}", hex::encode_prefixed(log_data.data))?;
+                }
             }
         }
         CastSubcommand::DecodeCalldata { sig, calldata, file } => {
@@ -398,7 +413,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
-            let output = if raw || fields.contains(&"raw".into()) {
+            let is_raw_block = raw || fields.contains(&"raw".into());
+            let output = if is_raw_block {
                 match network {
                     #[cfg(feature = "optimism")]
                     Some(NetworkVariant::Optimism) => {
@@ -431,8 +447,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     .block(block.unwrap_or(BlockId::Number(Latest)), full, fields)
                     .await?
             };
-            // JSON: Output is already formatted by `Cast::block()`
-            sh_println!("{output}")?;
+            print_json_value_or_scalar(output)?;
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = rpc.load_config()?;
@@ -505,14 +520,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = SimpleCast::disassemble(&hex::decode(bytecode)?)?;
             print_scalar(out)?;
         }
-        // TODO(json): tabular multi-row output, needs array envelope
         CastSubcommand::Selectors { bytecode, resolve } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
             let functions = SimpleCast::extract_functions(&bytecode)?;
-            let max_args_len = functions.iter().map(|r| r.1.len()).max().unwrap_or(0);
-            let max_mutability_len = functions.iter().map(|r| r.2.len()).max().unwrap_or(0);
 
-            let resolve_results = if resolve {
+            let resolve_results: Vec<String> = if resolve {
                 let selectors = functions
                     .iter()
                     .map(|&(selector, ..)| SelectorKind::Function(selector))
@@ -522,15 +534,41 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             } else {
                 vec![]
             };
-            for (pos, (selector, arguments, state_mutability)) in functions.into_iter().enumerate()
-            {
-                if resolve {
-                    let resolved = &resolve_results[pos];
-                    sh_println!(
-                        "{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}"
-                    )?
-                } else {
-                    sh_println!("{selector}\t{arguments:max_args_len$}\t{state_mutability}")?
+
+            if shell::is_json() {
+                #[derive(serde::Serialize)]
+                struct SelectorInfo {
+                    selector: String,
+                    arguments: String,
+                    state_mutability: String,
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    resolved: Option<String>,
+                }
+                let infos: Vec<SelectorInfo> = functions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(pos, (selector, arguments, state_mutability))| SelectorInfo {
+                        selector: selector.to_string(),
+                        arguments,
+                        state_mutability: state_mutability.to_string(),
+                        resolved: resolve_results.get(pos).cloned(),
+                    })
+                    .collect();
+                print_json_object(infos)?;
+            } else {
+                let max_args_len = functions.iter().map(|r| r.1.len()).max().unwrap_or(0);
+                let max_mutability_len = functions.iter().map(|r| r.2.len()).max().unwrap_or(0);
+                for (pos, (selector, arguments, state_mutability)) in
+                    functions.into_iter().enumerate()
+                {
+                    if resolve {
+                        let resolved = &resolve_results[pos];
+                        sh_println!(
+                            "{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}"
+                        )?
+                    } else {
+                        sh_println!("{selector}\t{arguments:max_args_len$}\t{state_mutability}")?
+                    }
                 }
             }
         }
@@ -586,6 +624,51 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = Cast::new(provider).storage_root(who, slots, block).await?;
             print_scalar(out)?;
         }
+        CastSubcommand::ChannelId {
+            payer,
+            payee,
+            token,
+            salt,
+            operator,
+            authorized_signer,
+            expiring_nonce_hash,
+            reserve,
+            block,
+            rpc,
+        } => {
+            let config = rpc.load_config()?;
+            let provider = utils::get_provider(&config)?;
+            let payer = payer.resolve(&provider).await?;
+            let payee = payee.resolve(&provider).await?;
+            let token = token.resolve(&provider).await?;
+            let operator = match operator {
+                Some(operator) => operator.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let authorized_signer = match authorized_signer {
+                Some(authorized_signer) => authorized_signer.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let reserve = match reserve {
+                Some(reserve) => reserve.resolve(&provider).await?,
+                None => TIP20_CHANNEL_RESERVE_ADDRESS,
+            };
+
+            let channel_id = ITIP20ChannelReserve::new(reserve, &provider)
+                .computeChannelId(
+                    payer,
+                    payee,
+                    operator,
+                    token,
+                    salt,
+                    authorized_signer,
+                    expiring_nonce_hash,
+                )
+                .block(block.unwrap_or_default())
+                .call()
+                .await?;
+            print_scalar(format!("{channel_id:#x}"))?;
+        }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
@@ -632,7 +715,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchMakeTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchSend(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request, network } => {
+        CastSubcommand::Classify { raw_tx } => {
+            let raw_tx = stdin::unwrap_line(raw_tx)?;
+            print_json_value_or_scalar(classify_raw_transaction_output(&raw_tx)?)?
+        }
+        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, lane, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
@@ -642,26 +729,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
 
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
                 Some(NetworkVariant::Tempo) => {
                     let provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
                 // Ethereum (default) or no --raw flag
                 _ => {
                     let provider = utils::get_provider(&config)?;
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
             };
-            // JSON: Output is already formatted by `Cast::transaction()`
-            sh_println!("{output}")?;
+            print_json_value_or_scalar(output)?;
         }
 
         // 4Byte
@@ -674,8 +760,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_list(&sigs)?;
         }
 
-        // TODO(json): multiple candidates + interactive selection + decoded tokens, needs
-        // structured envelope
+        // JSON envelope intentionally unsupported: output combines an interactive selector
+        // disambiguation step with decoded token output; no single stable shape exists.
         CastSubcommand::FourByteCalldata { calldata } => {
             let calldata = stdin::unwrap_line(calldata)?;
 
@@ -716,7 +802,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
             print_list(&sigs)?;
         }
-        // TODO(json): external API response printed via .describe(), needs structured envelope
+        // JSON envelope intentionally unsupported: output is a human-readable summary from an
+        // external selector registry API with no stable machine-readable schema.
         CastSubcommand::UploadSignature { signatures } => {
             let signatures = stdin::unwrap_vec(signatures)?;
             let ParsedSignatures { signatures, abis } = parse_signatures(signatures);
@@ -887,61 +974,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Trace(cmd) => cmd.run().await?,
     };
 
-    /// Prints a scalar value: JSON envelope in `--json` mode, plain text otherwise.
-    fn print_scalar(value: impl serde::Serialize + std::fmt::Display) -> Result<()> {
-        if shell::is_json() {
-            print_json_success(value)?;
-        } else {
-            sh_println!("{value}")?;
-        }
-        Ok(())
-    }
-
-    /// Prints a list of serializable items: JSON envelope wrapping an array in `--json` mode,
-    /// one item per line otherwise.
-    fn print_list<T: serde::Serialize + std::fmt::Display>(items: &[T]) -> Result<()> {
-        if shell::is_json() {
-            print_json_success(items)?;
-        } else {
-            for item in items {
-                sh_println!("{item}")?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Wraps a serializable object in the JSON envelope in `--json` mode, otherwise pretty-prints
-    /// it as JSON. Used for objects that have no human-readable `Display` format.
-    fn print_json_object<T: serde::Serialize>(value: T) -> Result<()> {
-        if shell::is_json() {
-            print_json_success(value)?;
-        } else {
-            sh_println!("{}", serde_json::to_string_pretty(&value)?)?;
-        }
-        Ok(())
-    }
-
-    /// Prints slice of tokens using [`format_tokens`] or [`serialize_value_as_json`] depending
-    /// whether the shell is in JSON mode.
-    ///
-    /// This is included here to avoid a cyclic dependency between `fmt` and `common`.
-    fn print_tokens(tokens: &[DynSolValue]) -> Result<()> {
-        if shell::is_json() {
-            let values = tokens
-                .iter()
-                .cloned()
-                .map(|t| serialize_value_as_json(t, None))
-                .collect::<Result<Vec<serde_json::Value>>>()?;
-            print_json_success(values)?;
-        } else {
-            format_tokens(tokens).for_each(|t| {
-                let _ = sh_println!("{t}");
-            });
-        }
-        Ok(())
-    }
-
     Ok(())
+}
+
+pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
+    let raw_tx = hex::decode(raw_tx)?;
+    let mut data = raw_tx.as_slice();
+    let tx =
+        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
+    format_lane_classification(&tx.classify_t5_payment_lane())
+}
+
+pub(crate) fn format_lane_classification(
+    classification: &PaymentLaneClassification,
+) -> Result<String> {
+    if shell::is_json() {
+        Ok(serde_json::to_string_pretty(classification)?)
+    } else {
+        Ok(serde_json::to_string(classification)?)
+    }
 }
 
 #[cfg(test)]

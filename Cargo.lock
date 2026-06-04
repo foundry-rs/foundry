@@ -111,7 +111,7 @@ dependencies = [
  "alloy-rlp",
  "num_enum",
  "serde",
- "strum",
+ "strum 0.27.2",
 ]
 
 [[package]]
@@ -332,9 +332,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.35.1"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58673bde58f17022886547b618346aeae9b147ed398f9c847105fa91c49f97eb"
+checksum = "a6e494529570a4d25eb4d1a7456d8f969c3202aceaf703e4006cec5f730aee96"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -448,7 +448,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.32.0"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -465,7 +465,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-hardforks"
 version = "0.4.7"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "alloy-chains",
  "alloy-hardforks",
@@ -711,7 +711,7 @@ dependencies = [
  "jsonwebtoken",
  "rand 0.8.6",
  "serde",
- "strum",
+ "strum 0.27.2",
 ]
 
 [[package]]
@@ -2788,6 +2788,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-evm-networks",
+ "foundry-primitives",
  "foundry-test-utils",
  "foundry-wallets",
  "futures",
@@ -4940,7 +4941,7 @@ dependencies = [
  "solar-compiler",
  "soldeer-commands",
  "soldeer-core",
- "strum",
+ "strum 0.27.2",
  "svm-rs",
  "tempfile",
  "tempo-alloy",
@@ -5216,6 +5217,8 @@ dependencies = [
  "serde",
  "serde_json",
  "solar-compiler",
+ "tempo-chainspec",
+ "tempo-precompiles",
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
@@ -5275,7 +5278,7 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "strsim",
- "strum",
+ "strum 0.27.2",
  "tempfile",
  "tempo-primitives",
  "tikv-jemallocator",
@@ -5523,6 +5526,7 @@ dependencies = [
  "snapbox",
  "solar-compiler",
  "soldeer-core",
+ "strum 0.27.2",
  "tempfile",
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
@@ -5644,6 +5648,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempo-alloy",
+ "tempo-chainspec",
  "tempo-contracts",
  "tempo-evm",
  "tempo-precompiles",
@@ -5724,6 +5729,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "tempo-contracts",
 ]
 
 [[package]]
@@ -5745,6 +5751,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm-core",
+ "foundry-evm-hardforks",
  "foundry-linking",
  "futures",
  "itertools 0.14.0",
@@ -6773,12 +6780,6 @@ name = "indenter"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "964de6e86d545b246d84badc0fef527924ace5134f30641c203ef52ba83f58d5"
-
-[[package]]
-name = "index_vec"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44faf5bb8861a9c72e20d3fb0fdbd59233e43056e2b80475ab0aacdc2e781355"
 
 [[package]]
 name = "indexmap"
@@ -8112,7 +8113,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "op-alloy"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "op-alloy-consensus",
  "op-alloy-network",
@@ -8124,7 +8125,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-consensus"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8151,7 +8152,7 @@ checksum = "a79f352fc3893dcd670172e615afef993a41798a1d3fc0db88a3e60ef2e70ecc"
 [[package]]
 name = "op-alloy-network"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -8164,7 +8165,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-provider"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
@@ -8178,7 +8179,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8198,7 +8199,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types-engine"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/optimism?branch=revm-40#fb56cdbcba416bafde4cba8abb2143fb67878fe9"
+source = "git+https://github.com/foundry-rs/optimism?branch=bump-alloy-evm-0-36-tempo#2d608a6b9a4cac60bddadc951c07d01c0e98fe5a"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8340,6 +8341,15 @@ name = "owo-colors"
 version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
+
+[[package]]
+name = "oxc_index"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb3e6120999627ec9703025eab7c9f410ebb7e95557632a8902ca48210416c2b"
+dependencies = [
+ "nonmax",
+]
 
 [[package]]
 name = "p256"
@@ -9309,7 +9319,7 @@ dependencies = [
  "itertools 0.14.0",
  "kasuari",
  "lru",
- "strum",
+ "strum 0.27.2",
  "thiserror 2.0.18",
  "unicode-segmentation",
  "unicode-truncate",
@@ -9341,7 +9351,7 @@ dependencies = [
  "itertools 0.14.0",
  "line-clipping",
  "ratatui-core",
- "strum",
+ "strum 0.27.2",
  "time",
  "unicode-segmentation",
  "unicode-width 0.2.2",
@@ -9578,7 +9588,7 @@ dependencies = [
 [[package]]
 name = "reth-chainspec"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -9658,7 +9668,7 @@ dependencies = [
 [[package]]
 name = "reth-consensus"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928 0.4.1",
@@ -9672,7 +9682,7 @@ dependencies = [
 [[package]]
 name = "reth-db-api"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -9696,7 +9706,7 @@ dependencies = [
 [[package]]
 name = "reth-db-models"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -9710,7 +9720,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-forks"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-eip2124",
  "alloy-hardforks",
@@ -9723,7 +9733,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-primitives"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9737,7 +9747,7 @@ dependencies = [
 [[package]]
 name = "reth-evm"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928 0.4.1",
@@ -9760,7 +9770,7 @@ dependencies = [
 [[package]]
 name = "reth-evm-ethereum"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9780,7 +9790,7 @@ dependencies = [
 [[package]]
 name = "reth-execution-errors"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -9793,7 +9803,7 @@ dependencies = [
 [[package]]
 name = "reth-execution-types"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -9812,7 +9822,7 @@ dependencies = [
 [[package]]
 name = "reth-network-peers"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -9879,14 +9889,14 @@ dependencies = [
 [[package]]
 name = "reth-prune-types"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-primitives",
  "derive_more",
  "modular-bitfield",
  "reth-codecs 0.4.0",
  "serde",
- "strum",
+ "strum 0.27.2",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -9894,7 +9904,7 @@ dependencies = [
 [[package]]
 name = "reth-revm"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -9907,7 +9917,7 @@ dependencies = [
 [[package]]
 name = "reth-rpc-convert"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -9957,7 +9967,7 @@ dependencies = [
 [[package]]
 name = "reth-stages-types"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-primitives",
  "bytes",
@@ -9970,21 +9980,21 @@ dependencies = [
 [[package]]
 name = "reth-static-file-types"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-primitives",
  "derive_more",
  "fixed-map",
  "reth-stages-types",
  "serde",
- "strum",
+ "strum 0.27.2",
  "tracing",
 ]
 
 [[package]]
 name = "reth-storage-api"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928 0.4.1",
@@ -10009,7 +10019,7 @@ dependencies = [
 [[package]]
 name = "reth-storage-errors"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -10027,7 +10037,7 @@ dependencies = [
 [[package]]
 name = "reth-tokio-util"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -10037,7 +10047,7 @@ dependencies = [
 [[package]]
 name = "reth-trie-common"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth?rev=6835254#6835254b289c48aa972651fafc26f8eb3b9b22f1"
+source = "git+https://github.com/paradigmxyz/reth?rev=259b8dc#259b8dc3be74fd70e1a157a33a0a45785b8521c4"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -11350,7 +11360,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -11360,13 +11370,13 @@ dependencies = [
  "solar-data-structures",
  "solar-interface",
  "solar-macros",
- "strum",
+ "strum 0.28.0",
 ]
 
 [[package]]
 name = "solar-compiler"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "alloy-primitives",
  "solar-ast",
@@ -11381,20 +11391,20 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "colorchoice",
- "strum",
+ "strum 0.28.0",
 ]
 
 [[package]]
 name = "solar-data-structures"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "bumpalo",
- "index_vec",
  "indexmap 2.14.0",
+ "oxc_index",
  "parking_lot",
  "rayon",
  "rustc-hash",
@@ -11404,15 +11414,15 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "annotate-snippets 0.12.16",
- "anstream 0.6.21",
+ "anstream 1.0.0",
  "anstyle",
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "itoa",
  "normalize-path",
  "once_map",
@@ -11424,7 +11434,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -11432,7 +11442,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -11442,12 +11452,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.11.1",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -11463,7 +11473,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.8"
-source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
+source = "git+https://github.com/paradigmxyz/solar?rev=4393d0dbb8d37df4df5c2840350a73a189441988#4393d0dbb8d37df4df5c2840350a73a189441988"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -11471,6 +11481,8 @@ dependencies = [
  "bumpalo",
  "derive_more",
  "either",
+ "num-bigint",
+ "num-traits",
  "once_map",
  "paste",
  "rayon",
@@ -11481,7 +11493,7 @@ dependencies = [
  "solar-interface",
  "solar-macros",
  "solar-parse",
- "strum",
+ "strum 0.28.0",
  "thread_local",
  "tracing",
 ]
@@ -11647,7 +11659,16 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
+dependencies = [
+ "strum_macros 0.28.0",
 ]
 
 [[package]]
@@ -11655,6 +11676,18 @@ name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -11900,7 +11933,7 @@ dependencies = [
 [[package]]
 name = "tempo-alloy"
 version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -11933,7 +11966,7 @@ dependencies = [
 [[package]]
 name = "tempo-chainspec"
 version = "1.5.4"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -11956,7 +11989,7 @@ dependencies = [
 [[package]]
 name = "tempo-contracts"
 version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy-contract",
  "alloy-primitives",
@@ -11966,8 +11999,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
-version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+version = "1.8.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -11978,8 +12011,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-evm"
-version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+version = "1.8.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12004,8 +12037,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles"
-version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+version = "1.8.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy",
  "alloy-evm",
@@ -12024,8 +12057,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles-macros"
-version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+version = "1.8.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -12036,7 +12069,7 @@ dependencies = [
 [[package]]
 name = "tempo-primitives"
 version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -12066,8 +12099,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-revm"
-version = "1.8.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=8b80b16023ae8ceb70a6b860c58d747e118448bc#8b80b16023ae8ceb70a6b860c58d747e118448bc"
+version = "1.8.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=32bb1d454f0fb70f8085c93bc04f35ed9715dc0c#32bb1d454f0fb70f8085c93bc04f35ed9715dc0c"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",

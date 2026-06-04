@@ -14,6 +14,7 @@ use chrono::DateTime;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    json::print_json_object,
     opts::{RpcOpts, TempoOpts, TransactionOpts},
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
@@ -749,14 +750,14 @@ impl KeychainPolicySubcommand {
 fn run_list() -> Result<()> {
     let keys_file = load_keys_file()?;
 
-    if keys_file.keys.is_empty() {
-        sh_println!("No keys found in keys.toml.")?;
+    if shell::is_json() {
+        let entries: Vec<_> = keys_file.keys.iter().map(key_entry_to_json).collect();
+        print_json_object(entries)?;
         return Ok(());
     }
 
-    if shell::is_json() {
-        let entries: Vec<_> = keys_file.keys.iter().map(key_entry_to_json).collect();
-        sh_println!("{}", serde_json::to_string_pretty(&entries)?)?;
+    if keys_file.keys.is_empty() {
+        sh_println!("No keys found in keys.toml.")?;
         return Ok(());
     }
 
@@ -777,14 +778,14 @@ fn run_show(wallet_address: Address) -> Result<()> {
     let entries: Vec<_> =
         keys_file.keys.iter().filter(|e| e.wallet_address == wallet_address).collect();
 
-    if entries.is_empty() {
-        sh_println!("No keys found for wallet {wallet_address}.")?;
+    if shell::is_json() {
+        let entries_json: Vec<_> = entries.iter().map(|e| key_entry_to_json(e)).collect();
+        print_json_object(entries_json)?;
         return Ok(());
     }
 
-    if shell::is_json() {
-        let json: Vec<_> = entries.iter().map(|e| key_entry_to_json(e)).collect();
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+    if entries.is_empty() {
+        sh_println!("No keys found for wallet {wallet_address}.")?;
         return Ok(());
     }
 
@@ -906,7 +907,7 @@ async fn run_inspect(
             "limits": limits.iter().map(inspected_limit_to_json).collect::<Vec<_>>(),
             "allowed_calls": allowed_calls_to_json(&allowed_calls),
         });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+        print_json_object(json)?;
         return Ok(());
     }
 
@@ -956,7 +957,7 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
             "enforce_limits": info.enforceLimits,
             "is_revoked": info.isRevoked,
         });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+        print_json_object(json)?;
         return Ok(());
     }
 
@@ -2583,8 +2584,7 @@ fn finalize_doctor(steps: Vec<DoctorStep>, context: DoctorContext) -> Result<()>
     };
 
     if shell::is_json() {
-        let json = serde_json::json!({
-            "schema_version": 1,
+        foundry_cli::json::print_json_success(serde_json::json!({
             "context": context,
             "steps": steps,
             "status": status,
@@ -2592,8 +2592,7 @@ fn finalize_doctor(steps: Vec<DoctorStep>, context: DoctorContext) -> Result<()>
             "healthy": healthy,
             "warning_count": warning_count,
             "failure_count": failure_count,
-        });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+        }))?;
     } else {
         for step in &steps {
             print_doctor_step(step)?;
