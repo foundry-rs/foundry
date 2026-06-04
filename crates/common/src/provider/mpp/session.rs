@@ -17,7 +17,9 @@ use mpp::{
             ChannelEntry, OpenPayloadOptions, build_credential, compute_expiring_nonce_hash,
             create_voucher_payload, is_precompile_escrow, resolve_chain_id, resolve_escrow,
         },
-        tempo::signing::{TempoSigningMode, sign_and_encode_async},
+        tempo::signing::{
+            TempoSigningMode, sign_and_encode_async, sign_and_encode_fee_payer_envelope_async,
+        },
     },
     error::MppError,
     protocol::{
@@ -76,11 +78,25 @@ const VALID_BEFORE_SECS: u64 = 25;
 /// Default gas limit for session open transactions.
 const SESSION_OPEN_GAS_LIMIT: u64 = 10_000_000;
 
+/// Gas limit for session open transactions when the sponsor pays
+/// (`feePayer: true`). Set to the mpp-rs `FeePayerPolicy::max_gas` ceiling
+/// (`MAX_FEE_PAYER_GAS_LIMIT = 2_000_000`, inclusive); exceeding it causes the
+/// sponsor to reject the tx with `verification-failed`. The previous value of
+/// 1M was too tight for Tempo mainnet passkey-wallet `escrow.open`, which
+/// together with the inner `approve` consumes ~1.2M gas and ran out of gas
+/// on-chain (tx reverted, sponsor returned generic `verification-failed`).
+const SESSION_OPEN_FEE_PAYER_GAS_LIMIT: u64 = 2_000_000;
+
 /// Max fee per gas (20 gwei — Tempo's fixed base fee).
 const MAX_FEE_PER_GAS: u128 = 20_000_000_000;
 
 /// Max priority fee per gas.
 const MAX_PRIORITY_FEE_PER_GAS: u128 = 20_000_000_000;
+
+/// Priority fee per gas when the sponsor pays (`feePayer: true`). Must stay
+/// under the server-enforced `MAX_PRIORITY_FEE_PER_GAS_DEFAULT` (10 gwei)
+/// defined by the mpp-rs `FeePayerPolicy`.
+const MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER: u128 = 1_000_000_000;
 
 /// Tempo session provider using expiring nonces.
 ///
@@ -424,9 +440,17 @@ impl SessionProvider {
                 fee_token: options.currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if options.fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if options.fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer: options.fee_payer,
                 valid_before,
                 key_authorization: (!*self.key_provisioned.lock().unwrap())
@@ -435,7 +459,11 @@ impl SessionProvider {
             },
         );
 
-        let signed_tx = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx = if options.fee_payer {
+            sign_and_encode_fee_payer_envelope_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
 
         let voucher = sign_voucher(
             &self.signer,
@@ -640,16 +668,28 @@ impl SessionProvider {
                 fee_token: currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer,
                 valid_before,
                 key_authorization: None,
             },
         );
 
-        let signed_tx = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx = if fee_payer {
+            sign_and_encode_fee_payer_envelope_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
 
         Ok(SessionCredentialPayload::TopUp {
             payload_type: "transaction".to_string(),
@@ -933,6 +973,7 @@ impl SessionProvider {
 mod tests {
     use super::*;
     use mpp::client::tempo::signing::KeychainVersion;
+    use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
     use tempo_primitives::transaction::{
         KeyAuthorization, PrimitiveSignature, SignatureType, SignedKeyAuthorization,
     };
@@ -1040,6 +1081,74 @@ mod tests {
             matches!(result_mode, TempoSigningMode::Direct),
             "Direct mode should pass through unchanged"
         );
+    }
+
+    fn payload_transaction_type(payload: &SessionCredentialPayload) -> u8 {
+        let transaction = match payload {
+            SessionCredentialPayload::Open { transaction, .. }
+            | SessionCredentialPayload::TopUp { transaction, .. } => transaction,
+            _ => panic!("expected transaction payload"),
+        };
+        let bytes =
+            alloy_primitives::hex::decode(transaction.strip_prefix("0x").unwrap_or(transaction))
+                .expect("valid transaction hex");
+        bytes[0]
+    }
+
+    /// Regression test for <https://github.com/foundry-rs/foundry/issues/14588>:
+    /// session open/topup transactions must be encoded as `0x78` fee-payer
+    /// envelope when `fee_payer == true`, not as a bare `0x76` Tempo tx.
+    #[tokio::test]
+    async fn test_session_transactions_use_fee_payer_envelope_when_fee_payer_true() {
+        let signer = mpp::PrivateKeySigner::random();
+        let payer = signer.address();
+        let provider = SessionProvider::new(signer, unique_origin())
+            .with_signing_mode(TempoSigningMode::Direct);
+        let escrow_contract = Address::repeat_byte(0x11);
+        let payee = Address::repeat_byte(0x22);
+        let chain_id = 4217;
+
+        let (entry, open_payload) = provider
+            .create_open_tx(
+                payer,
+                OpenPayloadOptions {
+                    authorized_signer: None,
+                    escrow_contract,
+                    payee,
+                    currency: DEFAULT_FEE_TOKEN,
+                    deposit: 1_000_000,
+                    initial_amount: 10,
+                    chain_id,
+                    fee_payer: true,
+                },
+                Address::ZERO,
+            )
+            .await
+            .unwrap();
+        assert_eq!(payload_transaction_type(&open_payload), 0x78);
+
+        let topup_payload =
+            provider.create_topup_tx(&entry, 1_000_000, DEFAULT_FEE_TOKEN, true).await.unwrap();
+        assert_eq!(payload_transaction_type(&topup_payload), 0x78);
+
+        let (_, open_without_fee_payer) = provider
+            .create_open_tx(
+                payer,
+                OpenPayloadOptions {
+                    authorized_signer: None,
+                    escrow_contract,
+                    payee,
+                    currency: DEFAULT_FEE_TOKEN,
+                    deposit: 1_000_000,
+                    initial_amount: 10,
+                    chain_id,
+                    fee_payer: false,
+                },
+                Address::ZERO,
+            )
+            .await
+            .unwrap();
+        assert_eq!(payload_transaction_type(&open_without_fee_payer), 0x76);
     }
 
     /// Legacy escrow address must flow into the entry's channel id.
