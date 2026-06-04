@@ -2607,6 +2607,38 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
 
 #[cfg(unix)]
 #[test]
+/// Regression coverage for validated hard-arithmetic model results populating caches.
+fn model_uses_validated_hard_arithmetic_fallback_cache() {
+    let marker = portfolio_test_marker("hard-arith-model-cache");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let constraints = vec![
+        BoolExpr::cmp(BoolExprOp::Ugt, x.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::cmp(BoolExprOp::Ugt, y.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::eq(Expr::op(ExprOp::Mul, x, y), Expr::Const(U256::from(4))),
+    ];
+
+    let first = solver.model(&constraints).unwrap();
+    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &first).unwrap()));
+    let second = solver.model(&constraints).unwrap();
+    assert_eq!(first, second);
+    assert!(solver.is_sat(&constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.model_queries, 2);
+    assert_eq!(stats.model_cache_hits, 1);
+    assert_eq!(stats.sat_queries, 1);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(solver.heuristic_witnesses(), 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 /// Regression coverage for hard-arithmetic `is_sat` preserving solver `unsat`.
 fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
     let marker = portfolio_test_marker("hard-arith-is-sat-unsat");
@@ -2887,6 +2919,53 @@ fn direct_contradiction_is_sat_short_circuits_locally() {
     assert_eq!(stats.solver_queries, 1);
     assert_eq!(stats.smt_queries, 0);
     assert_eq!(stats.sat_queries, 1);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for reusing cached unsat subsets without another SMT query.
+fn is_sat_reuses_cached_unsat_subset() {
+    let marker = portfolio_test_marker("unsat-subset-cache");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x_eq_one = BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)));
+    let y_eq_two = BoolExpr::eq(Expr::Var("y".to_string()), Expr::Const(U256::from(2)));
+
+    assert!(!solver.is_sat(std::slice::from_ref(&x_eq_one)).unwrap());
+    assert!(!solver.is_sat(&[x_eq_one, y_eq_two]).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for not generalizing cached sat subsets to stricter constraints.
+fn is_sat_does_not_reuse_cached_sat_subset() {
+    let marker = portfolio_test_marker("sat-subset-cache");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x_eq_one = BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)));
+    let y_eq_two = BoolExpr::eq(Expr::Var("y".to_string()), Expr::Const(U256::from(2)));
+
+    assert!(solver.is_sat(std::slice::from_ref(&x_eq_one)).unwrap());
+    assert!(matches!(
+        solver.is_sat(&[x_eq_one, y_eq_two]),
+        Err(SymbolicError::SolverQueryLimit(1))
+    ));
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
 }
 
 #[cfg(unix)]
