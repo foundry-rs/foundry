@@ -183,7 +183,7 @@ use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
-    extend_tempo_precompiles,
+    TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
     storage::StorageCtx,
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
@@ -3899,6 +3899,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         // reset the block env
         if let Some(block) = state.block.clone() {
             self.evm_env.write().block_env = block.clone();
+            if self.is_tempo() && self.is_fork() {
+                let mut env = self.evm_env.write();
+                if env.block_env.beneficiary.is_zero() {
+                    env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+                }
+            }
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.

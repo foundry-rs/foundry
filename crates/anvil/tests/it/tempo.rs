@@ -176,6 +176,50 @@ async fn test_tempo_fork_with_default_genesis_uses_fee_manager_beneficiary() {
     assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_with_loaded_zero_beneficiary_state_uses_fee_manager_beneficiary() {
+    let (source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let mut state = source_api.serialized_state(false).await.unwrap();
+    state.block.as_mut().unwrap().beneficiary = Address::ZERO;
+
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_init_state(Some(state)),
+    )
+    .await;
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_runtime_load_state_uses_fee_manager_beneficiary() {
+    let (source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let mut state = source_api.serialized_state(false).await.unwrap();
+    state.block.as_mut().unwrap().beneficiary = Address::ZERO;
+
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
 sol! {
     #[sol(rpc)]
     interface IFeeManagerRpc {
