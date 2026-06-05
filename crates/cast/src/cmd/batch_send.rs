@@ -53,6 +53,8 @@ impl BatchSendArgs {
     pub async fn run(self) -> Result<()> {
         let Self { calls, send_tx, mut tx, unlocked } = self;
         let has_session = tx.tempo.session_id()?.is_some();
+        // Tempo sessions must sign with the session key; these modes route signing through a
+        // node-managed account or browser wallet instead.
         if has_session && unlocked {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
