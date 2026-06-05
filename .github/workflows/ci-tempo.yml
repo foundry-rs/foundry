@@ -99,7 +99,7 @@ jobs:
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
           VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
-          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+          SCRIPTS: ${{ github.event_name == 'schedule' && 'check' || github.event.inputs.scripts || 'both' }}
         run: |
           if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
             ./.github/scripts/tempo-check.sh
