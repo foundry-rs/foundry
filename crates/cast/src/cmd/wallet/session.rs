@@ -313,6 +313,9 @@ impl InnerCommand {
 
     fn command(&self, session_id: B256) -> Command {
         let mut command = Command::new(&self.program);
+        // TODO: Wire cast single-wallet signer paths through
+        // TempoOpts::session_signer_for_wallet so cast commands launched via --for can consume
+        // TEMPO_SESSION_ID without requiring explicit signer options.
         command.args(&self.args).env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
         command
     }
