@@ -4,7 +4,10 @@ use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 use path_slash::PathExt;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
@@ -16,6 +19,23 @@ mod accounts {
 
 fn path_usd() -> String {
     PATH_USD_ADDRESS.to_string()
+}
+
+const MISSING_SESSION_ID: &str =
+    "0x5555555555555555555555555555555555555555555555555555555555555555";
+
+fn cast_bin() -> PathBuf {
+    std::env::current_exe()
+        .expect("current test executable")
+        .parent()
+        .expect("deps dir")
+        .parent()
+        .expect("target debug dir")
+        .join(format!("cast{}", std::env::consts::EXE_SUFFIX))
+}
+
+fn batch_send_transfer_call(path_usd: &str) -> String {
+    format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3)
 }
 
 fn create_session(cmd: &mut TestCommand, tempo_home: &Path, chain_id: &str) -> (String, String) {
@@ -74,6 +94,24 @@ fn assert_session_file_status_with_key(tempo_home: &Path, status: &str) {
     assert!(
         contents.contains("key = \"0x"),
         "{status} session should retain private key material:\n{contents}"
+    );
+}
+
+fn assert_async_tx_hash(stdout: &str, command: &str) {
+    assert!(
+        stdout.trim().starts_with("0x"),
+        "expected {command} --async to print a tx hash, got:\n{stdout}"
+    );
+}
+
+fn assert_session_cleanup_failure(stderr: &str) {
+    assert!(
+        stderr.contains("failed to clean up Tempo session after inner command"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("session key is not provisioned on-chain yet"),
+        "unexpected stderr:\n{stderr}"
     );
 }
 
@@ -425,14 +463,7 @@ printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
             .assert_failure()
             .get_output()
             .stderr_lossy();
-        assert!(
-            stderr.contains("failed to clean up Tempo session after inner command"),
-            "unexpected stderr:\n{stderr}"
-        );
-        assert!(
-            stderr.contains("session key is not provisioned on-chain yet"),
-            "unexpected stderr:\n{stderr}"
-        );
+        assert_session_cleanup_failure(&stderr);
 
         let child_session_id =
             fs::read_to_string(&child_session_out).expect("child wrote TEMPO_SESSION_ID");
@@ -451,13 +482,7 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |_prj
     let child_dir = tempfile::tempdir().unwrap();
     let child_script = child_dir.path().join("session-cast-send.sh");
     let path_usd = path_usd();
-    let cast_bin = std::env::current_exe()
-        .expect("current test executable")
-        .parent()
-        .expect("deps dir")
-        .parent()
-        .expect("target debug dir")
-        .join(format!("cast{}", std::env::consts::EXE_SUFFIX));
+    let cast_bin = cast_bin();
     fs::write(
         &child_script,
         format!(
@@ -503,18 +528,8 @@ test -n "${{TEMPO_SESSION_ID:-}}"
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
-    assert!(
-        stdout.trim().starts_with("0x"),
-        "expected child cast send --async to print a tx hash, got:\n{stdout}"
-    );
-    assert!(
-        stderr.contains("failed to clean up Tempo session after inner command"),
-        "unexpected stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("session key is not provisioned on-chain yet"),
-        "unexpected stderr:\n{stderr}"
-    );
+    assert_async_tx_hash(&stdout, "child cast send");
+    assert_session_cleanup_failure(&stderr);
     assert_session_file_status_without_key(tempo_home.path(), "failed");
 });
 
@@ -525,24 +540,16 @@ casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |_pr
     let child_dir = tempfile::tempdir().unwrap();
     let child_script = child_dir.path().join("session-batch-send.sh");
     let path_usd = path_usd();
-    let cast_bin = std::env::current_exe()
-        .expect("current test executable")
-        .parent()
-        .expect("deps dir")
-        .parent()
-        .expect("target debug dir")
-        .join(format!("cast{}", std::env::consts::EXE_SUFFIX));
+    let call = batch_send_transfer_call(&path_usd);
+    let cast_bin = cast_bin();
     fs::write(
         &child_script,
         format!(
             r#"#!/bin/sh
 set -eu
 test -n "${{TEMPO_SESSION_ID:-}}"
-"${{CAST_BIN}}" batch-send --call "{}::transfer(address,uint256):{},0" --rpc-url "${{RPC_URL}}" --tempo.fee-token "{}" --async
+"${{CAST_BIN}}" batch-send --call "{call}" --rpc-url "${{RPC_URL}}" --tempo.fee-token "{path_usd}" --async
 "#,
-            path_usd,
-            accounts::ADDR3,
-            path_usd,
         ),
     )
     .expect("write child script");
@@ -577,18 +584,8 @@ test -n "${{TEMPO_SESSION_ID:-}}"
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
-    assert!(
-        stdout.trim().starts_with("0x"),
-        "expected child cast batch-send --async to print a tx hash, got:\n{stdout}"
-    );
-    assert!(
-        stderr.contains("failed to clean up Tempo session after inner command"),
-        "unexpected stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("session key is not provisioned on-chain yet"),
-        "unexpected stderr:\n{stderr}"
-    );
+    assert_async_tx_hash(&stdout, "child cast batch-send");
+    assert_session_cleanup_failure(&stderr);
     assert_session_file_status_without_key(tempo_home.path(), "failed");
 });
 
@@ -597,6 +594,7 @@ casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
     let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
     let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31337");
 
     cmd.cast_fuse();
@@ -606,7 +604,7 @@ casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
         .args([
             "batch-send",
             "--call",
-            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            &call,
             "--rpc-url",
             &rpc,
             "--tempo.fee-token",
@@ -617,10 +615,7 @@ casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    assert!(
-        stdout.trim().starts_with("0x"),
-        "expected cast batch-send --async to print a tx hash, got:\n{stdout}"
-    );
+    assert_async_tx_hash(&stdout, "cast batch-send");
 });
 
 casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, async |_prj, cmd| {
@@ -631,13 +626,7 @@ casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, asyn
     let child_script = child_dir.path().join("session-child.sh");
     let grandchild_script = child_dir.path().join("session-grandchild-cast-send.sh");
     let path_usd = path_usd();
-    let cast_bin = std::env::current_exe()
-        .expect("current test executable")
-        .parent()
-        .expect("deps dir")
-        .parent()
-        .expect("target debug dir")
-        .join(format!("cast{}", std::env::consts::EXE_SUFFIX));
+    let cast_bin = cast_bin();
 
     fs::write(
         &child_script,
@@ -693,25 +682,14 @@ test -n "${{TEMPO_SESSION_ID:-}}"
     let stdout = output.stdout_lossy();
     let stderr = output.stderr_lossy();
 
-    assert!(
-        stdout.trim().starts_with("0x"),
-        "expected grandchild cast send --async to print a tx hash, got:\n{stdout}"
-    );
-    assert!(
-        stderr.contains("failed to clean up Tempo session after inner command"),
-        "unexpected stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("session key is not provisioned on-chain yet"),
-        "unexpected stderr:\n{stderr}"
-    );
+    assert_async_tx_hash(&stdout, "grandchild cast send");
+    assert_session_cleanup_failure(&stderr);
     assert_session_file_status_without_key(tempo_home.path(), "failed");
 });
 
 casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
-    let session_id = "0x5555555555555555555555555555555555555555555555555555555555555555";
 
     cmd.cast_fuse();
     let stderr = cmd
@@ -721,7 +699,7 @@ casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
             "--value",
             "1",
             "--tempo.session",
-            session_id,
+            MISSING_SESSION_ID,
             "--private-key",
             accounts::PK1,
             "--rpc-url",
@@ -738,16 +716,16 @@ casttest!(batch_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
-    let session_id = "0x5555555555555555555555555555555555555555555555555555555555555555";
+    let call = batch_send_transfer_call(&path_usd);
 
     cmd.cast_fuse();
     let stderr = cmd
         .args([
             "batch-send",
             "--call",
-            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            &call,
             "--tempo.session",
-            session_id,
+            MISSING_SESSION_ID,
             "--private-key",
             accounts::PK1,
             "--rpc-url",
@@ -766,16 +744,16 @@ casttest!(batch_send_rejects_session_with_unlocked, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let path_usd = path_usd();
-    let session_id = "0x5555555555555555555555555555555555555555555555555555555555555555";
+    let call = batch_send_transfer_call(&path_usd);
 
     cmd.cast_fuse();
     let stderr = cmd
         .args([
             "batch-send",
             "--call",
-            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            &call,
             "--tempo.session",
-            session_id,
+            MISSING_SESSION_ID,
             "--unlocked",
             "--from",
             accounts::ADDR1,
@@ -796,6 +774,7 @@ casttest!(batch_send_rejects_session_on_wrong_chain, async |_prj, cmd| {
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
     let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
     let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31338");
 
     cmd.cast_fuse();
@@ -804,7 +783,7 @@ casttest!(batch_send_rejects_session_on_wrong_chain, async |_prj, cmd| {
         .args([
             "batch-send",
             "--call",
-            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            &call,
             "--tempo.session",
             &session_id,
             "--rpc-url",

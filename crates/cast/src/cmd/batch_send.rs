@@ -92,8 +92,7 @@ impl BatchSendArgs {
             && let Some(session) =
                 tx.tempo.session_signer_for_wallet(&send_tx.eth.wallet, chain.id())?
         {
-            signer = Some(session.signer);
-            tempo_access_key = Some(session.access_key);
+            (signer, tempo_access_key) = (Some(session.signer), Some(session.access_key));
         }
 
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
