@@ -35,6 +35,10 @@ pub struct InvariantFuzzTestResult {
     /// Handler-side assertion bugs, keyed by `(reverter, selector)` site (deduped per
     /// handler function). Each entry is [`InvariantFuzzError::HandlerAssertion`].
     pub handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
+    /// Number of completed invariant runs.
+    pub runs: usize,
+    /// Number of completed fuzzed calls across all invariant runs.
+    pub calls: usize,
     /// Every successful fuzz test case
     pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
@@ -64,6 +68,8 @@ impl InvariantFuzzTestResult {
     pub(crate) const fn new(
         errors: HashMap<String, InvariantFuzzError>,
         handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
+        runs: usize,
+        calls: usize,
         cases: Vec<FuzzedCases>,
         reverts: usize,
         last_run_inputs: Vec<BasicTxDetails>,
@@ -78,6 +84,8 @@ impl InvariantFuzzTestResult {
         Self {
             errors,
             handler_errors,
+            runs,
+            calls,
             cases,
             reverts,
             last_run_inputs,

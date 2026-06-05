@@ -1171,6 +1171,8 @@ impl TestResult {
         invariant_count: Option<usize>,
         invariant_handler_failures: Vec<InvariantFailure>,
         counterexample: Option<CounterExample>,
+        runs: usize,
+        calls: usize,
         cases: Vec<FuzzedCases>,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
@@ -1179,8 +1181,8 @@ impl TestResult {
         optimization_best_value: Option<I256>,
     ) {
         self.kind = TestKind::Invariant {
-            runs: cases.len(),
-            calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+            runs,
+            calls,
             reverts,
             workers: workers.max(1),
             metrics,
