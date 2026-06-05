@@ -19,6 +19,7 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
     fn check_function(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -86,9 +87,10 @@ impl UnwrappedModifierLogic {
                     }
                     has_valid_stmt = true;
                 }
-                // HIR doesn't support assembly yet:
-                // <https://github.com/paradigmxyz/solar/blob/d25bf38a5accd11409318e023f701313d98b9e1e/crates/sema/src/hir/mod.rs#L977-L982>
-                hir::StmtKind::Err(_) => return false,
+                // Assembly may contain control flow or side effects this lint does not model.
+                hir::StmtKind::AssemblyBlock(_)
+                | hir::StmtKind::Switch(_)
+                | hir::StmtKind::Err(_) => return false,
                 _ => res = true,
             }
         }

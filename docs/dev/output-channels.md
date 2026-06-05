@@ -96,7 +96,7 @@ Each row's status is one of:
 | Command                | Text mode stdout                                     | `--json` stdout                                                | Status |
 | ---------------------- | ---------------------------------------------------- | -------------------------------------------------------------- | ------ |
 | `cast call`            | Return value (hex / decoded)                         | JSON of return value                                           | migrated |
-| `cast send`            | Tx hash                                              | JSON of receipt or `{ "hash": "0x…" }`                         | todo   |
+| `cast send`            | Receipt (or tx hash with `--async`)                  | JSON receipt (or hex tx hash with `--async`)                   | migrated |
 | `cast estimate`        | Gas estimate (decimal)                               | JSON `{ "gas": "…" }`                                          | migrated |
 | `cast rpc`             | RPC result (JSON)                                    | JSON                                                           | migrated |
 | `cast storage`         | Single slot value                                    | JSON of layout                                                 | migrated |
@@ -109,10 +109,17 @@ Each row's status is one of:
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | migrated |
 | `cast create2`         | `address\tsalt` (tab-separated)                      | n/a                                                            | migrated |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
+| `cast interface`       | Solidity interface source                            | JSON ABI array                                                 | migrated |
+| `cast artifact`        | JSON artifact                                        | n/a                                                            | migrated |
+| `cast creation-code`   | Hex bytecode (or disassembly with `--disassemble`)   | n/a                                                            | migrated |
+| `cast constructor-args`| One constructor arg per line                         | n/a                                                            | migrated |
+| `cast b2e-payload`     | JSON execution payload                               | n/a                                                            | migrated |
+| `cast tx-pool`         | JSON                                                 | JSON                                                           | migrated |
 | `cast da-estimate`     | Gas estimate                                         | JSON                                                           | migrated |
 | `cast find-block`      | Block number                                         | JSON                                                           | migrated |
 | `cast mktx`            | Signed RLP                                           | JSON                                                           | migrated |
-| `cast batch-send`      | One tx hash per line                                 | JSON array                                                     | todo   |
+| `cast batch-mktx`      | Signed RLP (or unsigned RLP with `--raw-unsigned`)   | n/a                                                            | migrated |
+| `cast batch-send`      | Receipt (or tx hash with `--async`)                  | JSON receipt (or hex tx hash with `--async`)                   | migrated |
 
 ### `forge`
 
@@ -120,9 +127,9 @@ Each row's status is one of:
 | ---------------------- | ---------------------------------------------------- | ------------------------------------------ | ------ |
 | `forge build`          | (empty)                                              | JSON build output                          | todo   |
 | `forge test`           | (empty; exit code = pass/fail)                       | JSON test results, JUnit XML with `--junit`| todo   |
-| `forge create`         | Deployed address                                     | JSON `{ "address": "…", "tx_hash": "…", … }` | todo |
+| `forge create`         | Deploy: `Deployer:` / `Deployed to:` / `Transaction hash:` lines. Dry-run: `Contract:` / `Transaction:` / `ABI:` lines. Compiler output may precede (tracked under `forge build`). | JSON `{ deployer, deployedTo, transactionHash }` (or dry-run JSON `{ contract, transaction, abi }`) | todo |
 | `forge inspect <field>`| Just that field's value                              | JSON of that field                         | migrated |
-| `forge install`        | (empty)                                              | (empty)                                    | todo   |
+| `forge install`        | (empty)                                              | (empty)                                    | migrated |
 | `forge init`           | (empty)                                              | (empty)                                    | migrated |
 | `forge update`         | (empty)                                              | (empty)                                    | migrated |
 | `forge remove`         | (empty)                                              | (empty)                                    | migrated |
@@ -140,20 +147,34 @@ Each row's status is one of:
 | `forge snapshot`       | Per-test diff lines (`--diff`); table (`--format table`); (empty) otherwise | n/a               | migrated |
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | migrated |
+| `forge clean`          | (empty)                                              | n/a                                        | migrated |
+| `forge completions`    | Generated shell completion script                    | n/a                                        | migrated |
 | `forge doc`            | (empty)                                              | n/a                                        | migrated |
 | `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
-| `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
+| `forge soldeer`        | Passthrough to `soldeer` crate; foundry adds no wrapper prose | n/a                               | migrated |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | migrated |
-| `forge verify-contract`| Verification GUID / URL                              | JSON                                       | todo   |
+| `forge verify-contract`| `<guid-or-job-id>\t<url>` on submission; empty if already verified | n/a                              | migrated |
+| `forge verify-bytecode`| `<type> code matched with status <kind>` lines       | JSON array of `{ bytecode_type, match_type, message }` | migrated |
 
 ### `anvil`, `chisel`, `script`
 
 | Command       | Text mode stdout                              | `--json` stdout       | Status |
 | ------------- | --------------------------------------------- | --------------------- | ------ |
-| `anvil`       | Banner, accounts, RPC URL on stderr           | n/a                   | todo   |
+| `anvil`       | (empty)                                       | n/a                   | migrated |
 | `chisel`      | REPL output                                   | n/a                   | todo   |
 | `forge script`| Simulation/broadcast result                   | JSON                  | todo   |
+
+`anvil` startup/status output — banner, accounts, IPC path, RPC URL, mined
+block/tx logs, `console.log` output, and `--print-traces` — is diagnostic
+output emitted on stderr. `--config-out <path>` writes anvil's JSON
+configuration to the given file and does not affect stdout, and
+`--dump-state` / `--state` write state snapshots to files (`anvil_dumpState`
+returns its payload over the RPC connection, not process stdout). As with
+other commands, global discovery modes such as `--help`, `--version`, and
+machine-mode envelopes write their primary result to stdout. The
+`anvil completions <shell>` subcommand writes its shell completion script to
+stdout because that is its primary result.
 
 Commands not listed here have not been classified yet — please open an issue or
 PR before relying on their stdout format.

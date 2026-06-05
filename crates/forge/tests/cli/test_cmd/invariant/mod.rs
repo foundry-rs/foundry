@@ -281,7 +281,7 @@ Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 ╭----------------+-----------+-------+---------+----------╮
 | Contract       | Selector  | Calls | Reverts | Discards |
 +=========================================================+
-| TimeoutHandler | increment | [..]  | [..]    | [..]     |
+| TimeoutHandler | increment | [..]| [..]| [..]|
 ╰----------------+-----------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -1211,7 +1211,7 @@ Ran 2 tests for test/OptimizationCorpusTest.t.sol:OptimizationCorpusTest
 
 forgetest_init!(json_reports_invariant_predicate_results, |prj, cmd| {
     prj.update_config(|config| {
-        config.invariant.runs = 1;
+        config.invariant.runs = 4;
         config.invariant.depth = 2;
     });
     prj.add_test(
@@ -1250,6 +1250,24 @@ contract JsonInvariantReportTest is Test {
     let tests = suite["test_results"].as_object().unwrap();
     assert_eq!(tests.len(), 1);
     let result = tests.values().next().unwrap();
+    let kind = &result["kind"]["Invariant"];
+    assert_eq!(kind["runs"], 4);
+    assert_eq!(kind["workers"], 1);
+    assert!(result.get("invariant_workers").is_none());
+
+    cmd.forge_fuse().args(["clean"]).assert_success();
+
+    let output =
+        cmd.forge_fuse().args(["test", "--json", "--invariant-workers", "4"]).assert_failure();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let suite = json.as_object().unwrap().values().next().unwrap();
+    let tests = suite["test_results"].as_object().unwrap();
+    assert_eq!(tests.len(), 1);
+    let result = tests.values().next().unwrap();
+    let kind = &result["kind"]["Invariant"];
+    assert_eq!(kind["runs"], 4);
+    assert_eq!(kind["workers"], 4);
+    assert!(result.get("invariant_workers").is_none());
     let predicates = result["invariant_predicate_results"].as_array().unwrap();
     assert_eq!(predicates.len(), 2);
 

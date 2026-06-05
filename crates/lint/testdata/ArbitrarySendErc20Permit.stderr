@@ -1,0 +1,248 @@
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.safeTransferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     SafeERC20.safeTransferFrom(token, from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom({from: from, to: to, amount: a});
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     IERC20(rawToken).transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     SafeTransferLib.safeTransferFrom(rawToken, from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     rawToken.safeTransferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     other.transferFrom(from2, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from1, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(address(receiver), address(this), amount + fee);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from2, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     t.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     cfg.token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+
+warning[arbitrary-send-erc20-permit]: `transferFrom` uses an arbitrary `from` after `permit`; a non-permit token (e.g. WETH) with a fallback can silently accept the permit and let anyone drain previously-approved tokens
+   ╭▸ ROOT/testdata/ArbitrarySendErc20Permit.sol:LL:CC
+   │
+LL │ …     _switchTokenAndReturn(token.transferFrom(from, to, a) ? 0 : 0);
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20-permit
+

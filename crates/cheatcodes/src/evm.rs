@@ -21,6 +21,7 @@ use foundry_common::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
         SlotInfo,
     },
+    tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
@@ -744,6 +745,20 @@ impl Cheatcode for storeCall {
             .sstore(target, slot.into(), value.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {:?}", e))?;
         Ok(Default::default())
+    }
+}
+
+impl Cheatcode for setTip20LogoURICall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, newLogoURI } = self;
+        set_tip20_logo_uri(ccx, token, newLogoURI)
+    }
+}
+
+impl Cheatcode for setLogoURICall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, newLogoURI } = self;
+        set_tip20_logo_uri(ccx, token, newLogoURI)
     }
 }
 
@@ -1680,6 +1695,125 @@ pub(super) fn ensure_loaded_account<CTX: ContextTr<Db: Database<Error = Database
     ecx.journal_mut().load_account(addr)?;
     ecx.journal_mut().touch_account(addr);
     Ok(())
+}
+
+// Tempo TIP-1026 stores logoURI in TIP-20 storage slot 5, reusing the
+// previously-unused domainSeparator slot. This mirrors Tempo's
+// crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
+// fixture, where `logoUri` has slot "5".
+const TIP20_LOGO_URI_SLOT_INDEX: u64 = 5;
+fn tip20_logo_uri_slot() -> U256 {
+    U256::from(TIP20_LOGO_URI_SLOT_INDEX)
+}
+
+fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    token: &Address,
+    new_logo_uri: &str,
+) -> Result {
+    validate_tip20_logo_uri(new_logo_uri).map_err(|err| match err {
+        Tip20LogoUriValidationError::LogoURITooLong => fmt_err!("LogoURITooLong"),
+        Tip20LogoUriValidationError::InvalidLogoURI => fmt_err!("InvalidLogoURI"),
+    })?;
+    ccx.ensure_not_precompile(token)?;
+    ensure_loaded_account(ccx.ecx, *token)?;
+    store_solidity_string(ccx.ecx, *token, tip20_logo_uri_slot(), new_logo_uri.as_bytes())
+}
+
+fn store_solidity_string<CTX>(
+    ecx: &mut CTX,
+    target: Address,
+    base_slot: U256,
+    bytes: &[u8],
+) -> Result
+where
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+{
+    cleanup_long_string_tail(ecx, target, base_slot, bytes.len())?;
+
+    if bytes.len() <= 31 {
+        ecx.journal_mut()
+            .sstore(target, base_slot, encode_short_string(bytes))
+            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI: {:?}", e))?;
+        return Ok(Default::default());
+    }
+
+    ecx.journal_mut()
+        .sstore(target, base_slot, U256::from(bytes.len() * 2 + 1))
+        .map_err(|e| fmt_err!("failed to store TIP-20 logo URI length: {:?}", e))?;
+
+    let slot_start = solidity_dynamic_data_slot(base_slot);
+    for (index, chunk) in bytes.chunks(32).enumerate() {
+        let mut chunk_bytes = [0u8; 32];
+        chunk_bytes[..chunk.len()].copy_from_slice(chunk);
+        ecx.journal_mut()
+            .sstore(target, slot_start + U256::from(index), U256::from_be_bytes(chunk_bytes))
+            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI data: {:?}", e))?;
+    }
+
+    Ok(Default::default())
+}
+
+fn cleanup_long_string_tail<CTX>(
+    ecx: &mut CTX,
+    target: Address,
+    base_slot: U256,
+    new_len: usize,
+) -> Result<()>
+where
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+{
+    let previous = ecx
+        .journal_mut()
+        .sload(target, base_slot)
+        .map_err(|e| fmt_err!("failed to load previous TIP-20 logo URI: {:?}", e))?
+        .data;
+    if !is_long_string(previous) {
+        return Ok(());
+    }
+
+    let Some(previous_len) = long_string_length(previous) else {
+        return Ok(());
+    };
+    let previous_chunks = string_chunks(previous_len);
+    let new_chunks = if new_len > 31 { string_chunks(new_len) } else { 0 };
+    if previous_chunks <= new_chunks {
+        return Ok(());
+    }
+
+    let slot_start = solidity_dynamic_data_slot(base_slot);
+    for index in new_chunks..previous_chunks {
+        ecx.journal_mut()
+            .sstore(target, slot_start + U256::from(index), U256::ZERO)
+            .map_err(|e| fmt_err!("failed to clear previous TIP-20 logo URI data: {:?}", e))?;
+    }
+
+    Ok(())
+}
+
+fn encode_short_string(bytes: &[u8]) -> U256 {
+    let mut storage_bytes = [0u8; 32];
+    storage_bytes[..bytes.len()].copy_from_slice(bytes);
+    storage_bytes[31] =
+        u8::try_from(bytes.len() * 2).expect("short Solidity string length tag fits in u8");
+    U256::from_be_bytes(storage_bytes)
+}
+
+fn solidity_dynamic_data_slot(base_slot: U256) -> U256 {
+    U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0)
+}
+
+const fn is_long_string(slot_value: U256) -> bool {
+    (slot_value.to_be_bytes::<32>()[31] & 1) != 0
+}
+
+fn long_string_length(slot_value: U256) -> Option<usize> {
+    let length: U256 = (slot_value - U256::ONE) >> 1;
+    (length <= U256::from(TIP20_MAX_LOGO_URI_BYTES)).then(|| length.to::<usize>())
+}
+
+const fn string_chunks(byte_length: usize) -> usize {
+    byte_length.div_ceil(32)
 }
 
 /// Consumes recorded account accesses and returns them as an abi encoded

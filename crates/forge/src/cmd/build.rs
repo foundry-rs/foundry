@@ -29,7 +29,10 @@ use foundry_config::{
     filter::expand_globs,
 };
 use serde::Serialize;
-use solar::{interface::Session, sema::Compiler};
+use solar::{
+    interface::{Session, config::Opts},
+    sema::Compiler,
+};
 use std::path::PathBuf;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
@@ -296,7 +299,10 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
+            let mut opts = Opts::default();
+            opts.unstable.typeck = true;
+            let mut compiler =
+                Compiler::new(Session::builder().opts(opts).with_stderr_emitter().build());
 
             // Load the solar-compatible sources to the pcx before linting
             compiler.enter_mut(|compiler| {

@@ -8,7 +8,7 @@
 //! uses the shared initialization logic from `foundry-evm-core`.
 
 use alloy_primitives::{Address, U256, address};
-use foundry_evm::core::tempo::{PATH_USD_ADDRESS, initialize_tempo_genesis};
+use foundry_evm::core::tempo::{PATH_USD_ADDRESS, initialize_tempo_genesis_at_hardfork};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     state::{AccountInfo, Bytecode},
@@ -228,7 +228,7 @@ pub fn initialize_tempo_precompiles(
     let mut storage = AnvilStorageProvider::new(db, chain_id, timestamp, 0, hardfork);
 
     // Initialize base Tempo genesis (precompiles and tokens)
-    initialize_tempo_genesis(&mut storage, ADMIN, SENDER)?;
+    initialize_tempo_genesis_at_hardfork(&mut storage, ADMIN, SENDER, hardfork)?;
 
     // Mint fee tokens to test accounts
     // u64::MAX per account - safe since u128::MAX can hold ~18 quintillion u64::MAX values

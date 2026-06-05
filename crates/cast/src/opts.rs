@@ -515,6 +515,12 @@ pub enum CastSubcommand {
     #[command(name = "mktx", visible_alias = "m")]
     MakeTx(MakeTxArgs),
 
+    /// Classify a raw transaction as Tempo T5 payment/general lane.
+    Classify {
+        /// The raw signed transaction.
+        raw_tx: Option<String>,
+    },
+
     /// Calculate the ENS namehash of a name.
     #[command(visible_aliases = &["na", "nh"])]
     Namehash { name: Option<String> },
@@ -540,6 +546,10 @@ pub enum CastSubcommand {
         /// Print the raw RLP encoded transaction.
         #[arg(long, conflicts_with = "field")]
         raw: bool,
+
+        /// Classify the transaction as Tempo T5 payment/general lane.
+        #[arg(long, conflicts_with_all = ["field", "raw", "to_request"])]
+        lane: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -1033,6 +1043,50 @@ pub enum CastSubcommand {
         /// The storage slot numbers (hex or decimal).
         #[arg(value_parser = parse_slot)]
         slots: Vec<B256>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Compute a Tempo TIP-20 channel reserve channel ID.
+    #[command(name = "channel-id")]
+    ChannelId {
+        /// Channel payer address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payer: NameOrAddress,
+
+        /// Channel payee address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payee: NameOrAddress,
+
+        /// TIP-20 token address locked by the channel.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// User-supplied channel salt.
+        salt: B256,
+
+        /// Optional relayer allowed to submit settlements for the payee.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        operator: Option<NameOrAddress>,
+
+        /// Optional voucher signer. Defaults to the zero address, meaning the payer signs.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        authorized_signer: Option<NameOrAddress>,
+
+        /// Transaction-derived expiring nonce hash from ChannelOpened.
+        #[arg(long, default_value_t = B256::ZERO)]
+        expiring_nonce_hash: B256,
+
+        /// Channel reserve precompile address.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        reserve: Option<NameOrAddress>,
+
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
 
         #[command(flatten)]
         rpc: RpcOpts,

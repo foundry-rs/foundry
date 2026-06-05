@@ -50,6 +50,8 @@ pub struct InvariantFuzzTestResult {
     pub metrics: HashMap<String, InvariantMetrics>,
     /// Number of failed replays from persisted corpus.
     pub failed_corpus_replays: usize,
+    /// Actual number of workers used for this logical campaign.
+    pub workers: usize,
     /// For optimization mode (int256 return): the best (maximum) value achieved.
     /// None means standard invariant check mode.
     pub optimization_best_value: Option<I256>,
@@ -69,6 +71,7 @@ impl InvariantFuzzTestResult {
         line_coverage: Option<HitMaps>,
         metrics: HashMap<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+        workers: usize,
         optimization_best_value: Option<I256>,
         optimization_best_sequence: Vec<BasicTxDetails>,
     ) -> Self {
@@ -82,6 +85,7 @@ impl InvariantFuzzTestResult {
             line_coverage,
             metrics,
             failed_corpus_replays,
+            workers,
             optimization_best_value,
             optimization_best_sequence,
         }

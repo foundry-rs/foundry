@@ -564,7 +564,7 @@ impl CreateArgs {
         }
 
         if let Some(ts) = expires_at {
-            sh_println!("Transaction expires at unix timestamp {ts}")?;
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
@@ -646,7 +646,7 @@ impl CreateArgs {
             return Ok(());
         }
 
-        sh_println!("Starting contract verification...")?;
+        sh_status!("Starting contract verification...")?;
 
         let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
             optimizer.then(|| self.build.compiler.optimizer_runs.unwrap_or(200))
@@ -691,7 +691,7 @@ impl CreateArgs {
             .map(|c| c.key)
             .or_else(|| verify_config.etherscan_api_key.clone());
         let resolved_verifier = verify.verifier.resolve(effective_key.as_deref(), Some(chain));
-        sh_println!("Waiting for {resolved_verifier} to detect contract deployment...")?;
+        sh_status!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
     }
 
