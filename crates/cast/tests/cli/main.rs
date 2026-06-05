@@ -1098,6 +1098,60 @@ Created new encrypted keystore file: [..]
     ]);
 });
 
+// tests that `cast wallet list --json --dir` wraps local accounts in the shared envelope
+casttest!(wallet_list_local_accounts_json, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.args(["wallet", "new", "keystore", "--unsafe-password", "test"]).assert_success();
+
+    cmd.cast_fuse()
+        .args(["wallet", "list", "--json", "--dir", "keystore"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "source": "Local"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
+
+"#]]
+            .is_json(),
+        );
+});
+
+// tests that `cast wallet vanity --json --nonce` wraps wallet and contract address output
+casttest!(wallet_vanity_json_nonce_contract_address, |_prj, cmd| {
+    cmd.args(["wallet", "vanity", "--starts-with", ".", "--nonce", "1", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": {
+    "address": "{...}",
+    "private_key": "{...}",
+    "contract_address": "{...}"
+  },
+  "errors": [],
+  "warnings": []
+}
+
+"#]]
+            .is_json(),
+        );
+});
+
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
 casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
     cmd.args([
