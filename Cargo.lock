@@ -2793,6 +2793,7 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "itertools 0.14.0",
+ "libc",
  "op-alloy-consensus",
  "op-alloy-flz",
  "op-alloy-network",
@@ -2813,6 +2814,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "windows-sys 0.61.2",
  "yansi",
 ]
 

@@ -27,7 +27,7 @@ use std::{
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::IAccountKeychain;
 use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule};
-use tokio::{process::Command as TokioCommand, signal};
+use tokio::signal;
 
 use crate::{
     cmd::{
@@ -41,6 +41,8 @@ use crate::{
     },
     tx::SendTxOpts,
 };
+
+use super::process_tree::ManagedChild;
 
 const PRINT_SPONSOR_HASH_REVOKE_ERROR: &str = "--tempo.print-sponsor-hash only prints a sponsor hash and does not revoke the session on-chain";
 const SESSION_CHILD_SIGNER_ENV: &[&str] = &[
@@ -226,7 +228,8 @@ async fn cleanup_session_run(
     send_tx: SendTxOpts,
 ) -> Result<()> {
     let retire_result = retire_session_run_locally(session_id);
-    let revoke_result = run_revoke(session_id, false, tx, send_tx).await;
+    let revoke_result =
+        run_revoke_with_policy(session_id, false, tx, send_tx, UnprovisionedKeyPolicy::Fail).await;
 
     match (retire_result, revoke_result) {
         (Ok(()), Ok(())) => Ok(()),
@@ -290,9 +293,7 @@ impl InnerCommand {
     where
         I: std::future::Future<Output = Result<&'static str>>,
     {
-        let mut child = TokioCommand::from(self.command(session_id))
-            .kill_on_drop(true)
-            .spawn()
+        let mut child = ManagedChild::spawn(self.command(session_id))
             .wrap_err_with(|| format!("failed to run inner command `{}`", self.raw))?;
 
         let status = tokio::select! {
@@ -300,8 +301,7 @@ impl InnerCommand {
                 format!("failed to wait for inner command `{}`", self.raw)
             })?,
             interrupt = interrupt => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
+                let _ = child.terminate_tree().await;
 
                 return match interrupt {
                     Ok(interrupt) => Err(self.interrupted_error(interrupt)),
@@ -309,6 +309,8 @@ impl InnerCommand {
                 };
             }
         };
+
+        let _ = child.terminate_tree().await;
 
         if status.success() { Ok(()) } else { Err(self.status_error(status)) }
     }
@@ -541,6 +543,23 @@ async fn run_revoke(
     tx: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
+    run_revoke_with_policy(session_id, local, tx, send_tx, UnprovisionedKeyPolicy::RevokeLocally)
+        .await
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnprovisionedKeyPolicy {
+    RevokeLocally,
+    Fail,
+}
+
+async fn run_revoke_with_policy(
+    session_id: B256,
+    local: bool,
+    tx: TransactionOpts,
+    send_tx: SendTxOpts,
+    unprovisioned_policy: UnprovisionedKeyPolicy,
+) -> Result<()> {
     let Some(entry) = read_session_entry(session_id)? else {
         print_revoke_status(session_id, None, SessionRevokeStatus::NotFound)?;
         return Ok(());
@@ -575,9 +594,7 @@ async fn run_revoke(
         return Ok(());
     }
     if info.keyId == Address::ZERO {
-        update_session_status(session_id, SessionStatus::Revoked)?;
-        print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::NotProvisioned)?;
-        return Ok(());
+        return handle_unprovisioned_revoke(session_id, &entry, unprovisioned_policy);
     }
 
     let root_signer =
@@ -607,6 +624,27 @@ async fn run_revoke(
     update_session_status(session_id, SessionStatus::Revoked)?;
 
     Ok(())
+}
+
+fn handle_unprovisioned_revoke(
+    session_id: B256,
+    entry: &SessionEntry,
+    policy: UnprovisionedKeyPolicy,
+) -> Result<()> {
+    match policy {
+        UnprovisionedKeyPolicy::RevokeLocally => {
+            update_session_status(session_id, SessionStatus::Revoked)?;
+            print_revoke_status(session_id, Some(entry), SessionRevokeStatus::NotProvisioned)?;
+            Ok(())
+        }
+        UnprovisionedKeyPolicy::Fail => {
+            eyre::bail!(
+                "session key is not provisioned on-chain yet; pending transactions from the \
+                 wrapped command may still provision it. Wait for pending transactions to settle, \
+                 then run `cast wallet session revoke {session_id}`."
+            )
+        }
+    }
 }
 
 async fn handle_revoke_error(
@@ -945,6 +983,24 @@ mod tests {
                 assert_eq!(session.status, SessionStatus::Failed, "{err:#}");
                 assert!(session.key.is_none());
             });
+        });
+    }
+
+    #[test]
+    fn run_for_unprovisioned_cleanup_remains_retryable() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0xd6; 32]);
+            upsert_session_entry(sample_session_entry(session_id, SessionStatus::Active)).unwrap();
+
+            retire_session_run_locally(session_id).unwrap();
+            let entry = read_session_entry(session_id).unwrap().unwrap();
+            let err = handle_unprovisioned_revoke(session_id, &entry, UnprovisionedKeyPolicy::Fail)
+                .unwrap_err();
+
+            assert!(err.to_string().contains("pending transactions"), "{err}");
+            let session = read_session_entry(session_id).unwrap().unwrap();
+            assert_eq!(session.status, SessionStatus::Failed);
+            assert!(session.key.is_none());
         });
     }
 

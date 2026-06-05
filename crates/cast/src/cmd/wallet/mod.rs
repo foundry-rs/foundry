@@ -25,6 +25,8 @@ use vanity::VanityArgs;
 pub mod list;
 use list::ListArgs;
 
+mod process_tree;
+
 pub mod session;
 use session::SessionArgs;
 
