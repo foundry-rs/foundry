@@ -12,7 +12,7 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -217,9 +217,10 @@ impl SendTxArgs {
         }
 
         if has_session
-            && let Some(session) = tx
-                .tempo
-                .session_signer_for_wallet(&send_tx.eth.wallet, provider.get_chain_id().await?)?
+            && let Some(session) = tx.tempo.session_signer_for_wallet(
+                &send_tx.eth.wallet,
+                get_chain(config.chain, &provider).await?.id(),
+            )?
         {
             pre_resolved_signer = Some(session.signer);
             access_key = Some(session.access_key);
