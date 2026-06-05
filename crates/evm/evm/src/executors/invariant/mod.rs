@@ -1234,7 +1234,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             handler_errors,
             result.runs,
             result.calls,
-            Vec::new(),
             reverts,
             result.last_run_inputs,
             result.gas_report_traces,

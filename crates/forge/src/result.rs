@@ -1,9 +1,6 @@
 //! Test outcomes.
 
-use crate::{
-    fuzz::{BaseCounterExample, FuzzedCases},
-    gas_report::GasReport,
-};
+use crate::{fuzz::BaseCounterExample, gas_report::GasReport};
 use alloy_primitives::{
     Address, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
@@ -1173,7 +1170,6 @@ impl TestResult {
         counterexample: Option<CounterExample>,
         runs: usize,
         calls: usize,
-        cases: Vec<FuzzedCases>,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,

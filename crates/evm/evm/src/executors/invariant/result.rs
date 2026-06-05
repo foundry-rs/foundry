@@ -19,7 +19,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    BasicTxDetails, FuzzedCases,
+    BasicTxDetails,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
 use proptest::test_runner::TestError;
@@ -39,8 +39,6 @@ pub struct InvariantFuzzTestResult {
     pub runs: usize,
     /// Number of completed fuzzed calls across all invariant runs.
     pub calls: usize,
-    /// Every successful fuzz test case
-    pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
     pub reverts: usize,
     /// The entire inputs of the last run of the invariant campaign, used for
@@ -70,7 +68,6 @@ impl InvariantFuzzTestResult {
         handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
         runs: usize,
         calls: usize,
-        cases: Vec<FuzzedCases>,
         reverts: usize,
         last_run_inputs: Vec<BasicTxDetails>,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
@@ -86,7 +83,6 @@ impl InvariantFuzzTestResult {
             handler_errors,
             runs,
             calls,
-            cases,
             reverts,
             last_run_inputs,
             gas_report_traces,

@@ -1751,7 +1751,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             counterexample,
             invariant_result.runs,
             invariant_result.calls,
-            invariant_result.cases,
             invariant_result.reverts,
             invariant_result.metrics,
             invariant_result.failed_corpus_replays,
