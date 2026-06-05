@@ -278,6 +278,40 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 "#]]);
 });
 
+forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let stderr = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--access-list",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "2",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("Error: max priority fee per gas (2) cannot exceed max fee per gas (1)"),
+        "{stderr}"
+    );
+});
+
 forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();

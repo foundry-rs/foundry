@@ -255,7 +255,7 @@ pub(super) async fn send_tip20_transaction(
 
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
-        let (mut tx, _) = builder.build(browser.address()).await?;
+        let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(gas) = tx.gas_limit() {
             tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
