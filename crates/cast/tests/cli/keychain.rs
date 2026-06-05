@@ -518,6 +518,111 @@ test -n "${{TEMPO_SESSION_ID:-}}"
     assert_session_file_status_without_key(tempo_home.path(), "failed");
 });
 
+casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let child_dir = tempfile::tempdir().unwrap();
+    let child_script = child_dir.path().join("session-batch-send.sh");
+    let path_usd = path_usd();
+    let cast_bin = std::env::current_exe()
+        .expect("current test executable")
+        .parent()
+        .expect("deps dir")
+        .parent()
+        .expect("target debug dir")
+        .join(format!("cast{}", std::env::consts::EXE_SUFFIX));
+    fs::write(
+        &child_script,
+        format!(
+            r#"#!/bin/sh
+set -eu
+test -n "${{TEMPO_SESSION_ID:-}}"
+"${{CAST_BIN}}" batch-send --call "{}::transfer(address,uint256):{},0" --rpc-url "${{RPC_URL}}" --tempo.fee-token "{}" --async
+"#,
+            path_usd,
+            accounts::ADDR3,
+            path_usd,
+        ),
+    )
+    .expect("write child script");
+
+    let for_command = format!("sh {}", child_script.to_slash_lossy());
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("CAST_BIN", &cast_bin);
+    cmd.env("RPC_URL", &rpc);
+    let assertion = cmd
+        .args([
+            "wallet",
+            "session",
+            "--root",
+            accounts::ADDR1,
+            "--expires",
+            "10m",
+            "--scope",
+            &path_usd,
+            "--spend-limit",
+            "PathUSD=1000000",
+            "--for",
+            &for_command,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure();
+    let output = assertion.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+
+    assert!(
+        stdout.trim().starts_with("0x"),
+        "expected child cast batch-send --async to print a tx hash, got:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("failed to clean up Tempo session after inner command"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("session key is not provisioned on-chain yet"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert_session_file_status_without_key(tempo_home.path(), "failed");
+});
+
+casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31337");
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("TEMPO_SESSION_ID", &session_id);
+    let stdout = cmd
+        .args([
+            "batch-send",
+            "--call",
+            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+            "--async",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        stdout.trim().starts_with("0x"),
+        "expected cast batch-send --async to print a tx hash, got:\n{stdout}"
+    );
+});
+
 casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
@@ -627,6 +732,92 @@ casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
         .stderr_lossy();
 
     assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(batch_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+    let session_id = "0x5555555555555555555555555555555555555555555555555555555555555555";
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "batch-send",
+            "--call",
+            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            "--tempo.session",
+            session_id,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(batch_send_rejects_session_with_unlocked, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+    let session_id = "0x5555555555555555555555555555555555555555555555555555555555555555";
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "batch-send",
+            "--call",
+            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            "--tempo.session",
+            session_id,
+            "--unlocked",
+            "--from",
+            accounts::ADDR1,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("cannot be combined with --unlocked"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(batch_send_rejects_session_on_wrong_chain, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31338");
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "batch-send",
+            "--call",
+            &format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3),
+            "--tempo.session",
+            &session_id,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("is for chain 31338"), "unexpected stderr:\n{stderr}");
+    assert!(stderr.contains("command is using chain 31337"), "unexpected stderr:\n{stderr}");
 });
 
 casttest!(wallet_session_run_for_cleans_key_material_when_child_fails, async |_prj, cmd| {
