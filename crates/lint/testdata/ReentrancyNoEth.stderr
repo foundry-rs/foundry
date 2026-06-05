@@ -1,0 +1,80 @@
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         hook.notify(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         (bool ok,) = target.call("");
+   │                      ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `credits` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         (bool ok,) = target.delegatecall(data);
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         hook.notify(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         hook.notify(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         hook.notify(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         hook.notify(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         hook.overloaded(amount);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         balances[hook.key()] = amount;
+   │                  ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │         delete balances[hook.key()];
+   │                         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+

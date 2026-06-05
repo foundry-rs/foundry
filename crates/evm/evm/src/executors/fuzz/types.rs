@@ -1,5 +1,8 @@
 use crate::executors::RawCallResult;
-use alloy_primitives::{Bytes, Log, map::HashMap};
+use alloy_primitives::{
+    Bytes, Log,
+    map::{AddressHashMap, HashMap},
+};
 use foundry_evm_core::{Breakpoints, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::FuzzCase;
@@ -13,6 +16,8 @@ pub struct CaseOutcome {
     pub case: FuzzCase,
     /// The traces of the call.
     pub traces: Option<SparsedTraceArena>,
+    /// Runtime bytecodes for contracts seen in the trace.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// The coverage info collected during the call.
     pub coverage: Option<HitMaps>,
     /// Breakpoints char pc map.

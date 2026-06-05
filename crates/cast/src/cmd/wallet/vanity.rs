@@ -3,13 +3,11 @@ use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::json::print_json_object;
-use foundry_common::{sh_println, shell};
+use foundry_common::sh_println;
 use itertools::Either;
 use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -102,9 +100,7 @@ impl VanityArgs {
             };
         }
 
-        if !shell::is_json() {
-            sh_println!("Starting to generate vanity address...")?;
-        }
+        sh_status!("Starting to generate vanity address...")?;
         let timer = Instant::now();
 
         let wallet = match (left_exact_hex, left_regex, right_exact_hex, right_regex) {
@@ -149,26 +145,18 @@ impl VanityArgs {
             save_wallet_to_file(&wallet, &save_path)?;
         }
 
-        let elapsed = timer.elapsed().as_secs_f64();
-        let address = wallet.address().to_checksum(None);
-        let private_key = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
-        let contract_address = nonce.map(|n| wallet.address().create(n).to_checksum(None));
-        if shell::is_json() {
-            print_json_object(json!({
-                "address": address,
-                "private_key": private_key,
-                "contract_address": contract_address,
-            }))?;
-        } else {
-            sh_println!(
-                "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: {}",
-                elapsed,
-                if nonce.is_some() { "\nContract address: " } else { "" },
-                contract_address.as_deref().unwrap_or(""),
-                address,
-                private_key,
-            )?;
-        }
+        sh_println!(
+            "Successfully found vanity address in {:.3} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
+            timer.elapsed().as_secs_f64(),
+            if nonce.is_some() { "\nContract address: " } else { "" },
+            if let Some(nonce_val) = nonce {
+                wallet.address().create(nonce_val).to_checksum(None)
+            } else {
+                String::new()
+            },
+            wallet.address().to_checksum(None),
+            hex::encode(wallet.credential().to_bytes()),
+        )?;
 
         Ok(wallet)
     }

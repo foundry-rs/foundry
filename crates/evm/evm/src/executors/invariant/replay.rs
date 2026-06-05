@@ -5,7 +5,10 @@ use crate::executors::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{I256, Log, map::HashMap};
+use alloy_primitives::{
+    Bytes, I256, Log,
+    map::{AddressHashMap, HashMap},
+};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
@@ -28,6 +31,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
+    debug_bytecodes: &mut AddressHashMap<Bytes>,
     line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
@@ -44,6 +48,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     for tx in inputs {
         let mut call_result = execute_tx(&mut executor, tx)?;
         logs.extend(call_result.logs.clone());
+        debug_bytecodes.extend(call_result.debug_bytecodes.clone());
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
         HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
 
@@ -73,6 +78,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         invariant_contract.address,
         target_invariant.abi_encode_input(&[])?.into(),
     )?;
+    debug_bytecodes.extend(invariant_result.debug_bytecodes);
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
     logs.extend(invariant_result.logs);
     deprecated_cheatcodes.extend(
@@ -86,6 +92,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     if invariant_contract.call_after_invariant && invariant_success {
         let (after_invariant_result, _) =
             call_after_invariant_function(&executor, invariant_contract.address)?;
+        debug_bytecodes.extend(after_invariant_result.debug_bytecodes);
         traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
         logs.extend(after_invariant_result.logs);
     }
@@ -111,6 +118,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
+    debug_bytecodes: &mut AddressHashMap<Bytes>,
     line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
@@ -158,6 +166,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         ided_contracts,
         logs,
         traces,
+        debug_bytecodes,
         line_coverage,
         deprecated_cheatcodes,
         &calls,

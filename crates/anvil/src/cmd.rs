@@ -250,9 +250,21 @@ impl NodeArgs {
 
         let funded_accounts = self.parse_funded_accounts()?;
 
+        let networks = self
+            .evm
+            .chain_id
+            .map(u64::from)
+            .or_else(|| self.evm.fork_chain_id.map(u64::from))
+            .map_or(self.evm.networks, |chain_id| self.evm.networks.with_chain_id(chain_id));
+
         let hardfork = match &self.hardfork {
-            Some(hf) => Some(parse_hardfork(hf, &self.evm.networks)?),
+            Some(hf) => Some(parse_hardfork(hf, &networks)?),
             None => None,
+        };
+        let networks = if let Some(hardfork) = hardfork {
+            networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?
+        } else {
+            networks
         };
 
         Ok(NodeConfig::default()
@@ -307,7 +319,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(self.evm.networks)
+            .with_networks(networks)
             // Apply chain-id after explicit network flags so auto-detection can fill in
             // defaults when no network was set, without being overwritten afterward.
             .with_chain_id(self.evm.chain_id)
@@ -651,11 +663,11 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
-    /// Disable printing of `console.log` invocations to stdout.
+    /// Disable printing of `console.log` invocations to stderr.
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
-    /// Enable printing of traces for executed transactions and `eth_call` to stdout.
+    /// Enable printing of traces for executed transactions and `eth_call` to stderr.
     #[arg(long, visible_alias = "enable-trace-printing")]
     pub print_traces: bool,
 
@@ -888,6 +900,11 @@ impl FromStr for ForkUrl {
 
 /// Parses a hardfork string against the active network configuration.
 fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    if let Ok(hardfork) = FoundryHardfork::from_str(hf) {
+        networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?;
+        return Ok(hardfork);
+    }
+
     #[cfg(feature = "optimism")]
     if networks.is_optimism() {
         return Ok(OpHardfork::from_str(hf)?.into());
@@ -962,6 +979,25 @@ mod tests {
         assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
     }
 
+    #[test]
+    fn can_parse_tempo_hardfork_from_network() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "tempo", "--hardfork", "T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn can_parse_namespaced_tempo_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--hardfork", "tempo:T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
     #[cfg(feature = "optimism")]
     #[test]
     fn chain_id_infers_optimism_network_in_node_config() {
@@ -969,6 +1005,34 @@ mod tests {
         let config = args.into_node_config().unwrap();
 
         assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    fn chain_id_infers_tempo_network_for_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--chain-id", "4217", "--hardfork", "T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+    }
+
+    #[test]
+    fn fork_chain_id_infers_tempo_network_for_hardfork() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "4217",
+            "--hardfork",
+            "T5",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
     }
 
     #[test]

@@ -174,6 +174,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
     EthSendRawTransactionSync(Bytes),
 
+    #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
+    AnvilClassifyTransaction(Bytes),
+
     #[serde(rename = "eth_call")]
     EthCall(
         WithOtherFields<TransactionRequest>,

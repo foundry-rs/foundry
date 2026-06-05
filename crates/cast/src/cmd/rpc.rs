@@ -1,7 +1,8 @@
 use crate::Cast;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{json::print_json_object, opts::RpcOpts, utils, utils::LoadConfig};
+use foundry_cli::{json::print_json_success, opts::RpcOpts, utils, utils::LoadConfig};
+use foundry_common::shell;
 use itertools::Itertools;
 
 /// CLI arguments for `cast rpc`.
@@ -54,8 +55,12 @@ impl RpcArgs {
 
         let provider = utils::get_provider(&config)?;
         let result = Cast::new(provider).rpc(&method, params).await?;
-        let result: serde_json::Value = serde_json::from_str(&result)?;
-        print_json_object(result)?;
+        if shell::is_json() {
+            let result: serde_json::Value = serde_json::from_str(&result)?;
+            print_json_success(result)?;
+        } else {
+            sh_println!("{result}")?;
+        }
         Ok(())
     }
 }

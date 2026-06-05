@@ -29,7 +29,10 @@ use foundry_config::{
     filter::expand_globs,
 };
 use serde::Serialize;
-use solar::{interface::Session, sema::Compiler};
+use solar::{
+    interface::{Session, config::Opts},
+    sema::Compiler,
+};
 use std::path::PathBuf;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
@@ -99,11 +102,14 @@ impl BuildArgs {
                 .filter_map(|(name, on)| on.then_some(name))
                 .collect::<Vec<_>>();
         if !unsupported.is_empty() {
-            foundry_cli::machine::bail_machine_usage(format!(
-                "`forge build` under `--machine` does not yet support {}; \
-                 run without `--machine` or omit those flags.",
-                unsupported.join(", ")
-            ));
+            foundry_cli::machine::bail_machine_usage_with_details(
+                format!(
+                    "`forge build` under `--machine` does not yet support {}; \
+                     run without `--machine` or omit those flags.",
+                    unsupported.join(", ")
+                ),
+                serde_json::json!({ "unsupported_flags": unsupported }),
+            );
         }
     }
 
@@ -187,7 +193,9 @@ impl BuildArgs {
                 .filter(|e| e.is_error())
                 .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
                 .collect();
-            print_json(&JsonEnvelope::<()>::failure(errors))?;
+            // Best-effort: bubbling via `?` on a broken stdout would demote
+            // the canonical `Build (4)` exit to `GenericError (1)`.
+            let _ = print_json(&JsonEnvelope::<()>::failure(errors));
             std::process::exit(ExitCode::Build.to_i32());
         }
 
@@ -291,7 +299,10 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
+            let mut opts = Opts::default();
+            opts.unstable.typeck = true;
+            let mut compiler =
+                Compiler::new(Session::builder().opts(opts).with_stderr_emitter().build());
 
             // Load the solar-compatible sources to the pcx before linting
             compiler.enter_mut(|compiler| {
