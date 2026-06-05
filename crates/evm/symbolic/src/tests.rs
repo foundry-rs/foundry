@@ -2126,6 +2126,102 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
 }
 
 #[test]
+/// Regression coverage for guarded self-division boolean tautology normalization.
+fn solver_normalizes_guarded_self_division_guard() {
+    let a = Expr::Var("a".to_string());
+    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
+    let checked_quotient = Expr::Ite(
+        Box::new(a_is_zero.clone()),
+        Box::new(Expr::Const(U256::ZERO)),
+        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
+    );
+    let guard = Expr::op(
+        ExprOp::Or,
+        SymWord::from_bool(a_is_zero).into_expr(),
+        SymWord::from_bool(BoolExpr::eq(checked_quotient, Expr::Const(U256::from(1)))).into_expr(),
+    );
+    let original = BoolExpr::eq(guard, Expr::Const(U256::ZERO));
+    let normalized = normalize_bool_for_solver(original.clone());
+
+    assert_eq!(normalized, BoolExpr::Const(false));
+
+    for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
+        let model = BTreeMap::from([("a".to_string(), value)]);
+        assert!(!eval_bool_expr(&original, &model).unwrap());
+    }
+}
+
+#[test]
+/// Regression coverage for guarded self-division word normalization.
+fn solver_normalizes_guarded_self_division_word() {
+    let a = Expr::Var("a".to_string());
+    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
+    let checked_quotient = Expr::Ite(
+        Box::new(a_is_zero.clone()),
+        Box::new(Expr::Const(U256::ZERO)),
+        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
+    );
+    let normalized = normalize_expr_for_solver(checked_quotient.clone());
+
+    assert!(!normalized.smt().contains("bvudiv"));
+    assert_eq!(
+        normalized,
+        Expr::Ite(
+            Box::new(a_is_zero.not()),
+            Box::new(Expr::Const(U256::from(1))),
+            Box::new(Expr::Const(U256::ZERO)),
+        )
+    );
+
+    for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
+        let model = BTreeMap::from([("a".to_string(), value)]);
+        assert_eq!(
+            eval_expr(&checked_quotient, &model).unwrap(),
+            eval_expr(&normalized, &model).unwrap()
+        );
+    }
+}
+
+#[test]
+/// Regression coverage for preserving mirrored zero-guarded self-division semantics.
+fn solver_does_not_invert_guarded_zero_self_division() {
+    let a = Expr::Var("a".to_string());
+    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
+    let mirrored = Expr::Ite(
+        Box::new(a_is_zero),
+        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
+        Box::new(Expr::Const(U256::ZERO)),
+    );
+    let normalized = normalize_expr_for_solver(mirrored.clone());
+
+    for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
+        let model = BTreeMap::from([("a".to_string(), value)]);
+        assert_eq!(eval_expr(&mirrored, &model).unwrap(), eval_expr(&normalized, &model).unwrap());
+    }
+}
+
+#[test]
+/// Regression coverage for guarded self-division overflow-guard normalization.
+fn solver_normalizes_guarded_self_division_add_overflow_guard() {
+    let a = Expr::Var("a".to_string());
+    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
+    let checked_quotient = Expr::Ite(
+        Box::new(a_is_zero),
+        Box::new(Expr::Const(U256::ZERO)),
+        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
+    );
+
+    assert_eq!(
+        normalize_bool_for_solver(BoolExpr::cmp(
+            BoolExprOp::Ugt,
+            checked_quotient.clone(),
+            Expr::op(ExprOp::Add, Expr::Const(U256::from(1)), checked_quotient),
+        )),
+        BoolExpr::Const(false)
+    );
+}
+
+#[test]
 /// Regression coverage for preserving unbounded checked-mul overflow guards.
 fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
     let a = Expr::Var("a".to_string());
