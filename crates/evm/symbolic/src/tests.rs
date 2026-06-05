@@ -1966,6 +1966,10 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
         Expr::Const(U256::ZERO)
     );
     assert_eq!(
+        Expr::op(ExprOp::Sub, Expr::Var("x".to_string()), Expr::Var("x".to_string())),
+        Expr::Const(U256::ZERO)
+    );
+    assert_eq!(
         Expr::op(ExprOp::And, Expr::Var("x".to_string()), Expr::Const(U256::MAX)),
         Expr::Var("x".to_string())
     );
@@ -1990,6 +1994,40 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
         Expr::op(ExprOp::Mul, Expr::Const(U256::from(6)), Expr::Const(U256::from(7))),
         Expr::Const(U256::from(42))
     );
+}
+
+#[test]
+/// Regression coverage for reflexive comparison simplification.
+fn bool_comparison_folds_reflexive_operands() {
+    let x = || Expr::Var("x".to_string());
+
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ult, x(), x()), BoolExpr::Const(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ugt, x(), x()), BoolExpr::Const(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, x(), x()), BoolExpr::Const(true));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, x(), x()), BoolExpr::Const(true));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Slt, x(), x()), BoolExpr::Const(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Sgt, x(), x()), BoolExpr::Const(false));
+}
+
+#[test]
+/// Regression coverage for unsigned min/max comparison simplification.
+fn bool_comparison_folds_unsigned_boundaries() {
+    let x = || Expr::Var("x".to_string());
+
+    assert_eq!(
+        BoolExpr::cmp(BoolExprOp::Ugt, Expr::Const(U256::ZERO), x()),
+        BoolExpr::Const(false)
+    );
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, Expr::Const(U256::ZERO), x()), BoolExpr::Const(true));
+    assert_eq!(
+        BoolExpr::cmp(BoolExprOp::Ult, x(), Expr::Const(U256::ZERO)),
+        BoolExpr::Const(false)
+    );
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, x(), Expr::Const(U256::ZERO)), BoolExpr::Const(true));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ult, Expr::Const(U256::MAX), x()), BoolExpr::Const(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, Expr::Const(U256::MAX), x()), BoolExpr::Const(true));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ugt, x(), Expr::Const(U256::MAX)), BoolExpr::Const(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, x(), Expr::Const(U256::MAX)), BoolExpr::Const(true));
 }
 
 #[test]

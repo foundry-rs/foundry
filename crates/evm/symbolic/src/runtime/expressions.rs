@@ -954,6 +954,7 @@ impl Expr {
                 expr
             }
             (ExprOp::Sub, expr, Self::Const(value)) if value.is_zero() => expr,
+            (ExprOp::Sub, left, right) if left == right => Self::Const(U256::ZERO),
             (ExprOp::Mul, Self::Const(value), _) | (ExprOp::Mul, _, Self::Const(value))
                 if value.is_zero() =>
             {
@@ -1200,6 +1201,9 @@ impl BoolExpr {
 
     /// Implements the `cmp` symbolic expression helper.
     pub(crate) fn cmp(op: BoolExprOp, left: Expr, right: Expr) -> Self {
+        if left == right {
+            return Self::Const(matches!(op, BoolExprOp::Ule | BoolExprOp::Uge));
+        }
         if let (Expr::Const(left), Expr::Const(right)) = (&left, &right) {
             return Self::Const(match op {
                 BoolExprOp::Ult => left < right,
@@ -1209,6 +1213,33 @@ impl BoolExpr {
                 BoolExprOp::Slt => slt(*left, *right),
                 BoolExprOp::Sgt => slt(*right, *left),
             });
+        }
+        match (op, &left, &right) {
+            (BoolExprOp::Ugt, Expr::Const(value), _) if value.is_zero() => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Ule, Expr::Const(value), _) if value.is_zero() => {
+                return Self::Const(true);
+            }
+            (BoolExprOp::Ult, _, Expr::Const(value)) if value.is_zero() => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Uge, _, Expr::Const(value)) if value.is_zero() => {
+                return Self::Const(true);
+            }
+            (BoolExprOp::Ult, Expr::Const(value), _) if *value == U256::MAX => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Uge, Expr::Const(value), _) if *value == U256::MAX => {
+                return Self::Const(true);
+            }
+            (BoolExprOp::Ugt, _, Expr::Const(value)) if *value == U256::MAX => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Ule, _, Expr::Const(value)) if *value == U256::MAX => {
+                return Self::Const(true);
+            }
+            _ => {}
         }
         Self::Cmp(op, left, right)
     }
