@@ -125,17 +125,22 @@ impl SessionArgs {
         let send_tx = *send_tx;
         let chain_id = resolve_session_chain_id(&send_tx).await?;
 
-        run_for_command(SessionRunRequest {
+        let tx = *tx;
+        if tx.tempo.print_sponsor_hash {
+            eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+        }
+
+        let entry = build_session_entry(
             root_account,
             chain_id,
             expires,
             scope,
             spend_limits,
-            command,
-            tx: *tx,
-            send_tx,
-        })
-        .await
+            send_tx.eth.wallet.clone(),
+        )
+        .await?;
+
+        run_for_command(entry, command, tx, send_tx).await
     }
 }
 
@@ -199,42 +204,12 @@ impl SessionSubcommands {
     }
 }
 
-struct SessionRunRequest {
-    root_account: Address,
-    chain_id: u64,
-    expires: u64,
-    scope: Vec<CallScope>,
-    spend_limits: Vec<SessionSpendLimit>,
+async fn run_for_command(
+    entry: SessionEntry,
     command: InnerCommand,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
-}
-
-async fn run_for_command(request: SessionRunRequest) -> Result<()> {
-    let SessionRunRequest {
-        root_account,
-        chain_id,
-        expires,
-        scope,
-        spend_limits,
-        command,
-        tx,
-        send_tx,
-    } = request;
-
-    if tx.tempo.print_sponsor_hash {
-        eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
-    }
-
-    let entry = build_session_entry(
-        root_account,
-        chain_id,
-        expires,
-        scope,
-        spend_limits,
-        send_tx.eth.wallet.clone(),
-    )
-    .await?;
+) -> Result<()> {
     let session_id = entry.session_id;
     upsert_session_entry(entry)?;
 
@@ -284,14 +259,10 @@ fn finish_session_run(
         (Ok(()), Err(revoke_err)) => {
             Err(revoke_err.wrap_err("failed to clean up Tempo session after inner command"))
         }
-        (Err(child_err), Err(revoke_err)) => {
-            Err(child_err.wrap_err(revoke_failure_context(session_id, &revoke_err)))
-        }
+        (Err(child_err), Err(revoke_err)) => Err(child_err.wrap_err(format!(
+            "also failed to clean up Tempo session {session_id:?}: {revoke_err}"
+        ))),
     }
-}
-
-fn revoke_failure_context(session_id: B256, err: &eyre::Report) -> String {
-    format!("also failed to clean up Tempo session {session_id:?}: {err}")
 }
 
 #[derive(Debug)]
@@ -321,7 +292,13 @@ impl InnerCommand {
     fn command(&self, session_id: B256) -> Command {
         let mut command = Command::new(&self.program);
         command.args(&self.args);
-        configure_session_child_environment(&mut command, session_id);
+        for key in SESSION_CHILD_SIGNER_ENV {
+            command.env_remove(key);
+        }
+        // TODO: Wire cast single-wallet signer paths through TempoOpts::session_signer_for_wallet
+        // so cast commands launched via --for can consume TEMPO_SESSION_ID without
+        // requiring explicit signer options.
+        command.env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
         command
     }
 
@@ -331,16 +308,6 @@ impl InnerCommand {
             None => eyre::eyre!("inner command `{}` terminated by a signal", self.raw),
         }
     }
-}
-
-fn configure_session_child_environment(command: &mut Command, session_id: B256) {
-    for key in SESSION_CHILD_SIGNER_ENV {
-        command.env_remove(key);
-    }
-    // TODO: Wire cast single-wallet signer paths through TempoOpts::session_signer_for_wallet so
-    // cast commands launched via --for can consume TEMPO_SESSION_ID without requiring explicit
-    // signer options.
-    command.env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
 }
 
 async fn resolve_session_chain_id(send_tx: &SendTxOpts) -> Result<u64> {

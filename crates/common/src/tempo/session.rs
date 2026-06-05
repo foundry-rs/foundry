@@ -38,7 +38,7 @@ impl SessionStatus {
 
     /// Returns `true` if entering this status must erase local key material.
     const fn clears_key_material(self) -> bool {
-        matches!(self, Self::Revoked | Self::Expired | Self::Failed)
+        self.is_terminal()
     }
 
     /// Returns `true` if the session is still in-flight or usable.
