@@ -2,8 +2,28 @@ use super::*;
 
 /// Normalizes path constraints into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_constraints_for_solver(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
-    let mut normalized = Vec::with_capacity(constraints.len());
-    for constraint in constraints.iter().cloned().map(normalize_bool_for_solver) {
+    let normalized = normalize_constraint_batch(
+        constraints.iter().cloned().map(normalize_bool_for_solver),
+        constraints.len(),
+    );
+    if matches!(normalized.as_slice(), [BoolExpr::Const(false)]) {
+        return normalized;
+    }
+
+    let context = ConstraintContext::new(&normalized);
+    let normalized_len = normalized.len();
+    normalize_constraint_batch(
+        normalized.into_iter().map(|constraint| context.normalize_bool(constraint)),
+        normalized_len,
+    )
+}
+
+fn normalize_constraint_batch(
+    constraints: impl IntoIterator<Item = BoolExpr>,
+    capacity: usize,
+) -> Vec<BoolExpr> {
+    let mut normalized = Vec::with_capacity(capacity);
+    for constraint in constraints {
         if matches!(constraint, BoolExpr::Const(false)) {
             return vec![BoolExpr::Const(false)];
         }
@@ -53,6 +73,89 @@ pub(crate) fn normalize_bool_for_solver(expr: BoolExpr) -> BoolExpr {
                 normalize_expr_for_solver(right),
             );
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
+        }
+    }
+}
+
+/// Simple facts learned from the normalized conjunction currently being queried.
+#[derive(Default)]
+struct ConstraintContext {
+    upper_bounds: BTreeMap<Expr, U256>,
+}
+
+impl ConstraintContext {
+    fn new(constraints: &[BoolExpr]) -> Self {
+        let mut context = Self::default();
+        for constraint in constraints {
+            context.record_upper_bound_constraint(constraint);
+        }
+        context
+    }
+
+    fn upper_bound(&self, expr: &Expr) -> Option<U256> {
+        self.upper_bounds.get(expr).copied()
+    }
+
+    fn normalize_bool(&self, expr: BoolExpr) -> BoolExpr {
+        match &expr {
+            BoolExpr::Eq(left, Expr::Const(value)) | BoolExpr::Eq(Expr::Const(value), left)
+                if value.is_zero() && self.word_bool_always_true(left) =>
+            {
+                BoolExpr::Const(false)
+            }
+            BoolExpr::Not(value) => match value.as_ref() {
+                BoolExpr::Eq(left, Expr::Const(value)) | BoolExpr::Eq(Expr::Const(value), left)
+                    if value.is_zero() && self.word_bool_always_true(left) =>
+                {
+                    BoolExpr::Const(true)
+                }
+                _ => expr,
+            },
+            _ => expr,
+        }
+    }
+
+    fn record_upper_bound_constraint(&mut self, constraint: &BoolExpr) {
+        if let Some((expr, bound)) = self.upper_bound_constraint(constraint) {
+            self.record_upper_bound(expr.clone(), bound);
+        }
+    }
+
+    fn record_upper_bound(&mut self, expr: Expr, bound: U256) {
+        self.upper_bounds
+            .entry(expr)
+            .and_modify(|existing| *existing = (*existing).min(bound))
+            .or_insert(bound);
+    }
+
+    fn upper_bound_constraint<'a>(&self, constraint: &'a BoolExpr) -> Option<(&'a Expr, U256)> {
+        match constraint {
+            BoolExpr::Eq(left, Expr::Const(value)) | BoolExpr::Eq(Expr::Const(value), left) => {
+                Some((left, *value))
+            }
+            BoolExpr::Cmp(op, left, right) => match (*op, left, right) {
+                (BoolExprOp::Ult, expr, Expr::Const(bound)) => {
+                    (!bound.is_zero()).then(|| (expr, *bound - U256::from(1)))
+                }
+                (BoolExprOp::Ule, expr, Expr::Const(bound)) => Some((expr, *bound)),
+                (BoolExprOp::Ugt, Expr::Const(bound), expr) => {
+                    (!bound.is_zero()).then(|| (expr, *bound - U256::from(1)))
+                }
+                (BoolExprOp::Uge, Expr::Const(bound), expr) => Some((expr, *bound)),
+                _ => None,
+            },
+            BoolExpr::Not(value) => match value.as_ref() {
+                BoolExpr::Cmp(BoolExprOp::Ugt, left, Expr::Const(bound)) => Some((left, *bound)),
+                BoolExpr::Cmp(BoolExprOp::Uge, left, Expr::Const(bound)) => {
+                    (!bound.is_zero()).then(|| (left, *bound - U256::from(1)))
+                }
+                BoolExpr::Cmp(BoolExprOp::Ult, Expr::Const(bound), right) => Some((right, *bound)),
+                BoolExpr::Cmp(BoolExprOp::Ule, Expr::Const(bound), right) => {
+                    (!bound.is_zero()).then(|| (right, *bound - U256::from(1)))
+                }
+                _ => None,
+            },
+            BoolExpr::Eq(_, _) | BoolExpr::Const(_) | BoolExpr::And(_) => None,
         }
     }
 }
@@ -354,26 +457,7 @@ pub(crate) fn add_cannot_overflow_256(left: &Expr, right: &Expr) -> bool {
 
 /// Returns whether a word-valued boolean expression is an exact tautology.
 pub(crate) fn word_bool_always_true(expr: &Expr) -> bool {
-    let mut terms = Vec::new();
-    collect_or_terms(expr, &mut terms);
-    if terms.len() <= 1 {
-        return false;
-    }
-
-    let bool_terms = terms.iter().filter_map(|term| word_bool_term(term)).collect::<Vec<_>>();
-    if bool_terms.iter().any(|term| {
-        let negated = (*term).clone().not();
-        bool_terms.iter().any(|other| **other == negated)
-    }) {
-        return true;
-    }
-    for zero_term in &bool_terms {
-        let Some(zero_operand) = zero_check_operand(zero_term) else { continue };
-        if bool_terms.iter().any(|term| checked_mul_guard_for_operand(term, zero_operand)) {
-            return true;
-        }
-    }
-    false
+    ConstraintContext::default().word_bool_always_true(expr)
 }
 
 /// Converts one `0`/`1` word boolean term into its boolean condition.
@@ -398,39 +482,101 @@ pub(crate) fn zero_check_operand(expr: &BoolExpr) -> Option<&Expr> {
     }
 }
 
-/// Returns whether this condition is Solidity's checked-mul guard for `zero_operand`.
-pub(crate) fn checked_mul_guard_for_operand(expr: &BoolExpr, zero_operand: &Expr) -> bool {
-    let BoolExpr::Eq(left, right) = expr else { return false };
-    checked_mul_guard_side(left, right, zero_operand)
-        || checked_mul_guard_side(right, left, zero_operand)
-}
+impl ConstraintContext {
+    fn word_bool_always_true(&self, expr: &Expr) -> bool {
+        let mut terms = Vec::new();
+        collect_or_terms(expr, &mut terms);
+        if terms.len() <= 1 {
+            return false;
+        }
 
-/// Matches `a == 0 ? 0 : (a * b) / a` against the expected quotient.
-pub(crate) fn checked_mul_guard_side(
-    div_expr: &Expr,
-    expected: &Expr,
-    zero_operand: &Expr,
-) -> bool {
-    let Expr::Ite(condition, then_expr, else_expr) = div_expr else { return false };
-    if zero_check_operand(condition).is_none_or(|operand| operand != zero_operand) {
-        return false;
+        let bool_terms = terms.iter().filter_map(|term| word_bool_term(term)).collect::<Vec<_>>();
+        if bool_terms.iter().any(|term| {
+            let negated = (*term).clone().not();
+            bool_terms.iter().any(|other| **other == negated)
+        }) {
+            return true;
+        }
+        for zero_term in &bool_terms {
+            let Some(zero_operand) = zero_check_operand(zero_term) else { continue };
+            if bool_terms.iter().any(|term| self.checked_mul_guard_for_operand(term, zero_operand))
+            {
+                return true;
+            }
+        }
+        false
     }
-    if !matches!(then_expr.as_ref(), Expr::Const(value) if value.is_zero()) {
-        return false;
+
+    fn checked_mul_guard_for_operand(&self, expr: &BoolExpr, zero_operand: &Expr) -> bool {
+        let BoolExpr::Eq(left, right) = expr else { return false };
+        self.checked_mul_guard_side(left, right, zero_operand)
+            || self.checked_mul_guard_side(right, left, zero_operand)
     }
-    let Some((numerator, denominator)) = udiv_operands(else_expr) else { return false };
-    if denominator != zero_operand {
-        return false;
+
+    fn checked_mul_guard_side(
+        &self,
+        div_expr: &Expr,
+        expected: &Expr,
+        zero_operand: &Expr,
+    ) -> bool {
+        let Expr::Ite(condition, then_expr, else_expr) = div_expr else { return false };
+        if zero_check_operand(condition).is_none_or(|operand| operand != zero_operand) {
+            return false;
+        }
+        if !matches!(then_expr.as_ref(), Expr::Const(value) if value.is_zero()) {
+            return false;
+        }
+        let Some((numerator, denominator)) = udiv_operands(else_expr) else { return false };
+        if denominator != zero_operand {
+            return false;
+        }
+        let Expr::Op(ExprOp::Mul, left, right) = numerator else { return false };
+        let other = if left.as_ref() == zero_operand {
+            right.as_ref()
+        } else if right.as_ref() == zero_operand {
+            left.as_ref()
+        } else {
+            return false;
+        };
+        other == expected && self.mul_cannot_overflow_256(zero_operand, other)
     }
-    let Expr::Op(ExprOp::Mul, left, right) = numerator else { return false };
-    let other = if left.as_ref() == zero_operand {
-        right.as_ref()
-    } else if right.as_ref() == zero_operand {
-        left.as_ref()
-    } else {
-        return false;
-    };
-    other == expected && mul_cannot_overflow_256(zero_operand, other)
+
+    fn mul_cannot_overflow_256(&self, left: &Expr, right: &Expr) -> bool {
+        self.expr_unsigned_bits(left).saturating_add(self.expr_unsigned_bits(right)) <= 256
+    }
+
+    fn expr_unsigned_bits(&self, expr: &Expr) -> usize {
+        let bits = match expr {
+            Expr::Const(_)
+            | Expr::Var(_)
+            | Expr::GasLeft(_)
+            | Expr::Keccak { .. }
+            | Expr::Hash { .. }
+            | Expr::Not(_) => expr_unsigned_bits(expr),
+            Expr::Op(ExprOp::And, left, right) => match (left.as_ref(), right.as_ref()) {
+                (expr, Expr::Const(mask)) | (Expr::Const(mask), expr) => {
+                    self.expr_unsigned_bits(expr).min(mask.bit_len())
+                }
+                _ => 256,
+            },
+            Expr::Op(ExprOp::Add, left, right) => self
+                .expr_unsigned_bits(left)
+                .max(self.expr_unsigned_bits(right))
+                .saturating_add(1)
+                .min(256),
+            Expr::Op(ExprOp::Mul, left, right) => self
+                .expr_unsigned_bits(left)
+                .saturating_add(self.expr_unsigned_bits(right))
+                .min(256),
+            Expr::Op(ExprOp::UDiv, left, _) => self.expr_unsigned_bits(left),
+            Expr::Ite(_, left, right) => {
+                self.expr_unsigned_bits(left).max(self.expr_unsigned_bits(right))
+            }
+            _ => 256,
+        };
+
+        self.upper_bound(expr).map(|bound| bits.min(bound.bit_len().max(1))).unwrap_or(bits)
+    }
 }
 
 /// Returns whether unsigned multiplication of two expressions cannot overflow 256 bits.

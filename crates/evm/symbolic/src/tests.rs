@@ -2102,27 +2102,56 @@ fn solver_rebuilds_word_from_extracted_byte_terms() {
     assert_eq!(rebuilt, normalize_expr_for_solver(masked));
 }
 
+fn checked_mul_guard_word(zero_operand: &Expr, expected: &Expr) -> Expr {
+    let operand_is_zero = BoolExpr::eq(zero_operand.clone(), Expr::Const(U256::ZERO));
+    let checked_product = Expr::Ite(
+        Box::new(operand_is_zero.clone()),
+        Box::new(Expr::Const(U256::ZERO)),
+        Box::new(Expr::op(
+            ExprOp::UDiv,
+            Expr::op(ExprOp::Mul, zero_operand.clone(), expected.clone()),
+            zero_operand.clone(),
+        )),
+    );
+
+    Expr::op(
+        ExprOp::Or,
+        SymWord::from_bool(operand_is_zero).into_expr(),
+        SymWord::from_bool(BoolExpr::eq(checked_product, expected.clone())).into_expr(),
+    )
+}
+
 #[test]
 /// Regression coverage for Solidity checked-mul guard tautology normalization.
 fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
     let a = Expr::op(ExprOp::And, Expr::Var("a".to_string()), Expr::Const(U256::from(u64::MAX)));
     let b = Expr::op(ExprOp::And, Expr::Var("b".to_string()), Expr::Const(U256::from(u64::MAX)));
-    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_product = Expr::Ite(
-        Box::new(a_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, Expr::op(ExprOp::Mul, a.clone(), b.clone()), a)),
-    );
-    let guard = Expr::op(
-        ExprOp::Or,
-        SymWord::from_bool(a_is_zero).into_expr(),
-        SymWord::from_bool(BoolExpr::eq(checked_product, b)).into_expr(),
-    );
+    let guard = checked_mul_guard_word(&a, &b);
 
     assert_eq!(
         normalize_bool_for_solver(BoolExpr::eq(guard, Expr::Const(U256::ZERO))),
         BoolExpr::Const(false)
     );
+}
+
+#[test]
+/// Regression coverage for path-bounded Solidity checked-mul guard tautology normalization.
+fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
+    let a = Expr::Var("a".to_string());
+    let factor = Expr::Const(U256::from(1_000_000_000_000_000_000u128));
+    let guard_is_false = BoolExpr::eq(checked_mul_guard_word(&a, &factor), Expr::Const(U256::ZERO));
+    let constraints = vec![
+        BoolExpr::cmp(BoolExprOp::Ule, a, Expr::Const(U256::from(1000))),
+        guard_is_false.clone(),
+    ];
+    let normalized = normalize_constraints_for_solver(&constraints);
+
+    assert_eq!(normalized, vec![BoolExpr::Const(false)]);
+
+    for value in [U256::ZERO, U256::from(1), U256::from(1000)] {
+        let model = BTreeMap::from([("a".to_string(), value)]);
+        assert!(!eval_bool_expr(&guard_is_false, &model).unwrap());
+    }
 }
 
 #[test]
@@ -2222,22 +2251,49 @@ fn solver_normalizes_guarded_self_division_add_overflow_guard() {
 }
 
 #[test]
+/// Regression coverage for checked-mul guards proven by normalized path bounds.
+fn solver_normalizes_checked_mul_guard_with_context_bound() {
+    let a = Expr::Var("a".to_string());
+    let scale = Expr::Const(U256::from(1_000_000_000_000_000_000u128));
+    let guard = checked_mul_guard_word(&a, &scale);
+    let constraints = vec![
+        BoolExpr::cmp(BoolExprOp::Ugt, a.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::cmp(BoolExprOp::Ugt, a, Expr::Const(U256::from(1000))).not(),
+        BoolExpr::eq(guard, Expr::Const(U256::ZERO)),
+    ];
+
+    assert_eq!(normalize_constraints_for_solver(&constraints), vec![BoolExpr::Const(false)]);
+}
+
+#[test]
+/// Regression coverage for preserving checked-mul guards without a useful path bound.
+fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
+    let a = Expr::Var("a".to_string());
+    let scale = Expr::Const(U256::from(1_000_000_000_000_000_000u128));
+    let guard_is_zero = BoolExpr::eq(checked_mul_guard_word(&a, &scale), Expr::Const(U256::ZERO));
+
+    assert_ne!(
+        normalize_constraints_for_solver(std::slice::from_ref(&guard_is_zero)),
+        vec![BoolExpr::Const(false)]
+    );
+    assert_ne!(
+        normalize_constraints_for_solver(&[
+            BoolExpr::cmp(BoolExprOp::Ule, a, Expr::Const(U256::MAX)),
+            guard_is_zero.clone(),
+        ]),
+        vec![BoolExpr::Const(false)]
+    );
+
+    let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
+    assert!(eval_bool_expr(&guard_is_zero, &model).unwrap());
+}
+
+#[test]
 /// Regression coverage for preserving unbounded checked-mul overflow guards.
 fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
     let a = Expr::Var("a".to_string());
     let b = Expr::Var("b".to_string());
-    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_product = Expr::Ite(
-        Box::new(a_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, Expr::op(ExprOp::Mul, a.clone(), b.clone()), a)),
-    );
-    let guard = Expr::op(
-        ExprOp::Or,
-        SymWord::from_bool(a_is_zero).into_expr(),
-        SymWord::from_bool(BoolExpr::eq(checked_product, b)).into_expr(),
-    );
-    let original = BoolExpr::eq(guard, Expr::Const(U256::ZERO));
+    let original = BoolExpr::eq(checked_mul_guard_word(&a, &b), Expr::Const(U256::ZERO));
     let normalized = normalize_bool_for_solver(original.clone());
 
     assert_ne!(normalized, BoolExpr::Const(false));
@@ -2248,6 +2304,24 @@ fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
         eval_bool_expr(&original, &model).unwrap(),
         eval_bool_expr(&normalized, &model).unwrap()
     );
+}
+
+#[test]
+/// Regression coverage for preserving path-bounded checked-mul guards with loose bounds.
+fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
+    let a = Expr::Var("a".to_string());
+    let factor = Expr::Const(U256::from(2));
+    let original = BoolExpr::eq(checked_mul_guard_word(&a, &factor), Expr::Const(U256::ZERO));
+    let normalized = normalize_constraints_for_solver(&[
+        BoolExpr::cmp(BoolExprOp::Ule, a, Expr::Const(U256::MAX)),
+        original.clone(),
+    ]);
+
+    assert!(!matches!(normalized.as_slice(), [BoolExpr::Const(false)]));
+
+    let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
+    assert!(eval_bool_expr(&original, &model).unwrap());
+    assert!(normalized.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
 }
 
 #[test]
