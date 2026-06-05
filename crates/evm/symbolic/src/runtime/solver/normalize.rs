@@ -95,6 +95,9 @@ pub(crate) fn normalize_ite_expr_for_solver(cond: BoolExpr, left: Expr, right: E
     if left == right {
         return left;
     }
+    if let Some(condition) = guarded_self_div_word_condition(&cond, &left, &right) {
+        return word_from_bool_expr(condition);
+    }
     if matches!(left, Expr::Const(value) if value == U256::from(1))
         && bool_from_word_expr(&right).as_ref() == Some(&cond)
     {
@@ -106,6 +109,32 @@ pub(crate) fn normalize_ite_expr_for_solver(cond: BoolExpr, left: Expr, right: E
         return left;
     }
     Expr::Ite(Box::new(cond), Box::new(left), Box::new(right))
+}
+
+/// Converts a boolean condition into its 0/1 word representation.
+fn word_from_bool_expr(condition: BoolExpr) -> Expr {
+    Expr::Ite(
+        Box::new(condition),
+        Box::new(Expr::Const(U256::from(1))),
+        Box::new(Expr::Const(U256::ZERO)),
+    )
+}
+
+/// Returns the boolean represented by `a == 0 ? 0 : a / a`.
+fn guarded_self_div_word_condition(cond: &BoolExpr, left: &Expr, right: &Expr) -> Option<BoolExpr> {
+    if matches!(left, Expr::Const(value) if value.is_zero())
+        && self_div_expr_matches_zero_check(cond, right)
+    {
+        return Some(cond.clone().not());
+    }
+    None
+}
+
+/// Returns whether `expr` is `a / a` for the operand guarded by `cond`.
+fn self_div_expr_matches_zero_check(cond: &BoolExpr, expr: &Expr) -> bool {
+    let Some(zero_operand) = zero_check_operand(cond) else { return false };
+    let Some((numerator, denominator)) = udiv_operands(expr) else { return false };
+    numerator == zero_operand && denominator == zero_operand
 }
 
 /// Rebuilds a word from OR-ed byte-extraction terms when the source is recoverable.
@@ -332,6 +361,12 @@ pub(crate) fn word_bool_always_true(expr: &Expr) -> bool {
     }
 
     let bool_terms = terms.iter().filter_map(|term| word_bool_term(term)).collect::<Vec<_>>();
+    if bool_terms.iter().any(|term| {
+        let negated = (*term).clone().not();
+        bool_terms.iter().any(|other| **other == negated)
+    }) {
+        return true;
+    }
     for zero_term in &bool_terms {
         let Some(zero_operand) = zero_check_operand(zero_term) else { continue };
         if bool_terms.iter().any(|term| checked_mul_guard_for_operand(term, zero_operand)) {
