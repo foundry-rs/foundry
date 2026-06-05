@@ -3,6 +3,7 @@
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
+use path_slash::PathExt;
 use std::{fs, path::Path};
 
 /// Anvil test accounts (standard mnemonic).
@@ -395,7 +396,10 @@ printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
         )
         .expect("write child script");
 
-        let for_command = format!("sh {} {}", child_script.display(), child_session_out.display());
+        // Git Bash (the `sh` on Windows) treats backslashes as escapes, so embed the script
+        // paths with forward slashes; `to_slash_lossy` is a no-op on Unix.
+        let for_command =
+            format!("sh {} {}", child_script.to_slash_lossy(), child_session_out.to_slash_lossy());
 
         cmd.cast_fuse();
         cmd.env("TEMPO_HOME", tempo_home.path());
@@ -469,7 +473,7 @@ test -n "${{TEMPO_SESSION_ID:-}}"
     )
     .expect("write child script");
 
-    let for_command = format!("sh {}", child_script.display());
+    let for_command = format!("sh {}", child_script.to_slash_lossy());
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
@@ -553,7 +557,8 @@ test -n "${{TEMPO_SESSION_ID:-}}"
     )
     .expect("write grandchild script");
 
-    let for_command = format!("sh {} {}", child_script.display(), grandchild_script.display());
+    let for_command =
+        format!("sh {} {}", child_script.to_slash_lossy(), grandchild_script.to_slash_lossy());
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
@@ -644,7 +649,7 @@ exit 7
     )
     .expect("write child script");
 
-    let for_command = format!("sh {}", child_script.display());
+    let for_command = format!("sh {}", child_script.to_slash_lossy());
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
@@ -690,7 +695,7 @@ test -n "${TEMPO_SESSION_ID:-}"
         )
         .expect("write child script");
 
-        let for_command = format!("sh {}", child_script.display());
+        let for_command = format!("sh {}", child_script.to_slash_lossy());
 
         cmd.cast_fuse();
         cmd.env("TEMPO_HOME", tempo_home.path());

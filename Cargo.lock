@@ -2797,6 +2797,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-flz",
  "op-alloy-network",
+ "path-slash",
  "rand 0.8.6",
  "rand 0.9.4",
  "rayon",
