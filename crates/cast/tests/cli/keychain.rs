@@ -463,3 +463,52 @@ exit 7
     assert!(stderr.contains("exited with code 7"), "unexpected stderr:\n{stderr}");
     assert_session_file_status_without_key(tempo_home.path(), "revoked");
 });
+
+casttest!(
+    wallet_session_run_for_retires_local_key_when_revoke_preflight_fails,
+    async |_prj, cmd| {
+        let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+        let rpc = handle.http_endpoint();
+        let tempo_home = tempfile::tempdir().unwrap();
+        let child_dir = tempfile::tempdir().unwrap();
+        let child_script = child_dir.path().join("session-child.sh");
+        fs::write(
+            &child_script,
+            r#"#!/bin/sh
+set -eu
+test -n "${TEMPO_SESSION_ID:-}"
+"#,
+        )
+        .expect("write child script");
+
+        let for_command = format!("sh {}", child_script.display());
+
+        cmd.cast_fuse();
+        cmd.env("TEMPO_HOME", tempo_home.path());
+        let stderr = cmd
+            .args([
+                "wallet",
+                "session",
+                "--root",
+                accounts::ADDR1,
+                "--chain-id",
+                "31338",
+                "--expires",
+                "10m",
+                "--scope",
+                accounts::TOKEN,
+                "--for",
+                &for_command,
+                "--private-key",
+                accounts::PK1,
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_failure()
+            .get_output()
+            .stderr_lossy();
+
+        assert!(stderr.contains("created for chain 31338"), "unexpected stderr:\n{stderr}");
+        assert_session_file_status_without_key(tempo_home.path(), "failed");
+    }
+);

@@ -232,9 +232,38 @@ async fn run_for_command(request: SessionRunRequest) -> Result<()> {
     upsert_session_entry(entry)?;
 
     let child_result = command.run(session_id);
+    let cleanup_result = cleanup_session_run(session_id, tx, send_tx).await;
+
+    finish_session_run(session_id, child_result, cleanup_result)
+}
+
+async fn cleanup_session_run(
+    session_id: B256,
+    tx: TransactionOpts,
+    send_tx: SendTxOpts,
+) -> Result<()> {
+    let retire_result = retire_session_run_locally(session_id);
     let revoke_result = run_revoke(session_id, false, tx, send_tx).await;
 
-    finish_session_run(session_id, child_result, revoke_result)
+    match (retire_result, revoke_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(retire_err), Ok(())) => Err(retire_err),
+        (Ok(()), Err(revoke_err)) => Err(revoke_err),
+        (Err(retire_err), Err(revoke_err)) => {
+            Err(revoke_err
+                .wrap_err(format!("also failed to retire local Tempo session: {retire_err}")))
+        }
+    }
+}
+
+fn retire_session_run_locally(session_id: B256) -> Result<()> {
+    let Some(entry) = read_session_entry(session_id)? else {
+        return Ok(());
+    };
+    let status = if entry.status.is_terminal() { entry.status } else { SessionStatus::Failed };
+    update_session_status(session_id, status)
+        .map(|_| ())
+        .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"))
 }
 
 fn finish_session_run(
@@ -246,7 +275,7 @@ fn finish_session_run(
         (Ok(()), Ok(())) => Ok(()),
         (Err(child_err), Ok(())) => Err(child_err),
         (Ok(()), Err(revoke_err)) => {
-            Err(revoke_err.wrap_err("failed to revoke Tempo session after inner command"))
+            Err(revoke_err.wrap_err("failed to clean up Tempo session after inner command"))
         }
         (Err(child_err), Err(revoke_err)) => {
             Err(child_err.wrap_err(revoke_failure_context(session_id, &revoke_err)))
@@ -255,7 +284,7 @@ fn finish_session_run(
 }
 
 fn revoke_failure_context(session_id: B256, err: &eyre::Report) -> String {
-    format!("also failed to revoke Tempo session {session_id:?}: {err}")
+    format!("also failed to clean up Tempo session {session_id:?}: {err}")
 }
 
 #[derive(Debug)]
@@ -752,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn revoke_preflight_error_preserves_local_key_material() {
+    fn explicit_revoke_preflight_error_preserves_local_key_material_for_retry() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
@@ -771,6 +800,45 @@ mod tests {
                 assert_eq!(session.status, SessionStatus::Active, "{err:#}");
                 assert!(session.key.is_some());
             });
+        });
+    }
+
+    #[test]
+    fn run_for_retire_local_session_before_revoke_preflight() {
+        with_tempo_home(|| {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let session_id = B256::from([0xd4; 32]);
+                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Active))
+                    .unwrap();
+
+                retire_session_run_locally(session_id).unwrap();
+
+                let mut send_tx = empty_send_tx_opts();
+                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
+                let err =
+                    run_revoke(session_id, false, TransactionOpts::parse_from(["cast"]), send_tx)
+                        .await
+                        .unwrap_err();
+
+                let session = read_session_entry(session_id).unwrap().unwrap();
+                assert_eq!(session.status, SessionStatus::Failed, "{err:#}");
+                assert!(session.key.is_none());
+            });
+        });
+    }
+
+    #[test]
+    fn run_for_retire_local_session_does_not_downgrade_revoked_status() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0xd5; 32]);
+            upsert_session_entry(sample_session_entry(session_id, SessionStatus::Revoked)).unwrap();
+
+            retire_session_run_locally(session_id).unwrap();
+
+            let session = read_session_entry(session_id).unwrap().unwrap();
+            assert_eq!(session.status, SessionStatus::Revoked);
+            assert!(session.key.is_none());
         });
     }
 
