@@ -216,8 +216,8 @@ impl InvariantWorkerOutput {
 ///   earlier logical worker;
 /// - optimization mode keeps the maximum value, with ties preserving the earlier logical worker;
 /// - `failed_corpus_replays` is a master-worker-only value from worker `0`;
-/// - run/call counts, reverts, gas traces, selector metrics, and line coverage accumulate into the logical
-///   campaign result.
+/// - run/call counts, reverts, gas traces, selector metrics, and line coverage accumulate into the
+///   logical campaign result.
 #[derive(Debug)]
 pub struct InvariantCampaignAggregator {
     spec: InvariantCampaignSpec,
