@@ -36,6 +36,11 @@ impl SessionStatus {
         matches!(self, Self::Revoked | Self::Expired | Self::Failed)
     }
 
+    /// Returns `true` if entering this status must erase local key material.
+    const fn clears_key_material(self) -> bool {
+        matches!(self, Self::Revoking | Self::Revoked | Self::Expired | Self::Failed)
+    }
+
     /// Returns `true` if the session is still in-flight or usable.
     pub const fn is_live(self) -> bool {
         !self.is_terminal()
@@ -171,7 +176,7 @@ impl SessionRecord {
         self.get(session_id).filter(|session| session.has_live_key_at(now))
     }
 
-    /// Update a session status by id. Terminal statuses clear local key material.
+    /// Update a session status by id. Revoking and terminal statuses clear local key material.
     ///
     /// Returns `true` when the record changed. Missing sessions and idempotent
     /// updates return `false`.
@@ -182,16 +187,7 @@ impl SessionRecord {
             return false;
         };
 
-        let changed = session.status != status || status.is_terminal() && session.key.is_some();
-        if !changed {
-            return false;
-        }
-
-        session.status = status;
-        if status.is_terminal() {
-            session.key = None;
-        }
-        true
+        set_session_status(session, status)
     }
 
     /// Mark expired live entries as expired. Returns the number updated.
@@ -200,7 +196,7 @@ impl SessionRecord {
         for session in &mut self.sessions {
             let should_expire = session.status.is_live() && session.is_expired_at(now);
             let should_clear_key =
-                session.key.is_some() && (should_expire || session.status.is_terminal());
+                session.key.is_some() && (should_expire || session.status.clears_key_material());
 
             if should_expire {
                 session.status = SessionStatus::Expired;
@@ -214,6 +210,19 @@ impl SessionRecord {
         }
         updated
     }
+}
+
+fn set_session_status(session: &mut SessionEntry, status: SessionStatus) -> bool {
+    let changed = session.status != status || status.clears_key_material() && session.key.is_some();
+    if !changed {
+        return false;
+    }
+
+    session.status = status;
+    if status.clears_key_material() {
+        session.key = None;
+    }
+    true
 }
 
 /// A live session key resolved into the signer and Tempo access-key metadata.
@@ -247,6 +256,14 @@ pub fn read_session_record() -> Option<SessionRecord> {
 /// Read a live session-scoped key entry by session id.
 pub fn read_live_session_key(session_id: B256, now: u64) -> Option<SessionEntry> {
     read_session_record()?.live_key(session_id, now).cloned()
+}
+
+/// Read a session entry by id, returning parse/read errors to the caller.
+pub fn read_session_entry(session_id: B256) -> eyre::Result<Option<SessionEntry>> {
+    let path =
+        session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
+    Ok(read_toml_file::<SessionRecord>(&path, "tempo sessions")?
+        .and_then(|record| record.get(session_id).cloned()))
 }
 
 /// Resolve a live session key into a signer and access-key configuration.
@@ -547,6 +564,30 @@ pub fn update_session_status(session_id: B256, status: SessionStatus) -> eyre::R
     })
 }
 
+/// Atomically update a session status only when the current status matches `current`.
+///
+/// Returns `true` when an entry was found with the expected current status. The
+/// registry is only rewritten when the matched entry actually changes.
+pub fn update_session_status_if(
+    session_id: B256,
+    current: SessionStatus,
+    status: SessionStatus,
+) -> eyre::Result<bool> {
+    mutate_session_record(|record| {
+        let Some(session) =
+            record.sessions.iter_mut().find(|session| session.session_id == session_id)
+        else {
+            return (false, false);
+        };
+        if session.status != current {
+            return (false, false);
+        }
+
+        let changed = set_session_status(session, status);
+        (true, changed)
+    })
+}
+
 /// Atomically remove a session from the registry.
 pub fn remove_session_entry(session_id: B256) -> eyre::Result<bool> {
     mutate_session_record(|record| {
@@ -777,7 +818,7 @@ mod tests {
         assert_eq!(record.get(active_id).unwrap().status, SessionStatus::Active);
         assert!(record.get(active_id).unwrap().key.is_some());
         assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
-        assert!(record.get(revoking_id).unwrap().key.is_some());
+        assert!(record.get(revoking_id).unwrap().key.is_none());
         assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
         assert!(record.get(revoked_id).unwrap().key.is_none());
         assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
@@ -1203,7 +1244,7 @@ key = "0x1111"
             let record = read_session_record().unwrap();
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Revoking);
-            assert!(session.key.is_some());
+            assert!(session.key.is_none());
 
             assert!(update_session_status(session_id, SessionStatus::Revoked).unwrap());
             let record = read_session_record().unwrap();
@@ -1230,6 +1271,39 @@ key = "0x1111"
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Failed);
             assert!(session.key.is_none());
+        });
+    }
+
+    #[test]
+    fn update_session_status_if_only_updates_matching_current_status() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0xc2; 32]);
+            upsert_session_entry(sample_entry_with_key(session_id, 200, SessionStatus::Active))
+                .unwrap();
+
+            assert!(
+                update_session_status_if(
+                    session_id,
+                    SessionStatus::Active,
+                    SessionStatus::Revoking,
+                )
+                .unwrap()
+            );
+            let record = read_session_record().unwrap();
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Revoking);
+            assert!(session.key.is_none());
+
+            assert!(!update_session_status_if(
+                session_id,
+                SessionStatus::Active,
+                SessionStatus::Failed,
+            )
+            .unwrap());
+            assert_eq!(
+                read_session_record().unwrap().get(session_id).unwrap().status,
+                SessionStatus::Revoking
+            );
         });
     }
 

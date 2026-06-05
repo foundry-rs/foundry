@@ -123,9 +123,9 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // This is used to decide which is the final statement within the `run()` method.
         // see <https://github.com/foundry-rs/foundry/issues/4617>.
         //
-        // Yul is not yet lowered to HIR (assembly statements appear as `StmtKind::Err`),
-        // so we walk the AST of the REPL source to find a top-level `return(...)` call
-        // inside any `assembly { ... }` block in `run()`.
+        // Walk the AST of the REPL source to find a top-level `return(...)` call
+        // inside any `assembly { ... }` block in `run()`. This lets us pick the
+        // meaningful Yul return span even when HIR represents the block coarsely.
         let last_yul_return_span: Option<Span> = self.first_yul_return_span();
 
         // Find the last statement within the "run()" method and get the program
@@ -136,9 +136,9 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // we need to find the final statement within that block. Otherwise, default to
         // the source loc of the final statement of the `run()` function's block.
         //
-        // Inline assembly blocks (lowered to `StmtKind::Err` in HIR in the pinned solar
-        // version) are handled separately via `trailing_assembly_last_stmt_span`, which
-        // walks the AST to recover the last meaningful Yul statement.
+        // Inline assembly blocks are handled separately via
+        // `trailing_assembly_last_stmt_span`, which walks the AST to recover the last
+        // meaningful Yul statement.
         let source_stmt = match &last_stmt.kind {
             HirStmtKind::UncheckedBlock(stmts) | HirStmtKind::Block(stmts) => {
                 if let Some(stmt) = stmts.last() {
@@ -156,19 +156,16 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // (non-`let`) Yul statement's span as the source location for `final_pc`.
         // See <https://github.com/foundry-rs/foundry/issues/4938>.
         //
-        // Two guards are required:
-        //   1. `StmtKind::Err`, assembly lowers to an error node in the current pinned solar
-        //      version; this ensures we don't apply the AST fallback to properly-lowered stmts.
-        //   2. `trailing_assembly_last_stmt_span` returning `Some`, verifies via the AST that the
-        //      failing HIR node actually corresponds to an assembly block (not some other lowering
-        //      failure), and supplies the concrete span to use.
-        let mut source_span = if matches!(last_stmt.kind, HirStmtKind::Err(_))
-            && let Some(span) = self.trailing_assembly_last_stmt_span()
-        {
-            span
-        } else {
-            self.stmt_span_without_semicolon(source_stmt)
-        };
+        // `trailing_assembly_last_stmt_span` verifies via the AST that the HIR node
+        // corresponds to an assembly block and supplies the concrete Yul span to use.
+        let mut source_span =
+            if matches!(last_stmt.kind, HirStmtKind::AssemblyBlock(_) | HirStmtKind::Err(_))
+                && let Some(span) = self.trailing_assembly_last_stmt_span()
+            {
+                span
+            } else {
+                self.stmt_span_without_semicolon(source_stmt)
+            };
 
         // Consider yul return statement as final statement (if it's loc is lower).
         if let Some(yul_return_span) = last_yul_return_span
@@ -220,8 +217,8 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
 
     /// Returns the AST `run()` body of the REPL contract, if any.
     ///
-    /// Yul/assembly is not yet lowered to HIR in the pinned solar version, so we
-    /// keep around the AST to be able to inspect inline assembly blocks.
+    /// Returns the AST `run()` body so inline assembly blocks can be inspected at
+    /// Yul-statement granularity.
     fn repl_run_ast_body(&self) -> Option<&'gcx solar::ast::Block<'gcx>> {
         let contract = self.repl_contract_hir()?;
         let source = self.gcx().sources.get(contract.source)?;
@@ -512,7 +509,10 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         }
 
         // Drive HIR lowering and analysis so that subsequent `enter` queries can use them.
-        output.parser_mut().solc_mut().compiler_mut().enter_mut(|c| {
+        // Chisel inspects expression values, so enable Solar's expression type table.
+        let compiler = output.parser_mut().solc_mut().compiler_mut();
+        compiler.sess_mut().opts.unstable.typeck = true;
+        compiler.enter_mut(|c| {
             let _ = c.lower_asts();
             let _ = c.analysis();
         });

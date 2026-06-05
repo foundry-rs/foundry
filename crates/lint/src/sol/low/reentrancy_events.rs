@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{
+        Severity, SolLint,
+        analysis::helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
+    },
 };
 use solar::{
     ast::LitKind,
@@ -19,7 +22,7 @@ use solar::{
         },
     },
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 declare_forge_lint!(
     REENTRANCY_EVENTS,
@@ -29,7 +32,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for ReentrancyEvents {
-    fn check_function_with_gcx(
+    fn check_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
@@ -113,6 +116,13 @@ const fn merge_opt(dst: &mut Option<FlowState>, src: Option<FlowState>) {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct InlineCallKey {
+    func_id: FunctionId,
+    external_call_seen: bool,
+    suppress_inline_reports: bool,
+}
+
 struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
     gcx: Gcx<'hir>,
@@ -122,6 +132,11 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     enclosing_contract: Option<ContractId>,
     /// Call stack to break recursion when inlining internal helpers and modifiers.
     call_stack: Vec<FunctionId>,
+    /// Cached summaries for transitive helper analysis. This keeps shared helper graphs from
+    /// being rescanned for every call edge in a function.
+    inline_cache: HelperAnalysisCache<InlineCallKey, Exits>,
+    /// Cached conservative summaries used only when a recursive edge is cut.
+    external_call_reachability: HashMap<FunctionId, bool>,
     /// Spans already reported, to dedupe diagnostics across paths/iterations.
     emitted: HashSet<Span>,
     /// When `true`, suppress emit diagnostics: we are inside an inlined helper that was
@@ -145,6 +160,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             hir,
             enclosing_contract,
             call_stack: Vec::new(),
+            inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
+            external_call_reachability: HashMap::new(),
             emitted: HashSet::new(),
             suppress_inline_reports: false,
             expr_aborted: false,
@@ -371,9 +388,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     Exits::fallthrough(entry)
                 }
             }
-            StmtKind::Err(_) => {
-                // Inline assembly lowers to `StmtKind::Err`; it can perform external
-                // interactions (call/delegatecall/create, logs). Conservatively taint.
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
+                // Inline assembly can perform external interactions
+                // (call/delegatecall/create, logs). Conservatively taint.
                 entry.external_call_seen = true;
                 Exits::fallthrough(entry)
             }
@@ -385,7 +402,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, state);
                     }
                 }
@@ -505,30 +522,59 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             | ExprKind::New(_)
             | ExprKind::TypeCall(_)
             | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
             | ExprKind::Err(_) => {}
         }
     }
 
     fn analyze_internal_call(&mut self, func_id: FunctionId, state: &mut FlowState) {
         if self.call_stack.contains(&func_id) {
+            // Keep inline summaries stack-insensitive by replacing cut recursive edges with a
+            // conservative cached "can this helper ever taint by external call?" summary.
+            if self.helper_may_reach_external_call(func_id) {
+                state.external_call_seen = true;
+            }
             return;
         }
 
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
+        let suppress_inline_reports = self.suppress_inline_reports || !state.external_call_seen;
+        let key = InlineCallKey {
+            func_id,
+            external_call_seen: state.external_call_seen,
+            suppress_inline_reports,
+        };
+
+        if self.inline_cache.is_in_progress(&key) {
+            return;
+        }
+
+        if let Some(summary) = self.inline_cache.get(&key).cloned() {
+            self.apply_inline_summary(summary, state);
+            return;
+        }
+
         // Suppress diagnostics inside helpers entered with a clean state — the helper's
         // own self-pass will independently catch any intra-helper taint, avoiding
         // duplicate reports across callers.
         let prev_suppress = self.suppress_inline_reports;
-        self.suppress_inline_reports = prev_suppress || !state.external_call_seen;
+        self.suppress_inline_reports = suppress_inline_reports;
 
+        self.inline_cache.start(key);
         self.call_stack.push(func_id);
         let summary = self.analyze_callable(func, body, state.clone());
         self.call_stack.pop();
 
+        self.inline_cache.finish(key, summary.clone());
+
         self.suppress_inline_reports = prev_suppress;
 
+        self.apply_inline_summary(summary, state);
+    }
+
+    fn apply_inline_summary(&mut self, summary: Exits, state: &mut FlowState) {
         // Caller inherits the state of paths that return normally. If the callee has no
         // normal exits (always aborts), signal abort to the enclosing statement.
         let any_normal = summary.fallthrough.is_some() || summary.return_.is_some();
@@ -544,6 +590,282 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         } else {
             self.expr_aborted = true;
         }
+    }
+
+    fn helper_may_reach_external_call(&mut self, func_id: FunctionId) -> bool {
+        self.helper_may_reach_external_call_inner(func_id, &mut HashSet::new()).0
+    }
+
+    fn helper_may_reach_external_call_inner(
+        &mut self,
+        func_id: FunctionId,
+        seen: &mut HashSet<FunctionId>,
+    ) -> (bool, bool) {
+        if let Some(cached) = self.external_call_reachability.get(&func_id) {
+            return (*cached, false);
+        }
+        if !seen.insert(func_id) {
+            return (false, true);
+        }
+
+        let func = self.hir.function(func_id);
+        let mut may_reach = false;
+        let mut cut_recursive_edge = false;
+        for modifier in func.modifiers {
+            for arg in modifier.args.exprs() {
+                let (arg_may_reach, arg_cut_recursive_edge) =
+                    self.expr_may_reach_external_call(arg, seen);
+                cut_recursive_edge |= arg_cut_recursive_edge;
+                if arg_may_reach {
+                    may_reach = true;
+                    break;
+                }
+            }
+            if may_reach {
+                break;
+            }
+            if let Some(modifier_id) = modifier.id.as_function() {
+                let (modifier_may_reach, modifier_cut_recursive_edge) =
+                    self.helper_may_reach_external_call_inner(modifier_id, seen);
+                cut_recursive_edge |= modifier_cut_recursive_edge;
+                if modifier_may_reach {
+                    may_reach = true;
+                    break;
+                }
+            }
+        }
+        if !may_reach && let Some(body) = func.body {
+            let (body_may_reach, body_cut_recursive_edge) =
+                self.block_may_reach_external_call(body, seen);
+            may_reach = body_may_reach;
+            cut_recursive_edge |= body_cut_recursive_edge;
+        }
+
+        seen.remove(&func_id);
+        if may_reach || !cut_recursive_edge {
+            self.external_call_reachability.insert(func_id, may_reach);
+        }
+        (may_reach, cut_recursive_edge)
+    }
+
+    fn block_may_reach_external_call(
+        &mut self,
+        block: Block<'hir>,
+        seen: &mut HashSet<FunctionId>,
+    ) -> (bool, bool) {
+        let mut cut_recursive_edge = false;
+        for stmt in block.stmts {
+            let (may_reach, stmt_cut_recursive_edge) =
+                self.stmt_may_reach_external_call(stmt, seen);
+            cut_recursive_edge |= stmt_cut_recursive_edge;
+            if may_reach {
+                return (true, cut_recursive_edge);
+            }
+        }
+        (false, cut_recursive_edge)
+    }
+
+    fn stmt_may_reach_external_call(
+        &mut self,
+        stmt: &'hir Stmt<'hir>,
+        seen: &mut HashSet<FunctionId>,
+    ) -> (bool, bool) {
+        match stmt.kind {
+            StmtKind::DeclSingle(var_id) => match self.hir.variable(var_id).initializer {
+                Some(expr) => self.expr_may_reach_external_call(expr, seen),
+                None => (false, false),
+            },
+            StmtKind::DeclMulti(_, expr)
+            | StmtKind::Expr(expr)
+            | StmtKind::Emit(expr)
+            | StmtKind::Revert(expr) => self.expr_may_reach_external_call(expr, seen),
+            StmtKind::Return(expr) => match expr {
+                Some(expr) => self.expr_may_reach_external_call(expr, seen),
+                None => (false, false),
+            },
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+                self.block_may_reach_external_call(block, seen)
+            }
+            StmtKind::If(cond, then_stmt, else_stmt) => Self::any_may_reach_external_call([
+                self.expr_may_reach_external_call(cond, seen),
+                self.stmt_may_reach_external_call(then_stmt, seen),
+                else_stmt
+                    .map(|else_stmt| self.stmt_may_reach_external_call(else_stmt, seen))
+                    .unwrap_or((false, false)),
+            ]),
+            StmtKind::Try(try_stmt) => {
+                let mut cut_recursive_edge = false;
+                let (expr_may_reach, expr_cut_recursive_edge) =
+                    self.expr_may_reach_external_call(&try_stmt.expr, seen);
+                cut_recursive_edge |= expr_cut_recursive_edge;
+                if expr_may_reach {
+                    return (true, cut_recursive_edge);
+                }
+                for clause in try_stmt.clauses {
+                    let (clause_may_reach, clause_cut_recursive_edge) =
+                        self.block_may_reach_external_call(clause.block, seen);
+                    cut_recursive_edge |= clause_cut_recursive_edge;
+                    if clause_may_reach {
+                        return (true, cut_recursive_edge);
+                    }
+                }
+                (false, cut_recursive_edge)
+            }
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => (true, false),
+            StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {
+                (false, false)
+            }
+        }
+    }
+
+    fn expr_may_reach_external_call(
+        &mut self,
+        expr: &'hir Expr<'hir>,
+        seen: &mut HashSet<FunctionId>,
+    ) -> (bool, bool) {
+        match &expr.kind {
+            ExprKind::Call(callee, args, opts) => {
+                let mut cut_recursive_edge = false;
+                let (callee_may_reach, callee_cut_recursive_edge) =
+                    self.expr_may_reach_external_call(callee, seen);
+                cut_recursive_edge |= callee_cut_recursive_edge;
+                if callee_may_reach {
+                    return (true, cut_recursive_edge);
+                }
+                if let Some(opts) = opts {
+                    for opt in opts.args {
+                        let (opt_may_reach, opt_cut_recursive_edge) =
+                            self.expr_may_reach_external_call(&opt.value, seen);
+                        cut_recursive_edge |= opt_cut_recursive_edge;
+                        if opt_may_reach {
+                            return (true, cut_recursive_edge);
+                        }
+                    }
+                }
+                for arg in args.exprs() {
+                    let (arg_may_reach, arg_cut_recursive_edge) =
+                        self.expr_may_reach_external_call(arg, seen);
+                    cut_recursive_edge |= arg_cut_recursive_edge;
+                    if arg_may_reach {
+                        return (true, cut_recursive_edge);
+                    }
+                }
+                if is_state_mutating_external_call(
+                    self.gcx,
+                    self.hir,
+                    callee,
+                    args.len(),
+                    self.enclosing_contract,
+                ) {
+                    return (true, cut_recursive_edge);
+                }
+
+                let internal: Vec<_> = resolved_internal_function_ids(self.hir, callee).collect();
+                for func_id in internal {
+                    let (func_may_reach, func_cut_recursive_edge) =
+                        self.helper_may_reach_external_call_inner(func_id, seen);
+                    cut_recursive_edge |= func_cut_recursive_edge;
+                    if func_may_reach {
+                        return (true, cut_recursive_edge);
+                    }
+                }
+
+                for func_id in resolved_super_function_ids(
+                    self.hir,
+                    self.enclosing_contract,
+                    callee,
+                    args.len(),
+                ) {
+                    let (func_may_reach, func_cut_recursive_edge) =
+                        self.helper_may_reach_external_call_inner(func_id, seen);
+                    cut_recursive_edge |= func_cut_recursive_edge;
+                    if func_may_reach {
+                        return (true, cut_recursive_edge);
+                    }
+                }
+
+                (false, cut_recursive_edge)
+            }
+            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+                Self::any_may_reach_external_call([
+                    self.expr_may_reach_external_call(lhs, seen),
+                    self.expr_may_reach_external_call(rhs, seen),
+                ])
+            }
+            ExprKind::Unary(_, inner)
+            | ExprKind::Delete(inner)
+            | ExprKind::Payable(inner)
+            | ExprKind::Member(inner, _) => self.expr_may_reach_external_call(inner, seen),
+            ExprKind::Index(base, index) => Self::any_may_reach_external_call([
+                self.expr_may_reach_external_call(base, seen),
+                index
+                    .map(|index| self.expr_may_reach_external_call(index, seen))
+                    .unwrap_or((false, false)),
+            ]),
+            ExprKind::Slice(base, start, end) => Self::any_may_reach_external_call([
+                self.expr_may_reach_external_call(base, seen),
+                start
+                    .map(|start| self.expr_may_reach_external_call(start, seen))
+                    .unwrap_or((false, false)),
+                end.map(|end| self.expr_may_reach_external_call(end, seen))
+                    .unwrap_or((false, false)),
+            ]),
+            ExprKind::Ternary(cond, then_expr, else_expr) => Self::any_may_reach_external_call([
+                self.expr_may_reach_external_call(cond, seen),
+                self.expr_may_reach_external_call(then_expr, seen),
+                self.expr_may_reach_external_call(else_expr, seen),
+            ]),
+            ExprKind::Array(exprs) => self.exprs_may_reach_external_call(exprs, seen),
+            ExprKind::Tuple(exprs) => {
+                let mut cut_recursive_edge = false;
+                for expr in exprs.iter().copied().flatten() {
+                    let (expr_may_reach, expr_cut_recursive_edge) =
+                        self.expr_may_reach_external_call(expr, seen);
+                    cut_recursive_edge |= expr_cut_recursive_edge;
+                    if expr_may_reach {
+                        return (true, cut_recursive_edge);
+                    }
+                }
+                (false, cut_recursive_edge)
+            }
+            ExprKind::Ident(_)
+            | ExprKind::Lit(_)
+            | ExprKind::New(_)
+            | ExprKind::TypeCall(_)
+            | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
+            | ExprKind::Err(_) => (false, false),
+        }
+    }
+
+    fn exprs_may_reach_external_call(
+        &mut self,
+        exprs: &'hir [Expr<'hir>],
+        seen: &mut HashSet<FunctionId>,
+    ) -> (bool, bool) {
+        let mut cut_recursive_edge = false;
+        for expr in exprs {
+            let (expr_may_reach, expr_cut_recursive_edge) =
+                self.expr_may_reach_external_call(expr, seen);
+            cut_recursive_edge |= expr_cut_recursive_edge;
+            if expr_may_reach {
+                return (true, cut_recursive_edge);
+            }
+        }
+        (false, cut_recursive_edge)
+    }
+
+    fn any_may_reach_external_call(
+        results: impl IntoIterator<Item = (bool, bool)>,
+    ) -> (bool, bool) {
+        let mut cut_recursive_edge = false;
+        for (may_reach, result_cut_recursive_edge) in results {
+            cut_recursive_edge |= result_cut_recursive_edge;
+            if may_reach {
+                return (true, cut_recursive_edge);
+            }
+        }
+        (false, cut_recursive_edge)
     }
 }
 

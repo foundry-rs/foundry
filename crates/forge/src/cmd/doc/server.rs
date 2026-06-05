@@ -74,7 +74,7 @@ impl Server {
             .unwrap_or_else(|| "404.html".to_string());
 
         let serving_url = format!("http://{address}");
-        sh_println!("Serving on: {serving_url}")?;
+        sh_status!("Serving on: {serving_url}")?;
 
         let thread_handle = std::thread::spawn(move || serve(build_dir, sockaddr, &file_404));
 

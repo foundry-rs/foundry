@@ -545,6 +545,11 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
     assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--names"), "missing --names mention: {envelope}");
+    assert_eq!(
+        envelope["errors"][0]["details"]["unsupported_flags"],
+        serde_json::json!(["--names"]),
+        "missing structured unsupported_flags details: {envelope}"
+    );
 });
 
 // `--quiet` must not suppress the machine envelope.
