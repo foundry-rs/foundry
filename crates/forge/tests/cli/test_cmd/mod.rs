@@ -3386,9 +3386,17 @@ Error: Not enough verbosity. Use -vvvvv to show opcodes.
 // Tests that the test file path is not swallowed by the --opcodes flag
 forgetest_init!(opcodes_path_after_flag, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--opcodes", "SSTORE", "test/Counter.t.sol"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "test",
+        "--mt",
+        "test_Increment",
+        "-vvvvv",
+        "--opcodes",
+        "SSTORE",
+        "test/Counter.t.sol",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])

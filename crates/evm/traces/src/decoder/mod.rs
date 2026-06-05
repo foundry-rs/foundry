@@ -198,7 +198,7 @@ pub struct CallTraceDecoder {
 
     /// Detailed opcodes for analysis
     pub opcodes: Vec<OpCode>,
-  
+
     /// The Tempo hardfork, used to determine hardfork-specific precompiles.
     pub tempo_hardfork: Option<TempoHardfork>,
 }
@@ -326,7 +326,7 @@ impl CallTraceDecoder {
             chain_id: None,
 
             opcodes: Vec::new(),
-          
+
             tempo_hardfork: None,
         }
     }
