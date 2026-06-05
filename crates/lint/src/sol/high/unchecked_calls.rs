@@ -1,11 +1,18 @@
 use super::{UncheckedCall, UncheckedTransferERC20};
 use crate::{
     linter::{EarlyLintPass, LateLintPass, LintContext},
-    sol::{Severity, SolLint, calls::is_low_level_call},
+    sol::{
+        Severity, SolLint,
+        analysis::interface::{is_elementary, receiver_contract_id},
+        calls::is_low_level_call,
+    },
 };
 use solar::{
     ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},
-    sema::hir::{self},
+    sema::{
+        Gcx,
+        hir::{self},
+    },
 };
 use std::ops::ControlFlow;
 
@@ -34,6 +41,7 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
     fn check_stmt(
         &mut self,
         ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {
@@ -52,13 +60,6 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
 ///
 /// Validates the method name, the params (count + types), and the returns (count + types).
 fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    let is_type = |var_id: hir::VariableId, type_str: &str| {
-        matches!(
-            &hir.variable(var_id).ty.kind,
-            hir::TypeKind::Elementary(ty) if ty.to_abi_str() == type_str
-        )
-    };
-
     // Ensure the expression is a call to a contract member function.
     let hir::ExprKind::Call(
         hir::Expr { kind: hir::ExprKind::Member(contract_expr, func_ident), .. },
@@ -77,27 +78,7 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
         _ => return false,
     };
 
-    let Some(cid) = (match &contract_expr.kind {
-        // Call to pre-instantiated contract variable
-        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Variable(id)), ..]) => {
-            if let hir::TypeKind::Custom(hir::ItemId::Contract(cid)) = hir.variable(*id).ty.kind {
-                Some(cid)
-            } else {
-                None
-            }
-        }
-        // Call to address wrapped by the contract interface
-        hir::ExprKind::Call(
-            hir::Expr {
-                kind: hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Contract(cid))]),
-                ..
-            },
-            ..,
-        ) => Some(*cid),
-        _ => None,
-    }) else {
-        return false;
-    };
+    let Some(cid) = receiver_contract_id(hir, contract_expr) else { return false };
 
     // Try to find a function in the contract that matches the expected signature.
     hir.contract_item_ids(cid).any(|item| {
@@ -108,8 +89,16 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
             && func.mutates_state()
             && func.parameters.len() == expected_params.len()
             && func.returns.len() == expected_returns.len()
-            && func.parameters.iter().zip(expected_params).all(|(id, &ty)| is_type(*id, ty))
-            && func.returns.iter().zip(expected_returns).all(|(id, &ty)| is_type(*id, ty))
+            && func
+                .parameters
+                .iter()
+                .zip(expected_params)
+                .all(|(id, &ty)| is_elementary(hir, *id, ty))
+            && func
+                .returns
+                .iter()
+                .zip(expected_returns)
+                .all(|(id, &ty)| is_elementary(hir, *id, ty))
     })
 }
 

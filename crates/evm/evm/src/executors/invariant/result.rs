@@ -50,11 +50,46 @@ pub struct InvariantFuzzTestResult {
     pub metrics: HashMap<String, InvariantMetrics>,
     /// Number of failed replays from persisted corpus.
     pub failed_corpus_replays: usize,
+    /// Actual number of workers used for this logical campaign.
+    pub workers: usize,
     /// For optimization mode (int256 return): the best (maximum) value achieved.
     /// None means standard invariant check mode.
     pub optimization_best_value: Option<I256>,
     /// For optimization mode: the call sequence that produced the best value.
     pub optimization_best_sequence: Vec<BasicTxDetails>,
+}
+
+impl InvariantFuzzTestResult {
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) const fn new(
+        errors: HashMap<String, InvariantFuzzError>,
+        handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
+        cases: Vec<FuzzedCases>,
+        reverts: usize,
+        last_run_inputs: Vec<BasicTxDetails>,
+        gas_report_traces: Vec<Vec<CallTraceArena>>,
+        line_coverage: Option<HitMaps>,
+        metrics: HashMap<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
+        workers: usize,
+        optimization_best_value: Option<I256>,
+        optimization_best_sequence: Vec<BasicTxDetails>,
+    ) -> Self {
+        Self {
+            errors,
+            handler_errors,
+            cases,
+            reverts,
+            last_run_inputs,
+            gas_report_traces,
+            line_coverage,
+            metrics,
+            failed_corpus_replays,
+            workers,
+            optimization_best_value,
+            optimization_best_sequence,
+        }
+    }
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
@@ -232,7 +267,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     // skip every subsequent `assert_invariants` evaluation under `assertions_revert = false`).
     // Handler bugs are tracked separately in `failures.broken_handlers`.
     let handlers_succeeded = || {
-        invariant_test.targeted_contracts.targets.lock().keys().all(|address| {
+        invariant_test.targeted_contracts.targets().keys().all(|address| {
             invariant_run.executor.is_success_handler_gate(
                 *address,
                 false,
@@ -398,7 +433,10 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
         calldata: &invariant_run.inputs,
     }
     .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
-    invariant_test.set_error(anchor, InvariantFuzzError::BrokenInvariant(case_data));
+    invariant_test
+        .test_data
+        .failures
+        .record_failure(anchor, InvariantFuzzError::BrokenInvariant(case_data));
     Ok(Some(anchor))
 }
 

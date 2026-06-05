@@ -23,7 +23,11 @@ mod stack;
 pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
 
 mod edge_cov;
-pub use edge_cov::EdgeCovInspector;
+pub(crate) use edge_cov::MAX_EDGE_COUNT;
+pub use edge_cov::{
+    CmpOperands, EdgeCovConfig, EdgeCovHit, EdgeCovInspector, EdgeCovKind, EdgeCoverage,
+    EdgeIndexMap, EdgeKey,
+};
 
 mod revert_diagnostic;
 pub use revert_diagnostic::RevertDiagnostic;

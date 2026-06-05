@@ -5,7 +5,7 @@ use crate::{
     gas_report::GasReport,
 };
 use alloy_primitives::{
-    Address, I256, Log, Selector, U256,
+    Address, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
@@ -20,11 +20,18 @@ use foundry_evm::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
 };
 use yansi::Paint;
+
+pub(crate) fn invariant_campaign_display_name(contract_name: &str) -> String {
+    format!("{contract_name} invariants")
+}
+
+const INVARIANT_CAMPAIGN_FALLBACK_NAME: &str = "Invariant campaign";
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -126,22 +133,33 @@ impl TestOutcome {
 
     /// Returns the number of tests that passed.
     pub fn passed(&self) -> usize {
-        self.successes().count()
+        self.results.values().map(SuiteResult::passed).sum()
     }
 
     /// Returns the number of tests that were skipped.
     pub fn skipped(&self) -> usize {
-        self.skips().count()
+        self.results.values().map(SuiteResult::skipped).sum()
     }
 
     /// Returns the number of tests that failed.
     pub fn failed(&self) -> usize {
-        self.failures().count()
+        self.results.values().map(SuiteResult::failed).sum()
     }
 
     /// Returns `true` if any fuzz or invariant test failed.
     pub fn has_fuzz_failures(&self) -> bool {
         self.failures().any(|(_, t)| t.kind.is_fuzz() || t.kind.is_invariant())
+    }
+
+    /// Returns `true` if any invariant test failed.
+    pub fn has_invariant_failures(&self) -> bool {
+        self.failures().any(|(_, t)| t.kind.is_invariant())
+    }
+
+    fn invariant_workers_hint(&self) -> Option<usize> {
+        let mut workers = self.failures().filter_map(|(_, result)| result.kind.invariant_workers());
+        let first = workers.next()?;
+        (first > 1 && workers.all(|workers| workers == first)).then_some(first)
     }
 
     /// Sums up all the durations of all individual test suites.
@@ -173,6 +191,10 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
+    //
+    // Exit-code policy: under `--machine` we honor the agent contract
+    // ([`ExitCode::TestFailure`]); legacy invocations preserve the
+    // historical exit-1 contract that scripts and CIs already depend on.
     pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
@@ -181,7 +203,7 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            std::process::exit(1);
+            std::process::exit(test_failure_exit_code());
         }
 
         sh_println!("\nFailing tests:")?;
@@ -194,7 +216,7 @@ impl TestOutcome {
             let term = if failed > 1 { "tests" } else { "test" };
             sh_println!("Encountered {failed} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
-                sh_println!("{}", result.short_result(name))?;
+                sh_println!("{}", result.short_result_with_suite(name, suite_name))?;
             }
             sh_println!()?;
         }
@@ -223,9 +245,16 @@ impl TestOutcome {
                 format!("{seed:#x}").cyan(),
                 "`--fuzz-seed`".cyan()
             )?;
+            if let Some(invariant_workers) = outcome.invariant_workers_hint() {
+                sh_println!(
+                    "Invariant workers: {} (use {} to reproduce)",
+                    invariant_workers,
+                    format!("`--invariant-workers {invariant_workers}`").cyan()
+                )?;
+            }
         }
 
-        std::process::exit(1);
+        std::process::exit(test_failure_exit_code());
     }
 
     /// Removes first test result, if any.
@@ -238,6 +267,77 @@ impl TestOutcome {
                 None
             }
         })
+    }
+}
+
+/// Process exit code emitted when at least one test failed.
+fn test_failure_exit_code() -> i32 {
+    if foundry_cli::is_machine() { foundry_cli::ExitCode::TestFailure.to_i32() } else { 1 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome_with_failed_invariant_workers(workers: &[usize]) -> TestOutcome {
+        let test_results = workers
+            .iter()
+            .enumerate()
+            .map(|(idx, workers)| {
+                (
+                    format!("invariant{idx}()"),
+                    TestResult {
+                        status: TestStatus::Failure,
+                        kind: TestKind::Invariant {
+                            runs: 0,
+                            calls: 0,
+                            reverts: 0,
+                            workers: *workers,
+                            metrics: Map::new(),
+                            failed_corpus_replays: 0,
+                            optimization_best_value: None,
+                        },
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        TestOutcome::new(
+            None,
+            BTreeMap::from([(
+                "suite".to_string(),
+                SuiteResult::new(Duration::ZERO, test_results, Vec::new()),
+            )]),
+            false,
+            None,
+        )
+    }
+
+    #[test]
+    fn invariant_workers_hint_requires_matching_parallel_worker_counts() {
+        assert_eq!(
+            outcome_with_failed_invariant_workers(&[3, 3]).invariant_workers_hint(),
+            Some(3)
+        );
+        assert_eq!(outcome_with_failed_invariant_workers(&[2, 3]).invariant_workers_hint(), None);
+        assert_eq!(outcome_with_failed_invariant_workers(&[1]).invariant_workers_hint(), None);
+    }
+
+    #[test]
+    fn invariant_kind_deserializes_legacy_payload_without_workers() {
+        let kind = serde_json::from_value::<TestKind>(serde_json::json!({
+            "Invariant": {
+                "runs": 4,
+                "calls": 10,
+                "reverts": 0,
+                "metrics": {},
+                "failed_corpus_replays": 0,
+                "optimization_best_value": null
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(kind.invariant_workers(), Some(1));
     }
 }
 
@@ -297,17 +397,17 @@ impl SuiteResult {
 
     /// Returns the number of tests that passed.
     pub fn passed(&self) -> usize {
-        self.successes().count()
+        self.test_results.values().map(TestResult::passed_count).sum()
     }
 
     /// Returns the number of tests that were skipped.
     pub fn skipped(&self) -> usize {
-        self.skips().count()
+        self.test_results.values().map(TestResult::skipped_count).sum()
     }
 
     /// Returns the number of tests that failed.
     pub fn failed(&self) -> usize {
-        self.failures().count()
+        self.test_results.values().map(TestResult::failed_count).sum()
     }
 
     /// Iterator over all tests and their names
@@ -322,7 +422,7 @@ impl SuiteResult {
 
     /// The number of tests in this test suite.
     pub fn len(&self) -> usize {
-        self.test_results.len()
+        self.test_results.values().map(TestResult::logical_count).sum()
     }
 
     /// Sums up all the durations of all individual tests in this suite.
@@ -424,9 +524,9 @@ pub enum InvariantFailure {
         counterexample: Option<CounterExample>,
         /// Path where the counterexample was persisted for re-running and shrinking.
         persisted_path: std::path::PathBuf,
-        /// Whether this failure is the campaign anchor (the `--mt`-selected invariant).
-        /// When `true` and this is the only failure, the function name is omitted on the
-        /// `[FAIL: ...]` line (the trailing summary already identifies it).
+        /// Whether this failure is the stable campaign anchor.
+        /// When `true` and this is the only single-predicate failure, the function name is
+        /// omitted on the `[FAIL: ...]` line (the trailing summary already identifies it).
         #[serde(default)]
         is_anchor: bool,
     },
@@ -462,6 +562,14 @@ impl InvariantFailure {
         }
     }
 
+    /// Invariant predicate name, if this is a predicate failure.
+    pub fn predicate_name(&self) -> Option<&str> {
+        match self {
+            Self::Predicate { name, .. } => Some(name),
+            Self::Handler { .. } => None,
+        }
+    }
+
     /// Counterexample sequence, when one is available.
     pub const fn counterexample(&self) -> Option<&CounterExample> {
         match self {
@@ -470,6 +578,18 @@ impl InvariantFailure {
             }
         }
     }
+}
+
+/// Pass/fail status for an invariant predicate evaluated inside a contract-level campaign.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvariantPredicateResult {
+    /// Invariant function name (e.g. `invariant_balance`).
+    pub name: String,
+    /// Predicate status within the logical campaign.
+    pub status: TestStatus,
+    /// Revert reason or assertion message when the predicate failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// The result of an executed test.
@@ -485,29 +605,34 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// All broken invariants in this campaign — anchor (`--mt` target) and any `assert_all`
-    /// secondaries — in source declaration order.
+    /// All broken invariant predicates in this campaign in source declaration order.
     ///
     /// For invariant tests, this is the single source of truth used by the renderer.
     /// `reason` and `counterexample` are not populated for invariant tests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_failures: Vec<InvariantFailure>,
 
+    /// Per-predicate outcomes for invariant campaigns. This preserves individual
+    /// `invariant_*` / `statefulFuzz*` pass/fail reporting when multiple predicates are checked
+    /// by one contract-level campaign.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invariant_predicate_results: Vec<InvariantPredicateResult>,
+
     /// Directory where invariant failure counterexamples have been persisted (set when one or more
     /// secondary invariant failures were written, so users can locate persisted counterexamples).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invariant_failure_dir: Option<std::path::PathBuf>,
 
-    /// Total number of invariants exercised in this `assert_all` run (primary + secondaries that
-    /// were not skipped by persisted-failure filtering). When `Some(n)` the test report renders
-    /// a `Suite assert_all: <broken>/<n> invariants broken` summary so users get an at-a-glance
-    /// health line without counting `[FAIL]` blocks. `None` for non-`assert_all` campaigns.
+    /// Total number of invariant predicates exercised in this campaign. When `Some(n)` the
+    /// user-facing report renders a contract-level `<broken>/<n> invariants broken` summary so
+    /// users get an at-a-glance health line without counting `[FAIL]` blocks. `None` for
+    /// single-predicate campaigns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assert_all_invariant_count: Option<usize>,
+    pub invariant_count: Option<usize>,
 
     /// Handler-side assertion bugs found during the campaign, deduped by
     /// `(reverter, selector)` site (Medusa/Echidna semantics). Rendered in a dedicated
-    /// `Suite handlers:` section.
+    /// `Assertion Tests` section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_handler_failures: Vec<InvariantFailure>,
 
@@ -527,6 +652,10 @@ pub struct TestResult {
 
     /// Traces
     pub traces: Traces,
+
+    /// Runtime bytecodes for contracts seen in debug traces.
+    #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
 
     /// Additional traces to use for gas report.
     ///
@@ -558,11 +687,21 @@ pub struct TestResult {
 
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.render_status_block(false, None))
+    }
+}
+
+impl TestResult {
+    fn render_status_block(
+        &self,
+        user_facing: bool,
+        invariant_campaign_name: Option<&str>,
+    ) -> String {
         match self.status {
             TestStatus::Success => {
                 // For optimization mode, show the best example sequence in green.
+                let mut s = String::from("[PASS]");
                 if let Some(CounterExample::Sequence(original, sequence)) = &self.counterexample {
-                    let mut s = String::from("[PASS]");
                     s.push_str(
                         format!(
                             "\n\t[Best sequence] (original: {original}, shrunk: {})\n",
@@ -573,10 +712,14 @@ impl fmt::Display for TestResult {
                     for ex in sequence {
                         writeln!(s, "{ex}").unwrap();
                     }
-                    s.green().wrap().fmt(f)
-                } else {
-                    "[PASS]".green().fmt(f)
                 }
+                self.write_invariant_predicate_results(
+                    &mut s,
+                    user_facing,
+                    true,
+                    invariant_campaign_name,
+                );
+                format!("{}", s.green().wrap())
             }
             TestStatus::Skipped => {
                 let mut s = String::from("[SKIP");
@@ -584,7 +727,13 @@ impl fmt::Display for TestResult {
                     write!(s, ": {reason}").unwrap();
                 }
                 s.push(']');
-                s.yellow().fmt(f)
+                self.write_invariant_predicate_results(
+                    &mut s,
+                    user_facing,
+                    true,
+                    invariant_campaign_name,
+                );
+                format!("{}", s.yellow())
             }
             TestStatus::Failure => {
                 let mut s = String::new();
@@ -619,24 +768,22 @@ impl fmt::Display for TestResult {
                         s.push(']');
                     }
                 } else if !self.invariant_failures.is_empty() {
-                    // Render every broken invariant uniformly. Show the function name on the
-                    // `[FAIL: ...]` line when there is >1 failure or the failure isn't the
-                    // anchor (the anchor's name is already on the trailing summary).
+                    // Contract-level campaigns identify the broken predicate even when only one
+                    // predicate failed. Preserve the compact legacy shape only for the anchor of a
+                    // single-predicate run.
                     let multi = self.invariant_failures.len() > 1;
+                    let is_campaign = self.invariant_count.is_some();
                     for (i, failure) in self.invariant_failures.iter().enumerate() {
                         if i > 0 {
                             s.push('\n');
                         }
-                        // `is_anchor` only applies to predicate failures.
                         let is_anchor =
                             matches!(failure, InvariantFailure::Predicate { is_anchor: true, .. });
-                        let name_suffix = if multi || !is_anchor {
+                        let name_suffix = if is_campaign || multi || !is_anchor {
                             format!(" {}", failure.name())
                         } else {
                             String::new()
                         };
-                        // With a counterexample: full `[FAIL: reason]<suffix>\n\t[Sequence] ...`
-                        // block; otherwise just `[FAIL: reason]<suffix>`.
                         if let Some(CounterExample::Sequence(original, sequence)) =
                             failure.counterexample()
                         {
@@ -655,67 +802,148 @@ impl fmt::Display for TestResult {
                         }
                     }
                 }
-                // Suite roll-up: `Suite assert_all: <broken>/<total>` for multi-invariant
-                // `assert_all` campaigns.
-                if let Some(total) = self.assert_all_invariant_count
-                    && total > 1
-                    && is_invariant_failure
-                {
-                    writeln!(
-                        s,
-                        "\nSuite assert_all: {}/{total} invariants broken",
-                        self.invariant_failures.len()
-                    )
-                    .unwrap();
+
+                let rollup_rendered = self.write_invariant_rollup(
+                    &mut s,
+                    user_facing,
+                    is_invariant_failure,
+                    invariant_campaign_name,
+                );
+                let show_predicate_header = if user_facing { !rollup_rendered } else { true };
+                self.write_invariant_predicate_results(
+                    &mut s,
+                    user_facing,
+                    show_predicate_header,
+                    invariant_campaign_name,
+                );
+                self.write_invariant_persistence_note(&mut s);
+                let handler_preceded = if user_facing {
+                    rollup_rendered
+                        || self.invariant_predicate_results.len() > 1
+                        || !self.invariant_failures.is_empty()
+                } else {
+                    !self.invariant_failures.is_empty()
+                        || matches!(self.invariant_count, Some(t) if t > 1)
+                };
+                self.write_handler_failures(&mut s, user_facing, handler_preceded);
+
+                format!("{}", s.red().wrap())
+            }
+        }
+    }
+
+    fn write_invariant_rollup(
+        &self,
+        s: &mut String,
+        user_facing: bool,
+        is_invariant_failure: bool,
+        invariant_campaign_name: Option<&str>,
+    ) -> bool {
+        let Some(total) = self.invariant_count else {
+            return false;
+        };
+        if total <= 1 || !is_invariant_failure {
+            return false;
+        }
+
+        writeln!(
+            s,
+            "\n{}: {}/{total} invariants broken",
+            if user_facing {
+                invariant_campaign_name.unwrap_or(INVARIANT_CAMPAIGN_FALLBACK_NAME)
+            } else {
+                "Predicates"
+            },
+            self.invariant_failures.len()
+        )
+        .unwrap();
+        true
+    }
+
+    fn write_invariant_persistence_note(&self, s: &mut String) {
+        if self.invariant_failures.len() > 1
+            && let Some(dir) = &self.invariant_failure_dir
+        {
+            writeln!(
+                s,
+                "{} invariant failure(s) persisted to {} — rerun to shrink",
+                self.invariant_failures.len(),
+                dir.display()
+            )
+            .unwrap();
+        }
+    }
+
+    fn write_handler_failures(&self, s: &mut String, user_facing: bool, preceded: bool) {
+        if self.invariant_handler_failures.is_empty() {
+            return;
+        }
+
+        let prefix = if preceded { "\n" } else { "" };
+        writeln!(
+            s,
+            "{prefix}{}: {} assertion bug(s) found",
+            if user_facing { "Assertion Tests" } else { "Handler assertions" },
+            self.invariant_handler_failures.len()
+        )
+        .unwrap();
+        for failure in &self.invariant_handler_failures {
+            if let Some(CounterExample::Sequence(original, sequence)) = failure.counterexample() {
+                writeln!(
+                    s,
+                    "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
+                    failure.reason(),
+                    failure.name(),
+                    sequence.len()
+                )
+                .unwrap();
+                for ex in sequence {
+                    writeln!(s, "{ex}").unwrap();
                 }
-                // Persistence note only for multi-invariant campaigns; rendered after the
-                // `Suite assert_all:` roll-up.
-                if self.invariant_failures.len() > 1
-                    && let Some(dir) = &self.invariant_failure_dir
-                {
-                    writeln!(
-                        s,
-                        "{} invariant failure(s) persisted to {} — rerun to shrink",
-                        self.invariant_failures.len(),
-                        dir.display()
-                    )
-                    .unwrap();
+            } else {
+                writeln!(s, "[FAIL: {}] {}", failure.reason(), failure.name()).unwrap();
+            }
+        }
+    }
+
+    /// Appends the invariant/property summary for multi-predicate campaigns.
+    fn write_invariant_predicate_results(
+        &self,
+        s: &mut String,
+        user_facing: bool,
+        show_header: bool,
+        invariant_campaign_name: Option<&str>,
+    ) {
+        if self.invariant_predicate_results.len() <= 1 {
+            return;
+        }
+
+        if show_header {
+            s.push('\n');
+            s.push_str(if user_facing {
+                invariant_campaign_name.unwrap_or(INVARIANT_CAMPAIGN_FALLBACK_NAME)
+            } else {
+                "Predicates"
+            });
+            s.push_str(":\n");
+        }
+
+        for predicate in &self.invariant_predicate_results {
+            match predicate.status {
+                TestStatus::Success => {
+                    writeln!(s, "[PASS] {}", predicate.name).unwrap();
                 }
-                // Handler-side assertion bug section: bugs *inside* a fuzzed handler function,
-                // distinct from the invariant predicate violations rendered above. Surfaced as
-                // `Suite handlers: N assertion bug(s) found` + one `[FAIL: ...]` per site.
-                if has_handler_failures {
-                    // Leading blank line if a preceding section was rendered.
-                    let preceded = !self.invariant_failures.is_empty()
-                        || matches!(self.assert_all_invariant_count, Some(t) if t > 1);
-                    let prefix = if preceded { "\n" } else { "" };
-                    writeln!(
-                        s,
-                        "{prefix}Suite handlers: {} assertion bug(s) found",
-                        self.invariant_handler_failures.len()
-                    )
-                    .unwrap();
-                    for failure in &self.invariant_handler_failures {
-                        if let Some(CounterExample::Sequence(original, sequence)) =
-                            failure.counterexample()
-                        {
-                            writeln!(
-                                s,
-                                "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
-                                failure.reason(),
-                                failure.name(),
-                                sequence.len()
-                            )
-                            .unwrap();
-                            for ex in sequence {
-                                writeln!(s, "{ex}").unwrap();
-                            }
-                        } else {
-                            writeln!(s, "[FAIL: {}] {}", failure.reason(), failure.name()).unwrap();
-                        }
+                TestStatus::Failure => {
+                    let reason = predicate.reason.as_deref().unwrap_or_default();
+                    writeln!(s, "[FAIL: {reason}] {}", predicate.name).unwrap();
+                }
+                TestStatus::Skipped => {
+                    if let Some(reason) = &predicate.reason {
+                        writeln!(s, "[SKIP: {reason}] {}", predicate.name).unwrap();
+                    } else {
+                        writeln!(s, "[SKIP] {}", predicate.name).unwrap();
                     }
                 }
-                s.red().wrap().fmt(f)
             }
         }
     }
@@ -726,6 +954,7 @@ macro_rules! extend {
         $a.logs.extend($b.logs);
         $a.labels.extend($b.labels);
         $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
+        $a.debug_bytecodes.extend($b.debug_bytecodes);
         $a.merge_coverages($b.line_coverage);
     };
 }
@@ -737,6 +966,7 @@ impl TestResult {
             labels: setup.labels.clone(),
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
+            debug_bytecodes: setup.debug_bytecodes.clone(),
             line_coverage: setup.coverage.clone(),
             ..Default::default()
         }
@@ -755,6 +985,7 @@ impl TestResult {
             logs,
             labels,
             traces,
+            debug_bytecodes,
             coverage,
             deployed_libs: _,
             reason,
@@ -766,6 +997,7 @@ impl TestResult {
             reason,
             logs,
             traces,
+            debug_bytecodes,
             line_coverage: coverage,
             labels,
             ..Default::default()
@@ -858,16 +1090,30 @@ impl TestResult {
 
     /// Returns the skipped result for invariant test.
     pub fn invariant_skip(&mut self, reason: SkipReason) {
+        self.invariant_skip_with_predicates(reason, Vec::new());
+    }
+
+    /// Returns the skipped result for invariant campaign with per-predicate outcomes.
+    pub fn invariant_skip_with_predicates(
+        &mut self,
+        reason: SkipReason,
+        invariant_predicate_results: Vec<InvariantPredicateResult>,
+    ) {
         self.kind = TestKind::Invariant {
             runs: 1,
             calls: 1,
             reverts: 1,
+            workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
         };
         self.status = TestStatus::Skipped;
-        self.reason = reason.0;
+        let predicate_count = invariant_predicate_results.len();
+        let is_campaign = predicate_count > 1;
+        self.reason = if is_campaign { None } else { reason.0 };
+        self.invariant_count = is_campaign.then_some(predicate_count);
+        self.invariant_predicate_results = invariant_predicate_results;
     }
 
     /// Returns the fail result for replayed invariant test.
@@ -882,6 +1128,7 @@ impl TestResult {
             runs: 1,
             calls: 1,
             reverts: 1,
+            workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
@@ -903,6 +1150,7 @@ impl TestResult {
             runs: 0,
             calls: 0,
             reverts: 0,
+            workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
@@ -918,20 +1166,23 @@ impl TestResult {
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
         invariant_failures: Vec<InvariantFailure>,
+        invariant_predicate_results: Vec<InvariantPredicateResult>,
         invariant_failure_dir: Option<std::path::PathBuf>,
-        assert_all_invariant_count: Option<usize>,
+        invariant_count: Option<usize>,
         invariant_handler_failures: Vec<InvariantFailure>,
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+        workers: usize,
         optimization_best_value: Option<I256>,
     ) {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
             reverts,
+            workers: workers.max(1),
             metrics,
             failed_corpus_replays,
             optimization_best_value,
@@ -943,8 +1194,9 @@ impl TestResult {
             TestStatus::Failure
         };
         self.invariant_failures = invariant_failures;
+        self.invariant_predicate_results = invariant_predicate_results;
         self.invariant_failure_dir = invariant_failure_dir;
-        self.assert_all_invariant_count = assert_all_invariant_count;
+        self.invariant_count = invariant_count;
         self.invariant_handler_failures = invariant_handler_failures;
         // `counterexample` is only used by the renderer for optimization mode (the "best
         // sequence" rendered on success). Invariant check-mode failures live entirely in
@@ -980,6 +1232,27 @@ impl TestResult {
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
     }
 
+    /// Records a successful showmap replay result.
+    pub fn replay_result(
+        &mut self,
+        corpus_entries: usize,
+        showmap_files: usize,
+        skipped_entries: usize,
+        duration: Duration,
+    ) {
+        self.kind = TestKind::Replay { corpus_entries, showmap_files, skipped_entries };
+        self.status = TestStatus::Success;
+        self.duration = duration;
+    }
+
+    /// Records a skipped showmap replay (e.g. unit test or no corpus available).
+    pub fn replay_skip(&mut self, reason: impl Into<String>) {
+        self.kind = TestKind::Replay { corpus_entries: 0, showmap_files: 0, skipped_entries: 0 };
+        self.status = TestStatus::Skipped;
+        self.reason = Some(reason.into());
+        self.duration = Duration::default();
+    }
+
     /// Returns `true` if this is the result of a fuzz test
     pub const fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
@@ -987,7 +1260,60 @@ impl TestResult {
 
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
-        format!("{self} {name} {}", self.kind.report())
+        self.short_result_with_campaign_name(name, None)
+    }
+
+    pub(crate) fn short_result_with_suite(&self, name: &str, suite_name: &str) -> String {
+        self.short_result_with_campaign_name(name, Some(get_contract_name(suite_name)))
+    }
+
+    fn short_result_with_campaign_name(&self, name: &str, contract_name: Option<&str>) -> String {
+        let is_invariant_campaign = self.is_invariant_campaign();
+        let name = if is_invariant_campaign {
+            contract_name
+                .map(invariant_campaign_display_name)
+                .map(Cow::Owned)
+                .unwrap_or(Cow::Borrowed(INVARIANT_CAMPAIGN_FALLBACK_NAME))
+        } else {
+            Cow::Borrowed(name)
+        };
+        let status = self.render_status_block(true, is_invariant_campaign.then_some(name.as_ref()));
+        format!("{status} {name} {}", self.kind.report())
+    }
+
+    const fn is_invariant_campaign(&self) -> bool {
+        self.kind.is_invariant() && self.invariant_count.is_some()
+    }
+
+    fn logical_count(&self) -> usize {
+        let skipped = self.skipped_predicate_count();
+        if skipped == 0 {
+            1
+        } else if self.status.is_skipped() && skipped == self.invariant_predicate_results.len() {
+            skipped
+        } else {
+            1 + skipped
+        }
+    }
+
+    fn passed_count(&self) -> usize {
+        usize::from(self.status.is_success())
+    }
+
+    fn skipped_count(&self) -> usize {
+        let skipped = self.skipped_predicate_count();
+        if skipped == 0 && self.status.is_skipped() { 1 } else { skipped }
+    }
+
+    fn failed_count(&self) -> usize {
+        usize::from(self.status.is_failure())
+    }
+
+    fn skipped_predicate_count(&self) -> usize {
+        self.invariant_predicate_results
+            .iter()
+            .filter(|predicate| predicate.status.is_skipped())
+            .count()
     }
 
     /// Merges the given raw call result into `self`.
@@ -1026,6 +1352,12 @@ pub enum TestKindReport {
         runs: usize,
         mean_gas: u64,
         median_gas: u64,
+    },
+    /// Showmap corpus replay (no campaign performed).
+    Replay {
+        corpus_entries: usize,
+        showmap_files: usize,
+        skipped_entries: usize,
     },
 }
 
@@ -1068,6 +1400,16 @@ impl fmt::Display for TestKindReport {
             Self::Table { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
+            Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
+                if *skipped_entries != 0 {
+                    write!(
+                        f,
+                        "(replay: {corpus_entries} entries, {showmap_files} files, {skipped_entries} skipped)"
+                    )
+                } else {
+                    write!(f, "(replay: {corpus_entries} entries, {showmap_files} files)")
+                }
+            }
         }
     }
 }
@@ -1080,7 +1422,7 @@ impl TestKindReport {
             // We use the median for comparisons
             Self::Fuzz { median_gas, .. } | Self::Table { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
-            Self::Invariant { .. } => 0,
+            Self::Invariant { .. } | Self::Replay { .. } => 0,
         }
     }
 }
@@ -1104,6 +1446,9 @@ pub enum TestKind {
         runs: usize,
         calls: usize,
         reverts: usize,
+        /// Actual worker count used by this invariant campaign.
+        #[serde(default = "default_invariant_workers")]
+        workers: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
@@ -1111,6 +1456,8 @@ pub enum TestKind {
     },
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },
+    /// Showmap corpus replay (no campaign performed).
+    Replay { corpus_entries: usize, showmap_files: usize, skipped_entries: usize },
 }
 
 impl Default for TestKind {
@@ -1130,6 +1477,14 @@ impl TestKind {
         matches!(self, Self::Invariant { .. })
     }
 
+    /// Actual invariant campaign worker count, if this is an invariant test.
+    pub const fn invariant_workers(&self) -> Option<usize> {
+        match self {
+            Self::Invariant { workers, .. } => Some(*workers),
+            _ => None,
+        }
+    }
+
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
         match self {
@@ -1146,6 +1501,7 @@ impl TestKind {
                 runs,
                 calls,
                 reverts,
+                workers: _,
                 metrics: _,
                 failed_corpus_replays,
                 optimization_best_value,
@@ -1160,8 +1516,19 @@ impl TestKind {
             Self::Table { runs, mean_gas, median_gas } => {
                 TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
+            Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
+                TestKindReport::Replay {
+                    corpus_entries: *corpus_entries,
+                    showmap_files: *showmap_files,
+                    skipped_entries: *skipped_entries,
+                }
+            }
         }
     }
+}
+
+const fn default_invariant_workers() -> usize {
+    1
 }
 
 /// The result of a test setup.
@@ -1181,6 +1548,8 @@ pub struct TestSetup {
     pub labels: AddressHashMap<String>,
     /// Call traces of the setup.
     pub traces: Traces,
+    /// Runtime bytecodes for contracts seen in setup traces.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
     /// Addresses of external libraries deployed during setup.

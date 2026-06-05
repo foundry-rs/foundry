@@ -22,7 +22,7 @@ use solar::{
     },
     sema::Compiler,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf, sync::Arc};
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files.
@@ -59,6 +59,7 @@ pub struct LintContext<'s, 'c> {
     active_lints: Vec<&'static str>,
     /// The source file currently being linted, when known.
     source_file: Option<Arc<SourceFile>>,
+    emitted: RefCell<HashSet<(&'static str, Span)>>,
 }
 
 pub struct LinterConfig<'s> {
@@ -67,7 +68,7 @@ pub struct LinterConfig<'s> {
 }
 
 impl<'s, 'c> LintContext<'s, 'c> {
-    pub const fn new(
+    pub fn new(
         sess: &'s Session,
         with_description: bool,
         with_json_emitter: bool,
@@ -75,7 +76,15 @@ impl<'s, 'c> LintContext<'s, 'c> {
         active_lints: Vec<&'static str>,
         source_file: Option<Arc<SourceFile>>,
     ) -> Self {
-        Self { sess, with_description, with_json_emitter, config, active_lints, source_file }
+        Self {
+            sess,
+            with_description,
+            with_json_emitter,
+            config,
+            active_lints,
+            source_file,
+            emitted: RefCell::default(),
+        }
     }
 
     fn add_help<'a>(&self, diag: DiagBuilder<'a, ()>, help: &'static str) -> DiagBuilder<'a, ()> {
@@ -103,6 +112,9 @@ impl<'s, 'c> LintContext<'s, 'c> {
     /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+            return;
+        }
+        if !self.emitted.borrow_mut().insert((lint.id(), span)) {
             return;
         }
 

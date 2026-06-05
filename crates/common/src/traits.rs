@@ -15,6 +15,13 @@ pub trait TestFilter: Send + Sync {
 
     /// Returns a contract with the given path should be included.
     fn matches_path(&self, path: &Path) -> bool;
+
+    /// Returns whether the test should be included for the given contract.
+    ///
+    /// `contract_id` is the full artifact identifier (`path:Contract`).
+    fn matches_test_function_in_contract(&self, _contract_id: &str, func: &Function) -> bool {
+        func.is_any_test() && self.matches_test(&func.signature())
+    }
 }
 
 impl<'a> dyn TestFilter + 'a {

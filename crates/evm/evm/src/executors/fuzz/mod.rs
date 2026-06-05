@@ -4,7 +4,10 @@ use crate::executors::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
+use alloy_primitives::{
+    Address, Bytes, Log, U256, keccak256,
+    map::{AddressHashMap, HashMap},
+};
 use eyre::Result;
 use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
@@ -59,6 +62,8 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     ///
     /// Stores up to `max_traces_to_collect` which is `config.gas_report_samples / num_workers`
     traces: Vec<SparsedTraceArena>,
+    /// Runtime bytecodes for the last collected trace.
+    debug_bytecodes: AddressHashMap<Bytes>,
     /// Last breakpoints from this worker
     breakpoints: Option<Breakpoints>,
     /// Coverage collected by this worker
@@ -89,6 +94,7 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
             gas_by_case: Vec::new(),
             counterexample: (Bytes::new(), RawCallResult::default()),
             traces: Vec::new(),
+            debug_bytecodes: HashMap::default(),
             breakpoints: None,
             coverage: None,
             logs: Vec::new(),
@@ -267,6 +273,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
+        let cmp_values = call.evm_cmp_values.take().unwrap_or_default();
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
@@ -279,6 +286,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     value: None,
                 },
             }],
+            &[cmp_values],
             new_coverage,
             None,
         );
@@ -309,6 +317,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
+                debug_bytecodes: call.debug_bytecodes,
                 coverage: call.line_coverage,
                 breakpoints,
                 logs: call.logs,
@@ -367,6 +376,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             let (calldata, call) = std::mem::take(&mut failed_worker.counterexample);
             result.labels = call.labels;
             result.traces = call.traces.clone();
+            result.debug_bytecodes = call.debug_bytecodes.clone();
             result.breakpoints = call.cheatcodes.map(|c| c.breakpoints);
 
             match &failed_worker.failure {
@@ -398,6 +408,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             let last_run_worker = &workers[last_run_worker_idx];
             result.success = true;
             result.traces = last_run_worker.traces.last().cloned();
+            result.debug_bytecodes.clone_from(&last_run_worker.debug_bytecodes);
             result.breakpoints = last_run_worker.breakpoints.clone();
         }
 
@@ -438,10 +449,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         progress: Option<&ProgressBar>,
     ) -> Result<WorkerState<FEN>> {
         // Prepare
+        let fuzz_state = shared_state.state.fork();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &shared_state.state),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state),
         ]
         .prop_map(move |calldata| BasicTxDetails {
             warp: None,
@@ -458,6 +470,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             (worker_id == 0).then_some(&self.executor_f),
             Some(func),
             None, // fuzzed_contracts for invariant tests
+            None, // dynamic target ctx (invariant-only)
         )?;
         let mut executor = self.executor_f.clone();
 
@@ -483,7 +496,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         if let Some(target_run) = self.config.run {
             for _ in 1..target_run {
-                if let Err(err) = corpus.new_input(&mut runner, &shared_state.state, func) {
+                if let Err(err) = corpus.new_input(&mut runner, &fuzz_state, func) {
                     worker.failure = Some(TestCaseError::fail(format!(
                         "failed to generate fuzzed input in worker {}: {err}",
                         worker.id
@@ -538,6 +551,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         &executor,
                         Some(func),
                         None,
+                        None,
                         &shared_state.global_corpus_metrics,
                     )?;
                     trace!("finished corpus sync in {:?}", timer.elapsed());
@@ -551,7 +565,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
-                let input = match corpus.new_input(&mut runner, &shared_state.state, func) {
+                let input = match corpus.new_input(&mut runner, &fuzz_state, func) {
                     Ok(input) => input,
                     Err(err) => {
                         worker.failure = Some(TestCaseError::fail(format!(
@@ -627,6 +641,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                                 worker.traces.pop();
                             }
                             worker.traces.push(call_traces);
+                            worker.debug_bytecodes = case.debug_bytecodes;
                             worker.breakpoints = Some(case.breakpoints);
                         }
 
@@ -702,7 +717,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         // Logs stats
         trace!("worker {worker_id} fuzz stats");
-        shared_state.state.log_stats();
+        fuzz_state.log_stats();
 
         Ok(worker)
     }

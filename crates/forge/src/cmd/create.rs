@@ -216,6 +216,7 @@ impl CreateArgs {
         // `<root>/tempo.lanes.toml`) and populate `self.tx.tempo.nonce_key` from the lane.
         // Must happen before `self.deploy(...)` so `TempoOpts::apply` picks up the nonce_key.
         let resolved_lane = resolve_lane(&mut self.tx.tempo, &config.root)?;
+        let expires_at = self.tx.tempo.resolve_expires();
 
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
@@ -238,6 +239,7 @@ impl CreateArgs {
                 None,
                 Some(browser),
                 resolved_lane,
+                expires_at,
             )
             .await
         } else if self.unlocked {
@@ -255,6 +257,7 @@ impl CreateArgs {
                 None,
                 None,
                 resolved_lane,
+                expires_at,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -276,6 +279,7 @@ impl CreateArgs {
                 Some((signer, ak)),
                 None,
                 resolved_lane,
+                expires_at,
             )
             .await
         } else {
@@ -300,6 +304,7 @@ impl CreateArgs {
                 None,
                 None,
                 resolved_lane,
+                expires_at,
             )
             .await
         }
@@ -346,6 +351,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.build.via_ir,
+            license_type: None,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -357,8 +363,10 @@ impl CreateArgs {
         // Check config for Etherscan API Keys to avoid preflight check failing if no
         // ETHERSCAN_API_KEY value set.
         let config = verify.load_config()?;
-        verify.etherscan.key =
-            config.get_etherscan_config_with_chain(self.chain_id())?.map(|c| c.key);
+        verify.etherscan.key = config
+            .get_etherscan_config_with_chain(self.chain_id())?
+            .map(|c| c.key)
+            .or_else(|| config.etherscan_api_key.clone());
 
         let context = verify.resolve_context().await?;
 
@@ -381,6 +389,7 @@ impl CreateArgs {
         tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
+        expires_at: Option<u64>,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -460,6 +469,38 @@ impl CreateArgs {
                 .await?;
         }
 
+        if is_legacy {
+            if self.tx.gas_price.is_none() {
+                deployer.tx.set_gas_price(provider.get_gas_price().await?);
+            }
+        } else {
+            if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
+                let mut estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                if browser_signer.is_some()
+                    && self.tx.priority_gas_price.is_none()
+                    && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+                    && suggested_tip > estimate.max_priority_fee_per_gas
+                {
+                    estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
+                    estimate.max_priority_fee_per_gas = suggested_tip;
+                }
+                if self.tx.priority_gas_price.is_none() {
+                    deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+                }
+                if self.tx.gas_price.is_none() {
+                    deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+                }
+            }
+            if let (Some(max_fee), Some(priority)) =
+                (deployer.tx.max_fee_per_gas(), deployer.tx.max_priority_fee_per_gas())
+            {
+                eyre::ensure!(
+                    priority <= max_fee,
+                    "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
+                );
+            }
+        }
+
         // set access list if specified
         if let Some(access_list) = match self.tx.access_list {
             None => None,
@@ -480,20 +521,6 @@ impl CreateArgs {
             }
 
             deployer.tx.set_gas_limit(estimated);
-        }
-
-        if is_legacy {
-            if self.tx.gas_price.is_none() {
-                deployer.tx.set_gas_price(provider.get_gas_price().await?);
-            }
-        } else if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
-            let estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-            if self.tx.priority_gas_price.is_none() {
-                deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-            if self.tx.gas_price.is_none() {
-                deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid
@@ -534,6 +561,10 @@ impl CreateArgs {
             }
 
             return Ok(());
+        }
+
+        if let Some(ts) = expires_at {
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
@@ -615,7 +646,7 @@ impl CreateArgs {
             return Ok(());
         }
 
-        sh_println!("Starting contract verification...")?;
+        sh_status!("Starting contract verification...")?;
 
         let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
             optimizer.then(|| self.build.compiler.optimizer_runs.unwrap_or(200))
@@ -643,6 +674,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier,
             via_ir: self.build.via_ir,
+            license_type: None,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -650,7 +682,16 @@ impl CreateArgs {
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };
-        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
+        // Load the full config (including foundry.toml) so the key used for resolution matches
+        // what `verify.run()` will actually use, preventing a "Waiting for sourcify..." message
+        // when the run will actually use Etherscan (or vice versa for unknown chains).
+        let verify_config = verify.load_config()?;
+        let effective_key = verify_config
+            .get_etherscan_config_with_chain(Some(chain))?
+            .map(|c| c.key)
+            .or_else(|| verify_config.etherscan_api_key.clone());
+        let resolved_verifier = verify.verifier.resolve(effective_key.as_deref(), Some(chain));
+        sh_status!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
     }
 

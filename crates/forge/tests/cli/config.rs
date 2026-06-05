@@ -73,6 +73,7 @@ ignored_error_codes_from = []
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
+mutation_dir = "cache/mutation"
 show_progress = false
 ffi = false
 live_logs = false
@@ -195,6 +196,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
 failure_persist_dir = "cache/fuzz"
@@ -203,6 +206,7 @@ show_logs = false
 [invariant]
 runs = 256
 depth = 500
+workers = 1
 fail_on_revert = false
 call_override = false
 dictionary_weight = 80
@@ -218,13 +222,26 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
 check_interval = 1
-assert_all = true
+
+[coverage]
+report = ["summary"]
+lcov_version = "1.0.0"
+ir_minimum = false
+include_libs = false
+exclude_tests = false
+skip_files = []
+
+[mutation]
+include_operators = []
+exclude_operators = []
 
 [labels]
 
@@ -288,6 +305,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         path_pattern_inverse: None,
         coverage_pattern_inverse: None,
         test_failures_file: "test-cache/test-failures".into(),
+        mutation_dir: "test-cache/mutation".into(),
         threads: None,
         show_progress: false,
         fuzz: FuzzConfig {
@@ -307,6 +325,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             },
             ..Default::default()
         },
+        coverage: Default::default(),
+        mutation: Default::default(),
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,
@@ -496,11 +516,14 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     assert_eq!(expected, output);
 
     let install = |cmd: &mut TestCommand, dep: &str| {
-        cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![[r#"
+        cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![""]).stderr_eq(
+            str![[r#"
 Installing solmate in [..] (url: https://github.com/transmissions11/solmate, tag: None)
+...
     Installed solmate[..]
 
-"#]]);
+"#]],
+        );
     };
 
     install(&mut cmd, "transmissions11/solmate");
@@ -949,14 +972,59 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
 
-    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@utils/libraries/Contract.sol=src/Contract.sol
+@utils/=src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/
+@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
+dep1/=lib/dep1/src/
+forge-std/=lib/forge-std/src/
+
+"#]])
+        .stderr_eq(str![[r#"
 Global:
-- @utils/libraries/Contract.sol=src/Contract.sol
-- @utils/=src/
-- @openzeppelin/contracts/=lib/openzeppelin-contracts/
-- @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
-- dep1/=lib/dep1/src/
-- forge-std/=lib/forge-std/src/
+
+
+"#]]);
+});
+
+// Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
+// identical stdout, even when remappings have contexts. The context prefix is part of the
+// machine-readable value and must survive `--pretty` mode.
+forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings = vec![
+            Remapping::from_str("@global/=lib/global/").unwrap().into(),
+            Remapping::from_str("ctx-a:@scoped/=lib/a/").unwrap().into(),
+            Remapping::from_str("ctx-b:@scoped/=lib/b/").unwrap().into(),
+        ];
+    });
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]])
+        .stderr_eq(str![[r#"
+Global:
+
+Context: ctx-a
+
+Context: ctx-b
 
 
 "#]]);
@@ -969,11 +1037,14 @@ forgetest!(can_update_libs_section, |prj, cmd| {
     // explicitly set gas_price
     prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
-    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
 
-"#]]);
+"#]],
+    );
 
     let config = cmd.forge_fuse().config();
     // `lib` was added automatically
@@ -981,8 +1052,13 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse().args(["install", "dapphub/ds-test"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["install", "dapphub/ds-test"])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
+...
     Installed ds-test
 
 "#]]);
@@ -996,11 +1072,14 @@ Installing ds-test in [..] (url: https://github.com/dapphub/ds-test, tag: None)
 forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
-    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
 
-"#]]);
+"#]],
+    );
 
     let faulty_toml = r"[default]
     src = 'src'
@@ -1292,6 +1371,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "no_match_path": null,
   "no_match_coverage": null,
   "test_failures_file": "cache/test-failures",
+  "mutation_dir": "cache/mutation",
   "threads": null,
   "show_progress": false,
   "fuzz": {
@@ -1313,6 +1393,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/fuzz",
@@ -1322,6 +1404,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "invariant": {
     "runs": 256,
     "depth": 500,
+    "workers": 1,
     "fail_on_revert": false,
     "call_override": false,
     "dictionary_weight": 80,
@@ -1338,6 +1421,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/invariant",
@@ -1346,8 +1431,23 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1,
-    "assert_all": true
+    "check_interval": 1
+  },
+  "coverage": {
+    "report": [
+      "summary"
+    ],
+    "lcov_version": "1.0.0",
+    "ir_minimum": false,
+    "report_file": null,
+    "include_libs": false,
+    "exclude_tests": false,
+    "skip_files": []
+  },
+  "mutation": {
+    "include_operators": [],
+    "exclude_operators": [],
+    "timeout": null
   },
   "ffi": false,
   "live_logs": false,

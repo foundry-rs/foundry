@@ -1,6 +1,6 @@
 //! TUI draw implementation.
 
-use super::context::TUIContext;
+use super::context::{StatusKind, TUIContext};
 use crate::op::OpcodeParam;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
@@ -79,7 +79,7 @@ impl TUIContext<'_> {
     /// ```
     fn vertical_layout(&self, f: &mut Frame<'_>) {
         let area = f.area();
-        let h_height = if self.show_shortcuts { 4 } else { 0 };
+        let footer_height = self.footer_height();
 
         // NOTE: `Layout::split` always returns a slice of the same length as the number of
         // constraints, so the `else` branch is unreachable.
@@ -87,7 +87,7 @@ impl TUIContext<'_> {
         // Split off footer.
         let [app, footer] = Layout::new(
             Direction::Vertical,
-            [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)],
+            [Constraint::Min(0), Constraint::Length(footer_height)],
         )
         .split(area)[..] else {
             unreachable!()
@@ -107,7 +107,7 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        if self.show_shortcuts {
+        if footer_height > 0 {
             self.draw_footer(f, footer);
         }
         self.draw_src(f, src_pane);
@@ -129,12 +129,12 @@ impl TUIContext<'_> {
     /// ```
     fn horizontal_layout(&self, f: &mut Frame<'_>) {
         let area = f.area();
-        let h_height = if self.show_shortcuts { 4 } else { 0 };
+        let footer_height = self.footer_height();
 
         // Split off footer.
         let [app, footer] = Layout::new(
             Direction::Vertical,
-            [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)],
+            [Constraint::Min(0), Constraint::Length(footer_height)],
         )
         .split(area)[..] else {
             unreachable!()
@@ -164,7 +164,7 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        if self.show_shortcuts {
+        if footer_height > 0 {
             self.draw_footer(f, footer);
         }
         self.draw_src(f, src_pane);
@@ -173,12 +173,44 @@ impl TUIContext<'_> {
         self.draw_buffer(f, memory_pane);
     }
 
+    fn footer_height(&self) -> u16 {
+        let status_or_input = u16::from(self.pc_input.is_some() || self.status.is_some());
+        let shortcuts = if self.show_shortcuts { 2 } else { 0 };
+        status_or_input + shortcuts
+    }
+
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
-        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [b]: cycle memory/calldata/returndata buffers";
+        let mut lines = Vec::with_capacity(self.footer_height() as usize);
+
+        if let Some(input) = &self.pc_input {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Goto PC: ",
+                    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(input.as_str()),
+                Span::styled("█", Style::new().fg(Color::Cyan)),
+                Span::styled(
+                    "  Enter: jump | Esc: cancel | hex: 0x2a/2a | decimal: d:42",
+                    Style::new().add_modifier(Modifier::DIM),
+                ),
+            ]));
+        } else if let Some(status) = &self.status {
+            let style = match status.kind {
+                StatusKind::Info => Style::new().fg(Color::Green),
+                StatusKind::Error => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            };
+            lines.push(Line::from(Span::styled(status.text.as_str(), style)));
+        }
+
+        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [b]: cycle memory/calldata/returndata buffers";
         let l2 = "[t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
-        let lines =
-            vec![Line::from(Span::styled(l1, dimmed)), Line::from(Span::styled(l2, dimmed))];
+        if self.show_shortcuts {
+            lines.push(Line::from(Span::styled(l1, dimmed)));
+            lines.push(Line::from(Span::styled(l2, dimmed)));
+        }
+
         let paragraph =
             Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
@@ -367,8 +399,9 @@ impl TUIContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used: {} | Gas refund: {}",
+            "Address: {} | PC: 0x{:x} ({}) | Gas used: {} | Gas refund: {}",
             self.address(),
+            self.current_step().pc,
             self.current_step().pc,
             self.debug_call().gas_limit - self.current_step().gas_remaining,
             self.current_step().gas_refund_counter

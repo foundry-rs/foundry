@@ -39,6 +39,7 @@ use foundry_common::{
 };
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
+use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, future::Either};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus as _;
@@ -60,6 +61,8 @@ pub use foundry_evm::*;
 
 pub mod args;
 pub mod cmd;
+pub mod diagnostic;
+pub mod introspect;
 pub mod opts;
 pub mod tempo;
 
@@ -1090,11 +1093,13 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
+    /// let tx =
+    ///     cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub async fn transaction(
         &self,
         tx_hash: Option<String>,
@@ -1103,6 +1108,7 @@ where
         field: Option<String>,
         raw: bool,
         to_request: bool,
+        lane: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
             let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -1131,9 +1137,26 @@ where
         Ok(if raw {
             let encoded = tx.as_ref().encoded_2718();
             format!("0x{}", hex::encode(encoded))
+        } else if lane {
+            let encoded = tx.as_ref().encoded_2718();
+            let mut data = encoded.as_slice();
+            let tx = FoundryTxEnvelope::decode_2718(&mut data)
+                .wrap_err("failed to decode transaction for lane classification")?;
+            crate::args::format_lane_classification(&tx.classify_t5_payment_lane())?
         } else if let Some(ref field) = field {
-            get_pretty_tx_attr::<N>(&tx, field.as_str())
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?
+            if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
+                value
+            } else {
+                let tx_json = serde_json::to_value(&tx)?;
+                let value = tx_json
+                    .get(field)
+                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?;
+
+                match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                }
+            }
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
@@ -2222,7 +2245,7 @@ impl SimpleCast {
         if let Some(path) = output_path {
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, flattened)?;
-            sh_println!("Flattened file written at {}", path.display())?
+            sh_status!("Flattened file written at {}", path.display())?
         } else {
             sh_println!("{flattened}")?
         }

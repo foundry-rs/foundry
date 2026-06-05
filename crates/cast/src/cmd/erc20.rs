@@ -3,7 +3,7 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
     format_uint_exp,
-    tx::{CastTxSender, SendTxOpts, TxParams},
+    tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
@@ -15,6 +15,7 @@ use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
 use clap::Parser;
 use foundry_cli::{
+    json::{print_json_success, print_scalar},
     opts::RpcOpts,
     utils::{LoadConfig, get_chain, get_provider},
 };
@@ -369,7 +370,7 @@ impl Erc20Subcommand {
                     if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
                 let needs_sponsor_payload = print_sponsor_hash || tempo_sponsor.is_some();
                 if let Some(ts) = expires_at {
-                    sh_println!("Transaction expires at unix timestamp {ts}")?;
+                    sh_status!("Transaction expires at unix timestamp {ts}")?;
                 }
 
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
@@ -392,7 +393,8 @@ impl Erc20Subcommand {
                             access_key.key_authorization.as_ref(),
                         )
                         .await?;
-                        fill_tx(&$provider, &mut tx, access_key.wallet_address, chain).await?;
+                        fill_tx(&$provider, &mut tx, access_key.wallet_address, chain, false)
+                            .await?;
                         if print_sponsor_hash {
                             let hash = tx
                                 .compute_sponsor_hash(access_key.wallet_address)
@@ -422,7 +424,7 @@ impl Erc20Subcommand {
                         $send_tx.confirmations,
                         timeout,
                     )
-                    .await?
+                    .await?;
                 } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
                     let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
                     if let Some(interval) = $send_tx.poll_interval {
@@ -435,7 +437,7 @@ impl Erc20Subcommand {
                     if chain.is_tempo() && tx.fee_token().is_none() {
                         tx.set_fee_token(PATH_USD_ADDRESS);
                     }
-                    fill_tx(&$provider, &mut tx, browser.address(), chain).await?;
+                    fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
                     if print_sponsor_hash {
                         let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
                             eyre::eyre!("This network does not support sponsored transactions")
@@ -464,7 +466,7 @@ impl Erc20Subcommand {
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
                     if needs_sponsor_payload {
-                        fill_tx(&$provider, &mut tx, from, chain).await?;
+                        fill_tx(&$provider, &mut tx, from, chain, false).await?;
                         if print_sponsor_hash {
                             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                                 eyre::eyre!("This network does not support sponsored transactions")
@@ -484,7 +486,7 @@ impl Erc20Subcommand {
                         $send_tx.confirmations,
                         timeout,
                     )
-                    .await?
+                    .await?;
                 }
             }};
         }
@@ -504,9 +506,9 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&allowance.to_string())?)?
+                    print_json_success(allowance.to_string())?;
                 } else {
-                    sh_println!("{}", format_uint_exp(allowance))?
+                    sh_println!("{}", format_uint_exp(allowance))?;
                 }
             }
             Self::Balance { token, owner, block, .. } => {
@@ -521,9 +523,9 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&balance.to_string())?)?
+                    print_json_success(balance.to_string())?;
                 } else {
-                    sh_println!("{}", format_uint_exp(balance))?
+                    sh_println!("{balance}")?;
                 }
             }
             Self::Name { token, block, .. } => {
@@ -536,11 +538,7 @@ impl Erc20Subcommand {
                     .call()
                     .await?;
 
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&name)?)?
-                } else {
-                    sh_println!("{}", name)?
-                }
+                print_scalar(name)?;
             }
             Self::Symbol { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -552,11 +550,7 @@ impl Erc20Subcommand {
                     .call()
                     .await?;
 
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&symbol)?)?
-                } else {
-                    sh_println!("{}", symbol)?
-                }
+                print_scalar(symbol)?;
             }
             Self::Decimals { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -567,11 +561,7 @@ impl Erc20Subcommand {
                     .block(block.unwrap_or_default())
                     .call()
                     .await?;
-                if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&decimals)?)?
-                } else {
-                    sh_println!("{}", decimals)?
-                }
+                print_scalar(decimals)?;
             }
             Self::TotalSupply { token, block, .. } => {
                 let provider = get_provider(&config)?;
@@ -584,7 +574,7 @@ impl Erc20Subcommand {
                     .await?;
 
                 if shell::is_json() {
-                    sh_println!("{}", serde_json::to_string(&total_supply.to_string())?)?
+                    print_json_success(total_supply.to_string())?;
                 } else {
                     sh_println!("{}", format_uint_exp(total_supply))?
                 }
@@ -615,8 +605,8 @@ impl Erc20Subcommand {
     }
 }
 
-/// Fills from, chain_id, nonce, fees, and gas limit on a transaction request for the browser
-/// wallet path. Mirrors the filling logic in the shared tx builder but operates on a
+/// Fills from, chain_id, nonce, fees, and gas limit on a transaction request for sponsor/browser
+/// wallet flows. Mirrors the filling logic in the shared tx builder but operates on a
 /// pre-built transaction request from the sol! macro rather than through the builder pipeline.
 /// Only fills fields that haven't already been set by the user.
 async fn fill_tx<N: Network, P: Provider<N>>(
@@ -624,6 +614,7 @@ async fn fill_tx<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     from: Address,
     chain: Chain,
+    browser: bool,
 ) -> eyre::Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -637,19 +628,7 @@ where
 
     let legacy = chain.is_legacy();
 
-    if legacy {
-        if tx.gas_price().is_none() {
-            tx.set_gas_price(provider.get_gas_price().await?);
-        }
-    } else if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
-        let estimate = provider.estimate_eip1559_fees().await?;
-        if tx.max_fee_per_gas().is_none() {
-            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-        }
-        if tx.max_priority_fee_per_gas().is_none() {
-            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-        }
-    }
+    fill_transaction_gas_fees(provider, tx, legacy, browser).await?;
 
     if tx.gas_limit().is_none() {
         let mut estimated = provider.estimate_gas(tx.clone()).await?;
