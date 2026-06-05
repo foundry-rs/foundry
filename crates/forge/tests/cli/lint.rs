@@ -1391,19 +1391,11 @@ forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity ^0.8.20;
   │ ━━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity 0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 
@@ -1502,27 +1494,11 @@ forgetest!(pragma_inconsistent_duplicates_among_conflict, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;
   │ ━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity 0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity ^0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 
@@ -1542,19 +1518,11 @@ forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;
   │ ━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity ^0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 
