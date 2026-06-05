@@ -3119,7 +3119,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     match root_signer {
         KeychainRootSigner::Browser(browser) => {
             let chain = builder.chain();
-            let (mut tx, _) = builder.build(browser.address()).await?;
+            let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
             if chain.is_tempo()
                 && let Some(gas) = tx.gas_limit()
             {
