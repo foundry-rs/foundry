@@ -38,7 +38,7 @@ impl SessionStatus {
 
     /// Returns `true` if entering this status must erase local key material.
     const fn clears_key_material(self) -> bool {
-        matches!(self, Self::Revoking | Self::Revoked | Self::Expired | Self::Failed)
+        self.is_terminal()
     }
 
     /// Returns `true` if the session is still in-flight or usable.
@@ -176,7 +176,7 @@ impl SessionRecord {
         self.get(session_id).filter(|session| session.has_live_key_at(now))
     }
 
-    /// Update a session status by id. Revoking and terminal statuses clear local key material.
+    /// Update a session status by id. Terminal statuses clear local key material.
     ///
     /// Returns `true` when the record changed. Missing sessions and idempotent
     /// updates return `false`.
@@ -793,7 +793,7 @@ mod tests {
     }
 
     #[test]
-    fn session_record_status_updates_preserve_live_keys_and_clear_terminal_keys() {
+    fn session_record_status_updates_preserve_retryable_keys_and_clear_terminal_keys() {
         let active_id = B256::from([0x67; 32]);
         let revoking_id = B256::from([0x68; 32]);
         let revoked_id = B256::from([0x69; 32]);
@@ -818,7 +818,7 @@ mod tests {
         assert_eq!(record.get(active_id).unwrap().status, SessionStatus::Active);
         assert!(record.get(active_id).unwrap().key.is_some());
         assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
-        assert!(record.get(revoking_id).unwrap().key.is_none());
+        assert!(record.get(revoking_id).unwrap().key.is_some());
         assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
         assert!(record.get(revoked_id).unwrap().key.is_none());
         assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
@@ -847,6 +847,7 @@ mod tests {
         let revoked_id = B256::from([0x03; 32]);
         let no_key_id = B256::from([0x04; 32]);
         let pending_id = B256::from([0x05; 32]);
+        let revoking_id = B256::from([0x06; 32]);
 
         let record = SessionRecord {
             sessions: vec![
@@ -855,6 +856,7 @@ mod tests {
                 sample_entry_with_key(revoked_id, 200, SessionStatus::Revoked),
                 sample_entry(no_key_id, 200, SessionStatus::Active),
                 sample_entry_with_key(pending_id, 200, SessionStatus::Pending),
+                sample_entry_with_key(revoking_id, 200, SessionStatus::Revoking),
             ],
         };
 
@@ -863,6 +865,7 @@ mod tests {
         assert!(record.live_key(revoked_id, 100).is_none());
         assert!(record.live_key(no_key_id, 100).is_none());
         assert!(record.live_key(pending_id, 100).is_none());
+        assert!(record.live_key(revoking_id, 100).is_none());
     }
 
     #[test]
@@ -1244,7 +1247,7 @@ key = "0x1111"
             let record = read_session_record().unwrap();
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Revoking);
-            assert!(session.key.is_none());
+            assert!(session.key.is_some());
 
             assert!(update_session_status(session_id, SessionStatus::Revoked).unwrap());
             let record = read_session_record().unwrap();
@@ -1292,7 +1295,7 @@ key = "0x1111"
             let record = read_session_record().unwrap();
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Revoking);
-            assert!(session.key.is_none());
+            assert!(session.key.is_some());
 
             assert!(!update_session_status_if(
                 session_id,

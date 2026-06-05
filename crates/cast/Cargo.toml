@@ -89,11 +89,22 @@ regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "signal"] }
+tokio = { workspace = true, features = ["macros", "process", "signal", "time"] }
 tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
 url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
@@ -102,6 +113,7 @@ dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
 tempo-chainspec.workspace = true
+path-slash.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
