@@ -82,4 +82,14 @@ contract UnusedReturn {
     function bad4(address t) external {
         oracle.getPrice({token: t}); //~WARN: Return value of an external call is not used
     }
+
+    // SHOULD FAIL: parenthesized receiver
+    function bad5(address t) external {
+        (oracle).getPrice(t); //~WARN: Return value of an external call is not used
+    }
+
+    // SHOULD FAIL: parenthesized interface cast receiver
+    function bad6(address oracleAddr, address t) external {
+        (IOracle(oracleAddr)).getPrice(t); //~WARN: Return value of an external call is not used
+    }
 }

@@ -63,7 +63,7 @@ fn check_yul_stmt(ctx: &LintContext, stmt: &yul::Stmt<'_>) {
 fn check_yul_expr(ctx: &LintContext, expr: &yul::Expr<'_>) {
     let yul::ExprKind::Call(call) = &expr.kind else { return };
 
-    if matches!(call.name.name, kw::Shl | kw::Shr)
+    if matches!(call.name.name, kw::Shl | kw::Shr | kw::Sar)
         && let [left, right] = call.arguments.as_ref()
         && !matches!(left.kind, yul::ExprKind::Lit(_))
         && matches!(right.kind, yul::ExprKind::Lit(_))

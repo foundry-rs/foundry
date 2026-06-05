@@ -14,3 +14,11 @@ LL │             result := shr(add(result, 1), 16)
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+   ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
+   │
+LL │             result := sar(add(result, 1), 8)
+   │                       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
+

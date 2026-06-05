@@ -1,11 +1,11 @@
 use super::UnusedReturn;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::interface::receiver_contract_id},
 };
 use solar::sema::{
     Gcx, Hir,
-    hir::{Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, TypeKind, VariableId},
+    hir::{Expr, ExprKind, Function, Stmt, StmtKind, TypeKind, VariableId},
 };
 
 declare_forge_lint!(
@@ -41,30 +41,15 @@ fn is_unused_return_call(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
         )
     };
 
-    let ExprKind::Call(callee, call_args, ..) = &expr.kind else { return false };
-    let ExprKind::Member(contract_expr, func_ident) = &callee.kind else { return false };
+    let ExprKind::Call(callee, call_args, ..) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Member(contract_expr, func_ident) = &callee.peel_parens().kind else {
+        return false;
+    };
 
     // Arity from either positional or named args.
     let arity = call_args.kind.len();
 
-    let Some(cid) = (match &contract_expr.kind {
-        // Pre-instantiated contract variable: `oracle.f()`
-        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
-            if let TypeKind::Custom(ItemId::Contract(cid)) = hir.variable(*id).ty.kind {
-                Some(cid)
-            } else {
-                None
-            }
-        }
-        // Explicit interface cast: `IOracle(addr).f()`
-        ExprKind::Call(
-            Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
-            ..,
-        ) => Some(*cid),
-        _ => None,
-    }) else {
-        return false;
-    };
+    let Some(cid) = receiver_contract_id(hir, contract_expr) else { return false };
 
     // Collect all functions in the contract matching this name and arity.
     let candidates: Vec<&Function<'_>> = hir

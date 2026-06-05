@@ -26,6 +26,7 @@ contract IncorrectShift {
         assembly {
             result := shl(result, 8) //~WARN: the order of args in a shift operation is incorrect
             result := shr(add(result, 1), 16) //~WARN: the order of args in a shift operation is incorrect
+            result := sar(add(result, 1), 8) //~WARN: the order of args in a shift operation is incorrect
         }
 
         // SHOULD PASS:
@@ -42,6 +43,7 @@ contract IncorrectShift {
         assembly {
             result := shl(8, result)
             result := shr(16, result)
+            result := sar(8, result)
             result := shl(8, 1)
         }
     }
