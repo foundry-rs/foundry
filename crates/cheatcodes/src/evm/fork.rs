@@ -457,7 +457,7 @@ fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value
     let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
     let params_json: serde_json::Value = serde_json::from_str(params)?;
     foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
-        .map_err(|err| fmt_err!("{method:?}: {err}").into())
+        .map_err(|err| fmt_err!("{method:?}: {err}"))
 }
 
 /// Convert fixed bytes and address values to bytes in order to prevent encoding issues.
