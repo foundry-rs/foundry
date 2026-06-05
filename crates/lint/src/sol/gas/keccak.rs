@@ -6,7 +6,10 @@ use crate::{
 use solar::{
     ast::{self as ast, Span},
     interface::kw,
-    sema::hir::{self},
+    sema::{
+        Gcx,
+        hir::{self},
+    },
 };
 
 declare_forge_lint!(
@@ -20,6 +23,7 @@ impl<'hir> LateLintPass<'hir> for AsmKeccak256 {
     fn check_stmt(
         &mut self,
         ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {

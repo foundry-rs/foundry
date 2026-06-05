@@ -261,11 +261,14 @@ impl CallArgs {
             .filter_map(|(name, on)| on.then_some(name))
             .collect::<Vec<_>>();
             if !unsupported.is_empty() {
-                foundry_cli::machine::bail_machine_usage(format!(
-                    "`cast call` under `--machine` does not yet support {}; \
-                     run without `--machine` or omit those flags.",
-                    unsupported.join(", ")
-                ));
+                foundry_cli::machine::bail_machine_usage_with_details(
+                    format!(
+                        "`cast call` under `--machine` does not yet support {}; \
+                         run without `--machine` or omit those flags.",
+                        unsupported.join(", ")
+                    ),
+                    serde_json::json!({ "unsupported_flags": unsupported }),
+                );
             }
             // Unlocked keystore: prompts for the password on TTY at signer construction.
             let has_keystore =
@@ -496,6 +499,7 @@ impl CallArgs {
                 debug,
                 decode_internal,
                 disable_labels,
+                None,
                 None,
             )
             .await?;

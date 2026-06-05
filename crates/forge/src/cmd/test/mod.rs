@@ -1,9 +1,11 @@
-use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use super::{install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
+    diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{MultiNetworkConfig, ShowmapConfig, matches_artifact},
+    mutation::{MutationRunConfig, run_mutation_testing},
     result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -17,12 +19,16 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
+    ExitCode,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
-use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
+use foundry_common::{
+    EmptyTestFilter, TestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell,
+};
 use foundry_compilers::{
-    ProjectCompileOutput,
+    CompilationError, ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
@@ -31,10 +37,10 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, figment,
+    Config, InlineConfig, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
-        value::{Dict, Map},
+        value::{Dict, Map, Value},
     },
     filter::GlobMatcher,
 };
@@ -47,6 +53,7 @@ use foundry_evm::{
     },
     executors::ShowmapDomain,
     fuzz::CounterExample,
+    hardforks::TempoHardfork,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -65,7 +72,8 @@ use yansi::Paint;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
-pub use filter::FilterArgs;
+pub use filter::{FilterArgs, ProjectPathsAwareFilter};
+use filter::{RerunFailure, RerunFailures};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
@@ -192,6 +200,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
+    /// Number of workers to use for invariant test campaigns, or `auto` to derive from `--jobs`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
+    pub invariant_workers: Option<InvariantWorkers>,
+
     /// Run only the fuzz case at the given 1-based run index.
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
     pub fuzz_run: Option<u32>,
@@ -300,6 +312,37 @@ pub struct TestArgs {
 
     #[command(flatten)]
     pub watch: WatchArgs,
+
+    /// Enable mutation testing.
+    /// If passed with file paths, only those files will be tested.
+    #[arg(long, num_args(0..), value_name = "PATH")]
+    pub mutate: Option<Vec<PathBuf>>,
+
+    /// Specify which files to mutate with glob pattern matching.
+    ///
+    /// Mutually exclusive with passing explicit paths to `--mutate`; either
+    /// supply paths to `--mutate` or use this glob filter, not both.
+    #[arg(long, value_name = "PATTERN", requires = "mutate", conflicts_with = "mutate_contract")]
+    pub mutate_path: Option<GlobMatcher>,
+
+    /// Only mutate contracts whose name matches the specified regex pattern.
+    ///
+    /// Mutually exclusive with `--mutate-path`.
+    #[arg(long, value_name = "REGEX", requires = "mutate")]
+    pub mutate_contract: Option<regex::Regex>,
+
+    /// Number of parallel workers for mutation testing.
+    /// Defaults to the number of CPU cores.
+    #[arg(long, value_name = "JOBS", requires = "mutate")]
+    pub mutation_jobs: Option<usize>,
+
+    /// Best-effort per-mutant wall-clock timeout in seconds. Mutants that
+    /// exceed it are recorded as "timed out" and cleanup continues in the
+    /// background with bounded pending workers.
+    ///
+    /// Analogous to `--invariant-timeout` for invariant campaigns.
+    #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
+    pub mutation_timeout: Option<u32>,
 }
 
 impl TestArgs {
@@ -329,6 +372,50 @@ impl TestArgs {
         })
     }
 
+    /// Reject flags whose stdout shape conflicts with the NDJSON stream
+    /// contract under `--machine`. Called from the binary entry point so
+    /// `--watch` is also rejected.
+    pub(crate) fn reject_machine_unsupported_flags(&self) -> Result<()> {
+        if !foundry_cli::is_machine() {
+            return Ok(());
+        }
+        let unsupported = [
+            ("--watch", self.is_watch()),
+            ("--debug", self.debug),
+            ("--flamegraph", self.flamegraph),
+            ("--flamechart", self.flamechart),
+            ("--gas-report", self.gas_report),
+            ("--summary", self.summary),
+            ("--list", self.list),
+            ("--junit", self.junit),
+            ("--show-progress", self.show_progress),
+            ("--mutate", self.mutate.is_some()),
+            // `--live-logs` writes console.log straight to stdout; the
+            // `live_logs = true` config equivalent is overridden in
+            // `compile_and_run`.
+            ("--live-logs", self.evm.live_logs),
+            // Bails mid-suite on diff; config equivalent overridden in `compile_and_run`.
+            ("--gas-snapshot-check", self.gas_snapshot_check.unwrap_or(false)),
+            // Writes mid-suite to disk and can fail between test_result and
+            // suite_finished; config equivalent overridden in `compile_and_run`.
+            ("--gas-snapshot-emit", self.gas_snapshot_emit == Some(true)),
+        ]
+        .into_iter()
+        .filter_map(|(name, on)| on.then_some(name))
+        .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            foundry_cli::machine::bail_machine_usage_with_details(
+                format!(
+                    "`forge test` under `--machine` does not yet support {}; \
+                     run without `--machine` or omit those flags.",
+                    unsupported.join(", ")
+                ),
+                serde_json::json!({ "unsupported_flags": unsupported }),
+            );
+        }
+        Ok(())
+    }
+
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
@@ -349,21 +436,48 @@ impl TestArgs {
                 .collect());
         }
 
+        let filter_args = test_filter.args();
+        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+            || filter_args.test_pattern_inverse.is_some()
+            || filter_args.contract_pattern.is_some()
+            || filter_args.contract_pattern_inverse.is_some();
+        if !has_contract_or_test_filter {
+            return Ok(source_files_iter(&config.src, MultiCompilerLanguage::FILE_EXTENSIONS)
+                .chain(
+                    source_files_iter(&config.test, MultiCompilerLanguage::FILE_EXTENSIONS)
+                        .filter(|path| test_filter.matches_path(path)),
+                )
+                .collect());
+        }
+
         let mut project = config.create_project(true, true)?;
         project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()]);
         });
         let output = project.compile()?;
         if output.has_compiler_errors() {
+            // Mirror the main-compile typed envelope so agents don't see this
+            // path as `cli.unknown` + exit 1.
+            if foundry_cli::is_machine() {
+                emit_machine_compile_error(&output);
+            }
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
 
+        // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
+        // identifiers it constructs are project-relative. Match that here for the filter check
+        // (notably for the `--rerun` failure list, which is persisted relative) but return the
+        // original absolute source paths so downstream compilation can locate them.
         Ok(output
             .artifact_ids()
             .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
             .filter(|(id, abi)| {
-                id.source.starts_with(&config.src) || matches_artifact(test_filter, id, abi)
+                if id.source.starts_with(&config.src) {
+                    return true;
+                }
+                let stripped = id.clone().with_stripped_file_prefixes(&config.root);
+                matches_artifact(test_filter, &stripped, abi)
             })
             .map(|(id, _)| id.source)
             .collect())
@@ -376,11 +490,34 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
+        let machine_mode = foundry_cli::is_machine();
+
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
-        // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        let should_mutate = self.mutate.is_some();
+
+        // Force dyn test linking for mutation testing
+        if should_mutate {
+            config.dynamic_test_linking = true;
+            config.cache = true;
+        }
+
+        // Override foundry.toml knobs that would print outside the NDJSON
+        // stream or bail mid-suite; the CLI equivalents are rejected in
+        // `reject_machine_unsupported_flags`.
+        if machine_mode {
+            config.show_progress = false;
+            config.live_logs = false;
+            config.gas_snapshot_check = false;
+            config.gas_snapshot_emit = false;
+        }
+
+        // Skip implicit dep install: it prints to stdout. A missing dep then
+        // surfaces as a typed `compiler.solc.error` from the compile below.
+        if !machine_mode
+            && install::install_missing_dependencies(&mut config).await
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -392,11 +529,20 @@ impl TestArgs {
         let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit)
+            .quiet(shell::is_json() || self.junit || machine_mode)
             .files(self.get_sources_to_compile(&config, &filter)?);
+        // Disable inner `bail` so a compile error returns the output and we
+        // can emit a typed envelope instead of an untyped `cli.unknown`.
+        if machine_mode {
+            compiler = compiler.bail(false);
+        }
         let output = compiler.compile(&project)?;
+
+        if machine_mode && output.has_compiler_errors() {
+            emit_machine_compile_error(&output);
+        }
 
         self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
     }
@@ -415,6 +561,45 @@ impl TestArgs {
     ) -> Result<TestOutcome> {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
+        }
+
+        // Mutation testing has bespoke orchestration (per-mutant temp
+        // workspaces, baseline + N mutants, aggregated mutation report). It is
+        // not compatible with the single-run debug / flame / list / junit
+        // modes — running them together would either mix incompatible output
+        // formats, or run the secondary mode against the baseline tests and
+        // then silently continue into mutation testing. Reject up front with a
+        // clear error rather than do the wrong thing.
+        if self.mutate.is_some() {
+            let mut conflicts = Vec::new();
+            if self.list {
+                conflicts.push("--list");
+            }
+            if self.debug {
+                conflicts.push("--debug");
+            }
+            if self.flamegraph {
+                conflicts.push("--flamegraph");
+            }
+            if self.flamechart {
+                conflicts.push("--flamechart");
+            }
+            if self.junit {
+                conflicts.push("--junit");
+            }
+            if coverage {
+                conflicts.push("coverage");
+            }
+            if self.showmap_out.is_some() {
+                conflicts.push("--showmap-out");
+            }
+            if !conflicts.is_empty() {
+                bail!(
+                    "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
+                     mutation testing.",
+                    conflicts.join(", ")
+                );
+            }
         }
 
         // Explicitly enable isolation for gas reports for more correct gas accounting.
@@ -458,9 +643,28 @@ impl TestArgs {
         // Auto-detect network from fork chain ID when not explicitly configured.
         evm_opts.infer_network_from_fork().await;
 
+        // Clone config and evm_opts before dispatch (needed for mutation testing).
+        let config_for_mutation = config.clone();
+        let evm_opts_for_mutation = evm_opts.clone();
+
         // Parse inline config early to detect per-test network annotations.
         let inline_config = InlineConfig::new_parsed(output, &config)?;
         let override_networks = inline_config.referenced_override_networks(&config.profile);
+
+        // Multi-pass would emit `test_result*` + `suite_finished` once per
+        // pass for the same suite, violating "exactly one terminator per group".
+        if foundry_cli::is_machine() && !override_networks.is_empty() {
+            let networks: Vec<String> = override_networks.iter().map(|n| n.to_string()).collect();
+            foundry_cli::machine::bail_machine_usage_with_details(
+                "`forge test` under `--machine` does not yet support inline network \
+                 overrides; run without `--machine` or remove the inline `network` \
+                 annotations.",
+                serde_json::json!({
+                    "unsupported_features": ["inline_network_overrides"],
+                    "networks": networks,
+                }),
+            );
+        }
 
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
@@ -523,10 +727,11 @@ impl TestArgs {
             }
 
             // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
-            if !self.summary && !shell::is_json() {
+            // Machine mode emits a terminal envelope from the binary entry point instead.
+            if !self.summary && !shell::is_json() && !foundry_cli::is_machine() {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
-            if self.summary && !outcome.results.is_empty() {
+            if self.summary && !outcome.results.is_empty() && !foundry_cli::is_machine() {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
             }
@@ -583,13 +788,23 @@ impl TestArgs {
             let sources =
                 ContractSources::from_project_output(output, project_root, Some(&libraries))?;
 
+            // Prefer execution traces for normal debug runs, but when execution never starts
+            // (for example if `setUp()` reverts), fall back to available setup/deployment traces.
+            let traces = {
+                let execution = test_result
+                    .traces
+                    .iter()
+                    .filter(|(kind, _)| kind.is_execution())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if execution.is_empty() { test_result.traces.clone() } else { execution }
+            };
+
             // Run the debugger.
             let mut builder = Debugger::builder()
-                .traces(
-                    test_result.traces.iter().filter(|(t, _)| t.is_execution()).cloned().collect(),
-                )
+                .traces(traces)
                 .sources(sources)
-                .breakpoints(test_result.breakpoints.clone());
+                .breakpoints(test_result.breakpoints);
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
@@ -601,6 +816,234 @@ impl TestArgs {
             } else {
                 debugger.try_run_tui()?;
             }
+        }
+
+        // All tests have been run once before reaching this point
+        if let Some(mutate) = &self.mutate {
+            // Check outcome here, stop if any test failed
+            if outcome.failed() > 0 {
+                eyre::bail!("Cannot run mutation testing with failed tests");
+            }
+
+            // A green baseline that ran zero non-skipped tests is not useful:
+            // every compileable mutant would be reported as `Alive` (no test
+            // failed, so nothing killed it), which produces a wildly
+            // misleading mutation report. Hard-error so users get an actual
+            // signal that their filter / path / setup matched nothing.
+            if outcome.successes().next().is_none() {
+                eyre::bail!(
+                    "Mutation testing requires at least one passing baseline test; the current \
+                     filter/path selection matched zero non-skipped tests. Loosen `--match-test` / \
+                     `--match-contract` / `--match-path` or check the project layout."
+                );
+            }
+
+            // Explicit paths on --mutate cannot be combined with the --mutate-path
+            // glob filter: clap can't express this directly because --mutate takes
+            // an optional list of paths.
+            if !mutate.is_empty() && self.mutate_path.is_some() {
+                eyre::bail!(
+                    "`--mutate-path <PATTERN>` cannot be combined with explicit paths passed to `--mutate`; pass either paths or a glob pattern, not both"
+                );
+            }
+
+            // The mutation runner builds a single-pass `MultiContractRunner`
+            // (`runner.rs::compile_and_test_inner`) and does not honor inline
+            // per-test network annotations. If the project declares network
+            // overrides, running mutation testing would silently execute those
+            // tests on the wrong network and produce false survivors / kills.
+            // Bail with a clear error rather than do the wrong thing silently.
+            if !override_networks.is_empty() {
+                eyre::bail!(
+                    "Mutation testing does not yet support inline per-test network overrides \
+                     (found {} annotated network(s)). Re-run without `--mutate` or remove the \
+                     per-test network annotations.",
+                    override_networks.len()
+                );
+            }
+
+            // The mutation runner symlinks dependency directories (`lib`,
+            // `node_modules`, `dependencies`) into each per-mutant TempDir for
+            // performance — see `workspace::copy_project`. That isolation
+            // breaks down if tests can write to those shared trees, either via
+            // `vm.writeFile` (broad `fs_permissions`) or arbitrary `ffi` calls.
+            // Detect both up front so users aren't surprised by races or
+            // corruption of their real dependency tree.
+            use foundry_config::fs_permissions::FsAccessPermission;
+            if config_for_mutation.ffi {
+                eyre::bail!(
+                    "Mutation testing is unsafe with `ffi = true`: per-mutant workspaces share \
+                     symlinked dependency directories, and arbitrary FFI commands run by tests \
+                     can race or corrupt the real `lib`/`node_modules`/`dependencies` trees. \
+                     Disable ffi in your foundry.toml to run mutation tests."
+                );
+            }
+
+            // Only refuse write-capable `fs_permissions` whose path can actually
+            // reach one of the symlinked dependency trees. Scoped writes (e.g.
+            // `./out`, `./snapshots`) are safe because they target paths that
+            // never resolve into the shared `lib`/`node_modules`/`dependencies`
+            // trees.
+            let root = &config_for_mutation.root;
+            let canonicalize_through_existing_ancestor = |path: &Path| -> PathBuf {
+                let resolved =
+                    if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+                if let Ok(canon) = dunce::canonicalize(&resolved) {
+                    return canon;
+                }
+
+                let mut missing = Vec::new();
+                let mut ancestor = resolved.as_path();
+                while !ancestor.exists() {
+                    let Some(name) = ancestor.file_name() else { break };
+                    missing.push(name.to_owned());
+                    let Some(parent) = ancestor.parent() else { break };
+                    ancestor = parent;
+                }
+
+                let mut canon = dunce::canonicalize(ancestor).unwrap_or_else(|_| ancestor.into());
+                for component in missing.iter().rev() {
+                    canon.push(component);
+                }
+                canon
+            };
+
+            let mut shared_dep_dirs: Vec<PathBuf> = config_for_mutation
+                .libs
+                .iter()
+                .filter(|p| p.exists())
+                .map(|p| canonicalize_through_existing_ancestor(p))
+                .collect();
+            for dep_dir in ["node_modules", "dependencies"] {
+                let dep_path = root.join(dep_dir);
+                if dep_path.exists() && dep_path.is_dir() {
+                    shared_dep_dirs.push(canonicalize_through_existing_ancestor(&dep_path));
+                }
+            }
+
+            let effective_permission = |path: &Path| -> Option<FsAccessPermission> {
+                let mut max_path_len = 0;
+                let mut highest_permission = FsAccessPermission::None;
+
+                for perm in &config_for_mutation.fs_permissions.permissions {
+                    let permission_path = canonicalize_through_existing_ancestor(&perm.path);
+                    if path.starts_with(&permission_path) {
+                        let path_len = permission_path.components().count();
+                        if path_len > max_path_len {
+                            max_path_len = path_len;
+                            highest_permission = perm.access;
+                        } else if path_len == max_path_len {
+                            highest_permission = match (highest_permission, perm.access) {
+                                (FsAccessPermission::ReadWrite, _)
+                                | (FsAccessPermission::Read, FsAccessPermission::Write)
+                                | (FsAccessPermission::Write, FsAccessPermission::Read) => {
+                                    FsAccessPermission::ReadWrite
+                                }
+                                (FsAccessPermission::None, perm) => perm,
+                                (existing_perm, _) => existing_perm,
+                            };
+                        }
+                    }
+                }
+
+                (max_path_len > 0).then_some(highest_permission)
+            };
+
+            let grants_write = |path: &Path| {
+                matches!(
+                    effective_permission(path),
+                    Some(FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+                )
+            };
+
+            let unsafe_write_paths: Vec<&Path> = config_for_mutation
+                .fs_permissions
+                .permissions
+                .iter()
+                .filter(|perm| {
+                    matches!(perm.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+                })
+                .filter(|perm| {
+                    let perm_path = canonicalize_through_existing_ancestor(&perm.path);
+                    shared_dep_dirs.iter().any(|dep| {
+                        if perm_path.starts_with(dep) {
+                            grants_write(&perm_path)
+                        } else if dep.starts_with(&perm_path) {
+                            grants_write(dep)
+                        } else {
+                            false
+                        }
+                    })
+                })
+                .map(|p| p.path.as_path())
+                .collect();
+
+            if !unsafe_write_paths.is_empty() {
+                let paths = unsafe_write_paths
+                    .iter()
+                    .map(|p| format!("  - {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                eyre::bail!(
+                    "Mutation testing is unsafe with write-capable `fs_permissions` that can \
+                     reach the symlinked dependency trees (`lib`/`node_modules`/`dependencies`); \
+                     per-mutant workspaces share those trees, so `vm.writeFile` calls would race \
+                     against or corrupt your real dependencies. Restrict the following \
+                     `fs_permissions` entries to read-only or scope them away from dependency \
+                     paths:\n{paths}"
+                );
+            }
+
+            let json_output = shell::is_json();
+            let selected_sources_relative = self
+                .get_sources_to_compile(&config_for_mutation, filter)?
+                .into_iter()
+                .filter_map(|path| {
+                    path.strip_prefix(&config_for_mutation.root).ok().map(PathBuf::from)
+                })
+                .collect::<Vec<_>>();
+
+            let mutation_config = MutationRunConfig {
+                mutate_paths: mutate.clone(),
+                mutate_path_pattern: self.mutate_path.clone(),
+                mutate_contract_pattern: self.mutate_contract.clone(),
+                num_workers: self.mutation_jobs.unwrap_or(0),
+                show_progress: self.show_progress,
+                json_output,
+                // Carry the same filter args (--match-test, --match-contract,
+                // --match-path, positional path shorthand, --rerun, ...) and
+                // isolation flag the baseline actually used, so every mutant
+                // exercises the exact same test set under the same execution
+                // model. We pull from the materialized `filter`, not the raw
+                // CLI flags on `self`, because the baseline applies extras:
+                // the positional `forge test <path>` shorthand is folded into
+                // `path_pattern`, and `--rerun` injects last-run failures
+                // into `test_pattern`. Using `self.filter.clone()` would lose
+                // those and let mutant runs silently diverge from baseline.
+                filter_args: filter.args().clone(),
+                selected_sources_relative,
+                isolate: evm_opts_for_mutation.isolate,
+            };
+
+            let result = run_mutation_testing(
+                Arc::new(config_for_mutation.clone()),
+                output,
+                evm_opts_for_mutation.clone(),
+                mutation_config,
+            )
+            .await?;
+
+            if result.cancelled {
+                std::process::exit(130);
+            }
+
+            // Output JSON if requested
+            if json_output {
+                let json_output = result.summary.to_json_output(result.duration_secs);
+                sh_println!("{}", serde_json::to_string(&json_output)?)?;
+            }
+
+            outcome = TestOutcome::empty(None, true);
         }
 
         Ok(outcome)
@@ -715,8 +1158,14 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
+        let machine_mode = foundry_cli::is_machine();
+
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
+        // Machine mode is also a structured stream and must not interleave human output.
+        let silent = machine_mode
+            || self.gas_report && shell::is_json()
+            || self.summary && shell::is_json()
+            || self.mutate.is_some() && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
@@ -731,22 +1180,24 @@ impl TestArgs {
             } else {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
-            if total_tests == 0 {
-                sh_println!(
-                    "No tests found in project! Forge looks for functions that start with `test`"
-                )?;
-            } else {
-                let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                // Try to suggest a test when there's no match.
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    let test_name = test_pattern.as_str();
-                    // Filter contracts but not test functions.
-                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        write!(msg, "\nDid you mean `{suggestion}`?")?;
+            if !machine_mode {
+                if total_tests == 0 {
+                    sh_println!(
+                        "No tests found in project! Forge looks for functions that start with `test`"
+                    )?;
+                } else {
+                    let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                    // Try to suggest a test when there's no match.
+                    if let Some(test_pattern) = &filter.args().test_pattern {
+                        let test_name = test_pattern.as_str();
+                        // Filter contracts but not test functions.
+                        let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                        if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                            write!(msg, "\nDid you mean `{suggestion}`?")?;
+                        }
                     }
+                    sh_warn!("{msg}")?;
                 }
-                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
@@ -776,7 +1227,13 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && !self.summary && shell::is_json() {
+        // Agent stream wins over `--json`.
+        if self.mutate.is_none()
+            && !machine_mode
+            && !self.gas_report
+            && !self.summary
+            && shell::is_json()
+        {
             let mut results = runner.test_collect(filter)?;
             for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
@@ -811,6 +1268,7 @@ impl TestArgs {
         // In multi-pass mode the per-pass summary is suppressed; the merged summary is
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
+        let is_tempo_network = runner.tcfg.evm_opts.networks.is_tempo();
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -836,7 +1294,11 @@ impl TestArgs {
             .with_known_contracts(&known_contracts)
             .with_label_disabled(self.disable_labels)
             .with_verbosity(verbosity)
-            .with_chain_id(remote_chain.map(|c| c.id()));
+            .with_chain_id(remote_chain.map(|c| c.id()))
+            .with_tempo_hardfork(
+                (is_tempo_network || remote_chain.is_some_and(|chain| chain.is_tempo()))
+                    .then(|| config.evm_spec_id::<TempoHardfork>()),
+            );
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
@@ -927,6 +1389,10 @@ impl TestArgs {
                     }
                 }
 
+                if machine_mode {
+                    emit_test_result_event(&contract_name, name, result)?;
+                }
+
                 // We shouldn't break out of the outer loop directly here so that we finish
                 // processing the remaining tests and print the suite summary.
                 any_test_failed |= result.status == TestStatus::Failure;
@@ -939,6 +1405,14 @@ impl TestArgs {
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &mut result.traces {
                     if identify_addresses {
+                        if self.debug && !result.debug_bytecodes.is_empty() {
+                            let mut local_identifier = TraceIdentifiers::new()
+                                .with_local_and_bytecodes(
+                                    &known_contracts,
+                                    &result.debug_bytecodes,
+                                );
+                            decoder.identify(arena, &mut local_identifier);
+                        }
                         decoder.identify(arena, &mut identifier);
                     }
 
@@ -1122,6 +1596,17 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
+            if machine_mode {
+                for warning in &suite_result.warnings {
+                    emit_warning_event(&contract_name, warning)?;
+                }
+                // Terminator follows any record for the group; warning-only
+                // suites get a zero-count `suite_finished`.
+                if has_tests || !suite_result.warnings.is_empty() {
+                    emit_suite_finished_event(&contract_name, &suite_result)?;
+                }
+            }
+
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
@@ -1141,11 +1626,11 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !is_multi_pass && !self.summary && !shell::is_json() {
+        if !is_multi_pass && !self.summary && !shell::is_json() && !machine_mode {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() && !machine_mode {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
             sh_println!("{summary_report}")?;
         }
@@ -1172,9 +1657,13 @@ impl TestArgs {
     /// Loads and applies filter from file if only last test run failures performed.
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
-        if self.rerun {
-            filter.test_pattern = last_run_failures(config);
-        }
+        let rerun_failures = if self.rerun {
+            let failures = last_run_failures(config);
+            filter.test_pattern = failures.test_pattern;
+            failures.failures
+        } else {
+            None
+        };
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
                 bail!("Can not supply both --match-path and |path|");
@@ -1182,7 +1671,11 @@ impl TestArgs {
         } else {
             filter.path_pattern = self.path.clone();
         }
-        Ok(filter.merge_with_config(config))
+        let mut filter = filter.merge_with_config(config);
+        if let Some(failures) = rerun_failures {
+            filter.set_rerun_failures(failures);
+        }
+        Ok(filter)
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -1197,6 +1690,124 @@ impl TestArgs {
             Ok([config.src, config.test])
         })
     }
+}
+
+/// Terminal `forge test` envelope payload under `--machine`. Counts are
+/// aggregated across every suite; times are in milliseconds.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TestSummaryData {
+    pub suites: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub duration_ms: u128,
+}
+
+impl TestSummaryData {
+    pub fn from_outcome(outcome: &TestOutcome, wall_clock: Duration) -> Self {
+        Self {
+            suites: outcome.results.len(),
+            passed: outcome.passed(),
+            failed: outcome.failed(),
+            skipped: outcome.skipped(),
+            duration_ms: wall_clock.as_millis(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct TestResultEvent<'a> {
+    suite: &'a str,
+    name: &'a str,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    duration_ms: u128,
+}
+
+#[derive(serde::Serialize)]
+struct SuiteFinishedEvent<'a> {
+    suite: &'a str,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    duration_ms: u128,
+}
+
+#[derive(serde::Serialize)]
+struct WarningEvent<'a> {
+    suite: &'a str,
+    code: &'static str,
+    message: &'a str,
+}
+
+const fn status_str(status: TestStatus) -> &'static str {
+    match status {
+        TestStatus::Success => "passed",
+        TestStatus::Failure => "failed",
+        TestStatus::Skipped => "skipped",
+    }
+}
+
+fn emit_test_result_event(
+    suite: &str,
+    name: &str,
+    result: &crate::result::TestResult,
+) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "test_result",
+        TestResultEvent {
+            suite,
+            name,
+            status: status_str(result.status),
+            reason: result.reason.as_deref(),
+            duration_ms: result.duration.as_millis(),
+        },
+    )?;
+    Ok(())
+}
+
+fn emit_suite_finished_event(suite: &str, result: &SuiteResult) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "suite_finished",
+        SuiteFinishedEvent {
+            suite,
+            passed: result.passed(),
+            failed: result.failed(),
+            skipped: result.skipped(),
+            duration_ms: result.duration.as_millis(),
+        },
+    )?;
+    Ok(())
+}
+
+fn emit_warning_event(suite: &str, message: &str) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "warning",
+        WarningEvent { suite, code: foundry_cli::diagnostic::test::WARNING, message },
+    )?;
+    Ok(())
+}
+
+/// Emit a `compiler.solc.error` envelope and exit `Build (4)`. Shared by the
+/// precompile and main-compile sites under `--machine`.
+fn emit_machine_compile_error(output: &ProjectCompileOutput) -> ! {
+    let errors: Vec<JsonMessage> = output
+        .output()
+        .errors
+        .iter()
+        .filter(|e| e.is_error())
+        .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
+        .collect();
+    // Best-effort: bubbling on a broken stdout would demote exit `4` to `1`.
+    let _ = print_json(&JsonEnvelope::<()>::failure(errors));
+    std::process::exit(ExitCode::Build.to_i32());
 }
 
 impl Provider for TestArgs {
@@ -1228,6 +1839,13 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
+        if let Some(invariant_workers) = self.invariant_workers {
+            dict.insert(
+                "invariant".to_string(),
+                Dict::from([("workers".to_string(), Value::serialize(invariant_workers)?)]).into(),
+            );
+        }
+
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
@@ -1236,6 +1854,13 @@ impl Provider for TestArgs {
 
         if self.show_progress {
             dict.insert("show_progress".to_string(), true.into());
+        }
+
+        // Mutation-testing CLI overrides
+        if let Some(timeout) = self.mutation_timeout {
+            let mut mutation_dict = Dict::default();
+            mutation_dict.insert("timeout".to_string(), timeout.into());
+            dict.insert("mutation".to_string(), mutation_dict.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -1290,33 +1915,66 @@ fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
     }
 }
 
+struct LastRunFailures {
+    test_pattern: Option<regex::Regex>,
+    failures: Option<Vec<RerunFailure>>,
+}
+
 /// Load persisted filter (with last test run failures) from file.
-fn last_run_failures(config: &Config) -> Option<regex::Regex> {
-    match fs::read_to_string(&config.test_failures_file) {
-        Ok(filter) => Regex::new(&filter)
-            .inspect_err(|e| {
-                _ = sh_warn!(
-                    "failed to parse test filter from {:?}: {e}",
-                    config.test_failures_file
-                )
-            })
-            .ok(),
-        Err(_) => None,
+fn last_run_failures(config: &Config) -> LastRunFailures {
+    let Ok(filter) = fs::read_to_string(&config.test_failures_file) else {
+        return LastRunFailures { test_pattern: None, failures: None };
+    };
+
+    if let Ok(failures) = serde_json::from_str::<RerunFailures>(&filter) {
+        if failures.failures.is_empty() {
+            return LastRunFailures { test_pattern: None, failures: None };
+        }
+        let test_pattern = failures
+            .failures
+            .iter()
+            .map(|failure| regex::escape(&failure.test))
+            .collect::<Vec<_>>()
+            .join("|");
+        let test_pattern = Regex::new(&test_pattern).ok();
+        return LastRunFailures { test_pattern, failures: Some(failures.failures) };
     }
+
+    let test_pattern = Regex::new(&filter)
+        .inspect_err(|e| {
+            _ = sh_warn!("failed to parse test filter from {:?}: {e}", config.test_failures_file)
+        })
+        .ok();
+    LastRunFailures { test_pattern, failures: None }
 }
 
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let filter =
-            outcome.failures().flat_map(rerun_filter_matches).collect::<Vec<_>>().join("|");
-        let _ = fs::write(&config.test_failures_file, filter);
+        let failures = outcome
+            .results
+            .iter()
+            .flat_map(|(contract, suite)| {
+                suite.test_results.iter().filter(|(_, result)| result.status.is_failure()).flat_map(
+                    move |(test_name, test_result)| {
+                        rerun_filter_matches(test_name, test_result)
+                            .map(move |test| RerunFailure { contract: contract.clone(), test })
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let output = serde_json::to_string(&RerunFailures { version: 1, failures });
+        if let Ok(output) = output {
+            let _ = fs::write(&config.test_failures_file, output);
+        }
     }
 }
 
 fn rerun_filter_matches<'a>(
-    (test_name, test_result): (&'a String, &'a TestResult),
-) -> impl Iterator<Item = &'a str> {
+    test_name: &'a str,
+    test_result: &'a TestResult,
+) -> impl Iterator<Item = String> + 'a {
     let has_predicate_failures =
         test_result.invariant_failures.iter().any(|failure| failure.predicate_name().is_some());
     let predicate_failures =
@@ -1324,7 +1982,9 @@ fn rerun_filter_matches<'a>(
 
     let fallback = test_name.is_any_test().then(|| test_name.split('(').next()).flatten();
 
-    predicate_failures.chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
+    predicate_failures
+        .chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
+        .map(str::to_owned)
 }
 
 /// Generate test report in JUnit XML report format.
@@ -1555,6 +2215,56 @@ mod tests {
             TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
         assert_eq!(args.fuzz_run, Some(10));
         assert_eq!(args.fuzz_worker, Some(2));
+    }
+
+    #[test]
+    fn invariant_workers() {
+        let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "4"]);
+        assert_eq!(
+            args.invariant_workers,
+            Some(InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap()))
+        );
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(
+            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
+            InvariantWorkers::Fixed(std::num::NonZeroUsize::new(4).unwrap())
+        );
+    }
+
+    #[test]
+    fn invariant_workers_accepts_auto() {
+        let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "auto"]);
+        assert_eq!(args.invariant_workers, Some(InvariantWorkers::Auto));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(
+            figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
+            InvariantWorkers::Auto
+        );
+    }
+
+    #[test]
+    fn invariant_workers_env_accepts_auto() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = std::env::var_os("FOUNDRY_INVARIANT_WORKERS");
+        unsafe {
+            std::env::set_var("FOUNDRY_INVARIANT_WORKERS", "auto");
+        }
+
+        let args = TestArgs::try_parse_from(["foundry-cli"]);
+
+        unsafe {
+            if let Some(previous) = previous {
+                std::env::set_var("FOUNDRY_INVARIANT_WORKERS", previous);
+            } else {
+                std::env::remove_var("FOUNDRY_INVARIANT_WORKERS");
+            }
+        }
+
+        assert_eq!(args.unwrap().invariant_workers, Some(InvariantWorkers::Auto));
     }
 
     #[test]

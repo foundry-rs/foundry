@@ -1,4 +1,5 @@
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 // Test evm version switch during tests / scripts.
@@ -245,6 +246,24 @@ contract TempoDefaultEvmVersionTest is Test {{
     );
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
+});
+
+// Validates T5 implicit-approval wiring: the cheatcodes, the AddressRegistry selector,
+// unchanged standard approve/transferFrom behavior, an implicit pull through StablecoinDEX,
+// and a non-implicit spender control case.
+forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+        // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
+        // here is what activates the T5 precompiles and selectors. `vm.setEvmVersion` only
+        // flips the cheatcode-visible spec.
+        config.hardfork = Some(FoundryHardfork::Tempo(TempoHardfork::T5));
+    });
+
+    let fixture = include_str!("../../fixtures/TempoImplicitApproval.t.sol");
+    prj.add_test("TempoImplicitApproval.t.sol", fixture);
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"]).assert_success();
 });
 
 // Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:

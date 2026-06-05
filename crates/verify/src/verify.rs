@@ -327,20 +327,20 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        sh_status!("Start verifying contract `{}` deployed on {chain}", self.address)?;
         if let Some(version) = &self.evm_version {
-            sh_println!("EVM version: {version}")?;
+            sh_status!("EVM version: {version}")?;
         }
         if let Some(version) = &self.compiler_version {
-            sh_println!("Compiler version: {version}")?;
+            sh_status!("Compiler version: {version}")?;
         }
         if let Some(optimizations) = &self.num_of_optimizations {
-            sh_println!("Optimizations:    {optimizations}")?
+            sh_status!("Optimizations:    {optimizations}")?
         }
         if let Some(args) = &self.constructor_args
             && !args.is_empty()
         {
-            sh_println!("Constructor args: {args}")?
+            sh_status!("Constructor args: {args}")?
         }
         let using_etherscan = resolved.is_etherscan();
         resolved
@@ -492,7 +492,7 @@ impl VerifyArgs {
             let provider = utils::get_provider(&config)?;
             let code = provider.get_code_at(self.address).await?;
 
-            let output = ProjectCompiler::new().compile(&project)?;
+            let output = ProjectCompiler::new().quiet(true).compile(&project)?;
             let contracts = ContractsByArtifact::new(
                 output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
             );
@@ -557,10 +557,7 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        sh_println!(
-            "Checking verification status on {}",
-            self.etherscan.chain.unwrap_or_default()
-        )?;
+        sh_status!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default())?;
         self.verifier
             .effective_type()
             .client(
