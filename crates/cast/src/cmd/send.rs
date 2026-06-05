@@ -119,8 +119,8 @@ impl SendTxArgs {
 
     pub async fn run_generic<N: Network>(
         self,
-        pre_resolved_signer: Option<WalletSigner>,
-        access_key: Option<TempoAccessKeyConfig>,
+        mut pre_resolved_signer: Option<WalletSigner>,
+        mut access_key: Option<TempoAccessKeyConfig>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -216,17 +216,14 @@ impl SendTxArgs {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
-        let session = if has_session {
-            tx.tempo
+        if has_session
+            && let Some(session) = tx
+                .tempo
                 .session_signer_for_wallet(&send_tx.eth.wallet, provider.get_chain_id().await?)?
-        } else {
-            None
-        };
-        let (pre_resolved_signer, access_key) = if let Some(session) = session {
-            (Some(session.signer), Some(session.access_key))
-        } else {
-            (pre_resolved_signer, access_key)
-        };
+        {
+            pre_resolved_signer = Some(session.signer);
+            access_key = Some(session.access_key);
+        }
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
