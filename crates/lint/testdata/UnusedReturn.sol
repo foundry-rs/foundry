@@ -94,35 +94,42 @@ contract UnusedReturn {
         (IOracle(oracleAddr)).getPrice(t); //~WARN: Return value of an external call is not used
     }
 
-    // SHOULD FAIL: return value captured but never read
+    // SHOULD FAIL: tuple return has an ignored slot
     function bad7(address t) external {
-        uint256 price = oracle.getPrice(t); //~WARN: Return value of an external call is not used
-        price = 1;
+        (uint256 price, ) = oracle.latest(t); //~WARN: Return value of an external call is not used
+        price = price + 1;
     }
 
-    // SHOULD FAIL: bool return captured but never read
-    function bad8() external {
-        bool ok = oracle.update(); //~WARN: Return value of an external call is not used
-        ok = true;
+    // SHOULD FAIL: tuple assignment has an ignored slot
+    function bad8(address t) external {
+        uint256 price;
+        (price, ) = oracle.latest(t); //~WARN: Return value of an external call is not used
+        price = price + 1;
     }
 
-    // SHOULD FAIL: tuple return values captured but never read
-    function bad9(address t) external {
-        (uint256 price, bool ok) = oracle.latest(t); //~WARN: Return value of an external call is not used
+    // SHOULD PASS: captured return alone is considered used
+    function good7(address t) external {
+        uint256 price = oracle.getPrice(t);
         price = 1;
-        ok = true;
     }
 
     // SHOULD PASS: captured return is read before overwrite
-    function good7(address t) external returns (uint256) {
+    function good8(address t) external returns (uint256) {
         uint256 price = oracle.getPrice(t);
         uint256 out = price;
         price = 1;
         return out;
     }
 
+    // SHOULD PASS: captured return read on a branch is still used
+    function good9(address t, bool cond) external returns (uint256) {
+        uint256 price = oracle.getPrice(t);
+        if (cond) return price;
+        return 0;
+    }
+
     // SHOULD PASS: tuple return values are read
-    function good8(address t) external returns (uint256) {
+    function good10(address t) external returns (uint256) {
         (uint256 price, bool ok) = oracle.latest(t);
         uint256 out = price;
         bool ready = ok;
@@ -131,7 +138,7 @@ contract UnusedReturn {
     }
 
     // SHOULD PASS: captured ERC20 transfer remains excluded
-    function good9(address to, uint256 amt) external {
+    function good11(address to, uint256 amt) external {
         bool ok = token.transfer(to, amt);
         ok = true;
     }
