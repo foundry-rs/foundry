@@ -1456,6 +1456,7 @@ pub enum TestKind {
         #[serde(default = "default_invariant_workers")]
         workers: usize,
         metrics: Map<String, InvariantMetrics>,
+        #[serde(default)]
         gas_fuzz: bool,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.

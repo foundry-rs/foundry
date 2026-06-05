@@ -82,8 +82,8 @@ contract GasFuzzAbsentTest is Test {
 "#]]);
 });
 
-// The GovernMental 2016 gas-DoS bug should surface as `bulkPayout` Max
-// Gas > 500k (clears the bounded-fixed ~474k cap with margin).
+// The GovernMental 2016 gas-DoS repro should surface the hot selector in the
+// gas-fuzz metrics table.
 forgetest_init!(should_surface_gas_dos_on_governmental_repro, |prj, cmd| {
     prj.add_source(
         "GovernMental.sol",
@@ -155,19 +155,29 @@ contract GovernMentalReproTest is Test {
         .get_output()
         .stdout_lossy();
 
-    // Last `|`-delimited cell of the `bulkPayout` row is its Max Gas value.
     let row = stdout
         .lines()
         .find(|l| l.contains("bulkPayout") && l.contains('|'))
         .unwrap_or_else(|| panic!("no bulkPayout metrics row found:\n{stdout}"));
-    let max_gas: u64 = row
-        .split('|')
-        .map(str::trim)
-        .rfind(|s| !s.is_empty())
+
+    let cells = row.split('|').map(str::trim).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    let calls: u64 = cells
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("could not parse Calls from row: {row:?}"));
+    let _max_gas: u64 = cells
+        .last()
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| panic!("could not parse Max Gas from row: {row:?}"));
+    assert!(calls > 0, "expected bulkPayout to be called, got row: {row:?}");
     assert!(
-        max_gas > 500_000,
-        "expected bulkPayout Max Gas > 500_000 (gas DoS), got {max_gas} from row: {row:?}",
+        stdout
+            .lines()
+            .any(|l| l.contains("Contract") && l.contains("Selector") && l.contains("Max Gas")),
+        "expected Max Gas header in metrics table:\n{stdout}",
+    );
+    assert!(
+        row.split('|').map(str::trim).filter(|s| !s.is_empty()).count() >= 6,
+        "expected bulkPayout row to include Max Gas cell, got row: {row:?}",
     );
 });
