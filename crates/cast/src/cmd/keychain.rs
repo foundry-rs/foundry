@@ -302,11 +302,18 @@ pub enum KeychainSubcommand {
         #[command(subcommand)]
         command: KeychainPolicySubcommand,
     },
+
+    /// Build or sign Tempo key authorization artifacts.
+    #[command(visible_alias = "authz")]
+    Authorization {
+        #[command(subcommand)]
+        command: KeychainAuthorizationSubcommand,
+    },
 }
 
-/// Tempo signed key-authorization helpers.
+/// Tempo key-authorization artifact helpers.
 #[derive(Debug, Parser)]
-pub enum KeyAuthSubcommand {
+pub enum KeychainAuthorizationSubcommand {
     /// RLP-encode an unsigned Tempo key authorization.
     Encode {
         #[command(flatten)]
@@ -326,7 +333,8 @@ pub enum KeyAuthSubcommand {
     },
 }
 
-/// Common fields for `cast key-auth encode` and `cast key-auth sign`.
+/// Common fields for `cast keychain authorization encode` and
+/// `cast keychain authorization sign`.
 #[derive(Debug, Parser)]
 pub struct KeyAuthArgs {
     /// Chain ID for replay protection.
@@ -711,11 +719,12 @@ impl KeychainSubcommand {
                 run_remove_scope(key_address, target, tx, send_tx).await
             }
             Self::Policy { command } => command.run().await,
+            Self::Authorization { command } => command.run().await,
         }
     }
 }
 
-impl KeyAuthSubcommand {
+impl KeychainAuthorizationSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::Encode { authorization } => run_key_auth_encode(authorization),
@@ -3806,6 +3815,48 @@ mod tests {
                 assert_eq!(token, PATH_USD_ADDRESS);
                 assert_eq!(amount, U256::from(123));
                 assert_eq!(period, None);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_keychain_authorization_encode_parses() {
+        let key = "0x1111111111111111111111111111111111111111";
+        let token = "0x20c0000000000000000000000000000000000000";
+
+        let command = KeychainSubcommand::try_parse_from([
+            "keychain",
+            "authorization",
+            "encode",
+            key,
+            "--chain-id",
+            "4217",
+            "--key-type",
+            "secp256k1",
+            "--expiry",
+            "1782647677",
+            "--limit",
+            "0x20c0000000000000000000000000000000000000:10000000",
+        ])
+        .unwrap();
+
+        match command {
+            KeychainSubcommand::Authorization {
+                command:
+                    KeychainAuthorizationSubcommand::Encode {
+                        authorization:
+                            KeyAuthArgs { chain_id, key_address, key_type, expiry, limits, .. },
+                    },
+            } => {
+                assert_eq!(chain_id, 4217);
+                assert_eq!(key_address, Address::from_str(key).unwrap());
+                assert_eq!(key_type, AuthSignatureType::Secp256k1);
+                assert_eq!(expiry, Some(1_782_647_677));
+                assert_eq!(limits.len(), 1);
+                assert_eq!(limits[0].token, Address::from_str(token).unwrap());
+                assert_eq!(limits[0].limit, U256::from(10_000_000));
+                assert_eq!(limits[0].period, 0);
             }
             other => panic!("unexpected command: {other:?}"),
         }
