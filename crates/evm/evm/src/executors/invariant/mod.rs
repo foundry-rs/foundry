@@ -26,7 +26,7 @@ use foundry_evm_core::{
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
-    BasicTxDetails, FuzzCase, FuzzFixtures, FuzzedCases,
+    BasicTxDetails, FuzzCase, FuzzFixtures,
     invariant::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
@@ -356,8 +356,10 @@ fn build_invariant_progress_json<M: Serialize>(
 
 /// Contains data collected during invariant test runs.
 struct InvariantTestData {
-    // Consumed gas and calldata of every successful fuzz call.
-    fuzz_cases: Vec<FuzzedCases>,
+    // Number of completed invariant runs.
+    runs: usize,
+    // Number of completed fuzzed calls across all invariant runs.
+    calls: usize,
     // Data related to reverts or failed assertions of the test.
     failures: InvariantFailures,
     // Calldata in the last invariant run.
@@ -400,7 +402,8 @@ impl InvariantTest {
         branch_runner: TestRunner,
     ) -> Self {
         let test_data = InvariantTestData {
-            fuzz_cases: vec![],
+            runs: 0,
+            calls: 0,
             failures,
             last_run_inputs: vec![],
             gas_report_traces: vec![],
@@ -460,7 +463,8 @@ impl InvariantTest {
                 .gas_report_traces
                 .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
         }
-        self.test_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
+        self.test_data.runs += 1;
+        self.test_data.calls += run.fuzz_runs.len();
 
         // Revert state to not persist values between runs.
         self.fuzz_state.revert();
@@ -1228,7 +1232,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let worker_result = InvariantFuzzTestResult::new(
             errors,
             handler_errors,
-            result.fuzz_cases,
+            result.runs,
+            result.calls,
+            Vec::new(),
             reverts,
             result.last_run_inputs,
             result.gas_report_traces,

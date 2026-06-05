@@ -274,6 +274,8 @@ fn fold_outputs(
     let workers = outputs.len();
     let mut errors = HashMap::default();
     let mut handler_errors = HashMap::default();
+    let mut runs = 0;
+    let mut calls = 0;
     let mut cases = Vec::new();
     let mut reverts = 0;
     let mut last_run_inputs = Vec::new();
@@ -293,6 +295,8 @@ fn fold_outputs(
         }
         merge_handler_errors(&mut handler_errors, result.handler_errors);
         corpus_entries.extend(worker_entries);
+        runs += result.runs;
+        calls += result.calls;
         cases.extend(result.cases);
         reverts += result.reverts;
         if !result.last_run_inputs.is_empty() {
@@ -313,6 +317,8 @@ fn fold_outputs(
         InvariantFuzzTestResult::new(
             errors,
             handler_errors,
+            runs,
+            calls,
             cases,
             reverts,
             last_run_inputs,
@@ -443,6 +449,8 @@ mod tests {
         InvariantFuzzTestResult::new(
             HashMap::default(),
             HashMap::default(),
+            0,
+            0,
             Vec::new(),
             reverts,
             Vec::new(),
@@ -490,6 +498,8 @@ mod tests {
     ) -> InvariantFuzzTestResult {
         let mut result = empty_result(reverts, failed_corpus_replays);
         result.cases.push(FuzzedCases::new(vec![FuzzCase { gas: case_gas, stipend: 0 }]));
+        result.runs = result.cases.len();
+        result.calls = result.cases.iter().map(|cases| cases.cases().len()).sum();
         result.last_run_inputs = vec![basic_tx(last_input_sender)];
         result.gas_report_traces.push(vec![CallTraceArena::default()]);
         result.line_coverage = Some(hit_maps(7, coverage_hits));
@@ -726,6 +736,30 @@ mod tests {
     }
 
     #[test]
+    fn aggregator_preserves_run_and_call_counts_without_case_payloads() {
+        let spec = InvariantCampaignSpec::new(3);
+        let plans = [
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 2 },
+        ];
+        let mut first = empty_result(0, 0);
+        first.runs = 1;
+        first.calls = 1000;
+        let mut second = empty_result(0, 0);
+        second.runs = 2;
+        second.calls = 2000;
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(InvariantWorkerOutput::new(plans[1], second));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], first));
+        let result = aggregator.finish().unwrap();
+
+        assert_eq!(result.runs, 3);
+        assert_eq!(result.calls, 3000);
+        assert!(result.cases.is_empty());
+    }
+
+    #[test]
     fn timeout_aggregator_accepts_partial_outputs_with_range_gaps() {
         fn result_with_cases(
             gases: &[u64],
@@ -736,6 +770,8 @@ mod tests {
                 .iter()
                 .map(|&gas| FuzzedCases::new(vec![FuzzCase { gas, stipend: 0 }]))
                 .collect();
+            result.runs = result.cases.len();
+            result.calls = result.cases.iter().map(|cases| cases.cases().len()).sum();
             result.last_run_inputs = gases.last().map_or_else(Vec::new, |_| vec![basic_tx(0x44)]);
             result
         }
