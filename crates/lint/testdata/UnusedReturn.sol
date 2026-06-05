@@ -5,6 +5,7 @@ pragma solidity ^0.8.20;
 
 interface IOracle {
     function getPrice(address token) external returns (uint256);
+    function latest(address token) external returns (uint256, bool);
     function update() external returns (bool);
     function noReturn() external;
 }
@@ -91,5 +92,47 @@ contract UnusedReturn {
     // SHOULD FAIL: parenthesized interface cast receiver
     function bad6(address oracleAddr, address t) external {
         (IOracle(oracleAddr)).getPrice(t); //~WARN: Return value of an external call is not used
+    }
+
+    // SHOULD FAIL: return value captured but never read
+    function bad7(address t) external {
+        uint256 price = oracle.getPrice(t); //~WARN: Return value of an external call is not used
+        price = 1;
+    }
+
+    // SHOULD FAIL: bool return captured but never read
+    function bad8() external {
+        bool ok = oracle.update(); //~WARN: Return value of an external call is not used
+        ok = true;
+    }
+
+    // SHOULD FAIL: tuple return values captured but never read
+    function bad9(address t) external {
+        (uint256 price, bool ok) = oracle.latest(t); //~WARN: Return value of an external call is not used
+        price = 1;
+        ok = true;
+    }
+
+    // SHOULD PASS: captured return is read before overwrite
+    function good7(address t) external returns (uint256) {
+        uint256 price = oracle.getPrice(t);
+        uint256 out = price;
+        price = 1;
+        return out;
+    }
+
+    // SHOULD PASS: tuple return values are read
+    function good8(address t) external returns (uint256) {
+        (uint256 price, bool ok) = oracle.latest(t);
+        uint256 out = price;
+        bool ready = ok;
+        if (ready) return out;
+        return 0;
+    }
+
+    // SHOULD PASS: captured ERC20 transfer remains excluded
+    function good9(address to, uint256 amt) external {
+        bool ok = token.transfer(to, amt);
+        ok = true;
     }
 }
