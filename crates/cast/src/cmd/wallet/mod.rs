@@ -25,8 +25,10 @@ use vanity::VanityArgs;
 pub mod list;
 use list::ListArgs;
 
+mod process_tree;
+
 pub mod session;
-use session::SessionSubcommands;
+use session::SessionArgs;
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -230,10 +232,7 @@ pub enum WalletSubcommands {
     List(ListArgs),
 
     /// Manage temporary Tempo wallet sessions.
-    Session {
-        #[command(subcommand)]
-        command: SessionSubcommands,
-    },
+    Session(SessionArgs),
 
     /// Remove a wallet from the keystore.
     ///
@@ -779,8 +778,8 @@ flag to set your key via:
             Self::List(cmd) => {
                 cmd.run().await?;
             }
-            Self::Session { command } => {
-                command.run().await?;
+            Self::Session(args) => {
+                args.run().await?;
             }
             Self::Remove { name, dir, unsafe_password } => {
                 let dir = if let Some(path) = dir {
@@ -987,7 +986,7 @@ flag to set your key via:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{session::SessionSubcommands, *};
     use alloy_primitives::{address, keccak256};
     use std::str::FromStr;
 
@@ -1130,15 +1129,15 @@ mod tests {
         ]);
 
         match args {
-            WalletSubcommands::Session { command } => match command {
-                SessionSubcommands::Create {
+            WalletSubcommands::Session(args) => match args.command {
+                Some(SessionSubcommands::Create {
                     root_account,
                     chain_id,
                     expires,
                     scope,
                     spend_limits,
                     wallet,
-                } => {
+                }) => {
                     assert_eq!(
                         root_account,
                         address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
@@ -1174,8 +1173,8 @@ mod tests {
             );
 
             match args {
-                WalletSubcommands::Session { command } => match command {
-                    SessionSubcommands::Revoke { session_id, local, .. } => {
+                WalletSubcommands::Session(args) => match args.command {
+                    Some(SessionSubcommands::Revoke { session_id, local, .. }) => {
                         assert_eq!(session_id, B256::from([0x11; 32]));
                         assert_eq!(local, expected_local);
                     }
@@ -1183,6 +1182,54 @@ mod tests {
                 },
                 _ => panic!("expected WalletSubcommands::Session"),
             }
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_session_run_for_command() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "session",
+            "--root",
+            "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "--chain-id",
+            "4217",
+            "--expires",
+            "10m",
+            "--target",
+            "0x20c0000000000000000000000000000000000001",
+            "--selector",
+            "transfer(address,uint256)",
+            "--spend-limit",
+            "PathUSD=0",
+            "--for",
+            "forge script Deploy --broadcast",
+            "--private-key",
+            "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0",
+        ]);
+
+        match args {
+            WalletSubcommands::Session(args) => {
+                assert!(args.command.is_none());
+                assert_eq!(
+                    args.root_account,
+                    Some(address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"))
+                );
+                assert_eq!(args.send_tx.eth.etherscan.chain.map(|chain| chain.id()), Some(4217));
+                assert_eq!(args.expires, Some(600));
+                assert_eq!(
+                    args.target,
+                    Some(address!("0x20c0000000000000000000000000000000000001"))
+                );
+                assert_eq!(args.selectors.len(), 1);
+                assert_eq!(args.spend_limits.len(), 1);
+                assert_eq!(args.for_command.as_deref(), Some("forge script Deploy --broadcast"));
+                assert_eq!(
+                    args.send_tx.eth.wallet.raw.private_key.as_deref(),
+                    Some("0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0")
+                );
+            }
+            _ => panic!("expected WalletSubcommands::Session"),
         }
     }
 
