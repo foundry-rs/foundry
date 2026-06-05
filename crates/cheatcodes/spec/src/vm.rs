@@ -931,6 +931,16 @@ interface Vm {
         external
         returns (bytes memory data);
 
+    /// Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+
+    /// Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params)
+        external
+        returns (string memory data);
+
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)

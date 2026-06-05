@@ -2114,6 +2114,37 @@ access list:
 "#]]);
 });
 
+casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let stderr = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "0x0000000000000000000000000000000000000001",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--access-list",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "2",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("Error: max priority fee per gas (2) cannot exceed max fee per gas (1)"),
+        "{stderr}"
+    );
+});
+
 casttest!(logs_topics, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
     cmd.args([

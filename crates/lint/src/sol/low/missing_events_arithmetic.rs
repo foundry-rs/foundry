@@ -41,20 +41,30 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
-        let arithmetic_vars = vars_used_in_unprotected_arithmetic(hir, contract, &candidate_vars);
+        let mut protected_funcs = HashSet::new();
+        let mut protected_entry_points = Vec::new();
+        for func_id in contract.all_functions() {
+            let func = hir.function(func_id);
+            if !is_external_function(func) || !is_protected(hir, func_id, func) {
+                continue;
+            }
+
+            protected_funcs.insert(func_id);
+            if !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View) {
+                protected_entry_points.push(func_id);
+            }
+        }
+        if protected_entry_points.is_empty() {
+            return;
+        }
+
+        let arithmetic_vars =
+            vars_used_in_unprotected_arithmetic(hir, contract, &candidate_vars, &protected_funcs);
         if arithmetic_vars.is_empty() {
             return;
         }
 
-        for func_id in contract.all_functions() {
-            let func = hir.function(func_id);
-            if !is_external_function(func)
-                || matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-                || !is_protected(hir, func_id, func)
-            {
-                continue;
-            }
-
+        for func_id in protected_entry_points {
             let mut analyzer = WriteAnalyzer::new(hir, &arithmetic_vars);
             let writes = analyzer.analyze_entry_point(func_id);
             let mut emitted = HashSet::new();
@@ -101,12 +111,13 @@ fn vars_used_in_unprotected_arithmetic<'hir>(
     hir: &'hir hir::Hir<'hir>,
     contract: &hir::Contract<'hir>,
     candidate_vars: &HashSet<VariableId>,
+    protected_funcs: &HashSet<FunctionId>,
 ) -> HashSet<VariableId> {
     let mut used = HashSet::new();
 
     for func_id in contract.all_functions() {
         let func = hir.function(func_id);
-        if !is_external_function(func) || is_protected(hir, func_id, func) {
+        if !is_external_function(func) || protected_funcs.contains(&func_id) {
             continue;
         }
 
