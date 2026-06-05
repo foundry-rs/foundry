@@ -304,6 +304,14 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, false);
             return Ok(false);
         }
+        if constraints_prefer_hard_arith_fallback_first(&smt_constraints)
+            && validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some()
+        {
+            self.heuristic_witnesses += 1;
+            trace!("is_sat: validated hard arithmetic fallback model before solver");
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
+        }
         let output = match self.query_normalized(&smt_constraints, false, constraints) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
