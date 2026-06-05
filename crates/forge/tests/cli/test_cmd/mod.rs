@@ -3088,13 +3088,13 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // Tests that --opcodes properly errors (fails early) with wrong opcode names
-forgetest_init!(invalid_opcode_name, |prj, cmd| {
+forgetest_init!(opcodes_invalid_name, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--opcodes", "BOGUS"])
         .assert_failure()
         .stderr_eq(str![[r#"
 ...
-error: invalid value 'BOGUS' for '--opcodes <OPCODES>...': invalid opcode: BOGUS
+error: invalid value 'BOGUS' for '--opcodes <OPCODES>': invalid opcode: BOGUS
 
 For more information, try '--help'.
 
@@ -3109,6 +3109,40 @@ forgetest_init!(opcodes_not_enough_verbosity, |prj, cmd| {
         .stderr_eq(str![[r#"
 ...
 Error: Not enough verbosity. Use -vvvvv to show opcodes.
+
+"#]]);
+});
+
+// Tests that the test file path is not swallowed by the --opcodes flag
+forgetest_init!(opcodes_path_after_flag, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--opcodes", "SSTORE", "test/Counter.t.sol"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [137242] CounterTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [2592] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [28783] CounterTest::test_Increment()
+    ├─ [22418] Counter::increment()
+    │   ├─ [20000] SSTORE 0 <- (1)
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
