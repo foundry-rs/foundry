@@ -2,7 +2,28 @@ use super::*;
 
 /// Normalizes path constraints into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_constraints_for_solver(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
-    constraints.iter().cloned().map(normalize_bool_for_solver).collect()
+    let mut normalized = Vec::with_capacity(constraints.len());
+    for constraint in constraints.iter().cloned().map(normalize_bool_for_solver) {
+        if matches!(constraint, BoolExpr::Const(false)) {
+            return vec![BoolExpr::Const(false)];
+        }
+        collect_normalized_conjunct(constraint, &mut normalized);
+    }
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn collect_normalized_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
+    match expr {
+        BoolExpr::Const(true) => {}
+        BoolExpr::And(values) => {
+            for value in values {
+                collect_normalized_conjunct(value, out);
+            }
+        }
+        value => out.push(value),
+    }
 }
 
 /// Normalizes one boolean expression into an equivalent, solver-friendlier form.

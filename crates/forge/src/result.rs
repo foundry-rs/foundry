@@ -1263,10 +1263,12 @@ impl TestResult {
         self.kind = TestKind::Symbolic {
             paths: stats.paths,
             solver_queries: stats.solver_queries,
+            smt_queries: stats.smt_queries,
             sat_queries: stats.sat_queries,
             model_queries: stats.model_queries,
             sat_cache_hits: stats.sat_cache_hits,
             model_cache_hits: stats.model_cache_hits,
+            heuristic_witnesses: stats.heuristic_witnesses,
             solver_time_ms: stats.solver_time_ms,
         };
         self.status = if success { TestStatus::Success } else { TestStatus::Failure };
@@ -1399,10 +1401,12 @@ pub enum TestKindReport {
     Symbolic {
         paths: usize,
         solver_queries: usize,
+        smt_queries: usize,
         sat_queries: usize,
         model_queries: usize,
         sat_cache_hits: usize,
         model_cache_hits: usize,
+        heuristic_witnesses: usize,
         solver_time_ms: u64,
     },
     /// Showmap corpus replay (no campaign performed).
@@ -1455,15 +1459,17 @@ impl fmt::Display for TestKindReport {
             Self::Symbolic {
                 paths,
                 solver_queries,
+                smt_queries,
                 sat_queries,
                 model_queries,
                 sat_cache_hits,
                 model_cache_hits,
+                heuristic_witnesses,
                 solver_time_ms,
             } => {
                 write!(
                     f,
-                    "(paths: {paths}, queries: {solver_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), solver: {solver_time_ms}ms)"
+                    "(paths: {paths}, queries: {solver_queries}, smt: {smt_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), hard-arith: {heuristic_witnesses}, solver: {solver_time_ms}ms)"
                 )
             }
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
@@ -1527,6 +1533,8 @@ pub enum TestKind {
         paths: usize,
         solver_queries: usize,
         #[serde(default)]
+        smt_queries: usize,
+        #[serde(default)]
         sat_queries: usize,
         #[serde(default)]
         model_queries: usize,
@@ -1534,6 +1542,8 @@ pub enum TestKind {
         sat_cache_hits: usize,
         #[serde(default)]
         model_cache_hits: usize,
+        #[serde(default)]
+        heuristic_witnesses: usize,
         #[serde(default)]
         solver_time_ms: u64,
     },
@@ -1600,18 +1610,22 @@ impl TestKind {
             Self::Symbolic {
                 paths,
                 solver_queries,
+                smt_queries,
                 sat_queries,
                 model_queries,
                 sat_cache_hits,
                 model_cache_hits,
+                heuristic_witnesses,
                 solver_time_ms,
             } => TestKindReport::Symbolic {
                 paths: *paths,
                 solver_queries: *solver_queries,
+                smt_queries: *smt_queries,
                 sat_queries: *sat_queries,
                 model_queries: *model_queries,
                 sat_cache_hits: *sat_cache_hits,
                 model_cache_hits: *model_cache_hits,
+                heuristic_witnesses: *heuristic_witnesses,
                 solver_time_ms: *solver_time_ms,
             },
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {

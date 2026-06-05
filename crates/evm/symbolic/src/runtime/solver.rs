@@ -158,6 +158,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     model_queries: usize,
     sat_cache_hits: usize,
     model_cache_hits: usize,
+    smt_queries: usize,
     solver_time: Duration,
 }
 
@@ -186,6 +187,7 @@ impl SmtLibSubprocessSolver {
             model_queries: 0,
             sat_cache_hits: 0,
             model_cache_hits: 0,
+            smt_queries: 0,
             solver_time: Duration::ZERO,
         }
     }
@@ -207,10 +209,12 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         SymbolicStats {
             paths: 0,
             solver_queries: self.queries,
+            smt_queries: self.smt_queries,
             sat_queries: self.sat_queries,
             model_queries: self.model_queries,
             sat_cache_hits: self.sat_cache_hits,
             model_cache_hits: self.model_cache_hits,
+            heuristic_witnesses: self.heuristic_witnesses,
             solver_time_ms: self.solver_time.as_millis().try_into().unwrap_or(u64::MAX),
         }
     }
@@ -273,6 +277,12 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             trace!(result, "is_sat: normalized cache hit");
             return Ok(*result);
         }
+        if self.has_cached_unsat_subset(&cache_key) {
+            self.sat_cache_hits += 1;
+            trace!("is_sat: normalized unsat subset cache hit");
+            self.cache_sat_result(cache_key, false);
+            return Ok(false);
+        }
 
         self.reserve_query()?;
         self.record_query();
@@ -284,6 +294,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
+        if constraints_are_directly_unsat(&smt_constraints) {
+            trace!("is_sat: direct contradiction");
+            self.cache_sat_result(cache_key, false);
+            return Ok(false);
+        }
         if product_monotonic_unsat_normalized(&smt_constraints) {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
@@ -292,9 +307,10 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         let output = match self.query_normalized(&smt_constraints, false, constraints) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
-                if hard_arith_fallback_model(&smt_constraints).is_some() {
+                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
                     self.heuristic_witnesses += 1;
-                    trace!("is_sat: hard arithmetic fallback model after solver unknown");
+                    trace!("is_sat: validated hard arithmetic fallback model after solver unknown");
+                    self.cache_sat_result(cache_key, true);
                     return Ok(true);
                 }
                 return Err(SymbolicError::SolverUnknown);
@@ -311,8 +327,9 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
                 Ok(false)
             }
             "unknown" => {
-                if hard_arith_fallback_model(&smt_constraints).is_some() {
+                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
                     self.heuristic_witnesses += 1;
+                    self.cache_sat_result(cache_key, true);
                     Ok(true)
                 } else {
                     Err(SymbolicError::SolverUnknown)
@@ -334,6 +351,12 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         if self.sat_cache.get(&cache_key) == Some(&false) {
             self.model_cache.remove(&cache_key);
             trace!("model: normalized sat cache says unsat");
+            return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
+        }
+        if self.has_cached_unsat_subset(&cache_key) {
+            self.cache_sat_result(cache_key.clone(), false);
+            self.model_cache.remove(&cache_key);
+            trace!("model: normalized unsat subset cache hit");
             return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
         }
 
@@ -362,18 +385,24 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
         if constraints_prefer_hard_arith_fallback_first(&smt_constraints)
-            && let Some(model) = hard_arith_fallback_model(&smt_constraints)
+            && let Some(model) = validated_hard_arith_fallback_model(&smt_constraints, constraints)
         {
             self.heuristic_witnesses += 1;
-            trace!("model: hard arithmetic fallback model before solver");
+            trace!("model: validated hard arithmetic fallback model before solver");
+            self.cache_sat_result(cache_key.clone(), true);
+            self.cache_model_result(cache_key, model.clone());
             return Ok(model);
         }
         let output = match self.query_normalized(&smt_constraints, true, constraints) {
             Ok(output) => output,
             Err(SymbolicError::SolverUnknown) => {
-                if let Some(model) = hard_arith_fallback_model(&smt_constraints) {
+                if let Some(model) =
+                    validated_hard_arith_fallback_model(&smt_constraints, constraints)
+                {
                     self.heuristic_witnesses += 1;
-                    trace!("model: hard arithmetic fallback model after solver unknown");
+                    trace!("model: validated hard arithmetic fallback model after solver unknown");
+                    self.cache_sat_result(cache_key.clone(), true);
+                    self.cache_model_result(cache_key, model.clone());
                     return Ok(model);
                 }
                 return Err(SymbolicError::SolverUnknown);
@@ -394,8 +423,12 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
                 Err(SymbolicError::Solver("counterexample path became unsat".to_string()))
             }
             "unknown" => {
-                if let Some(model) = hard_arith_fallback_model(&smt_constraints) {
+                if let Some(model) =
+                    validated_hard_arith_fallback_model(&smt_constraints, constraints)
+                {
                     self.heuristic_witnesses += 1;
+                    self.cache_sat_result(cache_key.clone(), true);
+                    self.cache_model_result(cache_key, model.clone());
                     Ok(model)
                 } else {
                     Err(SymbolicError::SolverUnknown)
@@ -459,6 +492,13 @@ impl SmtLibSubprocessSolver {
         }
     }
 
+    /// Returns whether an already-proved unsat constraint set is a subset of `key`.
+    fn has_cached_unsat_subset(&self, key: &[BoolExpr]) -> bool {
+        self.sat_cache
+            .iter()
+            .any(|(cached_key, result)| !*result && sorted_bool_exprs_are_subset(cached_key, key))
+    }
+
     /// Sends already-normalized constraints to the configured solver portfolio.
     pub(crate) fn query_normalized(
         &mut self,
@@ -466,6 +506,7 @@ impl SmtLibSubprocessSolver {
         model: bool,
         model_constraints: &[BoolExpr],
     ) -> Result<String, SymbolicError> {
+        self.smt_queries += 1;
         let mut vars = BTreeSet::new();
         for constraint in smt_constraints {
             constraint.collect_vars(&mut vars);
@@ -476,7 +517,7 @@ impl SmtLibSubprocessSolver {
         let commands =
             ordered_commands.iter().map(|(_, command)| command.clone()).collect::<Vec<_>>();
 
-        let mut smt = String::new();
+        let mut smt = String::with_capacity(256 + smt_constraints.len().saturating_mul(192));
         smt.push_str("(set-logic QF_BV)\n");
         if commands.iter().all(|command| command.smt_timeout)
             && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
@@ -518,13 +559,41 @@ impl SmtLibSubprocessSolver {
 
 /// Returns a structural key for normalized solver cache lookups.
 fn constraint_cache_key(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
-    let mut key = Vec::new();
+    let mut key = Vec::with_capacity(constraints.len());
     for constraint in constraints.iter().cloned().map(cache_key_bool) {
         collect_cache_key_conjunct(constraint, &mut key);
     }
     key.sort();
     key.dedup();
     key
+}
+
+/// Returns whether normalized conjunctive constraints contain a direct contradiction.
+fn constraints_are_directly_unsat(constraints: &[BoolExpr]) -> bool {
+    constraints.iter().any(|constraint| match constraint {
+        BoolExpr::Const(false) => true,
+        BoolExpr::Not(inner) => constraints.binary_search(inner.as_ref()).is_ok(),
+        constraint => constraints.binary_search(&constraint.clone().not()).is_ok(),
+    })
+}
+
+/// Returns whether every expression in sorted `subset` appears in sorted `superset`.
+fn sorted_bool_exprs_are_subset(subset: &[BoolExpr], superset: &[BoolExpr]) -> bool {
+    if subset.len() > superset.len() {
+        return false;
+    }
+
+    let mut superset = superset.iter();
+    for expected in subset {
+        loop {
+            match superset.next() {
+                Some(candidate) if candidate < expected => {}
+                Some(candidate) if candidate == expected => break,
+                _ => return false,
+            }
+        }
+    }
+    true
 }
 
 /// Returns a conservative canonical boolean expression for cache-key equality.
@@ -566,7 +635,7 @@ fn collect_cache_key_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
 }
 
 /// Returns a conservative canonical comparison for cache-key equality.
-const fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
+fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
     match op {
         BoolExprOp::Ugt => BoolExpr::cmp(BoolExprOp::Ult, right, left),
         BoolExprOp::Uge => BoolExpr::cmp(BoolExprOp::Ule, right, left),
@@ -608,6 +677,15 @@ fn cache_key_expr(expr: Expr) -> Expr {
 /// Returns whether a word operation is safe to reorder for cache-key equality.
 const fn expr_op_is_commutative(op: ExprOp) -> bool {
     matches!(op, ExprOp::Add | ExprOp::Mul | ExprOp::And | ExprOp::Or | ExprOp::Xor)
+}
+
+/// Returns a hard-arithmetic fallback model only after validating it against original constraints.
+fn validated_hard_arith_fallback_model(
+    normalized_constraints: &[BoolExpr],
+    original_constraints: &[BoolExpr],
+) -> Option<BTreeMap<String, U256>> {
+    let model = hard_arith_fallback_model(normalized_constraints)?;
+    model_satisfies_constraints(&model, original_constraints).then_some(model)
 }
 
 /// Returns whether a parsed model satisfies the current original constraints.
