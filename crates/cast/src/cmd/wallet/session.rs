@@ -363,6 +363,11 @@ fn session_scope(
     if !selectors.is_empty() && target.is_none() {
         eyre::bail!("--selector requires --target");
     }
+    if target.is_some() && selectors.is_empty() {
+        eyre::bail!(
+            "--target requires at least one --selector; use --scope TARGET for target-wide access"
+        );
+    }
 
     if let Some(target) = target {
         let selector_rules = selectors
@@ -796,6 +801,22 @@ mod tests {
 
         let err = InnerCommand::parse("forge 'script".to_string()).unwrap_err();
         assert!(err.to_string().contains("unterminated"), "{err}");
+    }
+
+    #[test]
+    fn session_scope_requires_selector_for_target_shortcut() {
+        let target = address!("0x00000000000000000000000000000000000000aa");
+        let err = session_scope(vec![], Some(target), vec![]).unwrap_err();
+
+        assert!(err.to_string().contains("--target requires at least one --selector"), "{err}");
+    }
+
+    #[test]
+    fn session_scope_preserves_explicit_scope_target_wildcard() {
+        let target = address!("0x00000000000000000000000000000000000000aa");
+        let scope = vec![CallScope { target, selector_rules: vec![] }];
+
+        assert_eq!(session_scope(scope.clone(), None, vec![]).unwrap(), scope);
     }
 
     #[test]
