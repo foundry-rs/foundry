@@ -979,13 +979,7 @@ fn write_param_table(
         };
         let ty = format!("`{}`", ctx.snippet(var.ty.span).trim());
         let desc = if is_return {
-            let by_name =
-                comments.returns.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str());
-            if by_name.is_none() && var.name.is_none() {
-                comments.returns.get(index).map(|(_, d)| d.as_str()).unwrap_or("")
-            } else {
-                by_name.unwrap_or("")
-            }
+            return_description(comments, index, var.name.map(|_| name.as_str()))
         } else {
             comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
         };
@@ -994,6 +988,44 @@ fn write_param_table(
         writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
+}
+
+fn return_description<'a>(
+    comments: &'a CommentData,
+    index: usize,
+    return_name: Option<&str>,
+) -> &'a str {
+    if let Some(return_name) = return_name
+        && let Some((_, desc)) = comments.returns.iter().find(|(n, _)| n == return_name)
+    {
+        return desc;
+    }
+
+    let Some((doc_name, desc)) = comments.returns.get(index) else {
+        return "";
+    };
+
+    if !doc_name.is_empty() {
+        return desc;
+    }
+
+    match return_name {
+        Some(return_name) => desc.strip_prefix(return_name).and_then(strip_one_ws).unwrap_or(desc),
+        None => split_first_word(desc).map(|(_, desc)| desc).unwrap_or(desc),
+    }
+}
+
+fn strip_one_ws(s: &str) -> Option<&str> {
+    let mut chars = s.char_indices();
+    let (_, first) = chars.next()?;
+    first.is_whitespace().then(|| chars.next().map(|(idx, _)| &s[idx..]).unwrap_or(""))
+}
+
+fn split_first_word(s: &str) -> Option<(&str, &str)> {
+    let trimmed = s.trim_start();
+    let split = trimmed.find(char::is_whitespace)?;
+    let (first, rest) = trimmed.split_at(split);
+    Some((first, rest.trim_start()))
 }
 
 fn write_struct_properties_table(
