@@ -2747,10 +2747,10 @@ fn counted_solver_invocations(marker: &Path) -> usize {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for hard-arithmetic `is_sat` fallback after solver unknown.
-fn is_sat_uses_validated_hard_arithmetic_fallback_after_solver_unknown() {
+/// Regression coverage for hard-arithmetic `is_sat` fallback before SMT.
+fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let marker = portfolio_test_marker("hard-arith-is-sat");
-    let commands = vec![counted_solver_command(&marker, "unknown")];
+    let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
     let x = Expr::Var("x".to_string());
     let y = Expr::Var("y".to_string());
@@ -2768,11 +2768,11 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_after_solver_unknown() {
 
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
-    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
     assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 1);
     assert_eq!(solver.heuristic_witnesses(), 1);
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }
 
