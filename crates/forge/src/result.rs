@@ -294,6 +294,7 @@ mod tests {
                             reverts: 0,
                             workers: *workers,
                             metrics: Map::new(),
+                            gas_fuzz: false,
                             failed_corpus_replays: 0,
                             optimization_best_value: None,
                         },
