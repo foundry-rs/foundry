@@ -9452,6 +9452,46 @@
     },
     {
       "func": {
+        "id": "rpcJson_0",
+        "description": "Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string)",
+        "selector": "0x9519f228",
+        "selectorBytes": [
+          149,
+          25,
+          242,
+          40
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpcJson_1",
+        "description": "Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string,string)",
+        "selector": "0x273b74f8",
+        "selectorBytes": [
+          39,
+          59,
+          116,
+          248
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "rpcUrl",
         "description": "Returns the RPC url for the given alias.",
         "declaration": "function rpcUrl(string calldata rpcAlias) external view returns (string memory json);",
