@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::sema::{
-    Hir,
+    Gcx, Hir,
     hir::{Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, TypeKind, VariableId},
 };
 
@@ -16,7 +16,13 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for UnusedReturn {
-    fn check_stmt(&mut self, ctx: &LintContext, hir: &'hir Hir<'hir>, stmt: &'hir Stmt<'hir>) {
+    fn check_stmt(
+        &mut self,
+        ctx: &LintContext,
+        _gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        stmt: &'hir Stmt<'hir>,
+    ) {
         if let StmtKind::Expr(expr) = &stmt.kind
             && is_unused_return_call(hir, expr)
         {

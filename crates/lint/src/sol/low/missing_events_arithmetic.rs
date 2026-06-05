@@ -27,6 +27,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
@@ -40,20 +41,30 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
-        let arithmetic_vars = vars_used_in_unprotected_arithmetic(hir, contract, &candidate_vars);
+        let mut protected_funcs = HashSet::new();
+        let mut protected_entry_points = Vec::new();
+        for func_id in contract.all_functions() {
+            let func = hir.function(func_id);
+            if !is_external_function(func) || !is_protected(hir, func_id, func) {
+                continue;
+            }
+
+            protected_funcs.insert(func_id);
+            if !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View) {
+                protected_entry_points.push(func_id);
+            }
+        }
+        if protected_entry_points.is_empty() {
+            return;
+        }
+
+        let arithmetic_vars =
+            vars_used_in_unprotected_arithmetic(hir, contract, &candidate_vars, &protected_funcs);
         if arithmetic_vars.is_empty() {
             return;
         }
 
-        for func_id in contract.all_functions() {
-            let func = hir.function(func_id);
-            if !is_external_function(func)
-                || matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-                || !is_protected(hir, func_id, func)
-            {
-                continue;
-            }
-
+        for func_id in protected_entry_points {
             let mut analyzer = WriteAnalyzer::new(hir, &arithmetic_vars);
             let writes = analyzer.analyze_entry_point(func_id);
             let mut emitted = HashSet::new();
@@ -96,16 +107,17 @@ fn is_external_function(func: &hir::Function<'_>) -> bool {
         && !func.is_special()
 }
 
-fn vars_used_in_unprotected_arithmetic(
-    hir: &hir::Hir<'_>,
-    contract: &hir::Contract<'_>,
+fn vars_used_in_unprotected_arithmetic<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    contract: &hir::Contract<'hir>,
     candidate_vars: &HashSet<VariableId>,
+    protected_funcs: &HashSet<FunctionId>,
 ) -> HashSet<VariableId> {
     let mut used = HashSet::new();
 
     for func_id in contract.all_functions() {
         let func = hir.function(func_id);
-        if !is_external_function(func) || is_protected(hir, func_id, func) {
+        if !is_external_function(func) || protected_funcs.contains(&func_id) {
             continue;
         }
 
@@ -331,9 +343,12 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                 }
                 WriteFlow::returned(state)
             }
-            StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {
-                WriteFlow::fallthrough(state)
-            }
+            StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => WriteFlow::fallthrough(state),
         }
     }
 
@@ -360,7 +375,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, state);
                     }
                 }
@@ -427,7 +442,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -641,7 +656,12 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                     self.analyze_expr(expr);
                 }
             }
-            StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {}
+            StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => {}
         }
     }
 
@@ -669,7 +689,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value);
                     }
                 }
@@ -716,7 +736,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -778,7 +798,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.collect_call_return_sources(callee, out);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.collect_call_return_sources(&opt.value, out);
                     }
                 }
@@ -829,7 +849,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -918,6 +938,8 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
             | StmtKind::Err(_) => {}
         }
     }
@@ -988,7 +1010,7 @@ fn collect_write_taint_sources_into(
         ExprKind::Call(callee, args, opts) => {
             collect_write_taint_sources_into(hir, taint, callee, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_write_taint_sources_into(hir, taint, &opt.value, out);
                 }
             }
@@ -1012,7 +1034,7 @@ fn collect_write_taint_sources_into(
             }
         }
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::Err(_) => {}
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
     }
 }
 
@@ -1067,7 +1089,7 @@ fn expr_has_dynamic_value(
             .flatten()
             .any(|expr| expr_has_dynamic_value(hir, taint, dynamic_taint, expr)),
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => false,
-        ExprKind::Lit(_) | ExprKind::Err(_) => false,
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => false,
     }
 }
 
@@ -1140,7 +1162,7 @@ fn collect_state_sources_into(
         ExprKind::Call(callee, args, opts) => {
             collect_state_sources_into(hir, targets, taint, callee, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_state_sources_into(hir, targets, taint, &opt.value, out);
                 }
             }
@@ -1164,7 +1186,7 @@ fn collect_state_sources_into(
             }
         }
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::Err(_) => {}
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
     }
 }
 
@@ -1302,6 +1324,8 @@ fn stmt_is_access_guard(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => false,
     }
 }
@@ -1449,7 +1473,7 @@ fn expr_reads_state_variable(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
         ExprKind::Call(callee, args, opts) => {
             expr_reads_state_variable(hir, callee)
                 || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_reads_state_variable(hir, &opt.value))
+                    opts.args.iter().any(|opt| expr_reads_state_variable(hir, &opt.value))
                 })
                 || args.exprs().any(|arg| expr_reads_state_variable(hir, arg))
         }
@@ -1475,7 +1499,7 @@ fn expr_calls_non_sender_user_function(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>)
                     .is_some_and(|name| !name_looks_like_sender_accessor(name.as_str()))
             }) || expr_calls_non_sender_user_function(hir, callee)
                 || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_calls_non_sender_user_function(hir, &opt.value))
+                    opts.args.iter().any(|opt| expr_calls_non_sender_user_function(hir, &opt.value))
                 })
                 || args.exprs().any(|arg| expr_calls_non_sender_user_function(hir, arg))
         }
@@ -1532,7 +1556,7 @@ fn expr_reads_sender(
 
             expr_reads_sender(hir, callee, seen)
                 || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_reads_sender(hir, &opt.value, seen))
+                    opts.args.iter().any(|opt| expr_reads_sender(hir, &opt.value, seen))
                 })
                 || args.exprs().any(|arg| expr_reads_sender(hir, arg, seen))
         }
@@ -1612,6 +1636,8 @@ fn stmt_reads_sender(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => false,
     }
 }

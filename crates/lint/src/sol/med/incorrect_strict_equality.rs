@@ -7,7 +7,7 @@ use solar::{
     ast::{BinOpKind, ContractKind},
     interface::sym,
     sema::{
-        Hir,
+        Gcx, Hir,
         hir::{ElementaryType, Expr, ExprKind, ItemId, Res, StructId, Type, TypeKind},
     },
 };
@@ -20,7 +20,13 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for IncorrectStrictEquality {
-    fn check_expr(&mut self, ctx: &LintContext, hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) {
+    fn check_expr(
+        &mut self,
+        ctx: &LintContext,
+        _gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        expr: &'hir Expr<'hir>,
+    ) {
         if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
             && matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne)
             && (contains_externally_influenced(hir, lhs)

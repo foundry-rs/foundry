@@ -9,7 +9,7 @@ use crate::{
 use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -33,10 +33,12 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
+use foundry_primitives::{FoundryTxEnvelope, PaymentLaneClassification};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
+use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -622,6 +624,51 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = Cast::new(provider).storage_root(who, slots, block).await?;
             print_scalar(out)?;
         }
+        CastSubcommand::ChannelId {
+            payer,
+            payee,
+            token,
+            salt,
+            operator,
+            authorized_signer,
+            expiring_nonce_hash,
+            reserve,
+            block,
+            rpc,
+        } => {
+            let config = rpc.load_config()?;
+            let provider = utils::get_provider(&config)?;
+            let payer = payer.resolve(&provider).await?;
+            let payee = payee.resolve(&provider).await?;
+            let token = token.resolve(&provider).await?;
+            let operator = match operator {
+                Some(operator) => operator.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let authorized_signer = match authorized_signer {
+                Some(authorized_signer) => authorized_signer.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let reserve = match reserve {
+                Some(reserve) => reserve.resolve(&provider).await?,
+                None => TIP20_CHANNEL_RESERVE_ADDRESS,
+            };
+
+            let channel_id = ITIP20ChannelReserve::new(reserve, &provider)
+                .computeChannelId(
+                    payer,
+                    payee,
+                    operator,
+                    token,
+                    salt,
+                    authorized_signer,
+                    expiring_nonce_hash,
+                )
+                .block(block.unwrap_or_default())
+                .call()
+                .await?;
+            print_scalar(format!("{channel_id:#x}"))?;
+        }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
@@ -668,7 +715,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchMakeTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchSend(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request, network } => {
+        CastSubcommand::Classify { raw_tx } => {
+            let raw_tx = stdin::unwrap_line(raw_tx)?;
+            print_json_value_or_scalar(classify_raw_transaction_output(&raw_tx)?)?
+        }
+        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, lane, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
@@ -678,21 +729,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
 
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
                 Some(NetworkVariant::Tempo) => {
                     let provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
                 // Ethereum (default) or no --raw flag
                 _ => {
                     let provider = utils::get_provider(&config)?;
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
             };
@@ -924,6 +975,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     };
 
     Ok(())
+}
+
+pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
+    let raw_tx = hex::decode(raw_tx)?;
+    let mut data = raw_tx.as_slice();
+    let tx =
+        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
+    format_lane_classification(&tx.classify_t5_payment_lane())
+}
+
+pub(crate) fn format_lane_classification(
+    classification: &PaymentLaneClassification,
+) -> Result<String> {
+    if shell::is_json() {
+        Ok(serde_json::to_string_pretty(classification)?)
+    } else {
+        Ok(serde_json::to_string(classification)?)
+    }
 }
 
 #[cfg(test)]

@@ -3182,6 +3182,26 @@
     },
     {
       "func": {
+        "id": "assumeImplicitApproval",
+        "description": "Skips a fuzz/invariant input unless `spender` is implicitly approved.",
+        "declaration": "function assumeImplicitApproval(address spender) external view;",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "assumeImplicitApproval(address)",
+        "selector": "0x7c8cd6d2",
+        "selectorBytes": [
+          124,
+          140,
+          214,
+          210
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "assumeNoRevert_0",
         "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
         "declaration": "function assumeNoRevert() external pure;",
@@ -5606,6 +5626,26 @@
     },
     {
       "func": {
+        "id": "expectLogoURIUpdated",
+        "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
+        "declaration": "function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectLogoURIUpdated(address,address,string)",
+        "selector": "0xd450e23a",
+        "selectorBytes": [
+          212,
+          80,
+          226,
+          58
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectPartialRevert_0",
         "description": "Expects an error on next call that starts with the revert data.",
         "declaration": "function expectPartialRevert(bytes4 revertData) external;",
@@ -5918,6 +5958,26 @@
           131,
           139,
           244
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectTip20LogoURIUpdated",
+        "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
+        "declaration": "function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectTip20LogoURIUpdated(address,address,string)",
+        "selector": "0x4e134a2c",
+        "selectorBytes": [
+          78,
+          19,
+          74,
+          44
         ]
       },
       "group": "testing",
@@ -6801,6 +6861,26 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "isImplicitlyApproved",
+        "description": "Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,\nmeaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.\nReturns `false` on non-Tempo networks.",
+        "declaration": "function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "isImplicitlyApproved(address)",
+        "selector": "0xa8da6aa7",
+        "selectorBytes": [
+          168,
+          218,
+          106,
+          167
+        ]
+      },
+      "group": "evm",
       "status": "stable",
       "safety": "safe"
     },
@@ -9372,6 +9452,46 @@
     },
     {
       "func": {
+        "id": "rpcJson_0",
+        "description": "Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string)",
+        "selector": "0x9519f228",
+        "selectorBytes": [
+          149,
+          25,
+          242,
+          40
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpcJson_1",
+        "description": "Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string,string)",
+        "selector": "0x273b74f8",
+        "selectorBytes": [
+          39,
+          59,
+          116,
+          248
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "rpcUrl",
         "description": "Returns the RPC url for the given alias.",
         "declaration": "function rpcUrl(string calldata rpcAlias) external view returns (string memory json);",
@@ -9952,6 +10072,26 @@
     },
     {
       "func": {
+        "id": "setLogoURI",
+        "description": "Sets a TIP-20 token's logo URI directly in storage.\nThis bypasses the token admin check, but still validates the URI against T5 constraints.",
+        "declaration": "function setLogoURI(address token, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setLogoURI(address,string)",
+        "selector": "0x256edb36",
+        "selectorBytes": [
+          37,
+          110,
+          219,
+          54
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "setNonce",
         "description": "Sets the nonce of an account. Must be higher than the current nonce of the account.",
         "declaration": "function setNonce(address account, uint64 newNonce) external;",
@@ -10009,6 +10149,26 @@
       "group": "utilities",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setTip20LogoURI",
+        "description": "Sets a TIP-20 token's logo URI directly in storage.\nThis bypasses the token admin check, but still validates the URI against T5 constraints.",
+        "declaration": "function setTip20LogoURI(address token, string calldata newLogoURI) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setTip20LogoURI(address,string)",
+        "selector": "0xb452dc23",
+        "selectorBytes": [
+          180,
+          82,
+          220,
+          35
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {

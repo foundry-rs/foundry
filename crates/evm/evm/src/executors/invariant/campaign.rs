@@ -271,6 +271,7 @@ impl InvariantCampaignAggregator {
 fn fold_outputs(
     outputs: Vec<InvariantWorkerOutput>,
 ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+    let workers = outputs.len();
     let mut errors = HashMap::default();
     let mut handler_errors = HashMap::default();
     let mut cases = Vec::new();
@@ -319,6 +320,7 @@ fn fold_outputs(
             line_coverage,
             metrics,
             failed_corpus_replays,
+            workers,
             optimization_best_value,
             optimization_best_sequence,
         ),
@@ -448,6 +450,7 @@ mod tests {
             None,
             HashMap::default(),
             failed_corpus_replays,
+            1,
             None,
             Vec::new(),
         )

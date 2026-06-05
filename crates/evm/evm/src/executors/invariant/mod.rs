@@ -1,12 +1,14 @@
 use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
-        corpus::{DynamicTargetCtx, WorkerCorpus, WorkerCorpusSeed},
+        corpus::{DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed},
     },
     inspectors::Fuzzer,
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
+use alloy_primitives::{
+    Address, Bytes, FixedBytes, I256, Selector, U256, keccak256, map::AddressMap,
+};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
@@ -14,7 +16,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     sh_eprintln, sh_println,
 };
-use foundry_config::InvariantConfig;
+use foundry_config::{InvariantConfig, InvariantWorkers};
 use foundry_evm_core::{
     FoundryBlock,
     constants::{
@@ -34,7 +36,10 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use proptest::{strategy::Strategy, test_runner::TestRunner};
+use proptest::{
+    strategy::Strategy,
+    test_runner::{RngAlgorithm, TestRng, TestRunner},
+};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
 use revm::{context::Block, state::Account};
@@ -71,10 +76,16 @@ pub use shrink::{
     replay_handler_failure_sequence,
 };
 
-/// Minimum number of logical runs assigned to each invariant worker.
+/// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
+/// depth.
 ///
 /// Keeps short campaigns single-threaded and avoids producing many small rayon jobs.
 const MIN_RUNS_PER_INVARIANT_WORKER: u32 = 10_000;
+/// Baseline depth used to preserve the previous default-depth worker heuristic.
+const DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP: u32 = 500;
+/// Minimum estimated handler calls assigned to each auto invariant worker.
+const MIN_ESTIMATED_CALLS_PER_INVARIANT_WORKER: u64 =
+    MIN_RUNS_PER_INVARIANT_WORKER as u64 * DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP as u64;
 
 sol! {
     interface IInvariantTest {
@@ -182,16 +193,36 @@ impl InvariantThroughputMetrics {
     }
 }
 
-fn max_invariant_workers_for_runs(runs: u32) -> usize {
-    (runs / MIN_RUNS_PER_INVARIANT_WORKER).max(1) as usize
+fn max_invariant_workers_for_campaign(runs: u32, depth: u32) -> usize {
+    let estimated_calls = u64::from(runs) * u64::from(depth.max(1));
+    usize::try_from((estimated_calls / MIN_ESTIMATED_CALLS_PER_INVARIANT_WORKER).max(1))
+        .unwrap_or(usize::MAX)
 }
 
-fn invariant_worker_count(config: &InvariantConfig) -> usize {
-    if config.timeout.is_some() {
-        return config.workers;
-    }
+fn auto_invariant_worker_count(
+    available_threads: usize,
+    invariant_campaign_anchors: usize,
+) -> usize {
+    (available_threads.max(1) / invariant_campaign_anchors.max(1)).max(1)
+}
 
-    config.workers.min(max_invariant_workers_for_runs(config.runs))
+fn invariant_worker_count_with_threads(
+    config: &InvariantConfig,
+    available_threads: usize,
+    invariant_campaign_anchors: usize,
+) -> usize {
+    match config.workers {
+        InvariantWorkers::Fixed(workers) => workers.get(),
+        InvariantWorkers::Auto => {
+            let requested =
+                auto_invariant_worker_count(available_threads, invariant_campaign_anchors);
+            if config.timeout.is_some() {
+                requested
+            } else {
+                requested.min(max_invariant_workers_for_campaign(config.runs, config.depth))
+            }
+        }
+    }
 }
 
 fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_count: usize) -> usize {
@@ -200,8 +231,38 @@ fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_coun
     total_samples / worker_count + usize::from((worker_id as usize) < total_samples % worker_count)
 }
 
-fn invariant_worker_runner(runner: &mut TestRunner, worker_id: u32) -> TestRunner {
+fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
     if worker_id == 0 {
+        seed
+    } else {
+        let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
+        U256::from_be_bytes(keccak256(seed_data).0)
+    }
+}
+
+fn should_continue_invariant_worker(
+    campaign_state: &InvariantCampaignState,
+    runs: u32,
+    plan: InvariantWorkerPlan,
+) -> bool {
+    if campaign_state.should_stop() {
+        return false;
+    }
+
+    campaign_state.is_timed_campaign() || runs < plan.runs
+}
+
+fn invariant_worker_runner(
+    runner: &mut TestRunner,
+    worker_id: u32,
+    seed: Option<U256>,
+) -> TestRunner {
+    if let Some(seed) = seed {
+        let worker_seed = invariant_worker_seed(seed, worker_id);
+        trace!(target: "forge::test", ?worker_seed, "deterministic seed for invariant worker {worker_id}");
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
+        TestRunner::new_with_rng(runner.config().clone(), rng)
+    } else if worker_id == 0 {
         runner.clone()
     } else {
         TestRunner::new_with_rng(runner.config().clone(), runner.new_rng())
@@ -549,6 +610,8 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     pub executor: Executor<FEN>,
     /// Proptest runner.
     runner: TestRunner,
+    /// Configured fuzz seed used to derive deterministic invariant worker runners.
+    fuzz_seed: Option<U256>,
     /// The invariant configuration
     config: InvariantConfig,
     /// Contracts deployed with `setUp()`
@@ -558,6 +621,8 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     project_contracts: &'a ContractsByArtifact,
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
+    /// Number of matching invariant campaign anchors in the current test pass.
+    invariant_campaign_anchors: usize,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
@@ -569,13 +634,37 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
     ) -> Self {
+        Self::new_with_fuzz_seed(
+            executor,
+            runner,
+            None,
+            config,
+            setup_contracts,
+            project_contracts,
+            1,
+        )
+    }
+
+    /// Instantiates an invariant executor with the configured fuzz seed for deterministic worker
+    /// runner derivation.
+    pub fn new_with_fuzz_seed(
+        executor: Executor<FEN>,
+        runner: TestRunner,
+        fuzz_seed: Option<U256>,
+        config: InvariantConfig,
+        setup_contracts: &'a ContractsByAddress,
+        project_contracts: &'a ContractsByArtifact,
+        invariant_campaign_anchors: usize,
+    ) -> Self {
         Self {
             executor,
             runner,
+            fuzz_seed,
             config,
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
+            invariant_campaign_anchors,
         }
     }
 
@@ -611,7 +700,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         >,
     ) -> Result<InvariantFuzzTestResult> {
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
-        let worker_plans = campaign_spec.worker_plans(invariant_worker_count(&self.config))?;
+        let worker_plans = campaign_spec.worker_plans(invariant_worker_count_with_threads(
+            &self.config,
+            rayon::current_num_threads(),
+            self.invariant_campaign_anchors,
+        ))?;
         let actual_worker_count = worker_plans.len();
         let campaign_seed =
             self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
@@ -644,7 +737,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
-                    let worker_runner = invariant_worker_runner(&mut runner, worker_plan.worker_id);
+                    let worker_runner =
+                        invariant_worker_runner(&mut runner, worker_plan.worker_id, self.fuzz_seed);
                     let gas_report_samples = gas_report_samples_for_worker(
                         config.gas_report_samples,
                         worker_plan.worker_id,
@@ -682,6 +776,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 .collect::<Result<Vec<_>>>()?
         } else {
             let worker_plan = worker_plans[0];
+            let runner =
+                invariant_worker_runner(&mut runner, worker_plan.worker_id, self.fuzz_seed);
             let gas_report_samples = config.gas_report_samples as usize;
             vec![Self::run_invariant_worker(
                 base_executor,
@@ -712,21 +808,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             aggregator.finish_with_corpus_entries()?
         };
         if corpus_persistence.is_deferred() {
-            let corpus_entries = corpus_seed.filter_campaign_entries(
-                &corpus_entries,
-                &self.executor,
-                None,
-                Some(&replay_targets),
-                Some(self.dynamic_target_ctx()),
-                self.config.gas_fuzz,
-            )?;
-            WorkerCorpus::persist_campaign_outputs(
+            let dynamic_target_ctx = self.dynamic_target_ctx();
+            corpus_seed.persist_filtered_campaign_outputs(
                 &self.config.corpus,
-                &corpus_entries,
+                corpus_entries,
+                &self.executor,
+                ReplayTarget {
+                    fuzzed_function: None,
+                    fuzzed_contracts: Some(&replay_targets),
+                    dynamic: Some(&dynamic_target_ctx),
+                },
+                self.config.gas_fuzz,
                 result
                     .optimization_best_value
                     .map(|value| (value, result.optimization_best_sequence.as_slice())),
-            );
+            )?;
         }
         Ok(result)
     }
@@ -773,7 +869,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
 
-        'stop: while !campaign_state.should_stop() && runs < plan.runs {
+        'stop: while should_continue_invariant_worker(campaign_state, runs, plan) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
@@ -1108,7 +1204,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             invariant_test.end_run(runs, current_run, gas_report_samples);
             runs += 1;
             let total_runs = campaign_state.increment_runs();
-            debug_assert!(total_runs <= config.runs, "worker runs were not distributed correctly");
+            debug_assert!(
+                campaign_state.is_timed_campaign() || total_runs <= config.runs,
+                "worker runs were not distributed correctly"
+            );
             if let Some(progress) = progress {
                 progress.inc(1);
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
@@ -1198,6 +1297,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.line_coverage,
             metrics,
             if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
+            1,
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
@@ -1859,7 +1959,59 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::{prelude::any, strategy::ValueTree, test_runner::Config};
     use serde_json::json;
+
+    fn first_generated_u64(runner: &mut TestRunner) -> u64 {
+        any::<u64>().new_tree(runner).unwrap().current()
+    }
+
+    fn test_runner() -> TestRunner {
+        TestRunner::new(Config { failure_persistence: None, ..Default::default() })
+    }
+
+    fn seeded_test_runner(seed: U256) -> TestRunner {
+        let config = Config { failure_persistence: None, ..Default::default() };
+        let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>());
+        TestRunner::new_with_rng(config, rng)
+    }
+
+    #[test]
+    fn invariant_worker_seed_preserves_master_seed_and_derives_workers() {
+        let seed = U256::from(0x1234);
+
+        assert_eq!(invariant_worker_seed(seed, 0), seed);
+        assert_ne!(invariant_worker_seed(seed, 1), seed);
+        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(seed, 2));
+        assert_ne!(invariant_worker_seed(seed, 1), invariant_worker_seed(U256::from(0x5678), 1));
+    }
+
+    #[test]
+    fn invariant_worker_runner_preserves_seed_for_master_worker() {
+        let seed = U256::from(0x1234);
+        let mut seeded_runner = seeded_test_runner(seed);
+        let mut parent = test_runner();
+        let mut worker = invariant_worker_runner(&mut parent, 0, Some(seed));
+
+        assert_eq!(first_generated_u64(&mut worker), first_generated_u64(&mut seeded_runner));
+    }
+
+    #[test]
+    fn invariant_worker_runner_uses_seed_independent_of_parent_rng_state() {
+        let seed = U256::from(0x1234);
+        let mut parent = test_runner();
+        let mut advanced_parent = test_runner();
+        let _ = first_generated_u64(&mut advanced_parent);
+
+        let mut worker = invariant_worker_runner(&mut parent, 1, Some(seed));
+        let mut worker_from_advanced_parent =
+            invariant_worker_runner(&mut advanced_parent, 1, Some(seed));
+
+        assert_eq!(
+            first_generated_u64(&mut worker),
+            first_generated_u64(&mut worker_from_advanced_parent)
+        );
+    }
 
     #[test]
     fn invariant_progress_json_includes_throughput_fields() {
@@ -1888,34 +2040,110 @@ mod tests {
 
     #[test]
     fn invariant_worker_count_keeps_short_campaigns_single_worker() {
-        assert_eq!(max_invariant_workers_for_runs(0), 1);
-        assert_eq!(max_invariant_workers_for_runs(MIN_RUNS_PER_INVARIANT_WORKER - 1), 1);
-        assert_eq!(max_invariant_workers_for_runs(MIN_RUNS_PER_INVARIANT_WORKER), 1);
-        assert_eq!(max_invariant_workers_for_runs(MIN_RUNS_PER_INVARIANT_WORKER * 2), 2);
+        assert_eq!(
+            max_invariant_workers_for_campaign(0, DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP),
+            1
+        );
+        assert_eq!(
+            max_invariant_workers_for_campaign(
+                MIN_RUNS_PER_INVARIANT_WORKER - 1,
+                DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP
+            ),
+            1
+        );
+        assert_eq!(
+            max_invariant_workers_for_campaign(
+                MIN_RUNS_PER_INVARIANT_WORKER,
+                DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP
+            ),
+            1
+        );
+        assert_eq!(
+            max_invariant_workers_for_campaign(
+                MIN_RUNS_PER_INVARIANT_WORKER * 2,
+                DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP
+            ),
+            2
+        );
+        assert_eq!(max_invariant_workers_for_campaign(256, 100_000), 5);
     }
 
     #[test]
-    fn invariant_worker_count_uses_configured_workers_and_caps_short_campaigns() {
+    fn invariant_worker_count_preserves_fixed_workers() {
         let mut config = InvariantConfig {
             runs: MIN_RUNS_PER_INVARIANT_WORKER * 4,
-            workers: 4,
+            workers: foundry_config::InvariantWorkers::Fixed(
+                std::num::NonZeroUsize::new(4).unwrap(),
+            ),
             ..Default::default()
         };
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 4);
 
         config.corpus.show_edge_coverage = true;
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 4);
 
         config.corpus.show_edge_coverage = false;
         config.corpus.corpus_dir = Some(std::path::PathBuf::from("corpus"));
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 4);
 
         config.runs = MIN_RUNS_PER_INVARIANT_WORKER - 1;
         config.timeout = None;
-        assert_eq!(invariant_worker_count(&config), 1);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 1), 4);
 
         config.timeout = Some(1);
-        assert_eq!(invariant_worker_count(&config), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 4), 4);
+    }
+
+    #[test]
+    fn invariant_worker_count_does_not_cap_configured_workers_by_available_threads() {
+        let config = InvariantConfig {
+            runs: MIN_RUNS_PER_INVARIANT_WORKER * 8,
+            workers: foundry_config::InvariantWorkers::Fixed(
+                std::num::NonZeroUsize::new(8).unwrap(),
+            ),
+            ..Default::default()
+        };
+
+        assert_eq!(invariant_worker_count_with_threads(&config, 4, 1), 8);
+    }
+
+    #[test]
+    fn invariant_worker_count_splits_available_threads_for_auto_workers() {
+        let mut config = InvariantConfig {
+            runs: MIN_RUNS_PER_INVARIANT_WORKER * 4,
+            depth: DEFAULT_DEPTH_FOR_INVARIANT_WORKER_CAP,
+            workers: foundry_config::InvariantWorkers::Auto,
+            ..Default::default()
+        };
+
+        assert_eq!(invariant_worker_count_with_threads(&config, 4, 1), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 3), 2);
+        assert_eq!(invariant_worker_count_with_threads(&config, 3, 8), 1);
+        assert_eq!(invariant_worker_count_with_threads(&config, 0, 0), 1);
+
+        config.runs = MIN_RUNS_PER_INVARIANT_WORKER - 1;
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 1);
+
+        config.depth = 100_000;
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
+
+        config.timeout = Some(1);
+        assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
+    }
+
+    #[test]
+    fn timed_invariant_workers_are_not_bounded_by_assigned_runs() {
+        let plan = InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 };
+
+        let untimed = InvariantCampaignState::new(EarlyExit::new(false), None);
+        assert!(should_continue_invariant_worker(&untimed, 0, plan));
+        assert!(!should_continue_invariant_worker(&untimed, 1, plan));
+
+        let timed = InvariantCampaignState::new(EarlyExit::new(false), Some(60));
+        assert!(should_continue_invariant_worker(&timed, 0, plan));
+        assert!(should_continue_invariant_worker(&timed, 1, plan));
+        assert!(should_continue_invariant_worker(&timed, 10_000, plan));
     }
 
     #[test]

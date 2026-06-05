@@ -342,14 +342,29 @@ impl FoundryTransaction for TempoTxEnv {
 
     fn set_kind(&mut self, kind: TxKind) {
         self.inner.set_kind(kind);
+        if let Some(call) =
+            self.tempo_tx_env.as_deref_mut().and_then(|env| env.aa_calls.first_mut())
+        {
+            call.to = kind;
+        }
     }
 
     fn set_value(&mut self, value: U256) {
         self.inner.set_value(value);
+        if let Some(call) =
+            self.tempo_tx_env.as_deref_mut().and_then(|env| env.aa_calls.first_mut())
+        {
+            call.value = value;
+        }
     }
 
     fn set_data(&mut self, data: Bytes) {
-        self.inner.set_data(data);
+        self.inner.set_data(data.clone());
+        if let Some(call) =
+            self.tempo_tx_env.as_deref_mut().and_then(|env| env.aa_calls.first_mut())
+        {
+            call.input = data;
+        }
     }
 
     fn set_nonce(&mut self, nonce: u64) {
@@ -773,7 +788,7 @@ mod tests {
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
-        transaction::PrimitiveSignature,
+        transaction::{Call, PrimitiveSignature},
     };
     use tempo_evm::TempoEvmFactory;
 
@@ -821,6 +836,45 @@ mod tests {
         evm.ctx_mut().set_tx(tx_env);
         let evm_env = evm.ctx().evm_clone();
         evm.ctx_mut().set_evm(evm_env);
+    }
+
+    #[test]
+    fn tempo_tx_env_setters_update_aa_call_payload() {
+        let old_to = TxKind::Call(Address::with_last_byte(0xAA));
+        let new_to = TxKind::Create;
+        let new_value = U256::from(123);
+        let new_input = Bytes::from_static(b"local bytecode");
+
+        let mut tx_env = TempoTxEnv {
+            inner: TxEnv {
+                kind: old_to,
+                value: U256::from(1),
+                data: Bytes::from_static(b"original bytecode"),
+                ..Default::default()
+            },
+            tempo_tx_env: Some(Box::new(tempo_revm::TempoBatchCallEnv {
+                aa_calls: vec![Call {
+                    to: old_to,
+                    value: U256::from(1),
+                    input: Bytes::from_static(b"original bytecode"),
+                }],
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        tx_env.set_kind(new_to);
+        tx_env.set_value(new_value);
+        tx_env.set_data(new_input.clone());
+
+        assert_eq!(tx_env.inner.kind, new_to);
+        assert_eq!(tx_env.inner.value, new_value);
+        assert_eq!(tx_env.inner.data, new_input);
+
+        let call = &tx_env.tempo_tx_env.as_ref().unwrap().aa_calls[0];
+        assert_eq!(call.to, new_to);
+        assert_eq!(call.value, new_value);
+        assert_eq!(call.input, new_input);
     }
 
     fn make_signed_eip1559() -> Signed<TxEip1559> {

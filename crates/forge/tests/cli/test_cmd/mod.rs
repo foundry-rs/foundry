@@ -1,6 +1,6 @@
 //! Contains various tests for `forge test`.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
     TestCommand,
@@ -9,12 +9,17 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-use std::{io::Write, path::PathBuf, str::FromStr};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 mod core;
 mod fuzz;
 mod invariant;
 mod logs;
+mod mutation;
 mod repros;
 mod showmap;
 mod spec;
@@ -657,6 +662,77 @@ contract MultiTest is Test {
     assert!(
         slow_tests_count < 2,
         "With --fail-fast and sequential execution, not all slow tests should run after first failure"
+    );
+});
+
+// Regression: a `setUp()` failure in one suite must trip the global fail-fast flag so that
+// long-running invariant campaigns in sibling suites (dispatched in parallel via rayon) exit
+// at their next run boundary instead of running to their configured timeout.
+forgetest_init!(fail_fast_cancels_invariant_after_setup_failure, |prj, cmd| {
+    // Need at least 2 worker threads so the two suites run concurrently.
+    if std::thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+
+    // Use a very large invariant timeout so the with-fix vs without-fix behavior is
+    // dramatically different: with the fix the campaign sees `should_stop()` and exits within
+    // one fuzz sequence (~seconds); without the fix it would run for the full timeout. Same
+    // canary pattern as `test_fail_fast_config`.
+    prj.update_config(|config| {
+        config.invariant.timeout = Some(3600);
+    });
+
+    prj.add_test(
+        "BrokenSetup.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BrokenSetupTest is Test {
+    function setUp() public pure {
+        require(false, "setUp failure");
+    }
+
+    function test_Noop() public pure {}
+}
+"#,
+    );
+
+    prj.add_test(
+        "LongInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Target {
+    uint256 public x;
+    function bump() external { x += 1; }
+}
+
+contract LongInvariantTest is Test {
+    Target internal target;
+
+    function setUp() public {
+        target = new Target();
+        targetContract(address(target));
+    }
+
+    function invariant_alwaysTrue() public view {
+        require(true);
+    }
+}
+"#,
+    );
+
+    let started = std::time::Instant::now();
+    cmd.args(["test", "--fail-fast", "--mc", "BrokenSetupTest|LongInvariantTest"]).assert_failure();
+    let elapsed = started.elapsed();
+
+    // The two suites run in parallel; the broken `setUp()` reverts within milliseconds and must
+    // cancel the in-flight invariant campaign almost immediately. The 1h invariant timeout above
+    // gives us a huge margin: with the fix elapsed is ~seconds; without it elapsed approaches
+    // 1h. 60s is generous slack for CI but still catches the regression unambiguously.
+    assert!(
+        elapsed < std::time::Duration::from_secs(60),
+        "fail-fast did not cancel the in-flight invariant campaign: elapsed {elapsed:?}",
     );
 });
 
@@ -2569,6 +2645,200 @@ contract Dummy {
 
     assert!(dump_path.exists());
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10322>
+forgetest!(test_debug_with_dump_setup_revert, |prj, cmd| {
+    prj.add_test(
+        "SetupRevertDebug.t.sol",
+        r#"
+contract SetupRevertDebugTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function testDummy() public {}
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("setup_revert_dump.json");
+
+    let out = cmd
+        .args(["test", "--mt", "testDummy", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .execute();
+
+    assert!(out.status.success(), "debug run with --dump should complete even when setUp reverts");
+    assert!(dump_path.exists(), "debugger dump should still be generated");
+    assert!(
+        !out.stderr_lossy().contains("debug arena is empty"),
+        "debugger should not fail with an empty arena on setUp revert"
+    );
+    assert!(
+        out.stdout_lossy().contains("[FAIL: setUp failed] setUp()"),
+        "expected setup failure output in forge test report"
+    );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10322>
+forgetest!(test_debug_with_dump_setup_revert_invariant, |prj, cmd| {
+    prj.add_test(
+        "SetupRevertInvariantDebug.t.sol",
+        r#"
+contract SetupRevertInvariantDebugTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function invariant_dummy() public {}
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("setup_revert_invariant_dump.json");
+
+    let out = cmd
+        .args(["test", "--mt", "invariant_dummy", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .execute();
+
+    assert!(
+        out.status.success(),
+        "debug run with --dump should complete even when invariant setUp reverts"
+    );
+    assert!(dump_path.exists(), "debugger dump should still be generated");
+    assert!(
+        !out.stderr_lossy().contains("debug arena is empty"),
+        "debugger should not fail with an empty arena on invariant setUp revert"
+    );
+    assert!(
+        out.stdout_lossy().contains("[FAIL: setUp failed] setUp()"),
+        "expected setup failure output in forge test report"
+    );
+});
+
+forgetest_async!(debug_dump_identifies_contracts_loaded_from_selected_fork, |prj, cmd| {
+    prj.add_source(
+        "ForkDebugTarget.sol",
+        r#"
+contract ForkDebugTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) public {
+        value = newValue;
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/ForkDebugTarget.sol:ForkDebugTarget",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk,
+            "--broadcast",
+        ])
+        .assert_success();
+    let deployed =
+        Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap().create(0);
+    let deployed = deployed.to_string();
+
+    prj.add_test(
+        "ForkDebug.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function createSelectFork(string calldata url) external returns (uint256 forkId);
+}}
+
+interface IForkDebugTarget {{
+    function set(uint256 newValue) external;
+    function value() external view returns (uint256);
+}}
+
+contract ForkDebugTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    uint256[] public fixtureNewValue = [7];
+
+    function testDebugForkTarget() public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(7);
+        require(target.value() == 7, "value");
+    }}
+
+    /// forge-config: default.fuzz.runs = 1
+    function testDebugForkTargetFuzz(uint256 newValue) public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(newValue);
+        require(target.value() == newValue, "value");
+    }}
+
+    function tableDebugForkTarget(uint256 newValue) public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(newValue);
+        require(target.value() == newValue, "value");
+    }}
+}}
+"#
+        ),
+    );
+
+    let dump_path = prj.root().join("dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^testDebugForkTarget\\(\\)$",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&dump_path, &deployed, "ForkDebugTarget");
+
+    let fuzz_dump_path = prj.root().join("fuzz_dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^testDebugForkTargetFuzz\\(uint256\\)$",
+        "--debug",
+        "--dump",
+        fuzz_dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&fuzz_dump_path, &deployed, "ForkDebugTarget");
+
+    let table_dump_path = prj.root().join("table_dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^tableDebugForkTarget\\(uint256\\)$",
+        "--debug",
+        "--dump",
+        table_dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&table_dump_path, &deployed, "ForkDebugTarget");
+});
+
+fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
+    let target_identified = identified.iter().any(|(identified_address, name)| {
+        identified_address.eq_ignore_ascii_case(address)
+            && name.as_str().is_some_and(|name| name == contract_name)
+    });
+    assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
+}
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {

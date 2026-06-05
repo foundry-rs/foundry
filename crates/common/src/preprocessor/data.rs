@@ -42,7 +42,7 @@ pub(crate) fn create_deploy_helpers(data: &BTreeMap<ContractId, ContractData>) -
     let mut deploy_helpers = Sources::new();
     for (contract_id, contract) in data {
         if let Some(code) = contract.build_helper() {
-            let path = format!("foundry-pp/DeployHelper{}.sol", contract_id.get());
+            let path = format!("foundry-pp/DeployHelper{}.sol", contract_id.index());
             deploy_helpers.insert(path.into(), Source::new(code));
         }
     }
@@ -170,7 +170,7 @@ impl ContractData {
         let Self { contract_id, path, name, constructor_data, artifact: _ } = self;
 
         let Some(constructor_details) = constructor_data else { return None };
-        let contract_id = contract_id.get();
+        let contract_id = contract_id.index();
         let struct_fields = &constructor_details.struct_fields;
         let abi_encode_args = &constructor_details.abi_encode_args;
 

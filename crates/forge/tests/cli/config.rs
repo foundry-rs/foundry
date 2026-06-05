@@ -73,6 +73,7 @@ ignored_error_codes_from = []
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
+mutation_dir = "cache/mutation"
 show_progress = false
 ffi = false
 live_logs = false
@@ -231,6 +232,18 @@ show_solidity = false
 check_interval = 1
 gas_fuzz = false
 
+[coverage]
+report = ["summary"]
+lcov_version = "1.0.0"
+ir_minimum = false
+include_libs = false
+exclude_tests = false
+skip_files = []
+
+[mutation]
+include_operators = []
+exclude_operators = []
+
 [labels]
 
 [vyper]
@@ -293,6 +306,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         path_pattern_inverse: None,
         coverage_pattern_inverse: None,
         test_failures_file: "test-cache/test-failures".into(),
+        mutation_dir: "test-cache/mutation".into(),
         threads: None,
         show_progress: false,
         fuzz: FuzzConfig {
@@ -312,6 +326,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             },
             ..Default::default()
         },
+        coverage: Default::default(),
+        mutation: Default::default(),
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,
@@ -1356,6 +1372,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "no_match_path": null,
   "no_match_coverage": null,
   "test_failures_file": "cache/test-failures",
+  "mutation_dir": "cache/mutation",
   "threads": null,
   "show_progress": false,
   "fuzz": {
@@ -1417,6 +1434,22 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_block_delay": null,
     "check_interval": 1,
     "gas_fuzz": false
+  },
+  "coverage": {
+    "report": [
+      "summary"
+    ],
+    "lcov_version": "1.0.0",
+    "ir_minimum": false,
+    "report_file": null,
+    "include_libs": false,
+    "exclude_tests": false,
+    "skip_files": []
+  },
+  "mutation": {
+    "include_operators": [],
+    "exclude_operators": [],
+    "timeout": null
   },
   "ffi": false,
   "live_logs": false,

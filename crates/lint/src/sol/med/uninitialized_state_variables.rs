@@ -27,6 +27,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         contract_id: ContractId,
     ) {
@@ -71,9 +72,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         }
 
         // Walk every function in the inheritance chain.
-        // Bail out conservatively if any function body contains inline assembly
-        // (lowered to StmtKind::Err by Solar), because we cannot soundly track
-        // reads or writes through it.
+        // Bail out conservatively if any function body contains inline assembly,
+        // because we cannot soundly track reads or writes through it.
         let bases = contract.linearized_bases;
 
         for &cid in bases {
@@ -171,8 +171,8 @@ fn collect_stmt_writes_checked<'hir>(
     bases: &'hir [ContractId],
 ) -> Result<(), ()> {
     match &stmt.kind {
-        // Assembly is lowered to StmtKind::Err; bail conservatively.
-        StmtKind::Err(_) => return Err(()),
+        // Assembly can write storage directly; bail conservatively.
+        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return Err(()),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
             collect_block_writes_checked(hir, *block, candidates, writes, bases)?;
         }
@@ -261,7 +261,7 @@ fn collect_expr_writes_checked<'hir>(
                 collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
             }
             if let Some(named_args) = named_args {
-                for arg in *named_args {
+                for arg in named_args.args {
                     collect_expr_writes_checked(hir, &arg.value, candidates, writes, bases)?;
                 }
             }
@@ -299,6 +299,7 @@ fn collect_expr_writes_checked<'hir>(
         | ExprKind::New(_)
         | ExprKind::TypeCall(_)
         | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => {}
     }
     Ok(())

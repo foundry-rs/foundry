@@ -152,6 +152,7 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata err) external pure;
     function assume(bool condition) external pure;
+    function assumeImplicitApproval(address spender) external view;
     function assumeNoRevert() external pure;
     function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
     function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
@@ -273,6 +274,7 @@ interface Vm {
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter, uint64 count) external;
     function expectEmit(uint64 count) external;
     function expectEmit(address emitter, uint64 count) external;
+    function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function expectPartialRevert(bytes4 revertData) external;
     function expectPartialRevert(bytes4 revertData, address reverter) external;
     function expectRevert() external;
@@ -289,6 +291,7 @@ interface Vm {
     function expectRevert(address reverter, uint64 count) external;
     function expectSafeMemory(uint64 min, uint64 max) external;
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
+    function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function foundryVersionAtLeast(string calldata version) external view returns (bool);
@@ -333,6 +336,7 @@ interface Vm {
     function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external view returns (bool result);
     function isFile(string calldata path) external view returns (bool result);
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
     function isPersistent(address account) external view returns (bool persistent);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
@@ -461,6 +465,8 @@ interface Vm {
     function rollFork(bytes32 txHash) external;
     function rollFork(uint256 forkId, uint256 blockNumber) external;
     function rollFork(uint256 forkId, bytes32 txHash) external;
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
     function rpcUrlStructs() external view returns (Rpc[] memory urls);
     function rpcUrls() external view returns (string[2][] memory urls);
@@ -490,9 +496,11 @@ interface Vm {
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
     function setEnv(string calldata name, string calldata value) external;
     function setEvmVersion(string calldata evm) external;
+    function setLogoURI(address token, string calldata newLogoURI) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
     function setSeed(uint256 seed) external;
+    function setTip20LogoURI(address token, string calldata newLogoURI) external;
     function shuffle(uint256[] calldata array) external returns (uint256[] memory);
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
     function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
