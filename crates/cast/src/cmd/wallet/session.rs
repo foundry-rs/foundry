@@ -42,6 +42,13 @@ use crate::{
 };
 
 const PRINT_SPONSOR_HASH_REVOKE_ERROR: &str = "--tempo.print-sponsor-hash only prints a sponsor hash and does not revoke the session on-chain";
+const SESSION_CHILD_SIGNER_ENV: &[&str] = &[
+    "ETH_KEYSTORE",
+    "ETH_KEYSTORE_ACCOUNT",
+    "ETH_PASSWORD",
+    "TEMPO_ACCESS_KEY",
+    "TEMPO_ROOT_ACCOUNT",
+];
 
 /// Arguments for `cast wallet session`.
 ///
@@ -313,10 +320,8 @@ impl InnerCommand {
 
     fn command(&self, session_id: B256) -> Command {
         let mut command = Command::new(&self.program);
-        // TODO: Wire cast single-wallet signer paths through
-        // TempoOpts::session_signer_for_wallet so cast commands launched via --for can consume
-        // TEMPO_SESSION_ID without requiring explicit signer options.
-        command.args(&self.args).env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
+        command.args(&self.args);
+        configure_session_child_environment(&mut command, session_id);
         command
     }
 
@@ -326,6 +331,16 @@ impl InnerCommand {
             None => eyre::eyre!("inner command `{}` terminated by a signal", self.raw),
         }
     }
+}
+
+fn configure_session_child_environment(command: &mut Command, session_id: B256) {
+    for key in SESSION_CHILD_SIGNER_ENV {
+        command.env_remove(key);
+    }
+    // TODO: Wire cast single-wallet signer paths through TempoOpts::session_signer_for_wallet so
+    // cast commands launched via --for can consume TEMPO_SESSION_ID without requiring explicit
+    // signer options.
+    command.env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
 }
 
 async fn resolve_session_chain_id(send_tx: &SendTxOpts) -> Result<u64> {
@@ -727,7 +742,7 @@ mod tests {
     use super::*;
     use alloy_primitives::address;
     use foundry_cli::opts::EthereumOpts;
-    use std::sync::Mutex;
+    use std::{ffi::OsStr, sync::Mutex};
     use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
     const ROOT_PRIVATE_KEY: &str =
@@ -781,6 +796,36 @@ mod tests {
 
         let err = InnerCommand::parse("forge 'script".to_string()).unwrap_err();
         assert!(err.to_string().contains("unterminated"), "{err}");
+    }
+
+    #[test]
+    fn inner_command_clears_inherited_signer_env_for_session_child() {
+        let session_id = B256::from([0x7a; 32]);
+        let command = InnerCommand::parse("forge script Deploy".to_string()).unwrap();
+        let child = command.command(session_id);
+
+        for key in SESSION_CHILD_SIGNER_ENV {
+            assert_eq!(
+                command_env(&child, key),
+                Some(None),
+                "expected {key} to be removed from session child environment"
+            );
+        }
+
+        let expected_session_id = format!("{session_id:?}");
+        assert_eq!(
+            command_env(&child, TEMPO_SESSION_ID_ENV),
+            Some(Some(OsStr::new(&expected_session_id)))
+        );
+        assert_eq!(
+            command_env(&child, "ETH_FROM"),
+            None,
+            "ETH_FROM is a sender hint and should not be stripped by session --for"
+        );
+    }
+
+    fn command_env<'a>(command: &'a Command, key: &str) -> Option<Option<&'a OsStr>> {
+        command.get_envs().find_map(|(name, value)| (name == key).then_some(value))
     }
 
     #[test]
