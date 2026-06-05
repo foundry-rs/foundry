@@ -363,16 +363,18 @@ casttest!(wallet_session_revoke_wrong_chain_preserves_local_key, async |_prj, cm
     assert_session_file_status_with_key(tempo_home.path(), "active");
 });
 
-casttest!(wallet_session_run_for_wraps_child_and_cleans_key_material, async |_prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
-    let rpc = handle.http_endpoint();
-    let tempo_home = tempfile::tempdir().unwrap();
-    let child_dir = tempfile::tempdir().unwrap();
-    let child_script = child_dir.path().join("session-child.sh");
-    let child_session_out = child_dir.path().join("child-session-id.txt");
-    fs::write(
-        &child_script,
-        r#"#!/bin/sh
+casttest!(
+    wallet_session_run_for_without_key_use_fails_closed_and_cleans_key_material,
+    async |_prj, cmd| {
+        let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+        let rpc = handle.http_endpoint();
+        let tempo_home = tempfile::tempdir().unwrap();
+        let child_dir = tempfile::tempdir().unwrap();
+        let child_script = child_dir.path().join("session-child.sh");
+        let child_session_out = child_dir.path().join("child-session-id.txt");
+        fs::write(
+            &child_script,
+            r#"#!/bin/sh
 set -eu
 test -n "${TEMPO_SESSION_ID:-}"
 session_file="${TEMPO_HOME}/wallet/sessions.toml"
@@ -381,41 +383,53 @@ grep -q 'key = "0x' "${session_file}"
 grep -q 'key_authorization = "0x' "${session_file}"
 printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
 "#,
-    )
-    .expect("write child script");
+        )
+        .expect("write child script");
 
-    let for_command = format!("sh {} {}", child_script.display(), child_session_out.display());
+        let for_command = format!("sh {} {}", child_script.display(), child_session_out.display());
 
-    cmd.cast_fuse();
-    cmd.env("TEMPO_HOME", tempo_home.path());
-    cmd.args([
-        "wallet",
-        "session",
-        "--root",
-        accounts::ADDR1,
-        "--expires",
-        "10m",
-        "--scope",
-        accounts::TOKEN,
-        "--spend-limit",
-        "PathUSD=0",
-        "--for",
-        &for_command,
-        "--private-key",
-        accounts::PK1,
-        "--rpc-url",
-        &rpc,
-    ])
-    .assert_success();
+        cmd.cast_fuse();
+        cmd.env("TEMPO_HOME", tempo_home.path());
+        let stderr = cmd
+            .args([
+                "wallet",
+                "session",
+                "--root",
+                accounts::ADDR1,
+                "--expires",
+                "10m",
+                "--scope",
+                accounts::TOKEN,
+                "--spend-limit",
+                "PathUSD=0",
+                "--for",
+                &for_command,
+                "--private-key",
+                accounts::PK1,
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_failure()
+            .get_output()
+            .stderr_lossy();
+        assert!(
+            stderr.contains("failed to clean up Tempo session after inner command"),
+            "unexpected stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("session key is not provisioned on-chain yet"),
+            "unexpected stderr:\n{stderr}"
+        );
 
-    let child_session_id =
-        fs::read_to_string(&child_session_out).expect("child wrote TEMPO_SESSION_ID");
-    assert!(
-        child_session_id.trim().starts_with("0x"),
-        "unexpected child session id: {child_session_id}"
-    );
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
-});
+        let child_session_id =
+            fs::read_to_string(&child_session_out).expect("child wrote TEMPO_SESSION_ID");
+        assert!(
+            child_session_id.trim().starts_with("0x"),
+            "unexpected child session id: {child_session_id}"
+        );
+        assert_session_file_status_without_key(tempo_home.path(), "failed");
+    }
+);
 
 casttest!(wallet_session_run_for_cleans_key_material_when_child_fails, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
@@ -461,7 +475,7 @@ exit 7
         .get_output()
         .stderr_lossy();
     assert!(stderr.contains("exited with code 7"), "unexpected stderr:\n{stderr}");
-    assert_session_file_status_without_key(tempo_home.path(), "revoked");
+    assert_session_file_status_without_key(tempo_home.path(), "failed");
 });
 
 casttest!(
