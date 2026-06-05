@@ -27,6 +27,7 @@ use std::{
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::IAccountKeychain;
 use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule};
+use tokio::{process::Command as TokioCommand, signal};
 
 use crate::{
     cmd::{
@@ -213,7 +214,7 @@ async fn run_for_command(
     let session_id = entry.session_id;
     upsert_session_entry(entry)?;
 
-    let child_result = command.run(session_id);
+    let child_result = command.run(session_id).await;
     let cleanup_result = cleanup_session_run(session_id, tx, send_tx).await;
 
     finish_session_run(session_id, child_result, cleanup_result)
@@ -280,11 +281,34 @@ impl InnerCommand {
         Ok(Self { raw, program, args })
     }
 
-    fn run(&self, session_id: B256) -> Result<()> {
-        let status = self
-            .command(session_id)
-            .status()
+    async fn run(&self, session_id: B256) -> Result<()> {
+        let mut interrupt = SessionInterrupt::new()?;
+        self.run_with_interrupt(session_id, interrupt.recv()).await
+    }
+
+    async fn run_with_interrupt<I>(&self, session_id: B256, interrupt: I) -> Result<()>
+    where
+        I: std::future::Future<Output = Result<&'static str>>,
+    {
+        let mut child = TokioCommand::from(self.command(session_id))
+            .kill_on_drop(true)
+            .spawn()
             .wrap_err_with(|| format!("failed to run inner command `{}`", self.raw))?;
+
+        let status = tokio::select! {
+            status = child.wait() => status.wrap_err_with(|| {
+                format!("failed to wait for inner command `{}`", self.raw)
+            })?,
+            interrupt = interrupt => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+
+                return match interrupt {
+                    Ok(interrupt) => Err(self.interrupted_error(interrupt)),
+                    Err(err) => Err(err),
+                };
+            }
+        };
 
         if status.success() { Ok(()) } else { Err(self.status_error(status)) }
     }
@@ -307,6 +331,50 @@ impl InnerCommand {
             Some(code) => eyre::eyre!("inner command `{}` exited with code {code}", self.raw),
             None => eyre::eyre!("inner command `{}` terminated by a signal", self.raw),
         }
+    }
+
+    fn interrupted_error(&self, interrupt: &'static str) -> eyre::Report {
+        eyre::eyre!("inner command `{}` interrupted by {interrupt}", self.raw)
+    }
+}
+
+#[cfg(unix)]
+struct SessionInterrupt {
+    sigint: signal::unix::Signal,
+    sigterm: signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl SessionInterrupt {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            sigint: signal::unix::signal(signal::unix::SignalKind::interrupt())
+                .wrap_err("failed to listen for SIGINT")?,
+            sigterm: signal::unix::signal(signal::unix::SignalKind::terminate())
+                .wrap_err("failed to listen for SIGTERM")?,
+        })
+    }
+
+    async fn recv(&mut self) -> Result<&'static str> {
+        tokio::select! {
+            _ = self.sigint.recv() => Ok("SIGINT"),
+            _ = self.sigterm.recv() => Ok("SIGTERM"),
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct SessionInterrupt;
+
+#[cfg(not(unix))]
+impl SessionInterrupt {
+    fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    async fn recv(&mut self) -> Result<&'static str> {
+        signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
+        Ok("Ctrl-C")
     }
 }
 
@@ -810,6 +878,22 @@ mod tests {
             None,
             "ETH_FROM is a sender hint and should not be stripped by session --for"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inner_command_interrupt_terminates_child() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let session_id = B256::from([0x7b; 32]);
+            let command = InnerCommand::parse("sh -c 'sleep 30'".to_string()).unwrap();
+            let err = command
+                .run_with_interrupt(session_id, std::future::ready(Ok("test interrupt")))
+                .await
+                .unwrap_err();
+
+            assert!(err.to_string().contains("interrupted by test interrupt"), "{err}");
+        });
     }
 
     fn command_env<'a>(command: &'a Command, key: &str) -> Option<Option<&'a OsStr>> {

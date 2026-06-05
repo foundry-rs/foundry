@@ -89,7 +89,7 @@ regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "signal"] }
+tokio = { workspace = true, features = ["macros", "process", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
