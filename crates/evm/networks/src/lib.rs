@@ -213,7 +213,7 @@ impl NetworkConfigs {
     }
 
     /// Returns the resolved network variant, folding legacy flags.
-    const fn resolved_network(&self) -> Option<NetworkVariant> {
+    pub const fn resolved_network(&self) -> Option<NetworkVariant> {
         if let Some(n) = self.network {
             return Some(n);
         }

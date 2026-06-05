@@ -509,7 +509,7 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "929cb8e77d055600dbe7ebdd65a1e7c3441ef9e6", default-features = false, features = [
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "ea69acd3a6c9c6f7c328b3e99c03b678cabf07b3", default-features = false, features = [
     "tempo",
     "client",
     "reqwest-rustls-tls",
@@ -604,10 +604,10 @@ tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "4d3f1db11a496d
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "4d3f1db11a496d5fc98bb33d8055de102e5f5e11" }
 
 # solar
-solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
-solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
-solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
-solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
+solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
+solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
+solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
+solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
