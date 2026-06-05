@@ -593,11 +593,12 @@ where
                 )
                 .await?;
         }
-        self.resolve_access_list().await?;
-
-        // fill
         if fill {
             self.fill_fees().await?;
+        }
+        self.resolve_access_list().await?;
+        if fill {
+            self.fill_gas_limit().await?;
         }
 
         Ok((self.tx, self.state.func))
@@ -693,7 +694,7 @@ where
         Ok(())
     }
 
-    /// Fills gas price, EIP-1559 fees, blob fees, and gas limit from the provider.
+    /// Fills gas price, EIP-1559 fees, and blob fees from the provider.
     ///
     /// Only fills values that haven't been explicitly set by the user.
     async fn fill_fees(&mut self) -> Result<()> {
@@ -701,8 +702,11 @@ where
             self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
         }
 
-        fill_transaction_gas_fees(&self.provider, &mut self.tx, self.legacy, self.browser).await?;
+        fill_transaction_gas_fees(&self.provider, &mut self.tx, self.legacy, self.browser).await
+    }
 
+    /// Fills gas limit from the provider.
+    async fn fill_gas_limit(&mut self) -> Result<()> {
         if self.tx.gas_limit().is_none() {
             self.estimate_gas().await?;
         }
