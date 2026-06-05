@@ -321,9 +321,6 @@ impl InnerCommand {
         for key in SESSION_CHILD_SIGNER_ENV {
             command.env_remove(key);
         }
-        // TODO: Wire cast single-wallet signer paths through TempoOpts::session_signer_for_wallet
-        // so cast commands launched via --for can consume TEMPO_SESSION_ID without
-        // requiring explicit signer options.
         command.env(TEMPO_SESSION_ID_ENV, format!("{session_id:?}"));
         command
     }

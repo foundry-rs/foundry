@@ -103,6 +103,10 @@ pub enum SendTxSubcommands {
 
 impl SendTxArgs {
     pub async fn run(self) -> Result<()> {
+        if self.tx.tempo.session_id()?.is_some() {
+            return self.run_generic::<TempoNetwork>(None, None).await;
+        }
+
         // Resolve the signer early so we know if it's a Tempo access key.
         let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
 
@@ -126,6 +130,14 @@ impl SendTxArgs {
     {
         let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
             self;
+
+        let has_session = tx.tempo.session_id()?.is_some();
+        if has_session && unlocked {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
+        }
+        if has_session && send_tx.browser.browser {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --browser");
+        }
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_url = tx.tempo.sponsor_url.clone();
@@ -203,6 +215,18 @@ impl SendTxArgs {
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
+
+        let session = if has_session {
+            tx.tempo
+                .session_signer_for_wallet(&send_tx.eth.wallet, provider.get_chain_id().await?)?
+        } else {
+            None
+        };
+        let (pre_resolved_signer, access_key) = if let Some(session) = session {
+            (Some(session.signer), Some(session.access_key))
+        } else {
+            (pre_resolved_signer, access_key)
+        };
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
