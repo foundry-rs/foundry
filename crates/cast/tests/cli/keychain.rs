@@ -611,7 +611,7 @@ casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
             "--value",
             "1",
             "--tempo.session",
-            &session_id,
+            session_id,
             "--private-key",
             accounts::PK1,
             "--rpc-url",
