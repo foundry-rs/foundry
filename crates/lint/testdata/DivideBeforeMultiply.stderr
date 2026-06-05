@@ -81,8 +81,40 @@ LL │         return c * copy;
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
    │
+LL │         return q * c;
+   │                ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
+
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+   ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
+   │
+LL │         return q * c;
+   │                ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
+
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+   ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
+   │
 LL │         q *= c;
    │         ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
+
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+   ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
+   │
+LL │         q *= c;
+   │         ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
+
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+   ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
+   │
+LL │         x = x * c;
+   │             ━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 

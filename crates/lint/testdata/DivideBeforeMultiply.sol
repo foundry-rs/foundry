@@ -35,12 +35,54 @@ contract DivideBeforeMultiply {
         return c * copy; //~WARN: multiplication should occur before division to avoid loss of precision
     }
 
+    function branchPropagated(uint256 a, uint256 b, uint256 c, bool condition)
+        public
+        pure
+        returns (uint256 q)
+    {
+        if (condition) {
+            q = a / b;
+        }
+        return q * c; //~WARN: multiplication should occur before division to avoid loss of precision
+    }
+
+    function loopPropagated(uint256 a, uint256 b, uint256 c) public pure returns (uint256 q) {
+        for (uint256 i = 0; i < 1; ++i) {
+            q = a / b;
+        }
+        return q * c; //~WARN: multiplication should occur before division to avoid loss of precision
+    }
+
     function compound(uint256 a, uint256 b, uint256 c) public pure returns (uint256 q) {
         q = a / b;
         q *= c; //~WARN: multiplication should occur before division to avoid loss of precision
 
         q = a + b;
         q *= c;
+
+        q = a;
+        q /= b;
+        q *= c; //~WARN: multiplication should occur before division to avoid loss of precision
+    }
+
+    function tupleElementWise(uint256 a, uint256 b, uint256 c)
+        public
+        pure
+        returns (uint256 x, uint256 y)
+    {
+        (x, y) = (a / b, c);
+        x = x * c; //~WARN: multiplication should occur before division to avoid loss of precision
+        y = y * c;
+    }
+
+    function noBroadRhsTaint(uint256 a, uint256 b, uint256 c) public pure returns (uint256) {
+        uint256 q = (a / b) + 1;
+        uint256 z = helper(a / b);
+        return (q * c) + (z * c);
+    }
+
+    function helper(uint256 value) internal pure returns (uint256) {
+        return value;
     }
 
     function yulDirect(uint256 a, uint256 b, uint256 c) public pure returns (uint256 result) {

@@ -53,15 +53,17 @@ fn check_stmt<'hir>(
         StmtKind::DeclSingle(var_id) => {
             if let Some(init) = hir.variable(*var_id).initializer {
                 check_expr(ctx, hir, init, tainted);
-                update_taint(hir, *var_id, expr_has_division_or_taint(init, tainted), tainted);
+                update_taint(
+                    hir,
+                    *var_id,
+                    expr_value_is_division_or_tainted(init, tainted),
+                    tainted,
+                );
             }
         }
         StmtKind::DeclMulti(vars, expr) => {
             check_expr(ctx, hir, expr, tainted);
-            let rhs_tainted = expr_has_division_or_taint(expr, tainted);
-            for var_id in vars.iter().flatten() {
-                update_taint(hir, *var_id, rhs_tainted, tainted);
-            }
+            update_multi_decl_taint(hir, vars, expr, tainted);
         }
         StmtKind::Expr(expr) => check_expr(ctx, hir, expr, tainted),
         StmtKind::Emit(expr) | StmtKind::Revert(expr) | StmtKind::Return(Some(expr)) => {
@@ -76,20 +78,25 @@ fn check_stmt<'hir>(
             if let Some(else_stmt) = else_stmt {
                 let mut else_tainted = tainted.clone();
                 check_stmt(ctx, hir, else_stmt, &mut else_tainted);
+                *tainted = union_taints(&then_tainted, &else_tainted);
+            } else {
+                *tainted = union_taints(tainted, &then_tainted);
             }
-
-            // Branch-local assignments may not execute; keep only the incoming taint set.
         }
         StmtKind::Loop(block, _) => {
             let mut loop_tainted = tainted.clone();
             check_block(ctx, hir, *block, &mut loop_tainted);
+            *tainted = union_taints(tainted, &loop_tainted);
         }
         StmtKind::Try(try_stmt) => {
             check_expr(ctx, hir, &try_stmt.expr, tainted);
+            let mut merged_taint = tainted.clone();
             for clause in try_stmt.clauses {
                 let mut clause_tainted = tainted.clone();
                 check_block(ctx, hir, clause.block, &mut clause_tainted);
+                merged_taint = union_taints(&merged_taint, &clause_tainted);
             }
+            *tainted = merged_taint;
         }
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
             check_block(ctx, hir, *block, tainted)
@@ -97,10 +104,13 @@ fn check_stmt<'hir>(
         StmtKind::AssemblyBlock(block) => check_block(ctx, hir, *block, tainted),
         StmtKind::Switch(switch) => {
             check_expr(ctx, hir, switch.selector, tainted);
+            let mut merged_taint = tainted.clone();
             for case in switch.cases {
                 let mut case_tainted = tainted.clone();
                 check_block(ctx, hir, case.body, &mut case_tainted);
+                merged_taint = union_taints(&merged_taint, &case_tainted);
             }
+            *tainted = merged_taint;
         }
         StmtKind::Return(None)
         | StmtKind::Break
@@ -123,8 +133,7 @@ fn check_expr<'hir>(
 
             match op {
                 None => {
-                    let rhs_tainted = expr_has_division_or_taint(rhs, tainted);
-                    update_lhs_taint(hir, lhs, rhs_tainted, tainted);
+                    update_assignment_taint(hir, lhs, rhs, tainted);
                 }
                 Some(op) if op.kind == BinOpKind::Mul => {
                     let lhs_tainted = expr_is_division_result_or_tainted(lhs, tainted);
@@ -132,12 +141,10 @@ fn check_expr<'hir>(
                     if lhs_tainted || rhs_tainted {
                         ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
                     }
-                    update_lhs_taint(
-                        hir,
-                        lhs,
-                        lhs_tainted || expr_has_division_or_taint(rhs, tainted),
-                        tainted,
-                    );
+                    update_lhs_taint(hir, lhs, lhs_tainted || rhs_tainted, tainted);
+                }
+                Some(op) if op.kind == BinOpKind::Div => {
+                    update_lhs_taint(hir, lhs, true, tainted);
                 }
                 Some(_) => {}
             }
@@ -194,8 +201,11 @@ fn check_expr<'hir>(
         }
         ExprKind::Ternary(cond, then_expr, else_expr) => {
             check_expr(ctx, hir, cond, tainted);
-            check_expr(ctx, hir, then_expr, &mut tainted.clone());
-            check_expr(ctx, hir, else_expr, &mut tainted.clone());
+            let mut then_tainted = tainted.clone();
+            check_expr(ctx, hir, then_expr, &mut then_tainted);
+            let mut else_tainted = tainted.clone();
+            check_expr(ctx, hir, else_expr, &mut else_tainted);
+            *tainted = union_taints(&then_tainted, &else_tainted);
         }
         ExprKind::Tuple(exprs) => {
             for expr in exprs.iter().flatten() {
@@ -211,6 +221,62 @@ fn check_expr<'hir>(
         ExprKind::YulMember(inner, _) => check_expr(ctx, hir, inner, tainted),
         ExprKind::Err(_) => {}
     }
+}
+
+fn update_multi_decl_taint(
+    hir: &Hir<'_>,
+    vars: &[Option<VariableId>],
+    expr: &Expr<'_>,
+    tainted: &mut HashSet<VariableId>,
+) {
+    if let ExprKind::Tuple(exprs) = &expr.peel_parens().kind
+        && exprs.len() == vars.len()
+    {
+        let rhs_taints: Vec<_> = exprs
+            .iter()
+            .map(|expr| expr.is_some_and(|expr| expr_value_is_division_or_tainted(expr, tainted)))
+            .collect();
+        for (var_id, rhs_tainted) in vars.iter().zip(rhs_taints) {
+            if let Some(var_id) = var_id {
+                update_taint(hir, *var_id, rhs_tainted, tainted);
+            }
+        }
+        return;
+    }
+
+    let rhs_tainted = expr_value_is_division_or_tainted(expr, tainted);
+    for var_id in vars.iter().flatten() {
+        update_taint(hir, *var_id, rhs_tainted, tainted);
+    }
+}
+
+fn update_assignment_taint(
+    hir: &Hir<'_>,
+    lhs: &Expr<'_>,
+    rhs: &Expr<'_>,
+    tainted: &mut HashSet<VariableId>,
+) {
+    if let (ExprKind::Tuple(lhs_exprs), ExprKind::Tuple(rhs_exprs)) =
+        (&lhs.peel_parens().kind, &rhs.peel_parens().kind)
+        && lhs_exprs.len() == rhs_exprs.len()
+    {
+        let rhs_taints: Vec<_> = rhs_exprs
+            .iter()
+            .map(|rhs| rhs.is_some_and(|rhs| expr_value_is_division_or_tainted(rhs, tainted)))
+            .collect();
+        for (lhs, rhs_tainted) in lhs_exprs.iter().zip(rhs_taints) {
+            if let Some(lhs) = lhs {
+                update_lhs_taint(hir, lhs, rhs_tainted, tainted);
+            }
+        }
+        return;
+    }
+
+    update_lhs_taint(hir, lhs, expr_value_is_division_or_tainted(rhs, tainted), tainted);
+}
+
+fn union_taints(left: &HashSet<VariableId>, right: &HashSet<VariableId>) -> HashSet<VariableId> {
+    left.union(right).copied().collect()
 }
 
 fn update_lhs_taint(
@@ -252,53 +318,29 @@ fn update_taint(
     }
 }
 
-fn expr_has_division_or_taint(expr: &Expr<'_>, tainted: &HashSet<VariableId>) -> bool {
+fn expr_value_is_division_or_tainted(expr: &Expr<'_>, tainted: &HashSet<VariableId>) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Binary(left, op, right) => {
-            op.kind == BinOpKind::Div
-                || expr_has_division_or_taint(left, tainted)
-                || expr_has_division_or_taint(right, tainted)
-        }
+        ExprKind::Binary(_, op, _) => op.kind == BinOpKind::Div,
         ExprKind::Ident(resolutions) => resolutions.iter().any(
             |res| matches!(res, Res::Item(ItemId::Variable(var_id)) if tainted.contains(var_id)),
         ),
-        ExprKind::Array(exprs) => {
-            exprs.iter().any(|expr| expr_has_division_or_taint(expr, tainted))
-        }
-        ExprKind::Assign(lhs, _, rhs) => {
-            expr_has_division_or_taint(lhs, tainted) || expr_has_division_or_taint(rhs, tainted)
-        }
-        ExprKind::Call(callee, args, named_args) => {
-            is_yul_division_call(expr)
-                || expr_has_division_or_taint(callee, tainted)
-                || args.exprs().any(|arg| expr_has_division_or_taint(arg, tainted))
-                || named_args.is_some_and(|args| {
-                    args.args.iter().any(|arg| expr_has_division_or_taint(&arg.value, tainted))
-                })
-        }
-        ExprKind::Delete(inner)
-        | ExprKind::Index(inner, None)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner)
-        | ExprKind::Unary(_, inner) => expr_has_division_or_taint(inner, tainted),
-        ExprKind::Index(base, Some(index)) => {
-            expr_has_division_or_taint(base, tainted) || expr_has_division_or_taint(index, tainted)
-        }
-        ExprKind::Slice(base, start, end) => {
-            expr_has_division_or_taint(base, tainted)
-                || start.is_some_and(|expr| expr_has_division_or_taint(expr, tainted))
-                || end.is_some_and(|expr| expr_has_division_or_taint(expr, tainted))
-        }
-        ExprKind::Ternary(cond, then_expr, else_expr) => {
-            expr_has_division_or_taint(cond, tainted)
-                || expr_has_division_or_taint(then_expr, tainted)
-                || expr_has_division_or_taint(else_expr, tainted)
-        }
-        ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| expr_has_division_or_taint(expr, tainted))
-        }
-        ExprKind::Lit(_) | ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => false,
-        ExprKind::YulMember(inner, _) => expr_has_division_or_taint(inner, tainted),
+        ExprKind::Call(..) => is_yul_division_call(expr),
+        ExprKind::Tuple([Some(inner)]) => expr_value_is_division_or_tainted(inner, tainted),
+        ExprKind::YulMember(inner, _) => expr_value_is_division_or_tainted(inner, tainted),
+        ExprKind::Array(_)
+        | ExprKind::Assign(..)
+        | ExprKind::Delete(_)
+        | ExprKind::Index(..)
+        | ExprKind::Lit(_)
+        | ExprKind::Member(_, _)
+        | ExprKind::New(_)
+        | ExprKind::Payable(_)
+        | ExprKind::Slice(..)
+        | ExprKind::Ternary(..)
+        | ExprKind::TypeCall(_)
+        | ExprKind::Type(_)
+        | ExprKind::Unary(_, _)
+        | ExprKind::Tuple(_) => false,
         ExprKind::Err(_) => false,
     }
 }
