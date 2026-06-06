@@ -468,11 +468,17 @@ impl TestProject {
         }
 
         let package = format!("{name}@{}", env!("CARGO_PKG_VERSION"));
-        let output = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-            .args(["build", "-p", &package, "--bin", name, "--manifest-path"])
+        let (target_dir, profile) = cargo_build_target_dir_and_profile(&self.exe_root);
+        let mut cmd = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        cmd.args(["build", "-p", &package, "--bin", name, "--manifest-path"])
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
-            .output()
-            .expect("build Foundry sibling binary");
+            .arg("--target-dir")
+            .arg(target_dir);
+        if let Some(profile) = profile {
+            cmd.arg("--profile").arg(profile);
+        }
+
+        let output = cmd.output().expect("build Foundry sibling binary");
         assert!(
             output.status.success(),
             "failed to build {name} for CLI test\nstdout:\n{}\nstderr:\n{}",
@@ -900,4 +906,16 @@ pub fn lossy_string(bytes: &[u8]) -> String {
 fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
     foundry_common::fs::canonicalize_path(path.as_ref())
         .unwrap_or_else(|_| path.as_ref().to_path_buf())
+}
+
+fn cargo_build_target_dir_and_profile(exe_root: &Path) -> (&Path, Option<&str>) {
+    let profile_dir = exe_root.parent().expect("test executable profile directory");
+    let target_dir = profile_dir.parent().expect("Cargo target directory");
+    let profile = match profile_dir.file_name().and_then(OsStr::to_str) {
+        // Cargo's dev profile writes to `debug`, so the default `cargo build` profile is correct.
+        Some("debug") => None,
+        Some(profile) => Some(profile),
+        None => panic!("test executable profile directory must be UTF-8"),
+    };
+    (target_dir, profile)
 }
