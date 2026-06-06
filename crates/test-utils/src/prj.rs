@@ -448,21 +448,50 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let mut cmd = Command::new(self.forge_path());
+        let mut cmd = Command::new(self.foundry_bin_path("forge"));
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
-    pub(crate) fn forge_path(&self) -> PathBuf {
-        canonicalize(self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)))
+    /// Returns the path to a sibling Foundry executable in the current test target directory.
+    pub fn foundry_bin_path(&self, name: &str) -> PathBuf {
+        canonicalize(self.exe_root.join(format!("../{name}{}", env::consts::EXE_SUFFIX)))
+    }
+
+    /// Returns the path to a sibling Foundry executable, building it when cargo did not.
+    pub fn ensure_foundry_bin(&self, name: &str) -> PathBuf {
+        let bin = self.foundry_bin_path(name);
+        if bin.exists() {
+            return bin;
+        }
+
+        let package = format!("{name}@{}", env!("CARGO_PKG_VERSION"));
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root")
+            .join("Cargo.toml");
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let output = Command::new(cargo)
+            .args(["build", "-p", &package, "--bin", name, "--manifest-path"])
+            .arg(manifest)
+            .output()
+            .expect("build Foundry sibling binary");
+        assert!(
+            output.status.success(),
+            "failed to build {name} for CLI test\nstdout:\n{}\nstderr:\n{}",
+            output.stdout_lossy(),
+            output.stderr_lossy(),
+        );
+
+        bin
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = canonicalize(self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX)));
-        let mut cmd = Command::new(cast);
+        let mut cmd = Command::new(self.foundry_bin_path("cast"));
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
         cmd
