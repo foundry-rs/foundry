@@ -4,7 +4,9 @@ use crate::{
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     sequence::ScriptSequenceKind,
-    session::{RemainingScriptTransaction, ScriptSession},
+    session::{
+        RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
+    },
 };
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, Bytes, map::AddressHashSet};
@@ -46,9 +48,12 @@ fn has_available_script_signers<FEN: FoundryEvmNetwork>(
         return Ok(true);
     }
 
-    let session_scope = ScriptSession::new(&script_config.tempo, wallets)
-        .signer_any_chain(expected_sender)?
-        .map(|session| session.scope());
+    let session_scope = script_config
+        .tempo
+        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
+        .map(|session| {
+            SignerScope::new(session.session.chain_id, session.access_key.wallet_address)
+        });
 
     Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || Some(tx.scope()) == session_scope))
 }
@@ -335,9 +340,10 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
                 let remaining_froms =
                     remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
-                let expected_session_sender =
-                    ScriptSession::new(&self.script_config.tempo, &self.args.wallets)
-                        .expected_sender(&remaining_froms)?;
+                let expected_session_sender = script_session_expected_sender_if_configured(
+                    &self.script_config.tempo,
+                    &remaining_froms,
+                )?;
                 let has_available_signers = has_available_script_signers(
                     &self.script_config,
                     &self.args.wallets,

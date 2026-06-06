@@ -5,7 +5,11 @@ use crate::{
     build::LinkedBuildData,
     progress::ScriptProgress,
     sequence::ScriptSequenceKind,
-    session::{RemainingScriptTransaction, ScriptSession, SignerScope},
+    session::{
+        RemainingScriptTransaction, SignerScope,
+        insert_session_access_key_for_remaining_transactions,
+        script_session_expected_sender_if_configured,
+    },
     verify::BroadcastedState,
 };
 use alloy_chains::{Chain, NamedChain};
@@ -476,18 +480,24 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
-            let script_session = ScriptSession::new(&self.script_config.tempo, &self.args.wallets);
-            let expected_session_sender = script_session.expected_sender(&required_addresses)?;
+            let expected_session_sender = script_session_expected_sender_if_configured(
+                &self.script_config.tempo,
+                &required_addresses,
+            )?;
 
             // For addresses without an explicit signer, try Tempo keys.toml fallback.
             let mut access_keys: HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)> =
                 HashMap::default();
             if let Some(expected_session_sender) = expected_session_sender
                 && let Some(session) =
-                    script_session.signer_any_chain(Some(expected_session_sender))?
+                    self.script_config.tempo.session_signer_for_multi_wallet_any_chain(
+                        &self.args.wallets,
+                        Some(expected_session_sender),
+                    )?
             {
-                session.insert_access_key_for_remaining_transactions(
+                insert_session_access_key_for_remaining_transactions(
                     &mut access_keys,
+                    session,
                     &remaining_transactions,
                 )?;
             }
@@ -1098,12 +1108,12 @@ impl BundledState<TempoEvmNetwork> {
 
         let batch_signer = if self.args.unlocked {
             BatchSigner::Unlocked
-        } else if let Some(session) =
-            ScriptSession::new(&self.script_config.tempo, &self.args.wallets)
-                .signer_for_chain(sender, chain_id)?
-        {
-            let (signer, access_key) = session.into_signer_parts();
-            BatchSigner::TempoKeychain(Box::new(signer), Box::new(access_key))
+        } else if let Some(session) = self.script_config.tempo.session_signer_for_multi_wallet(
+            &self.args.wallets,
+            Some(sender),
+            chain_id,
+        )? {
+            BatchSigner::TempoKeychain(Box::new(session.signer), Box::new(session.access_key))
         } else {
             let mut signers = self.script_wallets.into_multi_wallet().into_signers()?;
             if let Some(signer) = signers.remove(&sender) {
