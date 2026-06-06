@@ -2741,6 +2741,7 @@ async fn run_key_auth_sign(
 
     if let Some(browser) = browser.run::<TempoNetwork>().await? {
         let signer_address = browser.address();
+        ensure_root_sender(signer_address, wallet.from)?;
         let preferred_signature_type = authorization.key_type;
         let signed =
             browser.sign_key_authorization(authorization, Some(preferred_signature_type)).await?;
@@ -2761,10 +2762,11 @@ async fn run_key_auth_sign(
     let signer = signer.ok_or_else(|| {
         eyre::eyre!(
             "a persistent root signer is required to sign key authorizations; pass a signer with \
-             --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+             --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
         )
     })?;
     let signer_address = signer.address();
+    ensure_root_sender(signer_address, wallet.from)?;
     let signature = signer.sign_hash(&signature_hash).await?;
     let signed = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
     print_signed_key_authorization(&signed, signature_hash, signer_address, authorized_key_type)
