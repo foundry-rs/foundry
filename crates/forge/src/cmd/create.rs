@@ -478,6 +478,38 @@ impl CreateArgs {
                 .await?;
         }
 
+        if is_legacy {
+            if self.tx.gas_price.is_none() {
+                deployer.tx.set_gas_price(provider.get_gas_price().await?);
+            }
+        } else {
+            if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
+                let mut estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                if browser_signer.is_some()
+                    && self.tx.priority_gas_price.is_none()
+                    && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+                    && suggested_tip > estimate.max_priority_fee_per_gas
+                {
+                    estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
+                    estimate.max_priority_fee_per_gas = suggested_tip;
+                }
+                if self.tx.priority_gas_price.is_none() {
+                    deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+                }
+                if self.tx.gas_price.is_none() {
+                    deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+                }
+            }
+            if let (Some(max_fee), Some(priority)) =
+                (deployer.tx.max_fee_per_gas(), deployer.tx.max_priority_fee_per_gas())
+            {
+                eyre::ensure!(
+                    priority <= max_fee,
+                    "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
+                );
+            }
+        }
+
         // set access list if specified
         if let Some(access_list) = match self.tx.access_list {
             None => None,
@@ -498,20 +530,6 @@ impl CreateArgs {
             }
 
             deployer.tx.set_gas_limit(estimated);
-        }
-
-        if is_legacy {
-            if self.tx.gas_price.is_none() {
-                deployer.tx.set_gas_price(provider.get_gas_price().await?);
-            }
-        } else if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
-            let estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-            if self.tx.priority_gas_price.is_none() {
-                deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-            if self.tx.gas_price.is_none() {
-                deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid

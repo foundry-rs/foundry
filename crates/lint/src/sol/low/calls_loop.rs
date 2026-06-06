@@ -8,6 +8,7 @@ use solar::{
     interface::{kw, sym},
     sema::{
         Gcx, Ty,
+        builtins::Builtin,
         hir::{
             self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt,
             StmtKind, TypeKind,
@@ -564,7 +565,7 @@ fn type_is_address_like(ty: Ty<'_>) -> bool {
 }
 
 fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
-    if !is_super(expr)
+    if !is_typeless_builtin_expr(expr)
         && let Some(ty) = gcx.type_of_expr(expr.peel_parens().id)
     {
         return Some(ty);
@@ -578,6 +579,9 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
                         res.as_variable().map(|var_id| Res::Item(ItemId::Variable(var_id)))
                     }))
                 })?;
+            if matches!(res, Res::Builtin(builtin) if is_typeless_builtin(builtin)) {
+                return None;
+            }
             let ty = gcx.type_of_res(res);
             Some(match res {
                 Res::Item(ItemId::Variable(var_id)) => {
@@ -602,6 +606,31 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
         ExprKind::Payable(_) => Some(gcx.types.address_payable),
         _ => None,
     }
+}
+
+fn is_typeless_builtin_expr(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Ident(reses)
+            if reses.iter().any(|res| {
+                matches!(res, Res::Builtin(builtin) if is_typeless_builtin(*builtin))
+            })
+    )
+}
+
+const fn is_typeless_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::This
+            | Builtin::Super
+            | Builtin::ArrayPush0
+            | Builtin::ArrayPush
+            | Builtin::ArrayPop
+            | Builtin::TypeMin
+            | Builtin::TypeMax
+            | Builtin::UdvtWrap
+            | Builtin::UdvtUnwrap
+    )
 }
 
 fn semantic_index_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, base: &Expr<'gcx>) -> Option<Ty<'gcx>> {

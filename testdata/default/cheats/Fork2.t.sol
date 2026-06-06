@@ -232,6 +232,20 @@ contract ForkTest is Test {
         assertGt(decodedResult, 20_000_000);
     }
 
+    function testRpcJson() public {
+        vm.selectFork(mainnetFork);
+        string memory path = "fixtures/Rpc/balance_params.json";
+        string memory file = vm.readFile(path);
+        string memory result = vm.rpcJson("eth_getBalance", file);
+        assertEq(result, '"0x10b7c11bcb51e6"');
+    }
+
+    function testRpcJsonWithUrl() public {
+        string memory result = vm.rpcJson("mainnet", "eth_blockNumber", "[]");
+        uint256 decodedResult = vm.parseUint(vm.parseJsonString(result, "$"));
+        assertGt(decodedResult, 20_000_000);
+    }
+
     struct Withdrawal {
         address addr;
         bytes amount;
@@ -359,6 +373,23 @@ contract ForkTest is Test {
         assertEq(txn.from, 0x8Be6209bC9BD1a8e6e015ADe090F6BE7BE6f032A, "tx from mismatch");
         assertEq(txn.to, 0xF04fd9a66DE511BC389D3b830C1F850a4A4A8c61, "tx to mismatch");
         assertEq(txn.blockNumber, hex"588b24", "tx blockNumber mismatch");
+    }
+
+    function testRpcJsonTransactionByHashPreservesKeys() public {
+        string memory data = vm.rpcJson(
+            "mainnet",
+            "eth_getTransactionByHash",
+            '["0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace"]'
+        );
+
+        assertEq(
+            vm.parseJsonBytes32(data, ".hash"),
+            bytes32(hex"67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace"),
+            "tx hash mismatch"
+        );
+        assertEq(vm.parseJsonAddress(data, ".from"), 0x106aEe384Db47379b38f4212eB512b9c327e5F56, "tx from mismatch");
+        assertEq(vm.parseJsonAddress(data, ".to"), 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D, "tx to mismatch");
+        assertEq(vm.parseJsonBytes(data, ".blockNumber"), hex"f82248", "tx blockNumber mismatch");
     }
 }
 

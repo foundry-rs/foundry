@@ -42,6 +42,21 @@ contract ReentrancyNoEth {
         balances[msg.sender] = 0;
     }
 
+    function helperHeavyCallThenWrite(IHook hook) external {
+        uint256 amount = balances[msg.sender];
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        notifyHookHeavy(hook, amount);
+        balances[msg.sender] = 0;
+    }
+
     function modifierWriteAfterCall(IHook hook) external writeAfter {
         uint256 amount = balances[msg.sender];
         hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
@@ -125,6 +140,10 @@ contract ReentrancyNoEth {
     }
 
     function notifyHook(IHook hook, uint256 amount) internal {
+        hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
+    }
+
+    function notifyHookHeavy(IHook hook, uint256 amount) internal {
         hook.notify(amount); //~WARN: external call can be reentered before `balances` is updated
     }
 }
