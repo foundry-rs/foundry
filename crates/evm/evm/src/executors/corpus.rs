@@ -103,6 +103,12 @@ enum MutationType {
     /// Replace input bytes using comparison operands observed for a corpus entry
     /// (input-to-state, LibAFL-style).
     Cmp,
+    /// Insert a freshly generated call at a random position in the sequence.
+    Insert,
+    /// Delete a random call from the sequence (no-op if it would empty the sequence).
+    Delete,
+    /// Swap two calls in the sequence.
+    Swap,
 }
 
 /// Persisted optimization state: the best value found and the sequence that produced it.
@@ -711,6 +717,9 @@ impl WorkerCorpus {
             Just(MutationType::Suffix),
             Just(MutationType::Abi),
             Just(MutationType::Cmp),
+            Just(MutationType::Insert),
+            Just(MutationType::Delete),
+            Just(MutationType::Swap),
         ]
         .boxed();
 
@@ -1101,6 +1110,33 @@ impl WorkerCorpus {
                         }
                     }
                 }
+                MutationType::Insert => {
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    trace!(target: "corpus", "insert call into {}", corpus.uuid);
+
+                    self.current_mutated = Some(corpus.uuid);
+
+                    new_seq = corpus.tx_seq.clone();
+                    self.insert_call(&mut new_seq, test_runner)?;
+                }
+                MutationType::Delete => {
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    trace!(target: "corpus", "delete call from {}", corpus.uuid);
+
+                    self.current_mutated = Some(corpus.uuid);
+
+                    new_seq = corpus.tx_seq.clone();
+                    Self::delete_call(&mut new_seq, test_runner);
+                }
+                MutationType::Swap => {
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    trace!(target: "corpus", "swap calls in {}", corpus.uuid);
+
+                    self.current_mutated = Some(corpus.uuid);
+
+                    new_seq = corpus.tx_seq.clone();
+                    Self::swap_calls(&mut new_seq, test_runner);
+                }
             }
         }
 
@@ -1111,6 +1147,38 @@ impl WorkerCorpus {
         trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
 
         Ok(new_seq)
+    }
+
+    /// Inserts a freshly generated call at a random position in the sequence.
+    fn insert_call(
+        &self,
+        seq: &mut Vec<BasicTxDetails>,
+        test_runner: &mut TestRunner,
+    ) -> Result<()> {
+        // Pick the position before generating the tx so the rng borrow is released before
+        // `new_tx` borrows the test runner.
+        let idx = test_runner.rng().random_range(0..=seq.len());
+        let tx = self.new_tx(test_runner)?;
+        seq.insert(idx, tx);
+        Ok(())
+    }
+
+    /// Removes a random call from the sequence, keeping at least one so it stays runnable.
+    fn delete_call(seq: &mut Vec<BasicTxDetails>, test_runner: &mut TestRunner) {
+        if seq.len() > 1 {
+            let idx = test_runner.rng().random_range(0..seq.len());
+            seq.remove(idx);
+        }
+    }
+
+    /// Swaps two distinct calls in the sequence. No-op for sequences shorter than two calls.
+    fn swap_calls(seq: &mut [BasicTxDetails], test_runner: &mut TestRunner) {
+        if seq.len() >= 2 {
+            let rng = test_runner.rng();
+            let i = rng.random_range(0..seq.len());
+            let j = (i + rng.random_range(1..seq.len())) % seq.len();
+            seq.swap(i, j);
+        }
     }
 
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
@@ -1984,6 +2052,91 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.inner.insert(target, contract);
         FuzzRunIdentifiedContracts::new(targets, false)
+    }
+
+    fn tx_with_sender(b: u8) -> BasicTxDetails {
+        let mut tx = basic_tx();
+        tx.sender = Address::from([b; 20]);
+        tx
+    }
+
+    fn mk_runner() -> TestRunner {
+        TestRunner::new(proptest::test_runner::Config {
+            failure_persistence: None,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn swap_calls_is_noop_on_short_sequences() {
+        let mut runner = mk_runner();
+        let mut empty: Vec<BasicTxDetails> = vec![];
+        WorkerCorpus::swap_calls(&mut empty, &mut runner);
+        assert!(empty.is_empty());
+
+        let mut single = vec![tx_with_sender(1)];
+        WorkerCorpus::swap_calls(&mut single, &mut runner);
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].sender, Address::from([1; 20]));
+    }
+
+    #[test]
+    fn swap_calls_exchanges_two_calls() {
+        let mut runner = mk_runner();
+        let mut seq = vec![tx_with_sender(1), tx_with_sender(2)];
+        WorkerCorpus::swap_calls(&mut seq, &mut runner);
+        // With two calls the only valid swap is 0 <-> 1.
+        assert_eq!(seq[0].sender, Address::from([2; 20]));
+        assert_eq!(seq[1].sender, Address::from([1; 20]));
+    }
+
+    #[test]
+    fn swap_calls_permutes_exactly_two_positions() {
+        let mut runner = mk_runner();
+        let original =
+            vec![tx_with_sender(1), tx_with_sender(2), tx_with_sender(3), tx_with_sender(4)];
+        let mut seq = original.clone();
+        WorkerCorpus::swap_calls(&mut seq, &mut runner);
+        // No call is lost, duplicated or corrupted: the result is a permutation.
+        let mut before: Vec<u8> = original.iter().map(|t| t.sender[0]).collect();
+        let mut after: Vec<u8> = seq.iter().map(|t| t.sender[0]).collect();
+        before.sort_unstable();
+        after.sort_unstable();
+        assert_eq!(before, after, "swap must be a permutation of the original calls");
+        // Two distinct slots are exchanged, so exactly two positions differ.
+        let differing = original.iter().zip(&seq).filter(|(a, b)| a.sender != b.sender).count();
+        assert_eq!(differing, 2, "swap must change exactly two positions");
+    }
+
+    #[test]
+    fn delete_call_keeps_at_least_one_call() {
+        let mut runner = mk_runner();
+        let mut single = vec![tx_with_sender(1)];
+        WorkerCorpus::delete_call(&mut single, &mut runner);
+        assert_eq!(single.len(), 1, "delete must keep the sequence non-empty");
+
+        let mut three = vec![tx_with_sender(1), tx_with_sender(2), tx_with_sender(3)];
+        WorkerCorpus::delete_call(&mut three, &mut runner);
+        // Exactly one call removed; survivors keep their original relative order.
+        let survivors: Vec<u8> = three.iter().map(|t| t.sender[0]).collect();
+        assert_eq!(survivors.len(), 2, "one call removed");
+        assert!(survivors[0] < survivors[1], "original order preserved: {survivors:?}");
+        assert!(
+            survivors.iter().all(|b| (1..=3).contains(b)),
+            "survivors are originals: {survivors:?}"
+        );
+    }
+
+    #[test]
+    fn insert_call_adds_a_generated_call() {
+        let (manager, _uuid) = new_manager_with_single_corpus();
+        let mut runner = mk_runner();
+        let mut seq = vec![tx_with_sender(1)];
+        manager.insert_call(&mut seq, &mut runner).unwrap();
+        // Original call preserved (not overwritten) and the generated call added.
+        assert_eq!(seq.len(), 2);
+        assert!(seq.iter().any(|t| t.sender == Address::from([1; 20])), "original call kept");
+        assert!(seq.iter().any(|t| t.sender == Address::ZERO), "generated call inserted");
     }
 
     #[test]
