@@ -77,6 +77,7 @@ mod providers;
 mod receipts;
 mod runner;
 mod sequence;
+mod session;
 mod simulate;
 mod transaction;
 mod verify;
@@ -268,7 +269,7 @@ impl ScriptArgs {
         } else {
             // Initial scripts may only reveal multi-chain transactions during execution. Use the
             // session root as the script sender here and validate chain scope during broadcast.
-            self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
+            session::ScriptSession::new(&self.tempo, &self.wallets).sender(self.evm.sender)?
         };
 
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
@@ -768,7 +769,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         expected_sender: Option<Address>,
     ) -> Result<()> {
         if let Some(sender) =
-            self.tempo.session_sender_for_multi_wallet(wallets, expected_sender)?
+            crate::session::ScriptSession::new(&self.tempo, wallets).sender(expected_sender)?
         {
             self.update_sender(sender).await?;
         }

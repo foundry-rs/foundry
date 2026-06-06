@@ -1,12 +1,10 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{
-        BundledState, RemainingScriptTransaction, SignerScope, remaining_unsigned_transactions,
-        script_session_expected_sender_if_configured,
-    },
+    broadcast::{BundledState, remaining_unsigned_transactions},
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     sequence::ScriptSequenceKind,
+    session::{RemainingScriptTransaction, ScriptSession},
 };
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, Bytes, map::AddressHashSet};
@@ -48,12 +46,9 @@ fn has_available_script_signers<FEN: FoundryEvmNetwork>(
         return Ok(true);
     }
 
-    let session_scope = script_config
-        .tempo
-        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|session| {
-            SignerScope::new(session.session.chain_id, session.access_key.wallet_address)
-        });
+    let session_scope = ScriptSession::new(&script_config.tempo, wallets)
+        .signer_any_chain(expected_sender)?
+        .map(|session| session.scope());
 
     Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || Some(tx.scope()) == session_scope))
 }
@@ -340,10 +335,9 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
                 let remaining_froms =
                     remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
-                let expected_session_sender = script_session_expected_sender_if_configured(
-                    &self.script_config,
-                    &remaining_froms,
-                )?;
+                let expected_session_sender =
+                    ScriptSession::new(&self.script_config.tempo, &self.args.wallets)
+                        .expected_sender(&remaining_froms)?;
                 let has_available_signers = has_available_script_signers(
                     &self.script_config,
                     &self.args.wallets,
@@ -427,41 +421,16 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
+    use foundry_cli::opts::TempoOpts;
     use foundry_evm::core::evm::TempoEvmNetwork;
-    use std::sync::LazyLock;
-    use tokio::sync::{Mutex, MutexGuard};
-
-    static SESSION_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-    struct SessionEnvGuard {
-        _guard: MutexGuard<'static, ()>,
-    }
-
-    impl SessionEnvGuard {
-        async fn set(session_id: B256) -> Self {
-            let guard = SESSION_ENV_LOCK.lock().await;
-            // SAFETY: test-only environment override guarded by a process-wide mutex.
-            unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
-            Self { _guard: guard }
-        }
-    }
-
-    impl Drop for SessionEnvGuard {
-        fn drop(&mut self) {
-            // SAFETY: restore process environment after the guarded test section.
-            unsafe { std::env::remove_var(TEMPO_SESSION_ID_ENV) };
-        }
-    }
 
     #[tokio::test]
     async fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
-        let _guard = SessionEnvGuard::set(B256::from([0x99; 32])).await;
         let script_config = ScriptConfig::<TempoEvmNetwork>::new(
             Default::default(),
             Default::default(),
             false,
-            Default::default(),
+            TempoOpts { session: Some(B256::from([0x99; 32])), ..Default::default() },
         )
         .await
         .unwrap();
