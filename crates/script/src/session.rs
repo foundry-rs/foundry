@@ -65,23 +65,17 @@ pub(crate) fn insert_session_access_key_for_remaining_transactions(
 ) -> Result<()> {
     let chain = session.session.chain_id;
     let root = session.session.root_account;
-    let mut has_session_sender = false;
-
-    for tx in remaining_transactions {
-        if tx.from == root {
-            if tx.chain != chain {
-                eyre::bail!(
-                    "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
-                    chain,
-                    root,
-                    tx.chain,
-                );
-            }
-            has_session_sender = true;
-        }
+    if let Some(tx) = remaining_transactions.iter().find(|tx| tx.from == root && tx.chain != chain)
+    {
+        eyre::bail!(
+            "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
+            chain,
+            root,
+            tx.chain,
+        );
     }
 
-    if has_session_sender {
+    if remaining_transactions.iter().any(|tx| tx.from == root) {
         access_keys.insert(SignerScope::new(chain, root), (session.signer, session.access_key));
     }
 
@@ -148,10 +142,6 @@ mod tests {
     }
 
     fn session_signer(chain_id: u64) -> (ResolvedSessionSigner, Address, Address) {
-        resolved_session_signer(chain_id)
-    }
-
-    fn resolved_session_signer(chain_id: u64) -> (ResolvedSessionSigner, Address, Address) {
         let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
         let root_address = root.address();
         let signer =

@@ -14,6 +14,7 @@ use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
+use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, compile::ProjectCompiler, provider::ProviderBuilder,
 };
@@ -34,8 +35,8 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
 /// session signer lives in the session registry instead, so resume needs to treat the session
 /// root account as available only on the chain covered by the session.
-fn has_available_script_signers<FEN: FoundryEvmNetwork>(
-    script_config: &ScriptConfig<FEN>,
+fn has_available_script_signers(
+    tempo: &TempoOpts,
     wallets: &MultiWalletOpts,
     script_wallets: &Wallets,
     expected_sender: Option<Address>,
@@ -48,14 +49,11 @@ fn has_available_script_signers<FEN: FoundryEvmNetwork>(
         return Ok(true);
     }
 
-    let session_scope = script_config
-        .tempo
+    let session_scope = tempo
         .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        .map(|session| {
-            SignerScope::new(session.session.chain_id, session.access_key.wallet_address)
-        });
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.wallet_address));
 
-    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || Some(tx.scope()) == session_scope))
+    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
 }
 
 /// Container for the compiled contracts.
@@ -345,7 +343,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &remaining_froms,
                 )?;
                 let has_available_signers = has_available_script_signers(
-                    &self.script_config,
+                    &self.script_config.tempo,
                     &self.args.wallets,
                     &self.script_wallets,
                     expected_session_sender,
@@ -427,22 +425,11 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli::opts::TempoOpts;
-    use foundry_evm::core::evm::TempoEvmNetwork;
 
-    #[tokio::test]
-    async fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
-        let script_config = ScriptConfig::<TempoEvmNetwork>::new(
-            Default::default(),
-            Default::default(),
-            false,
-            TempoOpts { session: Some(B256::from([0x99; 32])), ..Default::default() },
-        )
-        .await
-        .unwrap();
-
+    #[test]
+    fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
         let has_available = has_available_script_signers(
-            &script_config,
+            &TempoOpts { session: Some(B256::repeat_byte(0x99)), ..Default::default() },
             &MultiWalletOpts::default(),
             &Wallets::new(Default::default(), None),
             None,

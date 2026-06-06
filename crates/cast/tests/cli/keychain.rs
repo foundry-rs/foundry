@@ -2,12 +2,9 @@
 
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
-use foundry_test_utils::{TestCommand, TestProject, util::OutputExt};
+use foundry_test_utils::{TestCommand, util::OutputExt};
 use path_slash::PathExt;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
@@ -24,16 +21,19 @@ fn path_usd() -> String {
 const MISSING_SESSION_ID: &str =
     "0x5555555555555555555555555555555555555555555555555555555555555555";
 
-fn cast_bin(prj: &TestProject) -> PathBuf {
-    prj.foundry_bin_path("cast")
-}
-
-fn forge_bin(prj: &TestProject) -> PathBuf {
-    prj.ensure_foundry_bin("forge")
-}
-
 fn batch_send_transfer_call(path_usd: &str) -> String {
     format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3)
+}
+
+fn cast_send_session_script(path_usd: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+set -eu
+test -n "${{TEMPO_SESSION_ID:-}}"
+"${{CAST_BIN}}" send "{path_usd}" 'transfer(address,uint256)' "{recipient}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{path_usd}" --async
+"#,
+        recipient = accounts::ADDR3,
+    )
 }
 
 fn create_session(cmd: &mut TestCommand, tempo_home: &Path, chain_id: &str) -> (String, String) {
@@ -480,27 +480,13 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj,
     let child_dir = tempfile::tempdir().unwrap();
     let child_script = child_dir.path().join("session-cast-send.sh");
     let path_usd = path_usd();
-    let cast_bin = cast_bin(&prj);
-    fs::write(
-        &child_script,
-        format!(
-            r#"#!/bin/sh
-set -eu
-test -n "${{TEMPO_SESSION_ID:-}}"
-"${{CAST_BIN}}" send "{}" 'transfer(address,uint256)' "{}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{}" --async
-"#,
-            path_usd,
-            accounts::ADDR3,
-            path_usd,
-        ),
-    )
-    .expect("write child script");
+    fs::write(&child_script, cast_send_session_script(&path_usd)).expect("write child script");
 
     let for_command = format!("sh {}", child_script.to_slash_lossy());
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
-    cmd.env("CAST_BIN", &cast_bin);
+    cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
     let assertion = cmd
         .args([
@@ -522,9 +508,8 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             &rpc,
         ])
         .assert_failure();
-    let output = assertion.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
 
     assert_async_tx_hash(&stdout, "child cast send");
     assert_session_cleanup_failure(&stderr);
@@ -539,7 +524,6 @@ casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj
     let child_script = child_dir.path().join("session-batch-send.sh");
     let path_usd = path_usd();
     let call = batch_send_transfer_call(&path_usd);
-    let cast_bin = cast_bin(&prj);
     fs::write(
         &child_script,
         format!(
@@ -556,7 +540,7 @@ test -n "${{TEMPO_SESSION_ID:-}}"
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
-    cmd.env("CAST_BIN", &cast_bin);
+    cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
     let assertion = cmd
         .args([
@@ -578,9 +562,8 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             &rpc,
         ])
         .assert_failure();
-    let output = assertion.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
 
     assert_async_tx_hash(&stdout, "child cast batch-send");
     assert_session_cleanup_failure(&stderr);
@@ -605,12 +588,9 @@ interface PathUsdLike {{
 }}
 
 contract SessionForgeScript is Script {{
-    address constant PATH_USD = {path_usd};
-    address constant RECIPIENT = {recipient};
-
     function run() external {{
         vm.startBroadcast();
-        PathUsdLike(PATH_USD).transfer(RECIPIENT, 0);
+        PathUsdLike({path_usd}).transfer({recipient}, 0);
         vm.stopBroadcast();
     }}
 }}
@@ -621,7 +601,7 @@ contract SessionForgeScript is Script {{
 
     let for_command = format!(
         "{} script {} --tc SessionForgeScript --broadcast --rpc-url {} --root {}",
-        forge_bin(&prj).to_slash_lossy(),
+        prj.ensure_foundry_bin("forge").to_slash_lossy(),
         script.to_slash_lossy(),
         rpc,
         prj.root().to_slash_lossy(),
@@ -651,9 +631,8 @@ contract SessionForgeScript is Script {{
             &rpc,
         ])
         .assert_failure();
-    let output = assertion.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
 
     assert!(
         stdout.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL."),
@@ -722,7 +701,6 @@ casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, asyn
     let child_script = child_dir.path().join("session-child.sh");
     let grandchild_script = child_dir.path().join("session-grandchild-cast-send.sh");
     let path_usd = path_usd();
-    let cast_bin = cast_bin(&prj);
 
     fs::write(
         &child_script,
@@ -734,25 +712,15 @@ sh "$1"
     )
     .expect("write child script");
 
-    fs::write(
-        &grandchild_script,
-        format!(
-            r#"#!/bin/sh
-set -eu
-test -n "${{TEMPO_SESSION_ID:-}}"
-"${{CAST_BIN}}" send "{}" 'transfer(address,uint256)' "{}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{}" --async
-"#,
-            path_usd, accounts::ADDR3, path_usd,
-        ),
-    )
-    .expect("write grandchild script");
+    fs::write(&grandchild_script, cast_send_session_script(&path_usd))
+        .expect("write grandchild script");
 
     let for_command =
         format!("sh {} {}", child_script.to_slash_lossy(), grandchild_script.to_slash_lossy());
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
-    cmd.env("CAST_BIN", &cast_bin);
+    cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
     let assertion = cmd
         .args([
@@ -774,9 +742,8 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             &rpc,
         ])
         .assert_failure();
-    let output = assertion.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
 
     assert_async_tx_hash(&stdout, "grandchild cast send");
     assert_session_cleanup_failure(&stderr);

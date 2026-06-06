@@ -468,15 +468,9 @@ impl TestProject {
         }
 
         let package = format!("{name}@{}", env!("CARGO_PKG_VERSION"));
-        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("workspace root")
-            .join("Cargo.toml");
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let output = Command::new(cargo)
+        let output = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
             .args(["build", "-p", &package, "--bin", name, "--manifest-path"])
-            .arg(manifest)
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
             .output()
             .expect("build Foundry sibling binary");
         assert!(
