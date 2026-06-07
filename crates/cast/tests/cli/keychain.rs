@@ -4,10 +4,7 @@ use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 use path_slash::PathExt;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
@@ -24,18 +21,19 @@ fn path_usd() -> String {
 const MISSING_SESSION_ID: &str =
     "0x5555555555555555555555555555555555555555555555555555555555555555";
 
-fn cast_bin() -> PathBuf {
-    std::env::current_exe()
-        .expect("current test executable")
-        .parent()
-        .expect("deps dir")
-        .parent()
-        .expect("target debug dir")
-        .join(format!("cast{}", std::env::consts::EXE_SUFFIX))
-}
-
 fn batch_send_transfer_call(path_usd: &str) -> String {
     format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3)
+}
+
+fn cast_send_session_script(path_usd: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+set -eu
+test -n "${{TEMPO_SESSION_ID:-}}"
+"${{CAST_BIN}}" send "{path_usd}" 'transfer(address,uint256)' "{recipient}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{path_usd}" --async
+"#,
+        recipient = accounts::ADDR3,
+    )
 }
 
 fn create_session(cmd: &mut TestCommand, tempo_home: &Path, chain_id: &str) -> (String, String) {
@@ -475,34 +473,20 @@ printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
     }
 );
 
-casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |_prj, cmd| {
+casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
     let child_dir = tempfile::tempdir().unwrap();
     let child_script = child_dir.path().join("session-cast-send.sh");
     let path_usd = path_usd();
-    let cast_bin = cast_bin();
-    fs::write(
-        &child_script,
-        format!(
-            r#"#!/bin/sh
-set -eu
-test -n "${{TEMPO_SESSION_ID:-}}"
-"${{CAST_BIN}}" send "{}" 'transfer(address,uint256)' "{}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{}" --async
-"#,
-            path_usd,
-            accounts::ADDR3,
-            path_usd,
-        ),
-    )
-    .expect("write child script");
+    fs::write(&child_script, cast_send_session_script(&path_usd)).expect("write child script");
 
     let for_command = format!("sh {}", child_script.to_slash_lossy());
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
-    cmd.env("CAST_BIN", &cast_bin);
+    cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
     let assertion = cmd
         .args([
@@ -524,16 +508,15 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             &rpc,
         ])
         .assert_failure();
-    let output = assertion.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
 
     assert_async_tx_hash(&stdout, "child cast send");
     assert_session_cleanup_failure(&stderr);
     assert_session_file_status_without_key(tempo_home.path(), "failed");
 });
 
-casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |_prj, cmd| {
+casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -541,7 +524,6 @@ casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |_pr
     let child_script = child_dir.path().join("session-batch-send.sh");
     let path_usd = path_usd();
     let call = batch_send_transfer_call(&path_usd);
-    let cast_bin = cast_bin();
     fs::write(
         &child_script,
         format!(
@@ -558,7 +540,7 @@ test -n "${{TEMPO_SESSION_ID:-}}"
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
-    cmd.env("CAST_BIN", &cast_bin);
+    cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
     let assertion = cmd
         .args([
@@ -580,11 +562,104 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             &rpc,
         ])
         .assert_failure();
-    let output = assertion.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
 
     assert_async_tx_hash(&stdout, "child cast batch-send");
+    assert_session_cleanup_failure(&stderr);
+    assert_session_file_status_without_key(tempo_home.path(), "failed");
+});
+
+casttest!(wallet_session_run_for_forge_script_submits_with_session_key, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "SessionForgeScript.s.sol",
+        &format!(
+            r#"
+import "forge-std/Script.sol";
+
+interface PathUsdLike {{
+    function transfer(address to, uint256 amount) external returns (bool);
+}}
+
+contract SessionForgeScript is Script {{
+    function run() external {{
+        vm.startBroadcast();
+        PathUsdLike({path_usd}).transfer({recipient}, 0);
+        vm.stopBroadcast();
+    }}
+}}
+"#,
+            recipient = accounts::ADDR3,
+        ),
+    );
+
+    let for_command = format!(
+        "{} script {} --tc SessionForgeScript --broadcast --timeout 1 --rpc-url {} --root {}",
+        prj.ensure_foundry_bin("forge").to_slash_lossy(),
+        script.to_slash_lossy(),
+        rpc,
+        prj.root().to_slash_lossy(),
+    );
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let assertion = cmd
+        .args([
+            "wallet",
+            "session",
+            "--root",
+            accounts::ADDR1,
+            "--expires",
+            "10m",
+            "--target",
+            &path_usd,
+            "--selector",
+            "transfer(address,uint256)",
+            "--spend-limit",
+            "PathUSD=0",
+            "--for",
+            &for_command,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
+
+    assert!(
+        stdout.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL."),
+        "expected forge script broadcast completion\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .unwrap_or_else(|| {
+            panic!("expected forge broadcast artifact\nstdout:\n{stdout}\nstderr:\n{stderr}")
+        });
+    let broadcast = fs::read_to_string(&run_latest).expect("read forge broadcast artifact");
+    let broadcast: serde_json::Value =
+        serde_json::from_str(&broadcast).expect("forge broadcast artifact is valid JSON");
+    let tx = &broadcast["transactions"][0];
+
+    assert_eq!(tx["transactionType"], "CALL", "unexpected forge broadcast tx: {tx}");
+    assert_eq!(tx["function"], "transfer(address,uint256)", "unexpected forge broadcast tx: {tx}");
+    assert_eq!(
+        tx["contractAddress"].as_str().map(str::to_ascii_lowercase),
+        Some(path_usd.to_ascii_lowercase()),
+        "unexpected forge broadcast tx: {tx}"
+    );
+    assert!(
+        tx["hash"].as_str().is_some_and(|hash| hash.starts_with("0x")),
+        "forge broadcast tx should have a submitted hash: {tx}"
+    );
     assert_session_cleanup_failure(&stderr);
     assert_session_file_status_without_key(tempo_home.path(), "failed");
 });
@@ -618,7 +693,7 @@ casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
     assert_async_tx_hash(&stdout, "cast batch-send");
 });
 
-casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, async |_prj, cmd| {
+casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
@@ -626,7 +701,6 @@ casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, asyn
     let child_script = child_dir.path().join("session-child.sh");
     let grandchild_script = child_dir.path().join("session-grandchild-cast-send.sh");
     let path_usd = path_usd();
-    let cast_bin = cast_bin();
 
     fs::write(
         &child_script,
@@ -638,25 +712,15 @@ sh "$1"
     )
     .expect("write child script");
 
-    fs::write(
-        &grandchild_script,
-        format!(
-            r#"#!/bin/sh
-set -eu
-test -n "${{TEMPO_SESSION_ID:-}}"
-"${{CAST_BIN}}" send "{}" 'transfer(address,uint256)' "{}" 0 --rpc-url "${{RPC_URL}}" --tempo.fee-token "{}" --async
-"#,
-            path_usd, accounts::ADDR3, path_usd,
-        ),
-    )
-    .expect("write grandchild script");
+    fs::write(&grandchild_script, cast_send_session_script(&path_usd))
+        .expect("write grandchild script");
 
     let for_command =
         format!("sh {} {}", child_script.to_slash_lossy(), grandchild_script.to_slash_lossy());
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
-    cmd.env("CAST_BIN", &cast_bin);
+    cmd.env("CAST_BIN", prj.foundry_bin_path("cast"));
     cmd.env("RPC_URL", &rpc);
     let assertion = cmd
         .args([
@@ -678,9 +742,8 @@ test -n "${{TEMPO_SESSION_ID:-}}"
             &rpc,
         ])
         .assert_failure();
-    let output = assertion.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+    let stdout = assertion.get_output().stdout_lossy();
+    let stderr = assertion.get_output().stderr_lossy();
 
     assert_async_tx_hash(&stdout, "grandchild cast send");
     assert_session_cleanup_failure(&stderr);

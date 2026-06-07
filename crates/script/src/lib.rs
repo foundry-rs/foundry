@@ -77,6 +77,7 @@ mod providers;
 mod receipts;
 mod runner;
 mod sequence;
+mod session;
 mod simulate;
 mod transaction;
 mod verify;
