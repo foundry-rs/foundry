@@ -19,9 +19,7 @@ fn path_usd() -> String {
     PATH_USD_ADDRESS.to_string()
 }
 
-const fn address_registry() -> &'static str {
-    "0xFDC0000000000000000000000000000000000000"
-}
+const ADDRESS_REGISTRY: &str = "0xFDC0000000000000000000000000000000000000";
 
 fn tip20_factory() -> String {
     TIP20_FACTORY_ADDRESS.to_string()
@@ -34,9 +32,8 @@ fn batch_send_transfer_call(path_usd: &str) -> String {
     format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3)
 }
 
-const fn precomputed_vaddr_salt_for_addr1() -> &'static str {
-    "0x00000000000000000000000000000000000000000000000000000000abf52baf"
-}
+const PRECOMPUTED_VADDR_SALT_FOR_ADDR1: &str =
+    "0x00000000000000000000000000000000000000000000000000000000abf52baf";
 
 fn assert_wrong_chain_error(stderr: &str) {
     assert!(stderr.contains("is for chain 31338"), "unexpected stderr:\n{stderr}");
@@ -55,8 +52,7 @@ test -n "${{TEMPO_SESSION_ID:-}}"
 }
 
 fn create_session(cmd: &mut TestCommand, tempo_home: &Path, chain_id: &str) -> (String, String) {
-    let path_usd = path_usd();
-    create_session_with_scope(cmd, tempo_home, chain_id, &path_usd)
+    create_session_with_scope(cmd, tempo_home, chain_id, &path_usd())
 }
 
 fn create_session_with_scope(
@@ -759,7 +755,7 @@ casttest!(vaddr_create_uses_tempo_session_id_env, async |_prj, cmd| {
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
     let (session_id, _) =
-        create_session_with_scope(&mut cmd, tempo_home.path(), "31337", address_registry());
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31337", ADDRESS_REGISTRY);
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
@@ -772,7 +768,7 @@ casttest!(vaddr_create_uses_tempo_session_id_env, async |_prj, cmd| {
             "--owner",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--rpc-url",
             &rpc,
             "--async",
@@ -830,7 +826,7 @@ casttest!(tip20_mine_register_uses_tempo_session_id_env, async |_prj, cmd| {
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
     let (session_id, _) =
-        create_session_with_scope(&mut cmd, tempo_home.path(), "31337", address_registry());
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31337", ADDRESS_REGISTRY);
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
@@ -841,7 +837,7 @@ casttest!(tip20_mine_register_uses_tempo_session_id_env, async |_prj, cmd| {
             "mine",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--register",
             "--rpc-url",
             &rpc,
@@ -1029,7 +1025,7 @@ casttest!(vaddr_create_rejects_session_with_explicit_signer, async |_prj, cmd| {
             "--owner",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--tempo.session",
             MISSING_SESSION_ID,
             "--private-key",
@@ -1056,7 +1052,7 @@ casttest!(vaddr_create_rejects_session_with_browser, async |_prj, cmd| {
             "--owner",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--tempo.session",
             MISSING_SESSION_ID,
             "--browser",
@@ -1075,7 +1071,7 @@ casttest!(vaddr_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
     let (session_id, _) =
-        create_session_with_scope(&mut cmd, tempo_home.path(), "31338", address_registry());
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31338", ADDRESS_REGISTRY);
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
@@ -1086,7 +1082,7 @@ casttest!(vaddr_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
             "--owner",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--tempo.session",
             &session_id,
             "--rpc-url",
@@ -1207,7 +1203,7 @@ casttest!(tip20_mine_register_rejects_session_with_explicit_signer, async |_prj,
             "mine",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--register",
             "--tempo.session",
             MISSING_SESSION_ID,
@@ -1234,7 +1230,7 @@ casttest!(tip20_mine_register_rejects_session_with_browser, async |_prj, cmd| {
             "mine",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--register",
             "--tempo.session",
             MISSING_SESSION_ID,
@@ -1254,7 +1250,7 @@ casttest!(tip20_mine_register_rejects_session_on_wrong_chain, async |_prj, cmd| 
     let rpc = handle.http_endpoint();
     let tempo_home = tempfile::tempdir().unwrap();
     let (session_id, _) =
-        create_session_with_scope(&mut cmd, tempo_home.path(), "31338", address_registry());
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31338", ADDRESS_REGISTRY);
 
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home.path());
@@ -1264,7 +1260,7 @@ casttest!(tip20_mine_register_rejects_session_on_wrong_chain, async |_prj, cmd| 
             "mine",
             accounts::ADDR1,
             "--salt",
-            precomputed_vaddr_salt_for_addr1(),
+            PRECOMPUTED_VADDR_SALT_FOR_ADDR1,
             "--register",
             "--tempo.session",
             &session_id,

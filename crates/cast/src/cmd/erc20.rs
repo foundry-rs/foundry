@@ -314,7 +314,7 @@ impl Erc20Subcommand {
     }
 
     fn has_tempo_session(&self) -> eyre::Result<bool> {
-        Ok(self.erc20_opts().map(|opts| opts.tempo.session_id()).transpose()?.flatten().is_some())
+        self.erc20_opts().map_or(Ok(false), |opts| opts.tempo.session_id().map(|id| id.is_some()))
     }
 
     pub async fn run(self) -> eyre::Result<()> {
@@ -328,9 +328,7 @@ impl Erc20Subcommand {
                 // Only attempt persistent Tempo lookup if --from is set (avoids unnecessary I/O).
                 // Explicit Tempo sessions are resolved after network selection, once the chain is
                 // known.
-                if has_session {
-                    (None, None)
-                } else if send_tx.eth.wallet.from.is_some() {
+                if !has_session && send_tx.eth.wallet.from.is_some() {
                     let (s, ak) = send_tx.eth.wallet.maybe_signer().await?;
                     (s, ak)
                 } else {
@@ -375,27 +373,20 @@ impl Erc20Subcommand {
             ) => {{
                 let mut tx_opts = $tx_opts;
                 tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
-                let session_signer = if tx_opts.tempo.session_id()?.is_some() {
+                let (pre_resolved_signer, tempo_keychain) = if tx_opts.tempo.session_id()?.is_some()
+                {
                     let $provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let chain = get_chain(config.chain, &$provider).await?;
-                    Some(
-                        tempo::resolve_session_or_wallet_signer(
-                            &tx_opts.tempo,
-                            &$send_tx.eth.wallet,
-                            chain.id(),
-                        )
-                        .await?,
+                    tempo::resolve_session_or_wallet_signer(
+                        &tx_opts.tempo,
+                        &$send_tx.eth.wallet,
+                        chain.id(),
                     )
+                    .await?
                 } else {
-                    None
+                    (pre_resolved_signer, tempo_keychain)
                 };
-                let (pre_resolved_signer, tempo_keychain) =
-                    if let Some((signer, access_key)) = session_signer {
-                        (signer, access_key)
-                    } else {
-                        (pre_resolved_signer, tempo_keychain)
-                    };
                 let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
                 let expires_at = tx_opts.tempo.resolve_expires();
                 let tempo_sponsor =

@@ -63,15 +63,11 @@ impl BatchMakeTxArgs {
             return Err(eyre!("No calls specified. Use --call to specify at least one call."));
         }
 
-        if has_session {
-            if raw_unsigned {
-                eyre::bail!(
-                    "--tempo.session/TEMPO_SESSION_ID cannot be combined with --raw-unsigned"
-                );
-            }
-            if ethsign {
-                eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --ethsign");
-            }
+        if has_session && raw_unsigned {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --raw-unsigned");
+        }
+        if has_session && ethsign {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --ethsign");
         }
 
         let config = eth.load_config()?;

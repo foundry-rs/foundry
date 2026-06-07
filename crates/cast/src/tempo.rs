@@ -29,11 +29,10 @@ pub(crate) async fn resolve_session_or_wallet_signer(
     wallet: &WalletOpts,
     chain_id: u64,
 ) -> Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
-    if let Some(session) = tempo.session_signer_for_wallet(wallet, chain_id)? {
-        return Ok((Some(session.signer), Some(session.access_key)));
+    match tempo.session_signer_for_wallet(wallet, chain_id)? {
+        Some(session) => Ok((Some(session.signer), Some(session.access_key))),
+        None => wallet.maybe_signer().await,
     }
-
-    wallet.maybe_signer().await
 }
 
 pub(crate) fn ensure_session_not_browser(tempo: &TempoOpts, browser: bool) -> Result<()> {

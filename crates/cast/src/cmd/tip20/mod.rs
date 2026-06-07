@@ -206,13 +206,13 @@ pub(super) async fn send_tip20_transaction(
     pre_resolved_signer: Option<WalletSigner>,
     access_key: Option<TempoAccessKeyConfig>,
 ) -> eyre::Result<()> {
-    let session_signer = resolve_tip20_signer(&send_tx, &tx_params).await?;
+    let (pre_resolved_signer, access_key) =
+        if let Some((signer, access_key)) = resolve_tip20_signer(&send_tx, &tx_params).await? {
+            (Some(signer), Some(access_key))
+        } else {
+            (pre_resolved_signer, access_key)
+        };
     let mut tx_opts = tx_params.into_transaction_opts();
-    let (pre_resolved_signer, access_key) = if let Some((signer, access_key)) = session_signer {
-        (Some(signer), Some(access_key))
-    } else {
-        (pre_resolved_signer, access_key)
-    };
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let sponsor_url = tx_opts.tempo.sponsor_url.clone();
     let expires_at = tx_opts.tempo.resolve_expires();
