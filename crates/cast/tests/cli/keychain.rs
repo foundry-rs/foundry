@@ -469,7 +469,7 @@ printf '%s\n' "${TEMPO_SESSION_ID}" > "$1"
             child_session_id.trim().starts_with("0x"),
             "unexpected child session id: {child_session_id}"
         );
-        assert_session_file_status_without_key(tempo_home.path(), "failed");
+        assert_session_file_status_without_key(tempo_home.path(), "revoking");
     }
 );
 
@@ -513,7 +513,7 @@ casttest!(wallet_session_run_for_cast_send_submits_with_session_key, async |prj,
 
     assert_async_tx_hash(&stdout, "child cast send");
     assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "failed");
+    assert_session_file_status_without_key(tempo_home.path(), "revoking");
 });
 
 casttest!(wallet_session_run_for_batch_send_submits_with_session_key, async |prj, cmd| {
@@ -567,7 +567,7 @@ test -n "${{TEMPO_SESSION_ID:-}}"
 
     assert_async_tx_hash(&stdout, "child cast batch-send");
     assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "failed");
+    assert_session_file_status_without_key(tempo_home.path(), "revoking");
 });
 
 casttest!(wallet_session_run_for_forge_script_submits_with_session_key, async |prj, cmd| {
@@ -661,7 +661,7 @@ contract SessionForgeScript is Script {{
         "forge broadcast tx should have a submitted hash: {tx}"
     );
     assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "failed");
+    assert_session_file_status_without_key(tempo_home.path(), "revoking");
 });
 
 casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
@@ -747,7 +747,7 @@ sh "$1"
 
     assert_async_tx_hash(&stdout, "grandchild cast send");
     assert_session_cleanup_failure(&stderr);
-    assert_session_file_status_without_key(tempo_home.path(), "failed");
+    assert_session_file_status_without_key(tempo_home.path(), "revoking");
 });
 
 casttest!(cast_send_rejects_session_with_explicit_signer, async |_prj, cmd| {
@@ -956,6 +956,6 @@ test -n "${TEMPO_SESSION_ID:-}"
             .stderr_lossy();
 
         assert!(stderr.contains("created for chain 31338"), "unexpected stderr:\n{stderr}");
-        assert_session_file_status_without_key(tempo_home.path(), "failed");
+        assert_session_file_status_without_key(tempo_home.path(), "revoking");
     }
 );
