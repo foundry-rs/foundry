@@ -217,8 +217,7 @@ async fn run_for_command(
     upsert_session_entry(entry)?;
 
     let child_result = command.run(session_id).await;
-    let child_succeeded = child_result.is_ok();
-    let cleanup_result = cleanup_session_run(session_id, child_succeeded, tx, send_tx).await;
+    let cleanup_result = cleanup_session_run(session_id, child_result.is_ok(), tx, send_tx).await;
 
     finish_session_run(session_id, child_result, cleanup_result)
 }
@@ -249,23 +248,21 @@ async fn cleanup_session_run(
 }
 
 fn mark_session_run_revoking(session_id: B256) -> Result<()> {
-    let Some(entry) = read_session_entry(session_id)? else {
-        return Ok(());
-    };
-    let status = if entry.status.is_terminal() { entry.status } else { SessionStatus::Revoking };
-    update_session_status(session_id, status)
-        .map(|_| ())
+    update_session_run_status(session_id, SessionStatus::Revoking)
         .wrap_err_with(|| format!("failed to mark Tempo session {session_id:?} as revoking"))
 }
 
 fn retire_session_run_locally(session_id: B256) -> Result<()> {
+    update_session_run_status(session_id, SessionStatus::Failed)
+        .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"))
+}
+
+fn update_session_run_status(session_id: B256, status: SessionStatus) -> Result<()> {
     let Some(entry) = read_session_entry(session_id)? else {
         return Ok(());
     };
-    let status = if entry.status.is_terminal() { entry.status } else { SessionStatus::Failed };
-    update_session_status(session_id, status)
-        .map(|_| ())
-        .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"))
+    let status = if entry.status.is_terminal() { entry.status } else { status };
+    update_session_status(session_id, status).map(|_| ())
 }
 
 fn finish_session_run(

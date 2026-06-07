@@ -252,18 +252,19 @@ pub struct ScriptArgs {
 impl ScriptArgs {
     fn normalized_tempo(&self) -> TempoOpts {
         let mut tempo = self.tempo.clone();
-        if let Some(session) = self.session {
-            tempo.session = Some(session);
-        }
+        tempo.session = self.session.or(tempo.session);
         tempo
+    }
+
+    fn has_tempo_session(&self) -> Result<bool> {
+        Ok(self.session.is_some() || self.tempo.session_id()?.is_some())
     }
 
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
-        let tempo = self.normalized_tempo();
 
-        if tempo.is_tempo() || tempo.session_id()?.is_some() {
+        if self.tempo.is_tempo() || self.has_tempo_session()? {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else {
@@ -279,9 +280,8 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let mut args = self;
+        let args = self;
         let mut tempo = args.normalized_tempo();
-        args.tempo = tempo.clone();
 
         let session_sender = if args.resume {
             None
@@ -334,7 +334,7 @@ impl ScriptArgs {
             eyre::bail!("--batch mode is only supported on Tempo networks");
         }
 
-        if self.unlocked && self.normalized_tempo().session_id()?.is_some() {
+        if self.unlocked && self.has_tempo_session()? {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
 
@@ -891,6 +891,10 @@ mod tests {
 
     const SESSION_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+    const SESSION_ID_HEX: &str =
+        "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const OTHER_SESSION_ID_HEX: &str =
+        "0x2222222222222222222222222222222222222222222222222222222222222222";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn active_session_entry(
@@ -999,7 +1003,7 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--tempo.session",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            SESSION_ID_HEX,
         ]);
 
         assert_eq!(args.tempo.session, Some(B256::from([0x11; 32])),);
@@ -1007,12 +1011,8 @@ mod tests {
 
     #[test]
     fn can_parse_session_alias_for_tempo_session() {
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Contract.sol",
-            "--session",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-        ]);
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--session", SESSION_ID_HEX]);
 
         assert_eq!(args.session, Some(B256::from([0x11; 32])));
         assert_eq!(args.normalized_tempo().session, Some(B256::from([0x11; 32])));
@@ -1024,9 +1024,9 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--session",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            SESSION_ID_HEX,
             "--tempo.session",
-            "0x2222222222222222222222222222222222222222222222222222222222222222",
+            OTHER_SESSION_ID_HEX,
         ])
         .unwrap_err();
 
@@ -1035,15 +1035,8 @@ mod tests {
 
     #[tokio::test]
     async fn session_alias_selects_tempo_network() {
-        let temp = tempdir().unwrap();
-        let _guard = TempoHomeGuard::set(temp.path()).await;
-
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Contract.sol",
-            "--session",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-        ]);
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--session", SESSION_ID_HEX]);
         let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
 
         assert!(evm_opts.networks.is_tempo());
