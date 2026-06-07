@@ -600,7 +600,7 @@ contract SessionForgeScript is Script {{
     );
 
     let for_command = format!(
-        "{} script {} --tc SessionForgeScript --broadcast --rpc-url {} --root {}",
+        "{} script {} --tc SessionForgeScript --broadcast --timeout 1 --rpc-url {} --root {}",
         prj.ensure_foundry_bin("forge").to_slash_lossy(),
         script.to_slash_lossy(),
         rpc,
