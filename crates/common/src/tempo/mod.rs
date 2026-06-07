@@ -37,6 +37,11 @@ pub(crate) use test_utils::{test_env_mutex, with_tempo_home};
 #[cfg(test)]
 mod tests;
 
+/// Placeholder rendered by `Debug` impls in place of secret key material.
+fn redacted_debug(value: &str) -> &'static str {
+    if value.trim().is_empty() { "<empty>" } else { "<redacted>" }
+}
+
 /// Conservative gas buffer for browser wallet transactions on Tempo chains.
 ///
 /// Browser wallets may sign with P256 or WebAuthn instead of secp256k1, which costs more gas
