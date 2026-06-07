@@ -2,7 +2,7 @@ use std::{str::FromStr, time::Duration};
 
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
-    format_uint_exp,
+    format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_consensus::{SignableTransaction, Signed};
@@ -299,6 +299,7 @@ impl Erc20Subcommand {
         tempo_access_key: &Option<TempoAccessKeyConfig>,
     ) -> eyre::Result<bool> {
         if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
+            || self.has_tempo_session()?
             || tempo_access_key.is_some()
         {
             return Ok(true);
@@ -312,15 +313,24 @@ impl Erc20Subcommand {
         Ok(false)
     }
 
+    fn has_tempo_session(&self) -> eyre::Result<bool> {
+        Ok(self.erc20_opts().map(|opts| opts.tempo.session_id()).transpose()?.flatten().is_some())
+    }
+
     pub async fn run(self) -> eyre::Result<()> {
+        let has_session = self.has_tempo_session()?;
         // Resolve the signer once for state-changing variants.
         let (signer, tempo_access_key) = match &self {
             Self::Transfer { send_tx, .. }
             | Self::Approve { send_tx, .. }
             | Self::Mint { send_tx, .. }
             | Self::Burn { send_tx, .. } => {
-                // Only attempt Tempo lookup if --from is set (avoids unnecessary I/O).
-                if send_tx.eth.wallet.from.is_some() {
+                // Only attempt persistent Tempo lookup if --from is set (avoids unnecessary I/O).
+                // Explicit Tempo sessions are resolved after network selection, once the chain is
+                // known.
+                if has_session {
+                    (None, None)
+                } else if send_tx.eth.wallet.from.is_some() {
                     let (s, ak) = send_tx.eth.wallet.maybe_signer().await?;
                     (s, ak)
                 } else {
@@ -364,6 +374,28 @@ impl Erc20Subcommand {
                 $build_tx:expr
             ) => {{
                 let mut tx_opts = $tx_opts;
+                tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
+                let session_signer = if tx_opts.tempo.session_id()?.is_some() {
+                    let $provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    Some(
+                        tempo::resolve_session_or_wallet_signer(
+                            &tx_opts.tempo,
+                            &$send_tx.eth.wallet,
+                            chain.id(),
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
+                let (pre_resolved_signer, tempo_keychain) =
+                    if let Some((signer, access_key)) = session_signer {
+                        (signer, access_key)
+                    } else {
+                        (pre_resolved_signer, tempo_keychain)
+                    };
                 let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
                 let expires_at = tx_opts.tempo.resolve_expires();
                 let tempo_sponsor =
@@ -384,17 +416,9 @@ impl Erc20Subcommand {
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
-                    if needs_sponsor_payload {
-                        tx.set_key_id(access_key.key_address);
-                        tx.prepare_access_key_authorization(
-                            &$provider,
-                            access_key.wallet_address,
-                            access_key.key_address,
-                            access_key.key_authorization.as_ref(),
-                        )
+                    tempo::fill_access_key_transaction(&$provider, &mut tx, access_key, chain)
                         .await?;
-                        fill_tx(&$provider, &mut tx, access_key.wallet_address, chain, false)
-                            .await?;
+                    if needs_sponsor_payload {
                         if print_sponsor_hash {
                             let hash = tx
                                 .compute_sponsor_hash(access_key.wallet_address)

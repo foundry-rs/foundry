@@ -56,10 +56,22 @@ impl BatchMakeTxArgs {
     pub async fn run(self) -> Result<()> {
         let Self { calls, mut tx, eth, raw_unsigned, ethsign } = self;
         let has_nonce = tx.nonce.is_some();
+        let has_session = tx.tempo.session_id()?.is_some();
         let expires_at = tx.tempo.resolve_expires();
 
         if calls.is_empty() {
             return Err(eyre!("No calls specified. Use --call to specify at least one call."));
+        }
+
+        if has_session {
+            if raw_unsigned {
+                eyre::bail!(
+                    "--tempo.session/TEMPO_SESSION_ID cannot be combined with --raw-unsigned"
+                );
+            }
+            if ethsign {
+                eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --ethsign");
+            }
         }
 
         let config = eth.load_config()?;
@@ -69,15 +81,17 @@ impl BatchMakeTxArgs {
         // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
-        // Resolve signer to detect keychain mode
-        let (signer, tempo_access_key) = eth.wallet.maybe_signer().await?;
-
         // Parse all call specs
         let call_specs: Vec<CallSpec> =
             calls.iter().map(|s| CallSpec::parse(s)).collect::<Result<Vec<_>>>()?;
 
         // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
+        let (signer, tempo_access_key) = if raw_unsigned {
+            (None, None)
+        } else {
+            tempo::resolve_session_or_wallet_signer(&tx.tempo, &eth.wallet, chain.id()).await?
+        };
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
         let etherscan_api_url = etherscan_config.map(|c| c.api_url);

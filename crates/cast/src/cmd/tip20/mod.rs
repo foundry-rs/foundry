@@ -11,7 +11,7 @@ use alloy_signer::Signer;
 use clap::Parser;
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder, provider::ProviderBuilder, tempo::TEMPO_BROWSER_GAS_BUFFER,
@@ -179,8 +179,22 @@ impl Tip20Subcommand {
 
 pub(super) async fn resolve_tip20_signer(
     send_tx: &SendTxOpts,
-) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
-    send_tx.eth.wallet.maybe_signer().await
+    tx_params: &TxParams,
+) -> eyre::Result<Option<(WalletSigner, TempoAccessKeyConfig)>> {
+    let Some(session_id) = tx_params.tempo.session_id()? else {
+        return Ok(None);
+    };
+
+    crate::tempo::ensure_session_not_browser(&tx_params.tempo, send_tx.browser.browser)?;
+
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let chain = get_chain(config.chain, &provider).await?;
+    let session =
+        tx_params.tempo.session_signer_for_wallet(&send_tx.eth.wallet, chain.id())?.ok_or_else(
+            || eyre::eyre!("Tempo session {session_id:?} is not active or has no live key"),
+        )?;
+    Ok(Some((session.signer, session.access_key)))
 }
 
 pub(super) async fn send_tip20_transaction(
@@ -192,7 +206,13 @@ pub(super) async fn send_tip20_transaction(
     pre_resolved_signer: Option<WalletSigner>,
     access_key: Option<TempoAccessKeyConfig>,
 ) -> eyre::Result<()> {
+    let session_signer = resolve_tip20_signer(&send_tx, &tx_params).await?;
     let mut tx_opts = tx_params.into_transaction_opts();
+    let (pre_resolved_signer, access_key) = if let Some((signer, access_key)) = session_signer {
+        (Some(signer), Some(access_key))
+    } else {
+        (pre_resolved_signer, access_key)
+    };
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let sponsor_url = tx_opts.tempo.sponsor_url.clone();
     let expires_at = tx_opts.tempo.resolve_expires();

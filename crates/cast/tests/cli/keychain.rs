@@ -5,6 +5,7 @@ use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 use path_slash::PathExt;
 use std::{fs, path::Path};
+use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
 
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
@@ -18,11 +19,28 @@ fn path_usd() -> String {
     PATH_USD_ADDRESS.to_string()
 }
 
+const fn address_registry() -> &'static str {
+    "0xFDC0000000000000000000000000000000000000"
+}
+
+fn tip20_factory() -> String {
+    TIP20_FACTORY_ADDRESS.to_string()
+}
+
 const MISSING_SESSION_ID: &str =
     "0x5555555555555555555555555555555555555555555555555555555555555555";
 
 fn batch_send_transfer_call(path_usd: &str) -> String {
     format!("{path_usd}::transfer(address,uint256):{},0", accounts::ADDR3)
+}
+
+const fn precomputed_vaddr_salt_for_addr1() -> &'static str {
+    "0x00000000000000000000000000000000000000000000000000000000abf52baf"
+}
+
+fn assert_wrong_chain_error(stderr: &str) {
+    assert!(stderr.contains("is for chain 31338"), "unexpected stderr:\n{stderr}");
+    assert!(stderr.contains("command is using chain 31337"), "unexpected stderr:\n{stderr}");
 }
 
 fn cast_send_session_script(path_usd: &str) -> String {
@@ -38,7 +56,15 @@ test -n "${{TEMPO_SESSION_ID:-}}"
 
 fn create_session(cmd: &mut TestCommand, tempo_home: &Path, chain_id: &str) -> (String, String) {
     let path_usd = path_usd();
+    create_session_with_scope(cmd, tempo_home, chain_id, &path_usd)
+}
 
+fn create_session_with_scope(
+    cmd: &mut TestCommand,
+    tempo_home: &Path,
+    chain_id: &str,
+    scope: &str,
+) -> (String, String) {
     cmd.cast_fuse();
     cmd.env("TEMPO_HOME", tempo_home);
     let create_output = cmd
@@ -54,7 +80,7 @@ fn create_session(cmd: &mut TestCommand, tempo_home: &Path, chain_id: &str) -> (
             "--expires",
             "10m",
             "--scope",
-            &path_usd,
+            scope,
             "--private-key",
             accounts::PK1,
         ])
@@ -99,6 +125,18 @@ fn assert_async_tx_hash(stdout: &str, command: &str) {
     assert!(
         stdout.trim().starts_with("0x"),
         "expected {command} --async to print a tx hash, got:\n{stdout}"
+    );
+}
+
+fn assert_contains_tx_hash(stdout: &str, command: &str) {
+    assert!(
+        stdout.lines().any(|line| {
+            let line = line.trim();
+            line.len() == 66
+                && line.starts_with("0x")
+                && line[2..].chars().all(|c| c.is_ascii_hexdigit())
+        }),
+        "expected {command} to print a tx hash, got:\n{stdout}"
     );
 }
 
@@ -691,6 +729,611 @@ casttest!(batch_send_uses_tempo_session_id_env, async |_prj, cmd| {
         .stdout_lossy();
 
     assert_async_tx_hash(&stdout, "cast batch-send");
+});
+
+casttest!(batch_mktx_uses_tempo_session_id_env, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
+    let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31337");
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("TEMPO_SESSION_ID", &session_id);
+    let stdout = cmd
+        .args(["batch-mktx", "--call", &call, "--rpc-url", &rpc, "--tempo.fee-token", &path_usd])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        stdout.trim().starts_with("0x"),
+        "expected cast batch-mktx to print raw tx hex, got:\n{stdout}"
+    );
+});
+
+casttest!(vaddr_create_uses_tempo_session_id_env, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let (session_id, _) =
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31337", address_registry());
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("TEMPO_SESSION_ID", &session_id);
+    let stdout = cmd
+        .args([
+            "--json",
+            "vaddr",
+            "create",
+            "--owner",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--rpc-url",
+            &rpc,
+            "--async",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("vaddr create emits JSON");
+    assert!(
+        envelope["data"]["registration_tx_hash"]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with("0x")),
+        "expected vaddr create --json to include registration tx hash, got:\n{stdout}"
+    );
+});
+
+casttest!(tip20_create_uses_tempo_session_id_env, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let (session_id, _) =
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31337", &tip20_factory());
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("TEMPO_SESSION_ID", &session_id);
+    let stdout = cmd
+        .args([
+            "tip20",
+            "create",
+            "Session Dollar",
+            "SESS",
+            "USD",
+            &path_usd,
+            accounts::ADDR1,
+            "0x0000000000000000000000000000000000000000000000000000000000005151",
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+            "--async",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_async_tx_hash(&stdout, "cast tip20 create");
+});
+
+casttest!(tip20_mine_register_uses_tempo_session_id_env, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let (session_id, _) =
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31337", address_registry());
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("TEMPO_SESSION_ID", &session_id);
+    let stdout = cmd
+        .args([
+            "tip20",
+            "mine",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--register",
+            "--rpc-url",
+            &rpc,
+            "--async",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_contains_tx_hash(&stdout, "cast tip20 mine --register");
+});
+
+casttest!(erc20_transfer_uses_tempo_session_id_env, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31337");
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    cmd.env("TEMPO_SESSION_ID", &session_id);
+    let stdout = cmd
+        .args([
+            "erc20",
+            "transfer",
+            &path_usd,
+            accounts::ADDR3,
+            "0",
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+            "--async",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_async_tx_hash(&stdout, "cast erc20 transfer");
+});
+
+casttest!(batch_mktx_rejects_session_with_explicit_signer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "batch-mktx",
+            "--call",
+            &call,
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(erc20_rejects_session_with_explicit_signer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "erc20",
+            "transfer",
+            &path_usd,
+            accounts::ADDR3,
+            "0",
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(batch_mktx_rejects_session_with_ethsign, |_prj, cmd| {
+    let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "batch-mktx",
+            "--call",
+            &call,
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--ethsign",
+            "--from",
+            accounts::ADDR1,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("cannot be combined with --ethsign"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(batch_mktx_rejects_session_with_raw_unsigned, |_prj, cmd| {
+    let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "batch-mktx",
+            "--call",
+            &call,
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--raw-unsigned",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("cannot be combined with --raw-unsigned"),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
+casttest!(batch_mktx_rejects_session_on_wrong_chain, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
+    let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31338");
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "batch-mktx",
+            "--call",
+            &call,
+            "--tempo.session",
+            &session_id,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert_wrong_chain_error(&stderr);
+});
+
+casttest!(vaddr_create_rejects_session_with_explicit_signer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "vaddr",
+            "create",
+            "--owner",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(vaddr_create_rejects_session_with_browser, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "vaddr",
+            "create",
+            "--owner",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--browser",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(vaddr_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let (session_id, _) =
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31338", address_registry());
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "vaddr",
+            "create",
+            "--owner",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--tempo.session",
+            &session_id,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert_wrong_chain_error(&stderr);
+});
+
+casttest!(tip20_create_rejects_session_with_explicit_signer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "tip20",
+            "create",
+            "Session Dollar",
+            "SESS",
+            "USD",
+            &path_usd,
+            accounts::ADDR1,
+            "0x0000000000000000000000000000000000000000000000000000000000005152",
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(tip20_create_rejects_session_with_browser, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "tip20",
+            "create",
+            "Session Dollar",
+            "SESS",
+            "USD",
+            &path_usd,
+            accounts::ADDR1,
+            "0x0000000000000000000000000000000000000000000000000000000000005153",
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--browser",
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(tip20_create_rejects_session_on_wrong_chain, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let (session_id, _) =
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31338", &tip20_factory());
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "tip20",
+            "create",
+            "Session Dollar",
+            "SESS",
+            "USD",
+            &path_usd,
+            accounts::ADDR1,
+            "0x0000000000000000000000000000000000000000000000000000000000005154",
+            "--tempo.session",
+            &session_id,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert_wrong_chain_error(&stderr);
+});
+
+casttest!(tip20_mine_register_rejects_session_with_explicit_signer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "tip20",
+            "mine",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--register",
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("explicit wallet signer"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(tip20_mine_register_rejects_session_with_browser, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "tip20",
+            "mine",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--register",
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--browser",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(tip20_mine_register_rejects_session_on_wrong_chain, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let (session_id, _) =
+        create_session_with_scope(&mut cmd, tempo_home.path(), "31338", address_registry());
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "tip20",
+            "mine",
+            accounts::ADDR1,
+            "--salt",
+            precomputed_vaddr_salt_for_addr1(),
+            "--register",
+            "--tempo.session",
+            &session_id,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert_wrong_chain_error(&stderr);
+});
+
+casttest!(erc20_rejects_session_with_browser, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "erc20",
+            "transfer",
+            &path_usd,
+            accounts::ADDR3,
+            "0",
+            "--tempo.session",
+            MISSING_SESSION_ID,
+            "--browser",
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("cannot be combined with --browser"), "unexpected stderr:\n{stderr}");
+});
+
+casttest!(erc20_rejects_session_on_wrong_chain, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let tempo_home = tempfile::tempdir().unwrap();
+    let path_usd = path_usd();
+    let (session_id, _) = create_session(&mut cmd, tempo_home.path(), "31338");
+
+    cmd.cast_fuse();
+    cmd.env("TEMPO_HOME", tempo_home.path());
+    let stderr = cmd
+        .args([
+            "erc20",
+            "transfer",
+            &path_usd,
+            accounts::ADDR3,
+            "0",
+            "--tempo.session",
+            &session_id,
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert_wrong_chain_error(&stderr);
 });
 
 casttest!(wallet_session_run_for_grandchild_cast_send_inherits_session_key, async |prj, cmd| {
