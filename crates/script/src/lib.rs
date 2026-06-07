@@ -16,7 +16,7 @@ use crate::{broadcast::BundledState, runner::ScriptRunner};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
-    Address, Bytes, Log, U256, hex,
+    Address, B256, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
 };
 use alloy_signer::Signer;
@@ -141,6 +141,12 @@ pub struct ScriptArgs {
     #[command(flatten)]
     pub tempo: TempoOpts,
 
+    /// Use a live Tempo wallet session for signing.
+    ///
+    /// This is a forge-script convenience alias for `--tempo.session`.
+    #[arg(long = "session", value_name = "SESSION_ID", conflicts_with = "tempo_session")]
+    pub session: Option<B256>,
+
     /// Skips on-chain simulation.
     #[arg(long)]
     pub skip_simulation: bool,
@@ -244,11 +250,20 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
+    fn normalized_tempo(&self) -> TempoOpts {
+        let mut tempo = self.tempo.clone();
+        if let Some(session) = self.session {
+            tempo.session = Some(session);
+        }
+        tempo
+    }
+
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        let tempo = self.normalized_tempo();
 
-        if self.tempo.is_tempo() || self.tempo.session_id()?.is_some() {
+        if tempo.is_tempo() || tempo.session_id()?.is_some() {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else {
@@ -264,22 +279,26 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let session_sender = if self.resume {
+        let mut args = self;
+        let mut tempo = args.normalized_tempo();
+        args.tempo = tempo.clone();
+
+        let session_sender = if args.resume {
             None
         } else {
             // Initial scripts may only reveal multi-chain transactions during execution. Use the
             // session root as the script sender here and validate chain scope during broadcast.
-            self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
+            tempo.session_sender_for_multi_wallet(&args.wallets, args.evm.sender)?
         };
 
-        let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
-        let browser_wallet = self.wallets.browser_signer::<FEN::Network>().await?;
+        let script_wallets = Wallets::new(args.wallets.get_multi_wallet().await?, args.evm.sender);
+        let browser_wallet = args.wallets.browser_signer::<FEN::Network>().await?;
 
         if let Some(sender) = session_sender {
             evm_opts.sender = sender;
-        } else if let Some(sender) = self.maybe_load_private_key()? {
+        } else if let Some(sender) = args.maybe_load_private_key()? {
             evm_opts.sender = sender;
-        } else if self.evm.sender.is_none() {
+        } else if args.evm.sender.is_none() {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
@@ -292,15 +311,14 @@ impl ScriptArgs {
             }
         }
 
-        let mut tempo = self.tempo.clone();
         tempo.resolve_expires();
 
         if evm_opts.networks.is_tempo() && tempo.fee_token.is_none() {
             tempo.fee_token = Some(PATH_USD_ADDRESS);
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
-        Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
+        let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
+        Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
     }
 
     /// Executes the script
@@ -316,7 +334,7 @@ impl ScriptArgs {
             eyre::bail!("--batch mode is only supported on Tempo networks");
         }
 
-        if self.unlocked && self.tempo.session_id()?.is_some() {
+        if self.unlocked && self.normalized_tempo().session_id()?.is_some() {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
 
@@ -860,7 +878,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::address;
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
     use foundry_common::tempo::{
         KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
@@ -985,6 +1003,50 @@ mod tests {
         ]);
 
         assert_eq!(args.tempo.session, Some(B256::from([0x11; 32])),);
+    }
+
+    #[test]
+    fn can_parse_session_alias_for_tempo_session() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--session",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        ]);
+
+        assert_eq!(args.session, Some(B256::from([0x11; 32])));
+        assert_eq!(args.normalized_tempo().session, Some(B256::from([0x11; 32])));
+    }
+
+    #[test]
+    fn session_alias_conflicts_with_tempo_session_opt() {
+        let err = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--session",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "--tempo.session",
+            "0x2222222222222222222222222222222222222222222222222222222222222222",
+        ])
+        .unwrap_err();
+
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn session_alias_selects_tempo_network() {
+        let temp = tempdir().unwrap();
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--session",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        ]);
+        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
+
+        assert!(evm_opts.networks.is_tempo());
     }
 
     #[tokio::test]
