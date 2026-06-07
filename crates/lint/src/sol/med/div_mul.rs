@@ -3,10 +3,15 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::sema::{
-    Gcx, Hir,
-    builtins::Builtin,
-    hir::{BinOpKind, Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, VariableId},
+use solar::{
+    ast::UnOpKind,
+    sema::{
+        Gcx, Hir,
+        builtins::Builtin,
+        hir::{
+            BinOpKind, Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, VariableId,
+        },
+    },
 };
 use std::collections::HashSet;
 
@@ -37,10 +42,13 @@ fn check_block<'hir>(
     hir: &'hir Hir<'hir>,
     block: Block<'hir>,
     tainted: &mut HashSet<VariableId>,
-) {
+) -> bool {
     for stmt in block.stmts {
-        check_stmt(ctx, hir, stmt, tainted);
+        if !check_stmt(ctx, hir, stmt, tainted) {
+            return false;
+        }
     }
+    true
 }
 
 fn check_stmt<'hir>(
@@ -48,7 +56,7 @@ fn check_stmt<'hir>(
     hir: &'hir Hir<'hir>,
     stmt: &'hir Stmt<'hir>,
     tainted: &mut HashSet<VariableId>,
-) {
+) -> bool {
     match &stmt.kind {
         StmtKind::DeclSingle(var_id) => {
             if let Some(init) = hir.variable(*var_id).initializer {
@@ -60,43 +68,75 @@ fn check_stmt<'hir>(
                     tainted,
                 );
             }
+            true
         }
         StmtKind::DeclMulti(vars, expr) => {
             check_expr(ctx, hir, expr, tainted);
             update_multi_decl_taint(hir, vars, expr, tainted);
+            true
         }
-        StmtKind::Expr(expr) => check_expr(ctx, hir, expr, tainted),
-        StmtKind::Emit(expr) | StmtKind::Revert(expr) | StmtKind::Return(Some(expr)) => {
-            check_expr(ctx, hir, expr, tainted)
+        StmtKind::Expr(expr) => {
+            check_expr(ctx, hir, expr, tainted);
+            !is_revert_call(expr)
+        }
+        StmtKind::Emit(expr) => {
+            check_expr(ctx, hir, expr, tainted);
+            true
+        }
+        StmtKind::Revert(expr) | StmtKind::Return(Some(expr)) => {
+            check_expr(ctx, hir, expr, tainted);
+            false
         }
         StmtKind::If(cond, then_stmt, else_stmt) => {
             check_expr(ctx, hir, cond, tainted);
 
-            let mut then_tainted = tainted.clone();
-            check_stmt(ctx, hir, then_stmt, &mut then_tainted);
+            let baseline = tainted.clone();
+            let mut merged_taint = HashSet::default();
+            let mut falls_through = false;
+
+            let mut then_tainted = baseline.clone();
+            if check_stmt(ctx, hir, then_stmt, &mut then_tainted) {
+                merged_taint = union_taints(&merged_taint, &then_tainted);
+                falls_through = true;
+            }
 
             if let Some(else_stmt) = else_stmt {
-                let mut else_tainted = tainted.clone();
-                check_stmt(ctx, hir, else_stmt, &mut else_tainted);
-                *tainted = union_taints(&then_tainted, &else_tainted);
+                let mut else_tainted = baseline;
+                if check_stmt(ctx, hir, else_stmt, &mut else_tainted) {
+                    merged_taint = union_taints(&merged_taint, &else_tainted);
+                    falls_through = true;
+                }
             } else {
-                *tainted = union_taints(tainted, &then_tainted);
+                merged_taint = union_taints(&merged_taint, &baseline);
+                falls_through = true;
             }
+
+            if falls_through {
+                *tainted = merged_taint;
+            }
+            falls_through
         }
         StmtKind::Loop(block, _) => {
-            let mut loop_tainted = tainted.clone();
-            check_block(ctx, hir, *block, &mut loop_tainted);
-            *tainted = union_taints(tainted, &loop_tainted);
+            let baseline = tainted.clone();
+            let mut loop_tainted = baseline.clone();
+            *tainted = if check_block(ctx, hir, *block, &mut loop_tainted) {
+                union_taints(&baseline, &loop_tainted)
+            } else {
+                baseline
+            };
+            true
         }
         StmtKind::Try(try_stmt) => {
             check_expr(ctx, hir, &try_stmt.expr, tainted);
             let mut merged_taint = tainted.clone();
             for clause in try_stmt.clauses {
                 let mut clause_tainted = tainted.clone();
-                check_block(ctx, hir, clause.block, &mut clause_tainted);
-                merged_taint = union_taints(&merged_taint, &clause_tainted);
+                if check_block(ctx, hir, clause.block, &mut clause_tainted) {
+                    merged_taint = union_taints(&merged_taint, &clause_tainted);
+                }
             }
             *tainted = merged_taint;
+            true
         }
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
             check_block(ctx, hir, *block, tainted)
@@ -107,16 +147,15 @@ fn check_stmt<'hir>(
             let mut merged_taint = tainted.clone();
             for case in switch.cases {
                 let mut case_tainted = tainted.clone();
-                check_block(ctx, hir, case.body, &mut case_tainted);
-                merged_taint = union_taints(&merged_taint, &case_tainted);
+                if check_block(ctx, hir, case.body, &mut case_tainted) {
+                    merged_taint = union_taints(&merged_taint, &case_tainted);
+                }
             }
             *tainted = merged_taint;
+            true
         }
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::Err(_) => {}
+        StmtKind::Return(None) => false,
+        StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => true,
     }
 }
 
@@ -146,7 +185,7 @@ fn check_expr<'hir>(
                 Some(op) if op.kind == BinOpKind::Div => {
                     update_lhs_taint(hir, lhs, true, tainted);
                 }
-                Some(_) => {}
+                Some(_) => update_lhs_taint(hir, lhs, false, tainted),
             }
         }
         ExprKind::Binary(left, op, right) => {
@@ -212,7 +251,12 @@ fn check_expr<'hir>(
                 check_expr(ctx, hir, expr, tainted);
             }
         }
-        ExprKind::Unary(_, inner) => check_expr(ctx, hir, inner, tainted),
+        ExprKind::Unary(op, inner) => {
+            check_expr(ctx, hir, inner, tainted);
+            if is_inc_dec_op(op.kind) {
+                update_lhs_taint(hir, inner, false, tainted);
+            }
+        }
         ExprKind::Ident(_)
         | ExprKind::Lit(_)
         | ExprKind::New(_)
@@ -363,6 +407,16 @@ fn is_yul_division_call(expr: &Expr<'_>) -> bool {
 
 fn is_yul_multiplication_call(expr: &Expr<'_>) -> bool {
     is_yul_builtin_call(expr, |builtin| matches!(builtin, Builtin::YulMul))
+}
+
+fn is_revert_call(expr: &Expr<'_>) -> bool {
+    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return false };
+    resolutions.iter().any(|res| matches!(res, Res::Builtin(Builtin::Revert | Builtin::RevertMsg)))
+}
+
+const fn is_inc_dec_op(kind: UnOpKind) -> bool {
+    matches!(kind, UnOpKind::PreInc | UnOpKind::PostInc | UnOpKind::PreDec | UnOpKind::PostDec)
 }
 
 fn is_yul_builtin_call(expr: &Expr<'_>, predicate: impl Fn(Builtin) -> bool) -> bool {

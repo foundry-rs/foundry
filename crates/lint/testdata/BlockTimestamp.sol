@@ -97,6 +97,24 @@ contract BlockTimestamp {
         return t > 0;
     }
 
+    function returningBranchAliasDoesNotLeak(bool condition) public view returns (bool) {
+        uint256 t = deadline;
+        if (condition) {
+            t = block.timestamp;
+            return true;
+        }
+        return t > 0;
+    }
+
+    function revertingBranchAliasDoesNotLeak(bool condition) public view returns (bool) {
+        uint256 t = deadline;
+        if (condition) {
+            t = block.timestamp;
+            revert("done");
+        }
+        return t > 0;
+    }
+
     function foo(uint256 x) internal pure returns (uint256) {
         return x;
     }

@@ -53,6 +53,30 @@ contract DivideBeforeMultiply {
         return q * c; //~WARN: multiplication should occur before division to avoid loss of precision
     }
 
+    function returningBranchDoesNotLeak(uint256 a, uint256 b, uint256 c, bool condition)
+        public
+        pure
+        returns (uint256 q)
+    {
+        if (condition) {
+            q = a / b;
+            return q;
+        }
+        return q * c;
+    }
+
+    function revertingBranchDoesNotLeak(uint256 a, uint256 b, uint256 c, bool condition)
+        public
+        pure
+        returns (uint256 q)
+    {
+        if (condition) {
+            q = a / b;
+            revert("done");
+        }
+        return q * c;
+    }
+
     function compound(uint256 a, uint256 b, uint256 c) public pure returns (uint256 q) {
         q = a / b;
         q *= c; //~WARN: multiplication should occur before division to avoid loss of precision
@@ -63,6 +87,18 @@ contract DivideBeforeMultiply {
         q = a;
         q /= b;
         q *= c; //~WARN: multiplication should occur before division to avoid loss of precision
+    }
+
+    function compoundClearsTaint(uint256 a, uint256 b, uint256 c) public pure returns (uint256 q) {
+        q = a / b;
+        q += 1;
+        return q * c;
+    }
+
+    function incrementClearsTaint(uint256 a, uint256 b, uint256 c) public pure returns (uint256 q) {
+        q = a / b;
+        q++;
+        return q * c;
     }
 
     function tupleElementWise(uint256 a, uint256 b, uint256 c)

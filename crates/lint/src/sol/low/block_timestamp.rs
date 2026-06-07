@@ -46,10 +46,13 @@ fn check_block<'hir>(
     helpers: &HashSet<FunctionId>,
     block: Block<'hir>,
     aliases: &mut HashSet<VariableId>,
-) {
+) -> bool {
     for stmt in block.stmts {
-        check_stmt(ctx, hir, helpers, stmt, aliases);
+        if !check_stmt(ctx, hir, helpers, stmt, aliases) {
+            return false;
+        }
     }
+    true
 }
 
 fn check_stmt<'hir>(
@@ -58,7 +61,7 @@ fn check_stmt<'hir>(
     helpers: &HashSet<FunctionId>,
     stmt: &'hir Stmt<'hir>,
     aliases: &mut HashSet<VariableId>,
-) {
+) -> bool {
     match &stmt.kind {
         StmtKind::DeclSingle(var_id) => {
             if let Some(init) = hir.variable(*var_id).initializer {
@@ -70,35 +73,63 @@ fn check_stmt<'hir>(
                     aliases,
                 );
             }
+            true
         }
         StmtKind::DeclMulti(vars, expr) => {
             check_expr(ctx, hir, helpers, expr, aliases);
             update_multi_aliases(hir, helpers, vars, expr, aliases);
+            true
         }
-        StmtKind::Expr(expr) => check_expr(ctx, hir, helpers, expr, aliases),
-        StmtKind::Emit(expr) | StmtKind::Revert(expr) | StmtKind::Return(Some(expr)) => {
+        StmtKind::Expr(expr) => {
             check_expr(ctx, hir, helpers, expr, aliases);
+            !is_revert_call(expr)
+        }
+        StmtKind::Emit(expr) => {
+            check_expr(ctx, hir, helpers, expr, aliases);
+            true
+        }
+        StmtKind::Revert(expr) | StmtKind::Return(Some(expr)) => {
+            check_expr(ctx, hir, helpers, expr, aliases);
+            false
         }
         StmtKind::If(cond, then_stmt, else_stmt) => {
             check_expr(ctx, hir, helpers, cond, aliases);
 
             let baseline = aliases.clone();
+            let mut merged = HashSet::new();
+            let mut falls_through = false;
+
             let mut then_aliases = baseline.clone();
-            check_stmt(ctx, hir, helpers, then_stmt, &mut then_aliases);
+            if check_stmt(ctx, hir, helpers, then_stmt, &mut then_aliases) {
+                merged.extend(then_aliases);
+                falls_through = true;
+            }
 
             if let Some(else_stmt) = else_stmt {
                 let mut else_aliases = baseline;
-                check_stmt(ctx, hir, helpers, else_stmt, &mut else_aliases);
-                *aliases = then_aliases.union(&else_aliases).copied().collect();
+                if check_stmt(ctx, hir, helpers, else_stmt, &mut else_aliases) {
+                    merged.extend(else_aliases);
+                    falls_through = true;
+                }
             } else {
-                *aliases = baseline.union(&then_aliases).copied().collect();
+                merged.extend(baseline);
+                falls_through = true;
             }
+
+            if falls_through {
+                *aliases = merged;
+            }
+            falls_through
         }
         StmtKind::Loop(block, _) => {
             let baseline = aliases.clone();
             let mut loop_aliases = baseline.clone();
-            check_block(ctx, hir, helpers, *block, &mut loop_aliases);
-            *aliases = baseline.union(&loop_aliases).copied().collect();
+            *aliases = if check_block(ctx, hir, helpers, *block, &mut loop_aliases) {
+                baseline.union(&loop_aliases).copied().collect()
+            } else {
+                baseline
+            };
+            true
         }
         StmtKind::Try(try_stmt) => {
             check_expr(ctx, hir, helpers, &try_stmt.expr, aliases);
@@ -107,13 +138,15 @@ fn check_stmt<'hir>(
             let mut merged = baseline.clone();
             for clause in try_stmt.clauses {
                 let mut clause_aliases = baseline.clone();
-                check_block(ctx, hir, helpers, clause.block, &mut clause_aliases);
-                merged.extend(clause_aliases);
+                if check_block(ctx, hir, helpers, clause.block, &mut clause_aliases) {
+                    merged.extend(clause_aliases);
+                }
             }
             *aliases = merged;
+            true
         }
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            check_block(ctx, hir, helpers, *block, aliases);
+            check_block(ctx, hir, helpers, *block, aliases)
         }
         StmtKind::AssemblyBlock(block) => check_block(ctx, hir, helpers, *block, aliases),
         StmtKind::Switch(switch) => {
@@ -123,16 +156,15 @@ fn check_stmt<'hir>(
             let mut merged = baseline.clone();
             for case in switch.cases {
                 let mut case_aliases = baseline.clone();
-                check_block(ctx, hir, helpers, case.body, &mut case_aliases);
-                merged.extend(case_aliases);
+                if check_block(ctx, hir, helpers, case.body, &mut case_aliases) {
+                    merged.extend(case_aliases);
+                }
             }
             *aliases = merged;
+            true
         }
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::Err(_) => {}
+        StmtKind::Return(None) => false,
+        StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => true,
     }
 }
 
@@ -460,6 +492,12 @@ fn timestamp_helpers(hir: &Hir<'_>, contract: Option<ContractId>) -> HashSet<Fun
 fn is_timestamp_helper_call(helpers: &HashSet<FunctionId>, expr: &Expr<'_>) -> bool {
     let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return false };
     helper_function_ids(callee).into_iter().any(|fid| helpers.contains(&fid))
+}
+
+fn is_revert_call(expr: &Expr<'_>) -> bool {
+    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return false };
+    resolutions.iter().any(|res| matches!(res, Res::Builtin(Builtin::Revert | Builtin::RevertMsg)))
 }
 
 fn helper_function_ids(callee: &Expr<'_>) -> Vec<FunctionId> {
