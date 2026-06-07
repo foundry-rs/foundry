@@ -6,7 +6,7 @@ use alloy_signer::Signer;
 use eyre::ensure;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroU64, path::PathBuf};
+use std::{fmt, num::NonZeroU64, path::PathBuf};
 use tempo_primitives::transaction::{
     CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
 };
@@ -59,7 +59,7 @@ pub struct SessionTokenLimit {
 /// Session keys live with their lifecycle record in `wallet/sessions.toml`.
 /// Persistent Tempo wallet login keys remain in `wallet/keys.toml`, so creating
 /// or cleaning up a session cannot replace a user's long-lived access key.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SessionKeyMaterial {
     #[serde(default)]
     pub key_type: KeyType,
@@ -69,6 +69,20 @@ pub struct SessionKeyMaterial {
     /// provisioning on first use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_authorization: Option<String>,
+}
+
+// Manual `Debug` redacts the secret key material; propagates to containers.
+impl fmt::Debug for SessionKeyMaterial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionKeyMaterial")
+            .field("key_type", &self.key_type)
+            .field("key", &super::redacted_debug(&self.key))
+            .field(
+                "key_authorization",
+                &self.key_authorization.as_deref().map(super::redacted_debug),
+            )
+            .finish()
+    }
 }
 
 impl SessionKeyMaterial {
@@ -619,6 +633,27 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const SESSION_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[test]
+    fn debug_redacts_session_key_material() {
+        // Distinctive sentinels so a leak can't accidentally pass.
+        let mut entry = sample_entry_with_key(B256::from([0x77; 32]), 200, SessionStatus::Active);
+        let key = entry.key.as_mut().unwrap();
+        key.key = "0xPRIVATE_KEY_MUST_NOT_LEAK".to_string();
+        key.key_authorization = Some("0xKEY_AUTH_MUST_NOT_LEAK".to_string());
+
+        let entry_dbg = format!("{entry:?}");
+        let record_dbg = format!("{:?}", SessionRecord { sessions: vec![entry] });
+
+        for rendered in [&entry_dbg, &record_dbg] {
+            assert!(!rendered.contains("PRIVATE_KEY_MUST_NOT_LEAK"), "key leaked in: {rendered}");
+            assert!(!rendered.contains("KEY_AUTH_MUST_NOT_LEAK"), "auth leaked in: {rendered}");
+        }
+        assert!(entry_dbg.contains("key: \"<redacted>\""), "got: {entry_dbg}");
+        assert!(entry_dbg.contains("key_authorization: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        // Non-secret metadata is still visible for diagnostics.
+        assert!(entry_dbg.contains("key_type"));
+    }
 
     fn sample_entry(session_id: B256, expiry: u64, status: SessionStatus) -> SessionEntry {
         SessionEntry {
