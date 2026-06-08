@@ -302,18 +302,11 @@ pub enum KeychainSubcommand {
         #[command(subcommand)]
         command: KeychainPolicySubcommand,
     },
-
-    /// Build or sign Tempo key authorization artifacts.
-    #[command(visible_alias = "authz")]
-    Authorization {
-        #[command(subcommand)]
-        command: KeychainAuthorizationSubcommand,
-    },
 }
 
 /// Tempo key-authorization artifact helpers.
 #[derive(Debug, Parser)]
-pub enum KeychainAuthorizationSubcommand {
+pub enum KeyAuthSubcommand {
     /// RLP-encode an unsigned Tempo key authorization.
     Encode {
         #[command(flatten)]
@@ -333,8 +326,7 @@ pub enum KeychainAuthorizationSubcommand {
     },
 }
 
-/// Common fields for `cast keychain authorization encode` and
-/// `cast keychain authorization sign`.
+/// Common fields for `cast key-auth encode` and `cast key-auth sign`.
 #[derive(Debug, Parser)]
 pub struct KeyAuthArgs {
     /// Chain ID for replay protection.
@@ -719,12 +711,11 @@ impl KeychainSubcommand {
                 run_remove_scope(key_address, target, tx, send_tx).await
             }
             Self::Policy { command } => command.run().await,
-            Self::Authorization { command } => command.run().await,
         }
     }
 }
 
-impl KeychainAuthorizationSubcommand {
+impl KeyAuthSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::Encode { authorization } => run_key_auth_encode(authorization),
@@ -3821,13 +3812,12 @@ mod tests {
     }
 
     #[test]
-    fn test_keychain_authorization_encode_parses() {
+    fn test_key_auth_encode_parses() {
         let key = "0x1111111111111111111111111111111111111111";
         let token = "0x20c0000000000000000000000000000000000000";
 
-        let command = KeychainSubcommand::try_parse_from([
-            "keychain",
-            "authorization",
+        let command = KeyAuthSubcommand::try_parse_from([
+            "key-auth",
             "encode",
             key,
             "--chain-id",
@@ -3842,12 +3832,8 @@ mod tests {
         .unwrap();
 
         match command {
-            KeychainSubcommand::Authorization {
-                command:
-                    KeychainAuthorizationSubcommand::Encode {
-                        authorization:
-                            KeyAuthArgs { chain_id, key_address, key_type, expiry, limits, .. },
-                    },
+            KeyAuthSubcommand::Encode {
+                authorization: KeyAuthArgs { chain_id, key_address, key_type, expiry, limits, .. },
             } => {
                 assert_eq!(chain_id, 4217);
                 assert_eq!(key_address, Address::from_str(key).unwrap());
