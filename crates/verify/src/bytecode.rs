@@ -143,16 +143,33 @@ impl figment::Provider for VerifyBytecodeArgs {
 }
 
 impl VerifyBytecodeArgs {
+    fn configured_network(
+        cli_network: Option<NetworkVariant>,
+        config: &Config,
+    ) -> Option<NetworkVariant> {
+        cli_network.or_else(|| config.networks.resolved_network())
+    }
+
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(self) -> Result<()> {
-        let config = self.load_config()?;
-        let network = match self.network {
-            Some(network) => network,
-            None => {
+        let mut config = self.load_config()?;
+        let network = if let Some(network) = Self::configured_network(self.network, &config) {
+            if self.network.is_some() {
+                config.networks = network.into();
+            }
+            network
+        } else {
+            let network = {
                 let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
                 provider.get_chain_id().await?.into()
+            };
+
+            if !matches!(network, NetworkVariant::Ethereum) {
+                config.networks = network.into();
             }
+
+            network
         };
 
         match network {
@@ -640,5 +657,25 @@ mod tests {
         ]);
 
         assert_eq!(args.network, Some(NetworkVariant::Monad));
+    }
+
+    #[test]
+    fn configured_network_uses_config_network() {
+        let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
+
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(None, &config),
+            Some(NetworkVariant::Monad)
+        );
+    }
+
+    #[test]
+    fn configured_network_prefers_cli_network() {
+        let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
+
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(Some(NetworkVariant::Ethereum), &config),
+            Some(NetworkVariant::Ethereum)
+        );
     }
 }

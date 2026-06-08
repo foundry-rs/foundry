@@ -138,16 +138,20 @@ impl NetworkConfigs {
     }
 
     /// Returns the resolved network variant, folding legacy flags.
-    fn resolved_network(&self) -> Option<NetworkVariant> {
-        self.network.or(if self.optimism {
-            Some(NetworkVariant::Optimism)
-        } else if self.tempo {
-            Some(NetworkVariant::Tempo)
-        } else if self.monad {
-            Some(NetworkVariant::Monad)
-        } else {
-            None
-        })
+    pub const fn resolved_network(&self) -> Option<NetworkVariant> {
+        if let Some(network) = self.network {
+            return Some(network);
+        }
+        if self.optimism {
+            return Some(NetworkVariant::Optimism);
+        }
+        if self.tempo {
+            return Some(NetworkVariant::Tempo);
+        }
+        if self.monad {
+            return Some(NetworkVariant::Monad);
+        }
+        None
     }
 
     /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
@@ -264,6 +268,23 @@ impl NetworkConfigs {
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
         }
         precompiles
+    }
+}
+
+impl From<NetworkVariant> for NetworkConfigs {
+    fn from(network: NetworkVariant) -> Self {
+        match network {
+            NetworkVariant::Ethereum => Self::default(),
+            NetworkVariant::Optimism => {
+                Self { network: Some(network), optimism: true, ..Default::default() }
+            }
+            NetworkVariant::Tempo => {
+                Self { network: Some(network), tempo: true, ..Default::default() }
+            }
+            NetworkVariant::Monad => {
+                Self { network: Some(network), monad: true, ..Default::default() }
+            }
+        }
     }
 }
 

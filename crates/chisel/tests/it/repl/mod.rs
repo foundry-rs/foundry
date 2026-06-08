@@ -141,8 +141,28 @@ repl_test!(
     }
 );
 
+repl_test!(
+    eval_tempo_chain_id_uses_tempo_executor,
+    "--chain 4217 eval uint256(address(0xfeEC000000000000000000000000000000000000).code.length)",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
+repl_test!(
+    eval_tempo_named_chain_uses_tempo_executor,
+    "--chain tempo eval uint256(address(0xfeEC000000000000000000000000000000000000).code.length)",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
 repl_test!(eval_monad_network_option_runs, "--network monad eval uint256(block.chainid)", |repl| {
     repl.expect("Decimal: 31337");
+});
+
+repl_test!(eval_monad_chain_id_option_runs, "--chain 143 eval uint256(block.chainid)", |repl| {
+    repl.expect("Decimal: 143");
 });
 
 // Issue #4938: Test memory/stack dumps with assembly.
