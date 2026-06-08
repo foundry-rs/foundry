@@ -2,6 +2,7 @@
 
 use super::context::{StatusKind, TUIContext};
 use crate::op::OpcodeParam;
+use alloy_primitives::Address;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::SourceData;
@@ -398,13 +399,16 @@ impl TUIContext<'_> {
             })
             .collect::<Vec<_>>();
 
-        let title = format!(
-            "Address: {} | PC: 0x{:x} ({}) | Gas used: {} | Gas refund: {}",
+        let step = self.current_step();
+        let call_gas_used = self.debug_call().gas_limit.saturating_sub(step.gas_remaining);
+        let title = op_list_title(
             self.address(),
-            self.current_step().pc,
-            self.current_step().pc,
-            self.debug_call().gas_limit - self.current_step().gas_remaining,
-            self.current_step().gas_refund_counter
+            step.pc,
+            step.gas_remaining,
+            self.debugger_context.stats.total_gas_used,
+            call_gas_used,
+            step.gas_refund_counter,
+            self.debugger_context.stats.subcalls,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -606,6 +610,28 @@ impl TUIContext<'_> {
     }
 }
 
+fn op_list_title(
+    address: &Address,
+    pc: usize,
+    gas_remaining: u64,
+    total_gas_used: u64,
+    call_gas_used: u64,
+    gas_refund_counter: u64,
+    subcalls: usize,
+) -> String {
+    let address = short_address(address);
+    format!(
+        "Addr: {address} | PC: 0x{pc:x} ({pc}) | gasleft: {gas_remaining} | totalGasUsed: \
+         {total_gas_used} | subcalls: {subcalls} | callGas: {call_gas_used} | refund: \
+         {gas_refund_counter}"
+    )
+}
+
+fn short_address(address: &Address) -> String {
+    let address = address.to_string();
+    format!("{}...{}", &address[..6], &address[address.len() - 4..])
+}
+
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
@@ -666,6 +692,22 @@ fn hex_digits(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::Address;
+
+    #[test]
+    fn op_list_title_includes_gas_and_subcall_stats() {
+        let title =
+            super::op_list_title(&Address::from([0x42; 20]), 0x2a, 123_456, 789_012, 42, 7, 3);
+
+        assert!(title.contains("PC: 0x2a (42)"));
+        assert!(title.contains("Addr: 0x4242...4242"));
+        assert!(title.contains("gasleft: 123456"));
+        assert!(title.contains("totalGasUsed: 789012"));
+        assert!(title.contains("subcalls: 3"));
+        assert!(title.contains("callGas: 42"));
+        assert!(title.contains("refund: 7"));
+    }
+
     #[test]
     fn decimal_digits() {
         assert_eq!(super::decimal_digits(0), 1);

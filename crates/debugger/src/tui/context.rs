@@ -661,6 +661,7 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debugger::DebuggerStats;
     use alloy_primitives::Bytes;
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::ContractSources;
@@ -690,8 +691,10 @@ mod tests {
     }
 
     fn context_with_arena(arena: Vec<DebugNode>) -> DebuggerContext {
+        let stats = DebuggerStats::from_debug_arena(&arena);
         DebuggerContext {
             debug_arena: arena,
+            stats,
             identified_contracts: Default::default(),
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
