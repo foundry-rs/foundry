@@ -36,6 +36,7 @@ alloy-evm = { workspace = true, features = ["rpc"] }
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["time"] }
 async-trait.workspace = true
 futures.workspace = true
 semver.workspace = true
@@ -48,3 +49,12 @@ url.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 foundry-test-utils.workspace = true
 tempfile.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-cli/optimism",
+]

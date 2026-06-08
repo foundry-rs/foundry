@@ -20,6 +20,7 @@ foundry-compilers.workspace = true
 foundry-linking.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
+foundry-evm-hardforks.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-json-abi.workspace = true
@@ -50,3 +51,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 yansi.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-common/optimism", "foundry-evm-core/optimism"]

@@ -39,6 +39,7 @@ impl ExternalIdentifier {
             return Ok(None);
         }
 
+        let no_proxy = config.eth_rpc_no_proxy;
         let config = match config.get_etherscan_config_with_chain(chain) {
             Ok(Some(config)) => {
                 chain = config.chain;
@@ -61,7 +62,7 @@ impl ExternalIdentifier {
         }
         if let Some(config) = config {
             debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            match config.into_client() {
+            match config.into_client_with_no_proxy(no_proxy) {
                 Ok(client) => {
                     fetchers.push(Arc::new(EtherscanFetcher::new(client)));
                 }
@@ -226,6 +227,10 @@ impl TraceIdentifier for ExternalIdentifier {
 type FetchFuture =
     Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)>>>;
 
+/// Maximum number of times a single address is retried through a transient Cloudflare
+/// block before we give up on it. Bounded so a persistent block can't loop forever.
+const MAX_CLOUDFLARE_RETRIES: u32 = 5;
+
 /// A rate limit aware fetcher.
 ///
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
@@ -242,6 +247,8 @@ struct ExternalFetcher {
     queue: Vec<Address>,
     /// The in progress requests
     in_progress: FuturesUnordered<FetchFuture>,
+    /// Per-address retry counter for transient Cloudflare blocks.
+    attempts: HashMap<Address, u32>,
 }
 
 impl ExternalFetcher {
@@ -253,6 +260,7 @@ impl ExternalFetcher {
             fetcher,
             queue: to_fetch.to_vec(),
             in_progress: FuturesUnordered::new(),
+            attempts: HashMap::default(),
         }
     }
 
@@ -318,10 +326,24 @@ impl Stream for ExternalFetcher {
                             return Poll::Ready(None);
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
-                            warn!(target: "evm::traces::external", "blocked by cloudflare");
-                            // mark key as invalid
-                            pin.fetcher.invalid_api_key().store(true, Ordering::Relaxed);
-                            return Poll::Ready(None);
+                            // A Cloudflare block is transient rate limiting (often triggered
+                            // by request bursts), not a permanent failure like an invalid key.
+                            // Back off and retry the address a bounded number of times instead
+                            // of aborting the whole stream, which would abandon every still-
+                            // queued address and leave traces only partially decoded (#9880).
+                            let attempts = {
+                                let entry = pin.attempts.entry(addr).or_default();
+                                *entry += 1;
+                                *entry
+                            };
+                            if attempts <= MAX_CLOUDFLARE_RETRIES {
+                                warn!(target: "evm::traces::external", attempts, "blocked by cloudflare, backing off");
+                                pin.backoff = Some(tokio::time::interval(pin.timeout));
+                                pin.queue.push(addr);
+                            } else {
+                                warn!(target: "evm::traces::external", "blocked by cloudflare, giving up on address");
+                                return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                            }
                         }
                         Err(err) => {
                             warn!(target: "evm::traces::external", ?err, "could not get info");
@@ -507,5 +529,56 @@ impl From<SourcifyMetadata> for Metadata {
             implementation: None,
             swarm_source: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::HashSet as StdHashSet, sync::Mutex};
+
+    /// Fetcher that returns a transient Cloudflare block the first time it sees an address, then
+    /// succeeds. Mirrors Etherscan/Cloudflare throttling a burst of concurrent requests.
+    struct FlakyCloudflareFetcher {
+        seen: Mutex<StdHashSet<Address>>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for FlakyCloudflareFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Etherscan
+        }
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(1)
+        }
+        fn concurrency(&self) -> usize {
+            1
+        }
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+        async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            let first_time = self.seen.lock().unwrap().insert(address);
+            if first_time { Err(EtherscanError::BlockedByCloudflare) } else { Ok(None) }
+        }
+    }
+
+    /// Regression test for #9880: a transient Cloudflare block on one address must not abandon the
+    /// rest of the queue. Before the fix the fetcher returned `Poll::Ready(None)` on the first
+    /// block, ending the stream and leaving later addresses unidentified (partial trace decoding).
+    #[tokio::test]
+    async fn cloudflare_block_retries_instead_of_abandoning_queue() {
+        let addrs: Vec<Address> = (1u8..=4).map(Address::with_last_byte).collect();
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(FlakyCloudflareFetcher {
+            seen: Mutex::new(StdHashSet::new()),
+            invalid: AtomicBool::new(false),
+        });
+
+        let collected: Vec<_> = ExternalFetcher::new(fetcher, &addrs).collect().await;
+
+        let got: StdHashSet<Address> = collected.into_iter().map(|(addr, _)| addr).collect();
+        let want: StdHashSet<Address> = addrs.into_iter().collect();
+        assert_eq!(got, want, "every address must be yielded despite a transient cloudflare block");
     }
 }

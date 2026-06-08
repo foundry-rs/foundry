@@ -37,9 +37,9 @@ pub struct AnvilInspector {
 /// Configuration for per-transaction inspector lifecycle.
 #[derive(Clone, Debug)]
 pub struct InspectorTxConfig {
-    /// Whether to print traces to stdout.
+    /// Whether to print traces to stderr.
     pub print_traces: bool,
-    /// Whether to print logs to stdout.
+    /// Whether to print logs to stderr.
     pub print_logs: bool,
     /// Whether to enable step-level tracing (with state diffs).
     pub enable_steps_tracing: bool,

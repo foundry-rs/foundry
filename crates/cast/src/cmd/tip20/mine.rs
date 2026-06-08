@@ -1,14 +1,16 @@
 use crate::{
-    cmd::{erc20::build_provider_with_signer, send::cast_send},
-    tx::{CastTxSender, SendTxOpts, TxParams},
+    cmd::{
+        erc20::build_provider_with_signer,
+        send::{cast_send, cast_send_with_access_key},
+    },
+    tempo,
+    tx::{SendTxOpts, TxParams},
 };
-use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, keccak256};
-use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::{LoadConfig, get_chain};
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::provider::ProviderBuilder;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
@@ -19,11 +21,11 @@ use tempo_primitives::{MasterId, TempoAddressExt, UserTag};
 
 const POW_BYTES: usize = 4;
 
-pub(super) struct Output {
-    pub(super) salt: B256,
-    pub(super) registration_hash: B256,
-    pub(super) master_id: MasterId,
-    pub(super) zero_tag_virtual_address: Address,
+pub(crate) struct Output {
+    pub(crate) salt: B256,
+    pub(crate) registration_hash: B256,
+    pub(crate) master_id: MasterId,
+    pub(crate) zero_tag_virtual_address: Address,
 }
 
 pub(super) fn run(
@@ -34,7 +36,9 @@ pub(super) fn run(
     no_random: bool,
 ) -> Result<Output> {
     if !master.is_valid_master() {
-        eyre::bail!("invalid master address {master}; see https://docs.tempo.xyz/protocol/tip1022");
+        eyre::bail!(
+            "invalid master address {master}; see https://docs.tempo.xyz/protocol/tips/tip-1022"
+        );
     }
 
     if let Some(salt) = salt {
@@ -63,7 +67,7 @@ pub(super) fn run(
         rng.fill_bytes(&mut salt[..]);
     }
 
-    sh_println!("Mining TIP-1022 salt for {master} with {n_threads} threads...")?;
+    sh_status!("Mining TIP-1022 salt for {master} with {n_threads} threads...")?;
 
     let timer = Instant::now();
     let output = mine(master, salt, n_threads, POW_BYTES)?;
@@ -75,7 +79,7 @@ pub(super) async fn register(
     master: Address,
     salt: B256,
     send_tx: SendTxOpts,
-    tx_opts: TxParams,
+    mut tx_opts: TxParams,
 ) -> Result<()> {
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let signer = signer.ok_or_else(|| {
@@ -100,28 +104,23 @@ pub(super) async fn register(
     let mut tx = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
         .registerVirtualMaster(salt)
         .into_transaction_request();
+    let expires_at = tx_opts.tempo.resolve_expires();
+    tempo::print_expires(expires_at)?;
     tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
-    sh_println!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
+    sh_status!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
 
-    if let Some(access_key) = tempo_access_key {
-        tx.set_from(access_key.wallet_address);
-        tx.set_key_id(access_key.key_address);
-
-        let raw_tx = tx
-            .sign_with_access_key(
-                &provider,
-                &signer,
-                access_key.wallet_address,
-                access_key.key_address,
-                access_key.key_authorization.as_ref(),
-            )
-            .await?;
-
-        let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-        CastTxSender::new(&provider)
-            .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-            .await?;
+    if let Some(ref access_key) = tempo_access_key {
+        cast_send_with_access_key(
+            &provider,
+            tx,
+            &signer,
+            access_key,
+            send_tx.cast_async,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
@@ -131,7 +130,12 @@ pub(super) async fn register(
     Ok(())
 }
 
-fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Result<Output> {
+pub(crate) fn mine(
+    master: Address,
+    salt: B256,
+    n_threads: usize,
+    pow_bytes: usize,
+) -> Result<Output> {
     let mut packed = [0u8; 52];
     packed[..20].copy_from_slice(master.as_slice());
 
@@ -148,7 +152,7 @@ fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Resu
     .ok_or_else(|| eyre::eyre!("virtual master mining failed: all threads panicked"))
 }
 
-fn derive(master: Address, salt: B256) -> Output {
+pub(crate) fn derive(master: Address, salt: B256) -> Output {
     let registration_hash = registration_hash(master, salt);
     let master_id = MasterId::from_slice(&registration_hash[4..8]);
     let zero_tag_virtual_address = Address::new_virtual(master_id, UserTag::ZERO);
@@ -156,14 +160,14 @@ fn derive(master: Address, salt: B256) -> Output {
     Output { salt, registration_hash, master_id, zero_tag_virtual_address }
 }
 
-fn registration_hash(master: Address, salt: B256) -> B256 {
+pub(crate) fn registration_hash(master: Address, salt: B256) -> B256 {
     let mut packed = [0u8; 52];
     packed[..20].copy_from_slice(master.as_slice());
     packed[20..].copy_from_slice(salt.as_slice());
     keccak256(packed)
 }
 
-fn has_pow(registration_hash: &B256, pow_bytes: usize) -> bool {
+pub(crate) fn has_pow(registration_hash: &B256, pow_bytes: usize) -> bool {
     registration_hash[..pow_bytes].iter().all(|byte| *byte == 0)
 }
 

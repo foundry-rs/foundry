@@ -43,6 +43,7 @@ impl LogCollector {
                 memory_offset: inputs.return_memory_offset.clone(),
                 was_precompile_called: true,
                 precompile_call_logs: vec![],
+                charged_new_account_state_gas: false,
             });
         }
         None
@@ -50,7 +51,9 @@ impl LogCollector {
 
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
         let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
-        self.push_msg(&decoded.fmt(Default::default()));
+        for line in decoded.fmt(Default::default()).lines() {
+            self.push_msg(line);
+        }
         Ok(())
     }
 

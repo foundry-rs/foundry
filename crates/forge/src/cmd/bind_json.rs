@@ -108,13 +108,15 @@ impl BindJsonArgs {
                 let mut content = Arc::try_unwrap(std::mem::take(&mut source.content)).unwrap();
 
                 let arena = Arena::new();
-                let mut parser = SolarParser::from_source_code(
-                    &sess,
-                    &arena,
-                    FileName::Real(path.clone()),
-                    content.clone(),
-                )?;
-                let ast = parser.parse_file().map_err(|e| e.emit())?;
+                let ast = {
+                    let mut parser = SolarParser::from_source_code(
+                        &sess,
+                        &arena,
+                        FileName::Real(path.clone()),
+                        content.clone(),
+                    )?;
+                    parser.parse_file().map_err(|e| e.emit())?
+                };
 
                 let mut visitor = PreprocessorVisitor::new();
                 let _ = visitor.visit_source_unit(&ast);
@@ -387,7 +389,7 @@ library JsonBindings {
         }
         fs::write(target_path, &result)?;
 
-        sh_println!("Bindings written to {}", target_path.display())?;
+        sh_status!("Bindings written to {}", target_path.display())?;
 
         Ok(())
     }

@@ -19,6 +19,7 @@ use crate::{
                 storage::MinedTransactionReceipt,
             },
             notifications::{NewBlockNotification, NewBlockNotifications},
+            tempo::AnvilStorageProvider,
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
         },
@@ -56,7 +57,8 @@ use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_op_evm::{OpEvmFactory, OpTx};
+#[cfg(feature = "optimism")]
+use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
@@ -75,6 +77,7 @@ use alloy_rpc_types::{
         geth::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
+            TraceResult,
         },
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
@@ -102,24 +105,64 @@ use foundry_evm::{
     },
     utils::{
         block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::NetworkConfigs;
+#[cfg(feature = "optimism")]
+use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, get_deposit_tx_parts,
+    FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
-use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
+#[cfg(feature = "optimism")]
+use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+
+/// Side-channel container for OP-specific deposit info produced by
+/// [`Backend::build_call_env`] and consumed by the OP transact path.
+///
+/// When the `optimism` feature is enabled, this is an alias for
+/// `op_revm::DepositTransactionParts`. When disabled, it is a zero-sized
+/// stand-in so the eth/tempo dispatch chain still type-checks.
+#[cfg(feature = "optimism")]
+type OpCallDepositInfo = DepositTransactionParts;
+#[cfg(not(feature = "optimism"))]
+#[derive(Default, Clone, Debug)]
+struct OpCallDepositInfo;
+
+/// Marker trait that abstracts over the per-network inspector trait bounds
+/// required by the in-memory backend. The OP bound is only included when the
+/// `optimism` feature is enabled.
+#[cfg(feature = "optimism")]
+pub trait BackendInspector<DB: Database>:
+    Inspector<EthEvmContext<DB>> + Inspector<OpEvmContext<DB>> + Inspector<TempoContext<DB>>
+{
+}
+#[cfg(feature = "optimism")]
+impl<DB: Database, T> BackendInspector<DB> for T where
+    T: Inspector<EthEvmContext<DB>> + Inspector<OpEvmContext<DB>> + Inspector<TempoContext<DB>>
+{
+}
+#[cfg(not(feature = "optimism"))]
+pub trait BackendInspector<DB: Database>:
+    Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>>
+{
+}
+#[cfg(not(feature = "optimism"))]
+impl<DB: Database, T> BackendInspector<DB> for T where
+    T: Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>>
+{
+}
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{EVMError, ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -139,6 +182,12 @@ use std::{
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
+use tempo_precompiles::{
+    extend_tempo_precompiles,
+    storage::StorageCtx,
+    tip_fee_manager::{IFeeManager, TipFeeManager},
+    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
     TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
@@ -150,6 +199,8 @@ pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod inspector;
+#[cfg(feature = "optimism")]
+pub mod optimism;
 pub mod state;
 pub mod storage;
 
@@ -246,7 +297,7 @@ pub struct Backend<N: Network> {
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
-    node_config: Arc<AsyncRwLock<NodeConfig>>,
+    pub(crate) node_config: Arc<AsyncRwLock<NodeConfig>>,
     /// Slots in an epoch
     slots_in_an_epoch: u64,
     /// Precompiles to inject to the EVM.
@@ -412,6 +463,11 @@ impl<N: Network> Backend<N> {
         self.genesis.timestamp
     }
 
+    /// Returns the configured genesis block number.
+    pub const fn genesis_number(&self) -> u64 {
+        self.genesis.number
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)
@@ -483,8 +539,17 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
+    #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
+    }
+
+    /// Returns true if op-stack deposits are active.
+    ///
+    /// Always `false` when built without the `optimism` feature.
+    #[cfg(not(feature = "optimism"))]
+    pub const fn is_optimism(&self) -> bool {
+        false
     }
 
     /// Returns true if Tempo network mode is active
@@ -493,8 +558,23 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the active hardfork.
-    pub const fn hardfork(&self) -> FoundryHardfork {
+    pub fn hardfork(&self) -> FoundryHardfork {
+        if let Some(hardfork) =
+            self.fork.read().as_ref().and_then(|fork| fork.config.read().hardfork)
+        {
+            return hardfork;
+        }
         self.hardfork
+    }
+
+    /// Returns the active Tempo hardfork.
+    pub fn tempo_hardfork(&self) -> TempoHardfork {
+        TempoHardfork::from(self.hardfork())
+    }
+
+    /// Returns whether a Tempo hardfork is active on this backend.
+    pub fn is_tempo_hardfork_active(&self, hardfork: TempoHardfork) -> bool {
+        self.is_tempo() && self.tempo_hardfork() >= hardfork
     }
 
     /// Returns the precompiles for the current spec.
@@ -508,7 +588,8 @@ impl<N: Network> Backend<N> {
         }
 
         // Extend with configured network precompiles.
-        precompiles_map.extend(self.networks.precompiles());
+        precompiles_map
+            .extend(self.networks.precompiles(self.is_tempo().then(|| self.tempo_hardfork())));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
@@ -538,17 +619,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        let spec_id = self.spec_id();
-
-        if spec_id >= SpecId::OSAKA {
-            return BlobParams::osaka();
-        }
-
-        if spec_id >= SpecId::PRAGUE {
-            return BlobParams::prague();
-        }
-
-        BlobParams::cancun()
+        get_blob_params_by_spec_id(self.spec_id())
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -582,6 +653,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
+    #[cfg(feature = "optimism")]
     pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
@@ -758,33 +830,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns the block and its hash for the given id
     fn get_block_with_hash(&self, id: impl Into<BlockId>) -> Option<(Block, B256)> {
-        let hash = match id.into() {
-            BlockId::Hash(hash) => hash.block_hash,
-            BlockId::Number(number) => {
-                let storage = self.blockchain.storage.read();
-                let slots_in_an_epoch = self.slots_in_an_epoch;
-                match number {
-                    BlockNumber::Latest => storage.best_hash,
-                    BlockNumber::Earliest => storage.genesis_hash,
-                    BlockNumber::Pending => return None,
-                    BlockNumber::Number(num) => *storage.hashes.get(&num)?,
-                    BlockNumber::Safe => {
-                        if storage.best_number > (slots_in_an_epoch) {
-                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch)))?
-                        } else {
-                            storage.genesis_hash // treat the genesis block as safe "by definition"
-                        }
-                    }
-                    BlockNumber::Finalized => {
-                        if storage.best_number > (slots_in_an_epoch * 2) {
-                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch * 2)))?
-                        } else {
-                            storage.genesis_hash
-                        }
-                    }
-                }
-            }
-        };
+        let hash = self.blockchain.hash(id.into(), self.slots_in_an_epoch)?;
         let block = self.get_block_by_hash(hash)?;
         Some((block, hash))
     }
@@ -1125,6 +1171,15 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    fn inject_tempo_precompiles(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        cfg_env: &CfgEnv<TempoHardfork>,
+    ) {
+        self.inject_precompiles(precompiles);
+        extend_tempo_precompiles(precompiles, cfg_env);
+    }
+
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
     /// to [`HaltReason`] so all call sites share a single halt-reason type.
     fn transact_with_inspector_ref<'db, I, DB>(
@@ -1132,56 +1187,51 @@ impl<N: Network> Backend<N> {
         db: &'db DB,
         evm_env: &EvmEnv,
         inspector: &mut I,
-        tx_env: OpTransaction<TxEnv>,
+        tx_env: TxEnv,
+        op_deposit: OpCallDepositInfo,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
+        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
-            let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
-                evm_env.block_env.clone(),
-            );
-            let mut evm = OpEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(db),
-                op_env,
-                inspector,
-            );
-            self.inject_precompiles(evm.precompiles_mut());
-            let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
-                EVMError::Database(db) => EVMError::Database(db),
-                EVMError::Header(h) => EVMError::Header(h),
-                EVMError::Custom(s) => EVMError::Custom(s),
-                EVMError::CustomAny(err) => EVMError::CustomAny(err),
-                EVMError::Transaction(t) => EVMError::Transaction(t),
-            })?;
-            Ok(ResultAndState {
-                result: result.result.map_haltreason(|h| match h {
-                    OpHaltReason::Base(eth) => eth,
-                    _ => HaltReason::PrecompileError,
-                }),
-                state: result.state,
-            })
-        } else if self.is_tempo() {
-            self.transact_tempo_with_inspector_ref(
-                db,
-                evm_env,
-                inspector,
-                TempoTxEnv::from(tx_env.base),
-            )
-        } else {
-            let mut evm = EthEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(db),
-                evm_env.clone(),
-                inspector,
-            );
-            self.inject_precompiles(evm.precompiles_mut());
-            Ok(evm.transact(tx_env.base)?)
+            let op_tx = OpTransaction { base: tx_env, deposit: op_deposit, ..Default::default() };
+            return self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx);
         }
+        // `op_deposit` only matters on the OP path; eth/tempo ignore it.
+        let _ = op_deposit;
+        if self.is_tempo() {
+            self.transact_tempo_with_inspector_ref(db, evm_env, inspector, TempoTxEnv::from(tx_env))
+        } else {
+            self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
+        }
+    }
+
+    /// Eth path of [`Backend::transact_with_inspector_ref`].
+    ///
+    /// Creates an Ethereum EVM, injects precompiles, and transacts with a
+    /// plain [`TxEnv`].
+    fn transact_eth_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let mut evm = EthEvmFactory::default().create_evm_with_inspector(
+            WrapDatabaseRef(db),
+            evm_env.clone(),
+            inspector,
+        );
+        self.inject_precompiles(evm.precompiles_mut());
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Builds the appropriate tx env from a [`FoundryTxEnvelope`], executes via the correct
@@ -1196,9 +1246,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
+        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         if tx.is_tempo() {
@@ -1206,14 +1254,21 @@ impl<N: Network> Backend<N> {
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
             let base = tx_env.inner.clone();
             let result = self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)?;
-            Ok((result, base))
-        } else {
-            let tx_env: OpTransaction<TxEnv> =
-                FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
-            let base = tx_env.base.clone();
-            let result = self.transact_with_inspector_ref(db, evm_env, inspector, tx_env)?;
-            Ok((result, base))
+            return Ok((result, base));
         }
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
+            let op_tx: OpTransaction<TxEnv> =
+                FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+            let base = op_tx.base.clone();
+            let result = self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx)?;
+            return Ok((result, base));
+        }
+        let tx_env: TxEnv =
+            FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+        let base = tx_env.clone();
+        let result = self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)?;
+        Ok((result, base))
     }
 
     /// Creates a Tempo EVM, injects precompiles, and transacts with a native [`TempoTxEnv`].
@@ -1229,7 +1284,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = TempoHardfork::from(self.hardfork);
+        let hardfork = self.tempo_hardfork();
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
@@ -1239,7 +1294,8 @@ impl<N: Network> Backend<N> {
             tempo_env,
             inspector,
         );
-        self.inject_precompiles(evm.precompiles_mut());
+        let cfg = evm.cfg.clone();
+        self.inject_tempo_precompiles(evm.precompiles_mut(), &cfg);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
@@ -1291,16 +1347,19 @@ impl<N: Network> Backend<N> {
             }};
         }
 
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
                 evm_env.block_env.clone(),
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            run!(evm)
-        } else if self.is_tempo() {
-            let hardfork = TempoHardfork::from(self.hardfork);
+            return run!(evm);
+        }
+
+        if self.is_tempo() {
+            let hardfork = self.tempo_hardfork();
             let tempo_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -1331,7 +1390,7 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> (EvmEnv, OpTransaction<TxEnv>) {
+    ) -> (EvmEnv, TxEnv, OpCallDepositInfo) {
         let tx_type = request.minimal_tx_type() as u8;
 
         let WithOtherFields::<TransactionRequest> {
@@ -1384,7 +1443,7 @@ impl<N: Network> Backend<N> {
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
-        let mut base = TxEnv {
+        let mut tx_env = TxEnv {
             caller,
             gas_limit,
             gas_price,
@@ -1406,11 +1465,10 @@ impl<N: Network> Backend<N> {
             blob_hashes,
             ..Default::default()
         };
-        base.set_signed_authorization(authorization_list.unwrap_or_default());
-        let mut tx_env = OpTransaction { base, ..Default::default() };
+        tx_env.set_signed_authorization(authorization_list.unwrap_or_default());
 
         if let Some(nonce) = nonce {
-            tx_env.base.nonce = nonce;
+            tx_env.nonce = nonce;
         }
 
         if evm_env.block_env.basefee == 0 {
@@ -1420,13 +1478,22 @@ impl<N: Network> Backend<N> {
         }
 
         // Deposit transaction? (only valid when op-stack deposits are active)
-        if self.ensure_op_deposits_active().is_ok()
+        #[cfg(feature = "optimism")]
+        let op_deposit = if self.ensure_op_deposits_active().is_ok()
             && let Ok(deposit) = get_deposit_tx_parts(&other)
         {
-            tx_env.deposit = deposit;
-        }
+            deposit
+        } else {
+            OpCallDepositInfo::default()
+        };
+        #[cfg(not(feature = "optimism"))]
+        let op_deposit = {
+            // `other` carries OP-only deposit fields; consumed only when feature is enabled.
+            let _ = &other;
+            OpCallDepositInfo
+        };
 
-        (evm_env, tx_env)
+        (evm_env, tx_env, op_deposit)
     }
 
     pub fn call_with_state(
@@ -1460,13 +1527,13 @@ impl<N: Network> Backend<N> {
             (fee_token, nonce_key, valid_before, valid_after)
         });
 
-        let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
+        let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block_env);
 
         let ResultAndState { result, state } =
             if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
                 use tempo_primitives::transaction::Call;
 
-                let base = tx_env.base;
+                let base = tx_env;
                 let mut tempo_tx = TempoTxEnv::from(base.clone());
                 tempo_tx.fee_token = fee_token;
 
@@ -1476,19 +1543,29 @@ impl<N: Network> Backend<N> {
                     // manager needs a non-zero hash; the actual value doesn't matter
                     // because the state is discarded after estimation.
                     let estimation_hash = keccak256(base.data.as_ref());
+                    // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
+                    // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
+                    // Set both so the synthetic env works across hardforks.
+                    tempo_tx.unique_tx_identifier = Some(estimation_hash);
                     tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
                         nonce_key,
                         valid_before,
                         valid_after,
                         aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
                         tx_hash: estimation_hash,
-                        expiring_nonce_hash: Some(estimation_hash),
+                        expiring_nonce_idx: Some(0),
                         ..Default::default()
                     }));
                 }
                 self.transact_tempo_with_inspector_ref(state, &evm_env, &mut inspector, tempo_tx)?
             } else {
-                self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?
+                self.transact_with_inspector_ref(
+                    state,
+                    &evm_env,
+                    &mut inspector,
+                    tx_env,
+                    op_deposit,
+                )?
             };
 
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
@@ -1511,9 +1588,9 @@ impl<N: Network> Backend<N> {
         let mut inspector =
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
-        let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
+        let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state: _ } =
-            self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
+            self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env, op_deposit)?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
@@ -2046,7 +2123,7 @@ impl<N: Network> Backend<N> {
             let chain_id = self.evm_env.read().cfg_env.chain_id;
             let timestamp = self.genesis.timestamp;
             let test_accounts: Vec<Address> = self.genesis.accounts.clone();
-            let hardfork = TempoHardfork::from(self.hardfork);
+            let hardfork = self.tempo_hardfork();
             let mut db = self.db.write().await;
             crate::eth::backend::tempo::initialize_tempo_precompiles(
                 &mut **db,
@@ -2079,6 +2156,7 @@ impl<N: Network> Backend<N> {
                     // we want to force the correct base fee for the next block during
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
+                    node_config.fork_urls = vec![eth_rpc_url.clone()];
 
                     node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
                 };
@@ -2101,7 +2179,9 @@ impl<N: Network> Backend<N> {
             let block_number =
                 forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
             // reset the fork entirely and reapply the genesis config
-            fork.reset(forking.json_rpc_url.clone(), block_number).await?;
+            let reset_urls =
+                forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
+            fork.reset(reset_urls, block_number).await?;
             let fork_block_number = fork.block_number();
             let fork_block = fork
                 .block_by_number(fork_block_number)
@@ -2115,7 +2195,8 @@ impl<N: Network> Backend<N> {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     {
-                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        let maybe_fork_url =
+                            { self.node_config.read().await.fork_urls.first().cloned() };
                         if let Some(fork_url) = maybe_fork_url {
                             self.reset_block_number(fork_url, fork_block_number).await?;
                         }
@@ -2229,6 +2310,8 @@ impl<N: Network> Backend<N> {
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
         node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
+        // Update fork_urls so setup_fork_db_config uses the correct URL set
+        node_config.fork_urls = vec![fork_url.clone()];
 
         let mut evm_env = self.evm_env.read().clone();
         let (forked_db, client_fork_config) =
@@ -2371,7 +2454,7 @@ where
             return Ok(fork.logs(&filter).await?);
         }
 
-        Ok(Vec::new())
+        Err(BlockchainError::UnknownBlock)
     }
 
     /// Returns the logs that match the filter in the given range of blocks
@@ -2899,7 +2982,7 @@ where
                                 TracingInspectorConfig::from_geth_call_config(&call_config),
                             );
 
-                            let (evm_env, tx_env) =
+                            let (evm_env, tx_env, op_deposit) =
                                 self.build_call_env(request, fee_details, block);
                             let ResultAndState { result, state: _ } = self
                                 .transact_with_inspector_ref(
@@ -2907,6 +2990,7 @@ where
                                     &evm_env,
                                     &mut inspector,
                                     tx_env,
+                                    op_deposit,
                                 )?;
 
                             inspector.print_logs();
@@ -2932,13 +3016,14 @@ where
                                 ),
                             );
 
-                            let (evm_env, tx_env) =
+                            let (evm_env, tx_env, op_deposit) =
                                 self.build_call_env(request, fee_details, block);
                             let result = self.transact_with_inspector_ref(
                                 &cache_db,
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
+                                op_deposit,
                             )?;
 
                             Ok(inspector
@@ -2960,22 +3045,22 @@ where
                     }
                     #[cfg(feature = "js-tracer")]
                     GethDebugTracerType::JsTracer(code) => {
-                        use alloy_evm::IntoTxEnv;
                         let config = tracer_config.into_json();
                         let mut inspector =
                             revm_inspectors::tracing::js::JsInspector::new(code, config)
                                 .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
-                        let (evm_env, tx_env) =
+                        let (evm_env, tx_env, op_deposit) =
                             self.build_call_env(request, fee_details, block.clone());
                         let result = self.transact_with_inspector_ref(
                             &cache_db,
                             &evm_env,
                             &mut inspector,
                             tx_env.clone(),
+                            op_deposit,
                         )?;
                         let res = inspector
-                            .json_result(result, &OpTx(tx_env).into_tx_env(), &block, &cache_db)
+                            .json_result(result, &tx_env, &block, &cache_db)
                             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         Ok(GethTrace::JS(res))
@@ -2988,9 +3073,14 @@ where
                 .build_inspector()
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
-            let (evm_env, tx_env) = self.build_call_env(request, fee_details, block);
-            let ResultAndState { result, state: _ } =
-                self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
+            let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block);
+            let ResultAndState { result, state: _ } = self.transact_with_inspector_ref(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                tx_env,
+                op_deposit,
+            )?;
 
             let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
 
@@ -3174,10 +3264,7 @@ where
         f: F,
     ) -> Result<T, BlockchainError>
     where
-        for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + 'a,
+        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
         for<'a> F:
             FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
     {
@@ -3466,6 +3553,72 @@ where
         Ok(GethTrace::Default(Default::default()))
     }
 
+    /// Returns geth-style traces for all transactions in a block by hash.
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
+            let mut traces = Vec::new();
+            for tx in &block.body.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_block_by_hash(block_hash, opts).await?);
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    /// Returns geth-style traces for all transactions in a block by number.
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let number = self.convert_block_number(Some(block_number));
+
+        if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
+            let mut traces = Vec::new();
+            for tx in &block.body.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_block_by_number(number, opts).await?);
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
     fn geth_trace(
         &self,
         tx: &MinedTransaction<N>,
@@ -3735,9 +3888,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage
-        self.blockchain.storage.write().load_blocks(state.blocks.clone());
-        self.blockchain.storage.write().load_transactions(state.transactions.clone());
+        // load the blocks and transactions into the storage atomically so concurrent readers
+        // never observe blocks without their transactions
+        {
+            let mut storage = self.blockchain.storage.write();
+            storage.load_blocks(state.blocks.clone());
+            storage.load_transactions(state.transactions.clone());
+        }
         // reset the block env
         if let Some(block) = state.block.clone() {
             self.evm_env.write().block_env = block.clone();
@@ -3754,14 +3911,16 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
                 if best_number > number {
                     self.blockchain.storage.write().best_number = best_number;
-                    let best_hash =
-                        self.blockchain.storage.read().hash(best_number.into()).ok_or_else(
-                            || {
-                                BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                                    "Best hash not found for best number {best_number}",
-                                )))
-                            },
-                        )?;
+                    let best_hash = self
+                        .blockchain
+                        .storage
+                        .read()
+                        .hash(best_number.into(), self.slots_in_an_epoch)
+                        .ok_or_else(|| {
+                            BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                                "Best hash not found for best number {best_number}",
+                            )))
+                        })?;
                     self.blockchain.storage.write().best_hash = best_hash;
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
@@ -3773,8 +3932,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
-                let best_hash =
-                    self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                let best_hash = self
+                    .blockchain
+                    .storage
+                    .read()
+                    .hash(best_number.into(), self.slots_in_an_epoch)
+                    .ok_or_else(|| {
                         BlockchainError::RpcError(RpcError::internal_error_with(format!(
                             "Best hash not found for best number {best_number}",
                         )))
@@ -3886,7 +4049,7 @@ impl Backend<FoundryNetwork> {
                     )?
                     .or_zero_fees();
 
-                    let (mut evm_env, tx_env) = self.build_call_env(
+                    let (mut evm_env, tx_env, op_deposit) = self.build_call_env(
                         WithOtherFields::new(request.clone()),
                         fee_details,
                         block_env.clone(),
@@ -3907,8 +4070,13 @@ impl Backend<FoundryNetwork> {
                         inspector = inspector.with_transfers();
                     }
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let ResultAndState { result, state } =
-                        self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
+                    let ResultAndState { result, state } = self.transact_with_inspector_ref(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        tx_env,
+                        op_deposit,
+                    )?;
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
                     inspector.print_logs();
@@ -4056,6 +4224,100 @@ impl Backend<FoundryNetwork> {
 
         Ok(None)
     }
+
+    /// Sets the fee token for a user address (Tempo-only).
+    pub async fn set_fee_token(&self, user: Address, token: Address) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager
+                .set_user_token(user, IFeeManager::setUserTokenCall { token })
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+        })
+    }
+
+    /// Sets the fee token for a validator address (Tempo-only).
+    pub async fn set_validator_fee_token(
+        &self,
+        validator: Address,
+        token: Address,
+    ) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            // Use Address::ZERO as beneficiary so the check `sender != beneficiary` passes
+            fee_manager
+                .set_validator_token(
+                    validator,
+                    IFeeManager::setValidatorTokenCall { token },
+                    Address::ZERO,
+                )
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+        })
+    }
+
+    /// Mints FeeAMM liquidity for a token pair (Tempo-only).
+    pub async fn set_fee_amm_liquidity(
+        &self,
+        user_token: Address,
+        validator_token: Address,
+        amount: U256,
+    ) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let admin = Address::ZERO;
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            // Mint the required tokens to admin so it can provide liquidity.
+            // grant_role_internal bypasses the caller check, matching genesis seeding.
+            for &token_address in &[user_token, validator_token] {
+                let mut token = TIP20Token::from_address(token_address)
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+                token
+                    .grant_role_internal(admin, *ISSUER_ROLE)
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+                token
+                    .mint(admin, ITIP20::mintCall { to: admin, amount })
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+            }
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager
+                .mint(admin, user_token, validator_token, amount, admin)
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+            Ok(())
+        })
+    }
 }
 
 /// Get max nonce from transaction pool by address.
@@ -4065,7 +4327,10 @@ fn get_pool_transactions_nonce(
 ) -> Option<u64> {
     if let Some(highest_nonce) = pool_transactions
         .iter()
-        .filter(|tx| *tx.pending_transaction.sender() == address)
+        .filter(|tx| {
+            *tx.pending_transaction.sender() == address
+                && !tx.pending_transaction.transaction.as_ref().has_nonzero_tempo_nonce_key()
+        })
         .map(|tx| tx.pending_transaction.nonce())
         .max()
     {
@@ -4172,8 +4437,10 @@ where
             return Err(InvalidTransactionError::TempoNativeValueTransfer);
         }
 
-        // Tempo AA: cap authorization list size
-        if let FoundryTxEnvelope::Tempo(aa_tx) = tx.as_ref() {
+        // Tempo AA T5: cap authorization list size
+        if self.is_tempo_hardfork_active(TempoHardfork::T5)
+            && let FoundryTxEnvelope::Tempo(aa_tx) = tx.as_ref()
+        {
             const MAX_TEMPO_AUTHORIZATIONS: usize = 16;
             let auth_count = aa_tx.tx().tempo_authorization_list.len();
             if auth_count > MAX_TEMPO_AUTHORIZATIONS {
@@ -4186,7 +4453,10 @@ where
         }
 
         // Nonce validation — skip for deposits (L1→L2) and Tempo txs (2D nonce system)
+        #[cfg(feature = "optimism")]
         let is_deposit_tx = pending.transaction.as_ref().is_deposit();
+        #[cfg(not(feature = "optimism"))]
+        let is_deposit_tx = false;
         let is_tempo_tx = pending.transaction.as_ref().is_tempo();
         let nonce = tx.nonce();
         if nonce < account.nonce && !is_deposit_tx && !is_tempo_tx {
@@ -4302,6 +4572,7 @@ where
                 );
             let value = tx.value();
             match tx.as_ref() {
+                #[cfg(feature = "optimism")]
                 FoundryTxEnvelope::Deposit(deposit_tx) => {
                     // Deposit transactions
                     // https://specs.optimism.io/protocol/deposits.html#execution
@@ -4365,6 +4636,7 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
+    #[cfg(feature = "optimism")]
     if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
         let dep_tx = deposit_tx;
 

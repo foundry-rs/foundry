@@ -99,10 +99,24 @@ impl GasSnapshotArgs {
     }
 
     pub async fn run(mut self) -> Result<()> {
-        // Set fuzz seed so gas snapshots are deterministic
-        self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        // Default to a static fuzz seed so gas snapshots are deterministic,
+        // but allow the user to override it via `--fuzz-seed`.
+        if self.test.fuzz_seed.is_none() {
+            self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        }
 
         let outcome = self.test.compile_and_run().await?;
+        if !shell::is_quiet()
+            && !outcome.allow_failure
+            && self.diff.is_none()
+            && self.check.is_none()
+            && outcome.failed() > 0
+        {
+            sh_eprintln!(
+                "Error: gas snapshot file \"{}\" was not written because the test run failed",
+                self.snap.display()
+            )?;
+        }
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 
@@ -199,6 +213,7 @@ impl GasSnapshotConfig {
         let mut tests = outcome
             .into_tests()
             .filter(|test| self.is_in_gas_range(test.gas_used()))
+            .flat_map(expand_invariant_snapshot_entries)
             .collect::<Vec<_>>();
 
         if self.asc {
@@ -209,6 +224,23 @@ impl GasSnapshotConfig {
 
         tests
     }
+}
+
+/// Expands merged invariant campaigns into per-predicate gas snapshot rows.
+fn expand_invariant_snapshot_entries(test: SuiteTestResult) -> Vec<SuiteTestResult> {
+    if !test.result.kind.is_invariant() || test.result.invariant_predicate_results.len() <= 1 {
+        return vec![test];
+    }
+
+    test.result
+        .invariant_predicate_results
+        .iter()
+        .map(|predicate| {
+            let mut expanded = test.clone();
+            expanded.signature = format!("{}()", predicate.name);
+            expanded
+        })
+        .collect()
 }
 
 /// A general entry in a gas snapshot file
@@ -384,7 +416,7 @@ fn check(
         {
             let source_gas = test.result.kind.report();
             if !within_tolerance(source_gas.gas(), target_gas.gas(), tolerance) {
-                let _ = sh_println!(
+                let _ = sh_eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
                     test.contract_name(),
                     test.signature,
@@ -394,7 +426,7 @@ fn check(
                 has_diff = true;
             }
         } else {
-            let _ = sh_println!(
+            let _ = sh_eprintln!(
                 "No matching snapshot entry found for \"{}::{}\" in snapshot file",
                 test.contract_name(),
                 test.signature
@@ -496,14 +528,14 @@ fn diff(
 
     // Display new tests if any
     if !new_tests.is_empty() {
-        sh_println!("\n{}", "New tests:".yellow())?;
+        sh_eprintln!("\n{}", "New tests:".yellow())?;
         for test in new_tests {
-            sh_println!("  {} {}", "+".green(), test)?;
+            sh_eprintln!("  {} {}", "+".green(), test)?;
         }
     }
 
     // Summary separator
-    sh_println!("\n{}", "-".repeat(80))?;
+    sh_eprintln!("\n{}", "-".repeat(80))?;
 
     let overall_gas_diff = if overall_gas_used > 0 {
         overall_gas_change as f64 / overall_gas_used as f64
@@ -511,7 +543,7 @@ fn diff(
         0.0
     };
 
-    sh_println!(
+    sh_eprintln!(
         "Total tests: {}, {} {}, {} {}, {} {}",
         diffs.len(),
         "↑".red().to_string(),
@@ -521,7 +553,7 @@ fn diff(
         "━",
         unchanged
     )?;
-    sh_println!(
+    sh_eprintln!(
         "Overall gas change: {} ({})",
         fmt_change(overall_gas_change),
         fmt_pct_change(overall_gas_diff)

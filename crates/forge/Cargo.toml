@@ -51,7 +51,7 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
-foundry-wallets.workspace = true
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
 alloy-chains.workspace = true
 alloy-consensus.workspace = true
@@ -65,23 +65,23 @@ alloy-transport.workspace = true
 
 tempo-alloy.workspace = true
 
-revm.workspace = true
-
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 dunce.workspace = true
+globset = "0.4"
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
+revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "signal"] }
 toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
@@ -101,10 +101,12 @@ opener = "0.8"
 soldeer-commands.workspace = true
 soldeer-core.workspace = true
 quick-junit = "0.5.2"
+tempfile.workspace = true
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
+axum.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 
@@ -117,8 +119,8 @@ tempfile.workspace = true
 alloy-signer-local.workspace = true
 
 [features]
-default = ["jemalloc"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
@@ -126,3 +128,15 @@ aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cli/optimism",
+    "forge-script/optimism",
+    "forge-verify/optimism",
+    "forge-doc/optimism",
+    "forge-fmt/optimism",
+    "forge-lint/optimism",
+    "forge-sol-macro-gen/optimism",
+]

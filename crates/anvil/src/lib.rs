@@ -3,6 +3,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 use crate::{
     error::{NodeError, NodeResult},
     eth::{
@@ -19,7 +22,6 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
-use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
@@ -29,7 +31,6 @@ pub use foundry_evm::hardfork::EthereumHardfork;
 use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
-use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
     net::SocketAddr,
@@ -208,11 +209,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
-        match backend.spec_id() {
-            SpecId::OSAKA => BlobParams::osaka(),
-            SpecId::PRAGUE => BlobParams::prague(),
-            _ => BlobParams::cancun(),
-        },
+        backend.blob_params(),
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),
@@ -288,9 +285,9 @@ pub struct NodeHandle {
     /// The address of the running rpc server.
     addresses: Vec<SocketAddr>,
     /// Join handle for the Node Service.
-    pub node_service: JoinHandle<Result<(), NodeError>>,
+    node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handles (one per socket) for the Anvil server.
-    pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
+    servers: Vec<JoinHandle<Result<(), NodeError>>>,
     /// The future that joins the ipc server, if any.
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
@@ -304,6 +301,13 @@ impl Drop for NodeHandle {
         // Fire shutdown signal to make sure anvil instance is terminated.
         if let Some(signal) = self._signal.take() {
             let _ = signal.fire();
+        }
+        self.node_service.abort();
+        for server in &self.servers {
+            server.abort();
+        }
+        if let Some(ipc_task) = &self.ipc_task {
+            ipc_task.abort();
         }
     }
 }
@@ -319,9 +323,9 @@ impl NodeHandle {
         self.config.print(fork)?;
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                sh_println!("IPC path: {ipc_path}")?;
+                sh_eprintln!("IPC path: {ipc_path}")?;
             }
-            sh_println!(
+            sh_eprintln!(
                 "Listening on {}",
                 self.addresses
                     .iter()
@@ -480,7 +484,7 @@ pub fn init_tracing() -> LoggingManager {
             rust_log_val.parse().expect("failed to parse modified RUST_LOG");
         tracing_subscriber::registry()
             .with(env_filter)
-            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .try_init()
     } else {
         tracing_subscriber::Registry::default()
@@ -489,7 +493,8 @@ pub fn init_tracing() -> LoggingManager {
                 tracing_subscriber::fmt::layer()
                     .without_time()
                     .with_target(false)
-                    .with_level(false),
+                    .with_level(false)
+                    .with_writer(std::io::stderr),
             )
             .try_init()
     };

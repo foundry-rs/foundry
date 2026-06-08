@@ -5,23 +5,23 @@
 
 use crate::{
     call_spec::CallSpec,
+    tempo,
     tx::{self, CastTxBuilder},
 };
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{EthereumWallet, NetworkTransactionBuilder};
-use alloy_primitives::{Address, Bytes};
+use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, LoadConfig, parse_function_args},
+    utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use tempo_alloy::TempoNetwork;
-use tempo_primitives::transaction::Call;
 
 /// CLI arguments for `cast batch-mktx`.
 ///
@@ -54,8 +54,9 @@ pub struct BatchMakeTxArgs {
 
 impl BatchMakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { calls, tx, eth, raw_unsigned, ethsign } = self;
+        let Self { calls, mut tx, eth, raw_unsigned, ethsign } = self;
         let has_nonce = tx.nonce.is_some();
+        let expires_at = tx.tempo.resolve_expires();
 
         if calls.is_empty() {
             return Err(eyre!("No calls specified. Use --call to specify at least one call."));
@@ -63,6 +64,10 @@ impl BatchMakeTxArgs {
 
         let config = eth.load_config()?;
         let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+
+        // Resolve `--tempo.lane <name>` against the lanes file (default
+        // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
+        let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
         // Resolve signer to detect keychain mode
         let (signer, tempo_access_key) = eth.wallet.maybe_signer().await?;
@@ -73,41 +78,34 @@ impl BatchMakeTxArgs {
 
         // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
+        let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
+        let etherscan_api_url = etherscan_config.map(|c| c.api_url);
 
-        // Build Vec<Call> from specs
         let mut tempo_calls = Vec::with_capacity(call_specs.len());
         for (i, spec) in call_specs.iter().enumerate() {
-            let input = if let Some(data) = &spec.data {
-                data.clone()
-            } else if let Some(sig) = &spec.sig {
-                let (encoded, _) = parse_function_args(
-                    sig,
-                    spec.args.clone(),
-                    Some(spec.to),
+            tempo_calls.push(
+                spec.resolve(
+                    i,
                     chain,
                     &provider,
                     etherscan_api_key.as_deref(),
+                    etherscan_api_url.as_deref(),
                 )
-                .await
-                .map_err(|e| eyre!("Failed to encode call {}: {}", i + 1, e))?;
-                Bytes::from(encoded)
-            } else {
-                Bytes::new()
-            };
-
-            tempo_calls.push(Call { to: spec.to.into(), value: spec.value, input });
+                .await?,
+            );
         }
 
-        sh_println!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
+        sh_status!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
+        tempo::print_expires(expires_at)?;
+
+        // Preserve key_id for modes that do not call build_with_access_key, such as raw unsigned.
+        if let Some(ref access_key) = tempo_access_key {
+            tx.tempo.key_id = Some(access_key.key_address);
+        }
 
         // Build transaction request with calls
         let mut builder = CastTxBuilder::<TempoNetwork, _, _>::new(&provider, tx, &config).await?;
-
-        // Set key_id for access key transactions
-        if let Some(ref access_key) = tempo_access_key {
-            builder.tx.set_key_id(access_key.key_address);
-        }
 
         // Set calls on the transaction
         builder.tx.calls = tempo_calls;
@@ -126,6 +124,7 @@ impl BatchMakeTxArgs {
 
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
             let (tx, _) = tx_builder.build(from).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let raw_tx =
                 alloy_primitives::hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
@@ -134,6 +133,7 @@ impl BatchMakeTxArgs {
 
         if ethsign {
             let (tx, _) = tx_builder.build(config.sender).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -144,23 +144,11 @@ impl BatchMakeTxArgs {
             Some(s) => s,
             None => eth.wallet.signer().await?,
         };
-        let from = if let Some(ref access_key) = tempo_access_key {
-            access_key.wallet_address
-        } else {
-            Signer::address(&signer)
-        };
-
-        if tempo_access_key.is_none() {
-            tx::validate_from_address(eth.wallet.from, from)?;
-        }
-
-        let (tx, _) = if tempo_access_key.is_some() {
-            tx_builder.build(from).await?
-        } else {
-            tx_builder.build(&signer).await?
-        };
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
+            let (tx, _) =
+                tx_builder.build_with_access_key(access_key.wallet_address, access_key).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -172,6 +160,9 @@ impl BatchMakeTxArgs {
                 .await?;
             alloy_primitives::hex::encode(raw_tx)
         } else {
+            tx::validate_from_address(eth.wallet.from, Signer::address(&signer))?;
+            let (tx, _) = tx_builder.build(&signer).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;
             alloy_primitives::hex::encode(envelope.encoded_2718())
         };

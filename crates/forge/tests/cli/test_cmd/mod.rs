@@ -1,6 +1,6 @@
 //! Contains various tests for `forge test`.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
     TestCommand,
@@ -9,13 +9,19 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-use std::{io::Write, path::PathBuf, str::FromStr};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 mod core;
 mod fuzz;
 mod invariant;
 mod logs;
+mod mutation;
 mod repros;
+mod showmap;
 mod spec;
 mod table;
 mod trace;
@@ -40,7 +46,11 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
 /// These are run separately by the `flaky_testdata` test below.
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
-const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test";
+const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test|Issue14212Test";
+
+// Issue14212Test depends on Base transaction lookups that are not reliably served by the public
+// Base RPC endpoint used in CI.
+const FLAKY_TESTDATA_RUN_CONTRACTS: &str = "Issue4640Test";
 
 // Run `forge test` on `/testdata`.
 forgetest!(testdata, |_prj, cmd| {
@@ -84,7 +94,7 @@ forgetest!(testdata, |_prj, cmd| {
 // Picked up by the nightly `test-flaky` workflow via `cargo nextest run --profile flaky`.
 forgetest!(flaky_testdata, |_prj, cmd| {
     setup_testdata_cmd(&mut cmd);
-    let mc = format!("--mc=({FLAKY_TESTDATA_CONTRACTS})");
+    let mc = format!("--mc=({FLAKY_TESTDATA_RUN_CONTRACTS})");
     cmd.args(["test", &mc]).assert_success();
 });
 
@@ -655,6 +665,77 @@ contract MultiTest is Test {
     );
 });
 
+// Regression: a `setUp()` failure in one suite must trip the global fail-fast flag so that
+// long-running invariant campaigns in sibling suites (dispatched in parallel via rayon) exit
+// at their next run boundary instead of running to their configured timeout.
+forgetest_init!(fail_fast_cancels_invariant_after_setup_failure, |prj, cmd| {
+    // Need at least 2 worker threads so the two suites run concurrently.
+    if std::thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
+        return;
+    }
+
+    // Use a very large invariant timeout so the with-fix vs without-fix behavior is
+    // dramatically different: with the fix the campaign sees `should_stop()` and exits within
+    // one fuzz sequence (~seconds); without the fix it would run for the full timeout. Same
+    // canary pattern as `test_fail_fast_config`.
+    prj.update_config(|config| {
+        config.invariant.timeout = Some(3600);
+    });
+
+    prj.add_test(
+        "BrokenSetup.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract BrokenSetupTest is Test {
+    function setUp() public pure {
+        require(false, "setUp failure");
+    }
+
+    function test_Noop() public pure {}
+}
+"#,
+    );
+
+    prj.add_test(
+        "LongInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Target {
+    uint256 public x;
+    function bump() external { x += 1; }
+}
+
+contract LongInvariantTest is Test {
+    Target internal target;
+
+    function setUp() public {
+        target = new Target();
+        targetContract(address(target));
+    }
+
+    function invariant_alwaysTrue() public view {
+        require(true);
+    }
+}
+"#,
+    );
+
+    let started = std::time::Instant::now();
+    cmd.args(["test", "--fail-fast", "--mc", "BrokenSetupTest|LongInvariantTest"]).assert_failure();
+    let elapsed = started.elapsed();
+
+    // The two suites run in parallel; the broken `setUp()` reverts within milliseconds and must
+    // cancel the in-flight invariant campaign almost immediately. The 1h invariant timeout above
+    // gives us a huge margin: with the fix elapsed is ~seconds; without it elapsed approaches
+    // 1h. 60s is generous slack for CI but still catches the regression unambiguously.
+    assert!(
+        elapsed < std::time::Duration::from_secs(60),
+        "fail-fast did not cancel the in-flight invariant campaign: elapsed {elapsed:?}",
+    );
+});
+
 // https://github.com/foundry-rs/foundry/pull/6531
 forgetest_init!(fork_traces, |prj, cmd| {
     let endpoint = rpc::next_http_archive_rpc_url();
@@ -970,21 +1051,29 @@ contract CounterTest is Test {
      "#,
     );
 
-    // make sure invariant test exit early with 0 runs
+    // make sure a pre-run invariant failure exits after the first campaign call and keeps the
+    // predicate failure attribution.
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 1 test for test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: wrong count] invariant_early_exit() (runs: 1, calls: 1, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Counter  | inc      | 1     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: wrong count] invariant_early_exit() (runs: 1, calls: 1, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2125,8 +2214,11 @@ forgetest_init!(skip_output, |prj, cmd| {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
 Ran 6 tests for src/Counter.t.sol:Skips
-[SKIP] invariant_skipInvariant() (runs: 1, calls: 1, reverts: 1)
-[SKIP: invariant] invariant_skipInvariantReason() (runs: 1, calls: 1, reverts: 1)
+[SKIP]
+Skips invariants:
+[SKIP] invariant_skipInvariant
+[SKIP: invariant] invariant_skipInvariantReason
+ Skips invariants (runs: 1, calls: 1, reverts: 1)
 [SKIP] test_skipFuzz(uint256) (runs: 0, [AVG_GAS])
 [SKIP: fuzz] test_skipFuzzReason(uint256) (runs: 0, [AVG_GAS])
 [SKIP] test_skipUnit() ([GAS])
@@ -2554,6 +2646,200 @@ contract Dummy {
     assert!(dump_path.exists());
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10322>
+forgetest!(test_debug_with_dump_setup_revert, |prj, cmd| {
+    prj.add_test(
+        "SetupRevertDebug.t.sol",
+        r#"
+contract SetupRevertDebugTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function testDummy() public {}
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("setup_revert_dump.json");
+
+    let out = cmd
+        .args(["test", "--mt", "testDummy", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .execute();
+
+    assert!(out.status.success(), "debug run with --dump should complete even when setUp reverts");
+    assert!(dump_path.exists(), "debugger dump should still be generated");
+    assert!(
+        !out.stderr_lossy().contains("debug arena is empty"),
+        "debugger should not fail with an empty arena on setUp revert"
+    );
+    assert!(
+        out.stdout_lossy().contains("[FAIL: setUp failed] setUp()"),
+        "expected setup failure output in forge test report"
+    );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10322>
+forgetest!(test_debug_with_dump_setup_revert_invariant, |prj, cmd| {
+    prj.add_test(
+        "SetupRevertInvariantDebug.t.sol",
+        r#"
+contract SetupRevertInvariantDebugTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function invariant_dummy() public {}
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("setup_revert_invariant_dump.json");
+
+    let out = cmd
+        .args(["test", "--mt", "invariant_dummy", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .execute();
+
+    assert!(
+        out.status.success(),
+        "debug run with --dump should complete even when invariant setUp reverts"
+    );
+    assert!(dump_path.exists(), "debugger dump should still be generated");
+    assert!(
+        !out.stderr_lossy().contains("debug arena is empty"),
+        "debugger should not fail with an empty arena on invariant setUp revert"
+    );
+    assert!(
+        out.stdout_lossy().contains("[FAIL: setUp failed] setUp()"),
+        "expected setup failure output in forge test report"
+    );
+});
+
+forgetest_async!(debug_dump_identifies_contracts_loaded_from_selected_fork, |prj, cmd| {
+    prj.add_source(
+        "ForkDebugTarget.sol",
+        r#"
+contract ForkDebugTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) public {
+        value = newValue;
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/ForkDebugTarget.sol:ForkDebugTarget",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk,
+            "--broadcast",
+        ])
+        .assert_success();
+    let deployed =
+        Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap().create(0);
+    let deployed = deployed.to_string();
+
+    prj.add_test(
+        "ForkDebug.t.sol",
+        &format!(
+            r#"
+interface Vm {{
+    function createSelectFork(string calldata url) external returns (uint256 forkId);
+}}
+
+interface IForkDebugTarget {{
+    function set(uint256 newValue) external;
+    function value() external view returns (uint256);
+}}
+
+contract ForkDebugTest {{
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    uint256[] public fixtureNewValue = [7];
+
+    function testDebugForkTarget() public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(7);
+        require(target.value() == 7, "value");
+    }}
+
+    /// forge-config: default.fuzz.runs = 1
+    function testDebugForkTargetFuzz(uint256 newValue) public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(newValue);
+        require(target.value() == newValue, "value");
+    }}
+
+    function tableDebugForkTarget(uint256 newValue) public {{
+        vm.createSelectFork("{rpc}");
+        IForkDebugTarget target = IForkDebugTarget({deployed});
+        target.set(newValue);
+        require(target.value() == newValue, "value");
+    }}
+}}
+"#
+        ),
+    );
+
+    let dump_path = prj.root().join("dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^testDebugForkTarget\\(\\)$",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&dump_path, &deployed, "ForkDebugTarget");
+
+    let fuzz_dump_path = prj.root().join("fuzz_dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^testDebugForkTargetFuzz\\(uint256\\)$",
+        "--debug",
+        "--dump",
+        fuzz_dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&fuzz_dump_path, &deployed, "ForkDebugTarget");
+
+    let table_dump_path = prj.root().join("table_dump.json");
+    cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "^tableDebugForkTarget\\(uint256\\)$",
+        "--debug",
+        "--dump",
+        table_dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&table_dump_path, &deployed, "ForkDebugTarget");
+});
+
+fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
+    let target_identified = identified.iter().any(|(identified_address, name)| {
+        identified_address.eq_ignore_ascii_case(address)
+            && name.as_str().is_some_and(|name| name == contract_name)
+    });
+    assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
+}
+
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(111));
@@ -2969,7 +3255,7 @@ contract ScrollForkTest is Test {
     }
 );
 
-// Test that only provider is included in failed fork error.
+// Test that failed fork errors still surface the provider hostname.
 forgetest_init!(test_display_provider_on_error, |prj, cmd| {
     prj.add_test(
         "ForkTest.t.sol",
@@ -2987,8 +3273,8 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; [..]] test_fork_err_message() ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; HTTP error 401 with body: [..]
+
 ...
 
 "#]]);
@@ -3483,16 +3769,19 @@ Error: No contract name provided.
     );
 
     // Upload single CounterV2.
-    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
-        r#"
-...
-Uploading selectors for CounterV2...
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "CounterV2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 Selectors successfully uploaded to OpenChain
 ...
 
-"#
-    ]]);
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for CounterV2...
+
+"#]]);
 
     // Upload CounterV1 with path.
     cmd.forge_fuse()
@@ -3500,10 +3789,12 @@ Selectors successfully uploaded to OpenChain
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Uploading selectors for Counter...
-...
 Selectors successfully uploaded to OpenChain
 ...
+
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for Counter...
 
 "#]]);
 
@@ -3513,10 +3804,12 @@ Selectors successfully uploaded to OpenChain
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-Uploading selectors for Counter...
-...
 Selectors successfully uploaded to OpenChain
 ...
+
+"#]])
+        .stderr_eq(str![[r#"
+Uploading selectors for Counter...
 
 "#]]);
 });
@@ -3558,8 +3851,9 @@ contract CounterV2 {
    ",
     );
 
-    cmd.args(["selectors", "list"]).assert_success().stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
+    cmd.args(["selectors", "list"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Counter
 
 ╭----------+----------------------+--------------------------------------------------------------------╮
@@ -3588,13 +3882,16 @@ CounterV2
 | Function | setNumberV2(uint256) | 0xb525b68c |
 ╰----------+----------------------+------------╯
 
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["selectors", "list", "--no-group"])
         .assert_success()
         .stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
 
 ╭----------+----------------------+--------------------------------------------------------------------+-----------╮
 | Type     | Signature            | Selector                                                           | Contract  |
@@ -3615,6 +3912,10 @@ Listing selectors for contracts in the project...
 |----------+----------------------+--------------------------------------------------------------------+-----------|
 | Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
 ╰----------+----------------------+--------------------------------------------------------------------+-----------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
 
 "#]]);
 });
@@ -3656,8 +3957,9 @@ contract CounterV2 {
    ",
     );
 
-    cmd.args(["selectors", "list", "--md"]).assert_success().stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
+    cmd.args(["selectors", "list", "--md"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 Counter
 
 | Type     | Signature            | Selector                                                           |
@@ -3676,13 +3978,16 @@ CounterV2
 | Function | number()             | 0x8381f58a |
 | Function | setNumberV2(uint256) | 0xb525b68c |
 
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["selectors", "list", "--no-group", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-Listing selectors for contracts in the project...
 
 | Type     | Signature            | Selector                                                           | Contract  |
 |----------|----------------------|--------------------------------------------------------------------|-----------|
@@ -3694,6 +3999,10 @@ Listing selectors for contracts in the project...
 | Function | incrementV2()        | 0x49365a69                                                         | CounterV2 |
 | Function | number()             | 0x8381f58a                                                         | CounterV2 |
 | Function | setNumberV2(uint256) | 0xb525b68c                                                         | CounterV2 |
+
+"#]])
+        .stderr_eq(str![[r#"
+Listing selectors for contracts in the project...
 
 "#]]);
 });

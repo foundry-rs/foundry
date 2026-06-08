@@ -6,12 +6,10 @@ use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{
-    opts::{NetworkVariant, RpcOpts},
-    utils::LoadConfig,
-};
+use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
 use foundry_common::provider::ProviderBuilder;
 use foundry_config::Config;
+use foundry_evm_networks::NetworkVariant;
 use op_alloy_network::Optimism;
 
 /// CLI arguments for `cast da-estimate`.
@@ -59,8 +57,9 @@ pub async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Resu
     for tx in block.transactions().txns() {
         da_estimate += op_alloy_flz::tx_estimated_size_fjord(&tx.as_ref().encoded_2718());
     }
-    sh_println!(
-        "Estimated data availability size for block {block_number} with {tx_count} transactions: {da_estimate}"
+    sh_status!(
+        "Estimated data availability size for block {block_number} with {tx_count} transactions:"
     )?;
+    sh_println!("{da_estimate}")?;
     Ok(())
 }

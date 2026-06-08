@@ -1,24 +1,13 @@
 //! The debugger TUI.
 
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
 use eyre::Result;
-use ratatui::{
-    Terminal,
-    backend::{Backend, CrosstermBackend},
-};
-use std::{io, ops::ControlFlow, sync::Arc};
+use foundry_tui::{TuiFallbackReason, TuiMode, run_app_if_interactive, tui_mode};
 
 mod context;
 use crate::debugger::DebuggerContext;
 use context::TUIContext;
 
 mod draw;
-
-type DebuggerTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
 /// Debugger exit reason.
 #[derive(Debug)]
@@ -40,86 +29,95 @@ impl<'a> TUI<'a> {
 
     /// Starts the debugger TUI.
     pub fn try_run(&mut self) -> Result<ExitReason> {
-        let backend = CrosstermBackend::new(io::stdout());
-        let terminal = Terminal::new(backend)?;
-        TerminalGuard::with(terminal, |terminal| self.run_inner(terminal))
+        self.run_inner()
     }
 
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
-    fn run_inner(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
+    fn run_inner(&mut self) -> Result<ExitReason> {
         let mut cx = TUIContext::new(self.debugger_context);
         cx.init();
-        loop {
-            cx.draw(terminal)?;
-            match cx.handle_event(event::read()?) {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(reason) => return Ok(reason),
+        match run_app_if_interactive(&mut cx)? {
+            Some(exit_reason) => Ok(exit_reason),
+            None => {
+                let message = match tui_mode() {
+                    TuiMode::Fallback(reason) => non_interactive_debugger_message(reason),
+                    TuiMode::Interactive => String::from(
+                        "Cannot open the debugger TUI in this environment. Re-run in an \
+                         interactive terminal.",
+                    ),
+                };
+                eyre::bail!("{message} {}", debugger_dump_hint());
             }
         }
     }
 }
 
-type PanicHandler = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + 'static + Sync + Send>;
-
-/// Handles terminal state.
-#[must_use]
-struct TerminalGuard<B: Backend + io::Write> {
-    terminal: Terminal<B>,
-    hook: Option<Arc<PanicHandler>>,
+fn non_interactive_debugger_message(reason: TuiFallbackReason) -> String {
+    format!(
+        "Cannot open the debugger TUI because {}. Re-run in an interactive terminal.",
+        reason.as_str()
+    )
 }
 
-impl<B: Backend + io::Write> TerminalGuard<B> {
-    fn with<T>(terminal: Terminal<B>, mut f: impl FnMut(&mut Terminal<B>) -> T) -> T {
-        let mut guard = Self { terminal, hook: None };
-        guard.setup();
-        f(&mut guard.terminal)
+const fn debugger_dump_hint() -> &'static str {
+    "Pass `--dump <PATH>` to export debugger steps."
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TuiFallbackReason, debugger_dump_hint, non_interactive_debugger_message};
+    use crate::{DebugNode, Debugger};
+    use std::{env, ffi::OsString};
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
     }
 
-    fn setup(&mut self) {
-        let previous = Arc::new(std::panic::take_hook());
-        self.hook = Some(previous.clone());
-        // We need to restore the terminal state before displaying the panic message.
-        // TODO: Use `std::panic::update_hook` when it's stable
-        std::panic::set_hook(Box::new(move |info| {
-            Self::half_restore(&mut std::io::stdout());
-            (previous)(info)
-        }));
-
-        let _ = enable_raw_mode();
-        let _ = execute!(*self.terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture);
-        let _ = self.terminal.hide_cursor();
-        let _ = self.terminal.clear();
-    }
-
-    fn restore(&mut self) {
-        if !std::thread::panicking() {
-            // Drop the current hook to guarantee that `self.hook` is the only reference to it.
-            let _ = std::panic::take_hook();
-            // Restore the previous panic hook.
-            let prev = self.hook.take().unwrap();
-            let prev = match Arc::try_unwrap(prev) {
-                Ok(prev) => prev,
-                Err(_) => unreachable!("`self.hook` is not the only reference to the panic hook"),
-            };
-            std::panic::set_hook(prev);
-
-            // NOTE: Our panic handler calls this function, so we only have to call it here if we're
-            // not panicking.
-            Self::half_restore(self.terminal.backend_mut());
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = env::var_os(key);
+            unsafe { env::set_var(key, value) };
+            Self { key, previous }
         }
-
-        let _ = self.terminal.show_cursor();
     }
 
-    fn half_restore(w: &mut impl io::Write) {
-        let _ = disable_raw_mode();
-        let _ = execute!(*w, LeaveAlternateScreen, DisableMouseCapture);
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.previous {
+                    Some(value) => env::set_var(self.key, value),
+                    None => env::remove_var(self.key),
+                }
+            }
+        }
     }
-}
 
-impl<B: Backend + io::Write> Drop for TerminalGuard<B> {
-    #[inline]
-    fn drop(&mut self) {
-        self.restore();
+    #[test]
+    fn fallback_message_includes_reason() {
+        let msg = non_interactive_debugger_message(TuiFallbackReason::Ci);
+        assert!(msg.contains("running in CI"));
+        assert!(!msg.contains("--dump <PATH>"));
+    }
+
+    #[test]
+    fn dump_hint_includes_dump_flag() {
+        assert!(debugger_dump_hint().contains("--dump <PATH>"));
+    }
+
+    #[test]
+    fn debugger_tui_falls_back_in_ci_with_dump_hint() {
+        let _ci = EnvVarGuard::set("CI", "1");
+        let mut debugger = Debugger::new(
+            vec![DebugNode::default()],
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+
+        let message = debugger.try_run_tui().unwrap_err().to_string();
+
+        assert!(message.contains("running in CI"));
+        assert!(message.contains("--dump <PATH>"));
     }
 }

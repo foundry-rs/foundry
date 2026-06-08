@@ -84,7 +84,7 @@ where
 
 /// Helper trait to reset the DB if it's forked
 pub trait MaybeForkedDatabase {
-    fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
+    fn maybe_reset(&mut self, _urls: Vec<String>, block_number: BlockId) -> Result<(), String>;
 
     fn maybe_flush_cache(&self) -> Result<(), String>;
 
@@ -203,7 +203,7 @@ pub trait Db:
             B256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(Bytecode::new_raw(alloy_primitives::Bytes(code.0)));
+        info.code = Some(Bytecode::new_raw(code));
         self.insert_account(address, info);
         Ok(())
     }
@@ -243,7 +243,7 @@ pub trait Db:
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)))
+                        Some(Bytecode::new_raw(account.code))
                     },
                     nonce,
                     account_id: None,
@@ -375,7 +375,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheD
 }
 
 impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
-    fn maybe_reset(&mut self, _url: Option<String>, _block_number: BlockId) -> Result<(), String> {
+    fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
         Err("not supported".to_string())
     }
 

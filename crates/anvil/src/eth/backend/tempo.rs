@@ -8,7 +8,7 @@
 //! uses the shared initialization logic from `foundry-evm-core`.
 
 use alloy_primitives::{Address, U256, address};
-use foundry_evm::core::tempo::{PATH_USD_ADDRESS, initialize_tempo_genesis};
+use foundry_evm::core::tempo::{PATH_USD_ADDRESS, initialize_tempo_genesis_at_hardfork};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     state::{AccountInfo, Bytecode},
@@ -20,7 +20,6 @@ use tempo_precompiles::{
     account_keychain::{
         AccountKeychain,
         IAccountKeychain::{KeyRestrictions, SignatureType},
-        authorizeKeyCall,
     },
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
@@ -169,6 +168,14 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.gas_used
     }
 
+    fn state_gas_used(&self) -> u64 {
+        0
+    }
+
+    fn gas_limit(&self) -> u64 {
+        u64::MAX
+    }
+
     fn gas_refunded(&self) -> i64 {
         self.gas_refunded
     }
@@ -196,6 +203,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) {}
 
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
+
+    fn amsterdam_eip8037_enabled(&self) -> bool {
+        false
+    }
 }
 
 /// Initialize Tempo precompiles and fee tokens for Anvil.
@@ -217,7 +228,7 @@ pub fn initialize_tempo_precompiles(
     let mut storage = AnvilStorageProvider::new(db, chain_id, timestamp, 0, hardfork);
 
     // Initialize base Tempo genesis (precompiles and tokens)
-    initialize_tempo_genesis(&mut storage, ADMIN, SENDER)?;
+    initialize_tempo_genesis_at_hardfork(&mut storage, ADMIN, SENDER, hardfork)?;
 
     // Mint fee tokens to test accounts
     // u64::MAX per account - safe since u128::MAX can hold ~18 quintillion u64::MAX values
@@ -243,17 +254,16 @@ pub fn initialize_tempo_precompiles(
             keychain.set_tx_origin(account)?;
             keychain.authorize_key(
                 account, // msg_sender (root account authorizes its own key)
-                authorizeKeyCall {
-                    keyId: account, // key ID = account address for secp256k1
-                    signatureType: SignatureType::Secp256k1,
-                    config: KeyRestrictions {
-                        expiry: u64::MAX,     // never expires
-                        enforceLimits: false, // no spending limits
-                        limits: vec![],
-                        allowAnyCalls: true,
-                        allowedCalls: vec![],
-                    },
+                account, // key ID = account address for secp256k1
+                SignatureType::Secp256k1,
+                KeyRestrictions {
+                    expiry: u64::MAX,     // never expires
+                    enforceLimits: false, // no spending limits
+                    limits: vec![],
+                    allowAnyCalls: true,
+                    allowedCalls: vec![],
                 },
+                None,
             )?;
         }
 

@@ -54,6 +54,10 @@ contract HelloWorld {
 	/// A long doc line comment that will be wrapped
 	function docLineOverflow() external {}
 
+	/// @dev No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed. No-ops are allowed.
+	/// @dev Zero checks are not systematically performed.
+	function adjacentDocTagsOverflow() external {}
+
 	function docLinePostfixOverflow() external {}
 
 	/// A long doc line comment that will be wrapped

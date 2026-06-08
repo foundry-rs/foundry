@@ -2,7 +2,7 @@
 # MPP (Machine Payments Protocol) end-to-end test script
 #
 # Prerequisites:
-#   - Tempo wallet configured: `tempo wallet login`
+#   - Either `TEMPO_PRIVATE_KEY` is set, or Tempo wallet is configured: `tempo wallet login`
 #   - Wallet funded with TEMPO on moderato testnet
 #   - Foundry binaries built: `cargo build --bin cast --bin forge --bin anvil --bin chisel`
 #
@@ -28,7 +28,10 @@ else
   ANVIL="anvil"
   CHISEL="chisel"
 fi
-export MPP_DEPOSIT=100000
+export MPP_DEPOSIT="${MPP_DEPOSIT:-100000}"
+TEMPO_AUTO_FUND="${TEMPO_AUTO_FUND:-0}"
+TEMPO_AUTO_FUND_ATTEMPTS="${TEMPO_AUTO_FUND_ATTEMPTS:-3}"
+MIN_BALANCE="${MPP_MIN_BALANCE:-$((MPP_DEPOSIT + 50000))}"
 RPC_MPP="https://rpc.mpp.moderato.tempo.xyz"
 RPC="https://rpc.moderato.tempo.xyz"
 TOKEN="0x20c0000000000000000000000000000000000000"  # TEMPO TIP-20
@@ -50,21 +53,44 @@ if ! command -v "$CHISEL" &>/dev/null; then
   exit 1
 fi
 
-# Discover wallet address from keys.toml
 KEYS_FILE="${TEMPO_HOME:-$HOME/.tempo}/wallet/keys.toml"
-if [ ! -f "$KEYS_FILE" ]; then
-  echo "ERROR: Tempo wallet not configured. Run: tempo wallet login"
+if [ -n "${TEMPO_PRIVATE_KEY:-}" ]; then
+  WALLET=$("$CAST" wallet address --private-key "$TEMPO_PRIVATE_KEY")
+elif [ -f "$KEYS_FILE" ]; then
+  WALLET=$(grep -m1 'wallet_address' "$KEYS_FILE" | sed 's/.*= *"\(.*\)"/\1/')
+else
+  echo "ERROR: Set TEMPO_PRIVATE_KEY or configure Tempo wallet with: tempo wallet login"
   exit 1
 fi
-WALLET=$(grep -m1 'wallet_address' "$KEYS_FILE" | sed 's/.*= *"\(.*\)"/\1/')
 echo "Wallet: $WALLET"
 echo "RPC:    $RPC_MPP"
 echo ""
+WALLET_LOWER=$(printf '%s' "$WALLET" | tr '[:upper:]' '[:lower:]')
 
 # 1. Check balance before
 echo "=== 1. Balance BEFORE ==="
 BEFORE=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
 echo "$BEFORE"
+BEFORE_RAW=$(echo "$BEFORE" | awk '{print $1}')
+
+if [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ] && [ "$TEMPO_AUTO_FUND" = "1" ]; then
+  echo "Balance below threshold, requesting faucet funds for $WALLET_LOWER"
+  ATTEMPT=0
+  while [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ] && [ "$ATTEMPT" -lt "$TEMPO_AUTO_FUND_ATTEMPTS" ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "Faucet attempt $ATTEMPT/$TEMPO_AUTO_FUND_ATTEMPTS"
+    "$CAST" rpc tempo_fundAddress "$WALLET_LOWER" --rpc-url "$RPC" >/dev/null
+    sleep 2
+    BEFORE=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
+    echo "$BEFORE"
+    BEFORE_RAW=$(echo "$BEFORE" | awk '{print $1}')
+  done
+fi
+
+if [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ]; then
+  echo "ERROR: Wallet balance too low for MPP e2e. Need at least $MIN_BALANCE units of $TOKEN, got $BEFORE_RAW. Refill the CI wallet."
+  exit 1
+fi
 
 # 2. Call block-number through MPP-gated endpoint
 echo ""
@@ -83,7 +109,6 @@ echo "=== 3. Balance AFTER ==="
 AFTER=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
 echo "$AFTER"
 
-BEFORE_RAW=$(echo "$BEFORE" | awk '{print $1}')
 AFTER_RAW=$(echo "$AFTER" | awk '{print $1}')
 SPENT=$((BEFORE_RAW - AFTER_RAW))
 echo "Spent: $SPENT units (channel deposit + gas)"
@@ -110,7 +135,7 @@ BLOCK2=$("$CAST" block-number --rpc-url "$RPC_MPP")
 AFTER2=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC" | awk '{print $1}')
 SPENT2=$((BEFORE2 - AFTER2))
 echo "Block: $BLOCK2"
-echo "Spent: $SPENT2 units (should be 0 — channel reused from ~/.tempo/foundry/channels.json)"
+echo "Spent: $SPENT2 units (should be 0 — channel reused from ~/.tempo/channels.db)"
 
 # 6. forge script via MPP
 echo ""
@@ -129,9 +154,9 @@ contract MppCheck is Script {
     }
 }
 SOL
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 "$FORGE" script "$TMPDIR/script/Mpp.s.sol" --rpc-url "$RPC_MPP" --root "$TMPDIR"
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 # 7. forge test with vm.createSelectFork via MPP
@@ -149,15 +174,15 @@ contract MppForkTest is Test {
     }
 }
 SOL
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 "$FORGE" test --match-test test_fork_via_mpp --root "$TMPDIR" -vvv
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 # 8. anvil fork via MPP
 echo ""
 echo "=== 8. anvil --fork-url (via MPP) ==="
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 "$ANVIL" --fork-url "$RPC_MPP" --port 8555 --silent &
 ANVIL_PID=$!
 for _ in $(seq 1 30); do
@@ -167,15 +192,15 @@ done
 echo "chain-id: $("$CAST" chain-id --rpc-url http://localhost:8555)"
 kill $ANVIL_PID 2>/dev/null
 wait $ANVIL_PID 2>/dev/null
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 # 9. chisel fork via MPP
 echo ""
 echo "=== 9. chisel --fork-url (via MPP) ==="
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo 'block.number' | "$CHISEL" --fork-url "$RPC_MPP" 2>&1 | grep -E "Decimal|Type"
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 echo ""

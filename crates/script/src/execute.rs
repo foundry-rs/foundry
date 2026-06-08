@@ -26,6 +26,7 @@ use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
+    hardforks::TempoHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
@@ -168,6 +169,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.traces.extend(script_result.traces);
             setup_result.labeled_addresses.extend(script_result.labeled_addresses);
             setup_result.returned = script_result.returned;
+            setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
 
             match (&mut setup_result.transactions, script_result.transactions) {
@@ -340,6 +342,8 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         known_contracts: &ContractsByArtifact,
     ) -> Result<CallTraceDecoder> {
         let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
+        let is_tempo = self.script_config.evm_opts.networks.is_tempo()
+            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
 
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(self.execution_result.labeled_addresses.clone())
@@ -350,6 +354,9 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             )?)
             .with_label_disabled(self.args.disable_labels)
             .with_chain_id(chain_id.map(|c| c.id()))
+            .with_tempo_hardfork(
+                is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
+            )
             .build();
 
         let mut identifier = TraceIdentifiers::new()
@@ -422,7 +429,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         if !self.execution_result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
+                &self
+                    .execution_artifacts
+                    .decoder
+                    .revert_decoder
+                    .decode(&result.returned[..], result.exit_reason)
             ));
         }
 
@@ -505,7 +516,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
+                &self
+                    .execution_artifacts
+                    .decoder
+                    .revert_decoder
+                    .decode(&result.returned[..], result.exit_reason)
             ));
         }
 

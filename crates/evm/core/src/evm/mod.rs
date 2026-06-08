@@ -10,14 +10,11 @@ use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
 };
 use alloy_network::{Ethereum, Network};
-use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
-use foundry_config::FromEvmVersion;
+use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
-use op_alloy_network::Optimism;
-use op_revm::OpHaltReason;
 use revm::{
     Database,
     context::{
@@ -36,10 +33,12 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
 pub mod eth;
+#[cfg(feature = "optimism")]
 pub mod op;
 pub mod tempo;
 
 pub use eth::*;
+#[cfg(feature = "optimism")]
 pub use op::*;
 pub use tempo::*;
 
@@ -75,13 +74,6 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
     type EvmFactory = TempoEvmFactory;
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct OpEvmNetwork;
-impl FoundryEvmNetwork for OpEvmNetwork {
-    type Network = Optimism;
-    type EvmFactory = OpEvmFactory;
-}
-
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
 pub type EvmFactoryFor<FEN> = <FEN as FoundryEvmNetwork>::EvmFactory;
 pub type FoundryContextFor<'db, FEN> =
@@ -101,7 +93,7 @@ pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
 pub trait FoundryEvmFactory:
     EvmFactory<
-        Spec: Into<SpecId> + FromEvmVersion + Default + Copy + Unpin + Send + 'static,
+        Spec: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
         Tx: Clone + Debug + FoundryTransaction + FromAnyRpcTransaction + Default + Send + Sync,
         HaltReason: IntoInstructionResult,
@@ -235,6 +227,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
         reservoir: inputs.reservoir(),
         is_static: false,
         return_memory_offset: 0..0,
+        charged_new_account_state_gas: false,
     })
 }
 
@@ -246,15 +239,6 @@ pub trait IntoInstructionResult {
 impl IntoInstructionResult for HaltReason {
     fn into_instruction_result(self) -> InstructionResult {
         self.into()
-    }
-}
-
-impl IntoInstructionResult for OpHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Base(eth) => eth.into(),
-            Self::FailedDeposit => InstructionResult::Stop,
-        }
     }
 }
 
