@@ -2,7 +2,7 @@ use std::{str::FromStr, time::Duration};
 
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
-    format_uint_exp,
+    format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_consensus::{SignableTransaction, Signed};
@@ -297,8 +297,10 @@ impl Erc20Subcommand {
     async fn should_use_tempo_network(
         &self,
         tempo_access_key: &Option<TempoAccessKeyConfig>,
+        has_session: bool,
     ) -> eyre::Result<bool> {
         if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
+            || has_session
             || tempo_access_key.is_some()
         {
             return Ok(true);
@@ -312,15 +314,22 @@ impl Erc20Subcommand {
         Ok(false)
     }
 
+    fn has_tempo_session(&self) -> eyre::Result<bool> {
+        self.erc20_opts().map_or(Ok(false), |opts| opts.tempo.session_id().map(|id| id.is_some()))
+    }
+
     pub async fn run(self) -> eyre::Result<()> {
+        let has_session = self.has_tempo_session()?;
         // Resolve the signer once for state-changing variants.
         let (signer, tempo_access_key) = match &self {
             Self::Transfer { send_tx, .. }
             | Self::Approve { send_tx, .. }
             | Self::Mint { send_tx, .. }
             | Self::Burn { send_tx, .. } => {
-                // Only attempt Tempo lookup if --from is set (avoids unnecessary I/O).
-                if send_tx.eth.wallet.from.is_some() {
+                // Only attempt persistent Tempo lookup if --from is set (avoids unnecessary I/O).
+                // Explicit Tempo sessions are resolved after network selection, once the chain is
+                // known.
+                if !has_session && send_tx.eth.wallet.from.is_some() {
                     let (s, ak) = send_tx.eth.wallet.maybe_signer().await?;
                     (s, ak)
                 } else {
@@ -330,12 +339,12 @@ impl Erc20Subcommand {
             _ => (None, None),
         };
 
-        let is_tempo = self.should_use_tempo_network(&tempo_access_key).await?;
+        let is_tempo = self.should_use_tempo_network(&tempo_access_key, has_session).await?;
 
         if is_tempo {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await
         } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None, has_session).await
         }
     }
 
@@ -343,6 +352,7 @@ impl Erc20Subcommand {
         self,
         pre_resolved_signer: Option<WalletSigner>,
         tempo_keychain: Option<TempoAccessKeyConfig>,
+        has_session: bool,
     ) -> eyre::Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -364,6 +374,20 @@ impl Erc20Subcommand {
                 $build_tx:expr
             ) => {{
                 let mut tx_opts = $tx_opts;
+                tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
+                let (pre_resolved_signer, tempo_keychain) = if has_session {
+                    let $provider =
+                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    tempo::resolve_session_or_wallet_signer(
+                        &tx_opts.tempo,
+                        &$send_tx.eth.wallet,
+                        chain.id(),
+                    )
+                    .await?
+                } else {
+                    (pre_resolved_signer, tempo_keychain)
+                };
                 let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
                 let expires_at = tx_opts.tempo.resolve_expires();
                 let tempo_sponsor =
@@ -384,17 +408,9 @@ impl Erc20Subcommand {
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
-                    if needs_sponsor_payload {
-                        tx.set_key_id(access_key.key_address);
-                        tx.prepare_access_key_authorization(
-                            &$provider,
-                            access_key.wallet_address,
-                            access_key.key_address,
-                            access_key.key_authorization.as_ref(),
-                        )
+                    tempo::fill_access_key_transaction(&$provider, &mut tx, access_key, chain)
                         .await?;
-                        fill_tx(&$provider, &mut tx, access_key.wallet_address, chain, false)
-                            .await?;
+                    if needs_sponsor_payload {
                         if print_sponsor_hash {
                             let hash = tx
                                 .compute_sponsor_hash(access_key.wallet_address)
