@@ -546,8 +546,7 @@ const fn package_json() -> &'static str {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn json_str(s: &str) -> String {
-    // Escape double quotes and wrap.
-    format!("'{}'", s.replace('\'', "\\'"))
+    serde_json::to_string(s).expect("serializing a string cannot fail")
 }
 
 #[cfg(test)]
@@ -629,5 +628,12 @@ End {brace}.
 
         // Inside ~~~ fences: untouched.
         assert!(out.contains("echo {not escaped}"), "~~~ fence content must be unchanged");
+    }
+
+    #[test]
+    fn json_str_emits_valid_typescript_strings() {
+        assert_eq!(json_str(r#"Acme\"#), r#""Acme\\""#);
+        assert_eq!(json_str("Bob's Docs"), r#""Bob's Docs""#);
+        assert_eq!(json_str(r#"Quote " Docs"#), r#""Quote \" Docs""#);
     }
 }
