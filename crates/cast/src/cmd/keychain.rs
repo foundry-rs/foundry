@@ -2742,9 +2742,7 @@ async fn run_key_auth_sign(
     if let Some(browser) = browser.run::<TempoNetwork>().await? {
         let signer_address = browser.address();
         ensure_root_sender(signer_address, wallet.from)?;
-        let preferred_signature_type = authorization.key_type;
-        let signed =
-            browser.sign_key_authorization(authorization, Some(preferred_signature_type)).await?;
+        let signed = browser.sign_key_authorization(authorization).await?;
         return print_signed_key_authorization(
             &signed,
             signature_hash,
