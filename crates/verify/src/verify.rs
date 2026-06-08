@@ -9,7 +9,7 @@ use crate::{
 use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_provider::Provider;
 use clap::{Parser, ValueEnum, ValueHint};
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
@@ -17,11 +17,118 @@ use foundry_cli::{
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
 use foundry_config::{
-    Chain, Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast,
+    Chain, Config, SolcReq,
+    figment::{
+        Error, Metadata, Profile, Provider as FigmentProvider,
+        value::{Dict, Map, Value},
+    },
+    impl_figment_convert, impl_figment_convert_cast,
 };
 use itertools::Itertools;
+use reqwest::{Client, StatusCode, Url};
 use semver::BuildMetadata;
-use std::path::PathBuf;
+use serde::Deserialize;
+use std::{path::PathBuf, time::Duration};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VerifierCredentialProbe {
+    Accepted,
+    InvalidApiKey,
+    Inconclusive,
+}
+
+#[derive(Debug, Deserialize)]
+struct EtherscanProbeResponse {
+    status: String,
+    result: Option<serde_json::Value>,
+}
+
+fn verifier_credential_probe_query(api_key: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut query = vec![
+        ("module", "contract".to_string()),
+        ("action", "getabi".to_string()),
+        ("address", Address::ZERO.to_string()),
+    ];
+    if let Some(api_key) = api_key {
+        query.push(("apikey", api_key.to_string()));
+    }
+    query
+}
+
+fn classify_verifier_credential_response(
+    status: StatusCode,
+    body: &str,
+) -> VerifierCredentialProbe {
+    let lower = body.to_lowercase();
+    if lower.contains("invalid api key") || lower.contains("invalid_api_key") {
+        return VerifierCredentialProbe::InvalidApiKey;
+    }
+
+    if lower.contains("contract source code not verified")
+        || lower.contains("contract not found")
+        || lower.contains("contract was not found")
+    {
+        return VerifierCredentialProbe::Accepted;
+    }
+
+    if status == StatusCode::UNAUTHORIZED {
+        return VerifierCredentialProbe::InvalidApiKey;
+    }
+
+    if !status.is_success()
+        || lower.contains("max rate limit reached")
+        || lower.contains("sorry, you have been blocked")
+        || lower.contains("checking if the site connection is secure")
+    {
+        return VerifierCredentialProbe::Inconclusive;
+    }
+
+    match serde_json::from_str::<EtherscanProbeResponse>(body) {
+        Ok(resp) if resp.status == "1" => VerifierCredentialProbe::Accepted,
+        Ok(resp) => resp
+            .result
+            .and_then(|result| result.as_str().map(str::to_lowercase))
+            .map(|result| {
+                if result.contains("invalid api key") || result.contains("invalid_api_key") {
+                    VerifierCredentialProbe::InvalidApiKey
+                } else if result.contains("max rate limit reached") {
+                    VerifierCredentialProbe::Inconclusive
+                } else if result.contains("contract source code not verified")
+                    || result.contains("contract not found")
+                    || result.contains("contract was not found")
+                {
+                    VerifierCredentialProbe::Accepted
+                } else {
+                    VerifierCredentialProbe::Inconclusive
+                }
+            })
+            .unwrap_or(VerifierCredentialProbe::Inconclusive),
+        Err(_) => VerifierCredentialProbe::Inconclusive,
+    }
+}
+
+fn parse_http_verifier_url(url: &str, label: &str) -> Result<Url> {
+    let url = Url::parse(url).wrap_err_with(|| format!("invalid {label} URL `{url}`"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        eyre::bail!("invalid {label} URL `{url}`: URL scheme must be http or https");
+    }
+    Ok(url)
+}
+
+async fn probe_verifier_credentials(
+    url: Url,
+    api_key: Option<&str>,
+) -> Result<VerifierCredentialProbe, reqwest::Error> {
+    let resp = Client::new()
+        .get(url)
+        .query(&verifier_credential_probe_query(api_key))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
+    let status = resp.status();
+    let body = resp.text().await?;
+    Ok(classify_verifier_credential_response(status, &body))
+}
 
 /// The programming language used for smart contract development.
 ///
@@ -62,6 +169,104 @@ impl VerifierArgs {
     /// Returns true if `--verifier` was explicitly provided by the user.
     pub const fn is_explicitly_set(&self) -> bool {
         self.verifier.is_some()
+    }
+
+    /// Resolves the API key with consistent precedence: explicit `--verifier-api-key` first,
+    /// then the etherscan config key.
+    pub fn resolve_api_key<'a>(&'a self, etherscan_key: Option<&'a str>) -> Option<&'a str> {
+        self.verifier_api_key.as_deref().or(etherscan_key)
+    }
+
+    /// Makes a lightweight network call to validate that credentials are accepted by the verifier.
+    ///
+    /// `api_key` must be the already-merged API key (CLI `--verifier-api-key` takes
+    /// precedence over config), as returned by [`Self::resolve_api_key`].
+    pub async fn check_credentials(
+        &self,
+        api_key: Option<&str>,
+        chain: Chain,
+        config: &Config,
+    ) -> eyre::Result<()> {
+        let resolved = self.resolve(api_key, Some(chain));
+        match resolved {
+            VerificationProviderType::Etherscan
+            | VerificationProviderType::Blockscout
+            | VerificationProviderType::Oklink => {
+                let etherscan_opts =
+                    EtherscanOpts { key: api_key.map(str::to_owned), chain: Some(chain) };
+                let client = EtherscanVerificationProvider::default().client(
+                    &etherscan_opts,
+                    self,
+                    config,
+                )?;
+                match tokio::time::timeout(
+                    Duration::from_secs(10),
+                    probe_verifier_credentials(
+                        client.etherscan_api_url().clone(),
+                        client.api_key(),
+                    ),
+                )
+                .await
+                {
+                    Err(_) => {
+                        sh_warn!("verifier credential check timed out, proceeding anyway")?;
+                    }
+                    Ok(Ok(VerifierCredentialProbe::Accepted)) => {}
+                    Ok(Ok(VerifierCredentialProbe::InvalidApiKey)) => {
+                        eyre::bail!("verifier credential check failed: invalid API key");
+                    }
+                    Ok(Ok(VerifierCredentialProbe::Inconclusive) | Err(_)) => {
+                        sh_warn!("verifier credential check inconclusive, proceeding anyway")?;
+                    }
+                }
+            }
+            VerificationProviderType::Custom => {
+                // Custom verifiers may return Etherscan-shaped responses (HTTP 200 with a JSON
+                // body) or standard HTTP auth errors (401/403). Check both.
+                if let Some(url) = &self.verifier_url {
+                    let url = parse_http_verifier_url(url, "verifier")?;
+                    match probe_verifier_credentials(url, api_key).await {
+                        Err(_) => {
+                            sh_warn!("verifier credential check failed, proceeding anyway")?;
+                        }
+                        Ok(
+                            VerifierCredentialProbe::Accepted
+                            | VerifierCredentialProbe::Inconclusive,
+                        ) => {}
+                        Ok(VerifierCredentialProbe::InvalidApiKey) => {
+                            eyre::bail!("verifier credential check failed: invalid API key")
+                        }
+                    }
+                }
+            }
+            VerificationProviderType::Sourcify => {
+                // Only probe custom URLs; the default public endpoint is assumed reachable.
+                if let Some(url) = &self.verifier_url {
+                    let url = parse_http_verifier_url(url, "Sourcify")?;
+                    match Client::new()
+                        .get(url.clone())
+                        .timeout(Duration::from_secs(10))
+                        .send()
+                        .await
+                    {
+                        Err(_) => {
+                            sh_warn!(
+                                "Sourcify URL `{url}` could not be reached, proceeding anyway"
+                            )?;
+                        }
+                        Ok(resp) => {
+                            let status = resp.status();
+                            if !status.is_success() && status != StatusCode::NOT_FOUND {
+                                sh_warn!(
+                                    "Sourcify URL `{url}` returned HTTP {status}, proceeding anyway"
+                                )?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Resolves the actual verification provider that will be used at runtime, taking into
@@ -219,48 +424,43 @@ pub struct VerifyArgs {
 
 impl_figment_convert!(VerifyArgs);
 
-impl figment::Provider for VerifyArgs {
-    fn metadata(&self) -> figment::Metadata {
-        figment::Metadata::named("Verify Provider")
+impl FigmentProvider for VerifyArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Verify Provider")
     }
 
-    fn data(
-        &self,
-    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = self.etherscan.dict();
         dict.extend(self.rpc.dict());
 
         if let Some(root) = self.root.as_ref() {
-            dict.insert("root".to_string(), figment::value::Value::serialize(root)?);
+            dict.insert("root".to_string(), Value::serialize(root)?);
         }
         if let Some(optimizer_runs) = self.num_of_optimizations {
-            dict.insert("optimizer".to_string(), figment::value::Value::serialize(true)?);
-            dict.insert(
-                "optimizer_runs".to_string(),
-                figment::value::Value::serialize(optimizer_runs)?,
-            );
+            dict.insert("optimizer".to_string(), Value::serialize(true)?);
+            dict.insert("optimizer_runs".to_string(), Value::serialize(optimizer_runs)?);
         }
         if let Some(evm_version) = self.evm_version {
-            dict.insert("evm_version".to_string(), figment::value::Value::serialize(evm_version)?);
+            dict.insert("evm_version".to_string(), Value::serialize(evm_version)?);
         }
         if self.via_ir {
-            dict.insert("via_ir".to_string(), figment::value::Value::serialize(self.via_ir)?);
+            dict.insert("via_ir".to_string(), Value::serialize(self.via_ir)?);
         }
 
         if self.no_auto_detect {
-            dict.insert("auto_detect_solc".to_string(), figment::value::Value::serialize(false)?);
+            dict.insert("auto_detect_solc".to_string(), Value::serialize(false)?);
         }
 
         if let Some(ref solc) = self.use_solc {
             let solc = solc.trim_start_matches("solc:");
-            dict.insert("solc".to_string(), figment::value::Value::serialize(solc)?);
+            dict.insert("solc".to_string(), Value::serialize(solc)?);
         }
 
         if let Some(api_key) = &self.verifier.verifier_api_key {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
-        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -571,20 +771,18 @@ impl VerifyCheckArgs {
     }
 }
 
-impl figment::Provider for VerifyCheckArgs {
-    fn metadata(&self) -> figment::Metadata {
-        figment::Metadata::named("Verify Check Provider")
+impl FigmentProvider for VerifyCheckArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Verify Check Provider")
     }
 
-    fn data(
-        &self,
-    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = self.etherscan.dict();
         if let Some(api_key) = &self.etherscan.key {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
-        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -633,6 +831,68 @@ mod tests {
         ]);
         assert!(args.no_auto_detect);
         assert_eq!(args.use_solc.as_deref(), Some("0.8.23"));
+    }
+
+    #[test]
+    fn classify_verifier_probe_accepts_not_verified_response() {
+        let body =
+            r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#;
+        assert_eq!(
+            classify_verifier_credential_response(StatusCode::OK, body),
+            VerifierCredentialProbe::Accepted,
+        );
+    }
+
+    #[test]
+    fn classify_verifier_probe_rejects_invalid_api_key() {
+        let body = r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#;
+        assert_eq!(
+            classify_verifier_credential_response(StatusCode::OK, body),
+            VerifierCredentialProbe::InvalidApiKey,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(StatusCode::UNAUTHORIZED, ""),
+            VerifierCredentialProbe::InvalidApiKey,
+        );
+    }
+
+    #[test]
+    fn classify_verifier_probe_treats_transient_errors_as_inconclusive() {
+        let body = r#"{"status":"0","message":"NOTOK","result":"Max rate limit reached"}"#;
+        assert_eq!(
+            classify_verifier_credential_response(StatusCode::OK, body),
+            VerifierCredentialProbe::Inconclusive,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(
+                StatusCode::OK,
+                "Checking if the site connection is secure",
+            ),
+            VerifierCredentialProbe::Inconclusive,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(
+                StatusCode::FORBIDDEN,
+                "Sorry, you have been blocked",
+            ),
+            VerifierCredentialProbe::Inconclusive,
+        );
+        assert_eq!(
+            classify_verifier_credential_response(StatusCode::FORBIDDEN, ""),
+            VerifierCredentialProbe::Inconclusive,
+        );
+    }
+
+    #[test]
+    fn parse_http_verifier_url_rejects_unsupported_schemes() {
+        assert!(parse_http_verifier_url("https://example.com/api", "verifier").is_ok());
+        assert!(parse_http_verifier_url("http://example.com/api", "verifier").is_ok());
+
+        let err = parse_http_verifier_url("gopher://example.com/api", "verifier").unwrap_err();
+        assert!(
+            err.to_string().contains("URL scheme must be http or https"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
