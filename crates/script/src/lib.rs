@@ -145,12 +145,6 @@ pub struct ScriptArgs {
     #[command(flatten)]
     pub tempo: TempoOpts,
 
-    /// Use a live Tempo wallet session for signing.
-    ///
-    /// This is a forge-script convenience alias for `--tempo.session`.
-    #[arg(long = "session", value_name = "SESSION_ID", conflicts_with = "tempo_session")]
-    pub session: Option<B256>,
-
     /// Create a temporary Tempo wallet session, run this script with it, then revoke it.
     #[command(flatten)]
     pub wallet_session: ScriptWalletSessionArgs,
@@ -259,13 +253,11 @@ pub struct ScriptArgs {
 
 impl ScriptArgs {
     fn normalized_tempo(&self) -> TempoOpts {
-        let mut tempo = self.tempo.clone();
-        tempo.session = self.session.or(tempo.session);
-        tempo
+        self.tempo.clone()
     }
 
     fn has_tempo_session(&self) -> Result<bool> {
-        Ok(self.session.is_some() || self.tempo.session_id()?.is_some())
+        Ok(self.tempo.session_id()?.is_some())
     }
 
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
@@ -752,7 +744,7 @@ impl ScriptArgs {
         self.wallet_session
             .root
             .or(self.evm.sender)
-            .ok_or_else(|| eyre::eyre!("forge script --wallet-session requires --session-root"))
+            .ok_or_else(|| eyre::eyre!("forge script --session requires --session-root"))
     }
 }
 
@@ -761,9 +753,9 @@ impl ScriptArgs {
 pub struct ScriptWalletSessionArgs {
     /// Create a temporary Tempo wallet session for this script run.
     #[arg(
-        long = "wallet-session",
+        long = "session",
         id = "wallet_session",
-        conflicts_with_all = ["session", "tempo_session", "unlocked"]
+        conflicts_with_all = ["tempo_session", "unlocked"]
     )]
     pub enabled: bool,
 
@@ -937,16 +929,14 @@ impl ScriptWalletSessionArgs {
             return Ok(());
         }
         if !args.should_broadcast() {
-            eyre::bail!("forge script --wallet-session requires --broadcast or --resume");
+            eyre::bail!("forge script --session requires --broadcast or --resume");
         }
         if self.expires.as_ref().is_none_or(|expires| expires.trim().is_empty()) {
-            eyre::bail!("forge script --wallet-session requires --session-expires");
+            eyre::bail!("forge script --session requires --session-expires");
         }
         args.root_account_for_session()?;
         if self.scopes.is_empty() && self.target.is_none() {
-            eyre::bail!(
-                "forge script --wallet-session requires --session-scope or --session-target"
-            );
+            eyre::bail!("forge script --session requires --session-scope or --session-target");
         }
         if self.target.is_some() && self.selectors.is_empty() {
             eyre::bail!("--session-target requires at least one --session-selector");
@@ -956,12 +946,12 @@ impl ScriptWalletSessionArgs {
         }
         if args.wallets.browser.browser {
             eyre::bail!(
-                "forge script --wallet-session cannot use --browser until browser KeyAuthorization signing is supported"
+                "forge script --session cannot use --browser until browser KeyAuthorization signing is supported"
             );
         }
         if has_explicit_script_signer(&args.wallets) {
             eyre::bail!(
-                "forge script --wallet-session cannot be combined with explicit script wallet signer options; use --session-* root signer options instead"
+                "forge script --session cannot be combined with explicit script wallet signer options; use --session-* root signer options instead"
             );
         }
         Ok(())
@@ -1080,7 +1070,7 @@ where
 }
 
 const WRAPPER_BOOL_ARGS: &[&str] = &[
-    "--wallet-session",
+    "--session",
     "--session-interactive",
     "--session-ledger",
     "--session-trezor",
@@ -1385,8 +1375,6 @@ mod tests {
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
     const SESSION_ID_HEX: &str =
         "0x1111111111111111111111111111111111111111111111111111111111111111";
-    const OTHER_SESSION_ID_HEX: &str =
-        "0x2222222222222222222222222222222222222222222222222222222222222222";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn active_session_entry(
@@ -1518,23 +1506,14 @@ mod tests {
     }
 
     #[test]
-    fn can_parse_session_alias_for_tempo_session() {
-        let args =
-            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--session", SESSION_ID_HEX]);
-
-        assert_eq!(args.session, Some(B256::from([0x11; 32])));
-        assert_eq!(args.normalized_tempo().session, Some(B256::from([0x11; 32])));
-    }
-
-    #[test]
-    fn can_parse_wallet_session_wrapper() {
+    fn can_parse_session_wrapper() {
         let root = address!("0x1111111111111111111111111111111111111111");
         let target = address!("0x2222222222222222222222222222222222222222");
         let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Deploy.s.sol",
             "--broadcast",
-            "--wallet-session",
+            "--session",
             "--session-root",
             &root.to_string(),
             "--session-expires",
@@ -1559,12 +1538,12 @@ mod tests {
     }
 
     #[test]
-    fn wallet_session_wrapper_conflicts_with_existing_session_id() {
+    fn session_wrapper_conflicts_with_existing_session_id() {
         let err = ScriptArgs::try_parse_from([
             "foundry-cli",
             "Deploy.s.sol",
-            "--wallet-session",
             "--session",
+            "--tempo.session",
             SESSION_ID_HEX,
         ])
         .unwrap_err();
@@ -1573,11 +1552,11 @@ mod tests {
     }
 
     #[test]
-    fn wallet_session_wrapper_rejects_dry_run() {
+    fn session_wrapper_rejects_dry_run() {
         let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Deploy.s.sol",
-            "--wallet-session",
+            "--session",
             "--session-root",
             "0x1111111111111111111111111111111111111111",
             "--session-expires",
@@ -1588,7 +1567,7 @@ mod tests {
 
         let err = wallet_session_command(
             &args,
-            ["forge", "script", "Deploy.s.sol", "--wallet-session"].into_iter().map(OsString::from),
+            ["forge", "script", "Deploy.s.sol", "--session"].into_iter().map(OsString::from),
         )
         .unwrap_err();
 
@@ -1596,7 +1575,7 @@ mod tests {
     }
 
     #[test]
-    fn wallet_session_wrapper_rewrites_to_cast_session_command() {
+    fn session_wrapper_rewrites_to_cast_session_command() {
         let root = address!("0x1111111111111111111111111111111111111111");
         let target = address!("0x2222222222222222222222222222222222222222");
         let root_arg = root.to_string();
@@ -1609,7 +1588,7 @@ mod tests {
             "http://127.0.0.1:8545",
             "--chain",
             "4217",
-            "--wallet-session",
+            "--session",
             "--session-root",
             &root_arg,
             "--session-expires",
@@ -1630,7 +1609,7 @@ mod tests {
             "http://127.0.0.1:8545",
             "--chain",
             "4217",
-            "--wallet-session",
+            "--session",
             "--session-root",
             &root_arg,
             "--session-expires",
@@ -1666,12 +1645,12 @@ mod tests {
         assert!(inner.starts_with("/tmp/forge script Deploy.s.sol --broadcast"), "{inner}");
         assert!(inner.contains("--rpc-url http://127.0.0.1:8545"), "{inner}");
         assert!(inner.contains("--chain 4217"), "{inner}");
-        assert!(!inner.contains("--wallet-session"), "{inner}");
+        assert!(!inner.contains("--session "), "{inner}");
         assert!(!inner.contains("--session-private-key"), "{inner}");
     }
 
     #[test]
-    fn wallet_session_wrapper_uses_project_config_for_cast_session() {
+    fn session_wrapper_uses_project_config_for_cast_session() {
         let temp = tempdir().unwrap();
         let project_root = temp.path();
         fs::write(
@@ -1693,7 +1672,7 @@ mod tests {
             "--root",
             &project_root_arg,
             "--broadcast",
-            "--wallet-session",
+            "--session",
             "--session-root",
             &root_arg,
             "--session-expires",
@@ -1708,7 +1687,7 @@ mod tests {
             "--root",
             &project_root_arg,
             "--broadcast",
-            "--wallet-session",
+            "--session",
             "--session-root",
             &root_arg,
             "--session-expires",
@@ -1732,12 +1711,12 @@ mod tests {
     }
 
     #[test]
-    fn wallet_session_wrapper_rejects_browser_until_key_authorization_support_lands() {
+    fn session_wrapper_rejects_browser_until_key_authorization_support_lands() {
         let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Deploy.s.sol",
             "--broadcast",
-            "--wallet-session",
+            "--session",
             "--session-root",
             "0x1111111111111111111111111111111111111111",
             "--session-expires",
@@ -1749,7 +1728,7 @@ mod tests {
 
         let err = wallet_session_command(
             &args,
-            ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
+            ["forge", "script", "Deploy.s.sol", "--broadcast", "--session"]
                 .into_iter()
                 .map(OsString::from),
         )
@@ -1759,12 +1738,12 @@ mod tests {
     }
 
     #[test]
-    fn wallet_session_wrapper_rejects_script_wallet_signer_options() {
+    fn session_wrapper_rejects_script_wallet_signer_options() {
         let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Deploy.s.sol",
             "--broadcast",
-            "--wallet-session",
+            "--session",
             "--session-root",
             "0x1111111111111111111111111111111111111111",
             "--session-expires",
@@ -1777,37 +1756,13 @@ mod tests {
 
         let err = wallet_session_command(
             &args,
-            ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
+            ["forge", "script", "Deploy.s.sol", "--broadcast", "--session"]
                 .into_iter()
                 .map(OsString::from),
         )
         .unwrap_err();
 
         assert!(err.to_string().contains("explicit script wallet signer"), "{err}");
-    }
-
-    #[test]
-    fn session_alias_conflicts_with_tempo_session_opt() {
-        let err = ScriptArgs::try_parse_from([
-            "foundry-cli",
-            "Contract.sol",
-            "--session",
-            SESSION_ID_HEX,
-            "--tempo.session",
-            OTHER_SESSION_ID_HEX,
-        ])
-        .unwrap_err();
-
-        assert!(err.to_string().contains("cannot be used with"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn session_alias_selects_tempo_network() {
-        let args =
-            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--session", SESSION_ID_HEX]);
-        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
-
-        assert!(evm_opts.networks.is_tempo());
     }
 
     #[tokio::test]
