@@ -703,6 +703,7 @@ impl ScriptArgs {
         inner.extend(inner_args);
         let inner = quote_command(&inner)?;
 
+        let context = self.resolved_wallet_session_context()?;
         let session = &self.wallet_session;
         let root = self.root_account_for_session()?;
         let mut args = vec![
@@ -733,14 +734,7 @@ impl ScriptArgs {
             args.push(limit.into());
         }
 
-        if let Some(rpc_url) = self.evm.rpc.rpc_url.as_ref() {
-            args.push("--rpc-url".into());
-            args.push(rpc_url.into());
-        }
-        if let Some(chain) = self.evm.env.chain {
-            args.push("--chain".into());
-            args.push(chain.id().to_string().into());
-        }
+        context.push_cast_args(&mut args);
 
         session.push_root_signer_args(&mut args);
 
@@ -748,6 +742,11 @@ impl ScriptArgs {
         args.push(inner.into());
 
         Ok(WalletSessionCommand { program: cast_program, args })
+    }
+
+    fn resolved_wallet_session_context(&self) -> Result<ResolvedWalletSessionContext> {
+        let (_, evm_opts) = self.load_config_and_evm_opts()?;
+        Ok(ResolvedWalletSessionContext::from_evm_opts(&evm_opts))
     }
 
     fn root_account_for_session(&self) -> Result<Address> {
@@ -938,6 +937,9 @@ impl ScriptWalletSessionArgs {
         if !self.enabled {
             return Ok(());
         }
+        if !args.should_broadcast() {
+            eyre::bail!("forge script --wallet-session requires --broadcast or --resume");
+        }
         if self.expires.as_ref().is_none_or(|expires| expires.trim().is_empty()) {
             eyre::bail!("forge script --wallet-session requires --session-expires");
         }
@@ -1006,6 +1008,29 @@ struct WalletSessionCommand {
     args: Vec<OsString>,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ResolvedWalletSessionContext {
+    rpc_url: Option<String>,
+    chain_id: Option<u64>,
+}
+
+impl ResolvedWalletSessionContext {
+    fn from_evm_opts(evm_opts: &EvmOpts) -> Self {
+        Self { rpc_url: evm_opts.fork_url.clone(), chain_id: evm_opts.env.chain_id }
+    }
+
+    fn push_cast_args(&self, args: &mut Vec<OsString>) {
+        if let Some(rpc_url) = self.rpc_url.as_ref() {
+            args.push("--rpc-url".into());
+            args.push(rpc_url.into());
+        }
+        if let Some(chain_id) = self.chain_id {
+            args.push("--chain".into());
+            args.push(chain_id.to_string().into());
+        }
+    }
+}
+
 fn push_opt_arg(args: &mut Vec<OsString>, name: &'static str, value: Option<&str>) {
     if let Some(value) = value {
         args.push(name.into());
@@ -1013,7 +1038,7 @@ fn push_opt_arg(args: &mut Vec<OsString>, name: &'static str, value: Option<&str
     }
 }
 
-fn has_explicit_script_signer(wallets: &MultiWalletOpts) -> bool {
+const fn has_explicit_script_signer(wallets: &MultiWalletOpts) -> bool {
     wallets.interactive
         || wallets.interactives > 0
         || wallets.private_key.is_some()
@@ -1041,7 +1066,7 @@ where
     I: IntoIterator<Item = OsString>,
 {
     let mut out = Vec::new();
-    let mut args = raw_args.into_iter().peekable();
+    let mut args = raw_args.into_iter();
     let mut after_double_dash = false;
 
     while let Some(arg) = args.next() {
@@ -1441,6 +1466,11 @@ mod tests {
         }
     }
 
+    fn option_value<'a>(args: &'a [std::borrow::Cow<'_, str>], option: &str) -> Option<&'a str> {
+        args.windows(2)
+            .find_map(|window| (window[0].as_ref() == option).then(|| window[1].as_ref()))
+    }
+
     #[test]
     fn can_parse_sig() {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
@@ -1560,6 +1590,33 @@ mod tests {
     }
 
     #[test]
+    fn wallet_session_wrapper_rejects_dry_run() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Deploy.s.sol",
+            "--wallet-session",
+            "--session-root",
+            "0x1111111111111111111111111111111111111111",
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+        ]);
+
+        let err = args
+            .wallet_session_command_from_raw_args(
+                ["forge", "script", "Deploy.s.sol", "--wallet-session"]
+                    .into_iter()
+                    .map(OsString::from),
+                OsString::from("/tmp/forge"),
+                OsString::from("/tmp/cast"),
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("requires --broadcast or --resume"), "{err}");
+    }
+
+    #[test]
     fn wallet_session_wrapper_rewrites_to_cast_session_command() {
         let root = address!("0x1111111111111111111111111111111111111111");
         let target = address!("0x2222222222222222222222222222222222222222");
@@ -1641,10 +1698,78 @@ mod tests {
     }
 
     #[test]
+    fn wallet_session_wrapper_uses_project_config_for_cast_session() {
+        let temp = tempdir().unwrap();
+        let project_root = temp.path();
+        fs::write(
+            project_root.join(Config::FILE_NAME),
+            r#"
+                [profile.default]
+                eth_rpc_url = "http://127.0.0.1:8545"
+                chain_id = 4217
+            "#,
+        )
+        .unwrap();
+
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let root_arg = root.to_string();
+        let project_root_arg = project_root.to_string_lossy();
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Deploy.s.sol",
+            "--root",
+            &project_root_arg,
+            "--broadcast",
+            "--wallet-session",
+            "--session-root",
+            &root_arg,
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+        ]);
+        let raw_args = [
+            "forge",
+            "script",
+            "Deploy.s.sol",
+            "--root",
+            &project_root_arg,
+            "--broadcast",
+            "--wallet-session",
+            "--session-root",
+            &root_arg,
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+        ]
+        .into_iter()
+        .map(OsString::from);
+
+        let command = args
+            .wallet_session_command_from_raw_args(
+                raw_args,
+                OsString::from("/tmp/forge"),
+                OsString::from("/tmp/cast"),
+            )
+            .unwrap();
+
+        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
+        assert_eq!(option_value(&command_args, "--rpc-url"), Some("http://127.0.0.1:8545"));
+        assert_eq!(option_value(&command_args, "--chain"), Some("4217"));
+
+        let for_pos = command_args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
+        let inner = command_args[for_pos + 1].as_ref();
+        assert!(inner.contains("--root "), "{inner}");
+        assert!(inner.contains(project_root.to_string_lossy().as_ref()), "{inner}");
+    }
+
+    #[test]
     fn wallet_session_wrapper_rejects_browser_until_key_authorization_support_lands() {
         let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Deploy.s.sol",
+            "--broadcast",
             "--wallet-session",
             "--session-root",
             "0x1111111111111111111111111111111111111111",
@@ -1657,7 +1782,7 @@ mod tests {
 
         let err = args
             .wallet_session_command_from_raw_args(
-                ["forge", "script", "Deploy.s.sol", "--wallet-session"]
+                ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
                     .into_iter()
                     .map(OsString::from),
                 OsString::from("/tmp/forge"),
@@ -1673,6 +1798,7 @@ mod tests {
         let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Deploy.s.sol",
+            "--broadcast",
             "--wallet-session",
             "--session-root",
             "0x1111111111111111111111111111111111111111",
@@ -1686,7 +1812,7 @@ mod tests {
 
         let err = args
             .wallet_session_command_from_raw_args(
-                ["forge", "script", "Deploy.s.sol", "--wallet-session"]
+                ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
                     .into_iter()
                     .map(OsString::from),
                 OsString::from("/tmp/forge"),
