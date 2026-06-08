@@ -489,6 +489,7 @@ mod tests {
     fn test_evm_spec_id_from_str_parses_network_hardforks() {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T3"), Some(TempoHardfork::T3));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T2"), Some(TempoHardfork::T2));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T7"), Some(TempoHardfork::T7));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
     }
 

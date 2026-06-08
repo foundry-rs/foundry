@@ -1,37 +1,39 @@
-# Incorrect shift order
+# Incorrect Yul shift order
 
 **Severity**: `High`
 **ID**: `incorrect-shift`
 
-Flags shift operations where a literal appears on the left and a non-literal on the right, which
-is almost always the wrong operand order.
+Flags Yul `shl` and `shr` calls whose operands appear to be reversed.
 
 ## What it does
 
-Warns when the left-hand operand of `<<` or `>>` is a numeric literal and the right-hand operand
-is a non-literal expression (e.g. a variable, function call, or composite expression).
+Warns when the first argument to a Yul `shl` or `shr` call is dynamic and the second argument is a
+literal. Yul shift calls take the shift amount first and the value second, so `shr(value, 8)`
+shifts the literal `8` by `value`; the usual intended expression is `shr(8, value)`.
 
 ## Why is this bad?
 
-Shift expressions like `2 << x` are usually a typo for `x << 2`. In the former, the *value being
-shifted* is a tiny constant and the *shift amount* is dynamic — almost never the intended
-behavior, and a known source of bugs in production contracts.
+Yul's shift argument order is easy to confuse with high-level Solidity operators. Reversing the
+arguments silently changes which value is shifted and can produce incorrect arithmetic,
+bit-packing, or bounds logic.
 
 ## Example
 
 ### Bad
 
 ```solidity
-result = 2 << stateValue;        // shift amount comes from state
-result = 8 >> localValue;        // shift amount comes from a local
-result = 16 << (stateValue + 1); // shift amount is a dynamic expression
+assembly {
+    result := shl(value, 8)
+    result := shr(add(value, 1), 16)
+}
 ```
 
 ### Good
 
 ```solidity
-result = stateValue << 2;
-result = localValue >> 3;
-result = stateValue << localShiftAmount;
-result = 1 << 8; // both literals — fine
+assembly {
+    result := shl(8, value)
+    result := shr(16, add(value, 1))
+    result := shl(8, 1) // both literals
+}
 ```

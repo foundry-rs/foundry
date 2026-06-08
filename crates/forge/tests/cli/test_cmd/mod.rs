@@ -3282,7 +3282,7 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; HTTP error 401 with body: Must be authenticated!
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; HTTP error 401 with body: [..]
 
 ...
 
