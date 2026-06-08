@@ -693,17 +693,14 @@ impl ScriptArgs {
     {
         self.wallet_session.validate(self)?;
 
-        let inner_args = strip_wallet_session_args(raw_args)?;
-        let mut inner_args = inner_args.into_iter();
-        let mut inner = Vec::new();
-        let Some(_program) = inner_args.next() else {
+        let mut inner = strip_wallet_session_args(raw_args)?;
+        let Some(program) = inner.first_mut() else {
             eyre::bail!("failed to reconstruct forge script command");
         };
-        inner.push(forge_program);
-        inner.extend(inner_args);
+        *program = forge_program;
         let inner = quote_command(&inner)?;
 
-        let context = self.resolved_wallet_session_context()?;
+        let (_, evm_opts) = self.load_config_and_evm_opts()?;
         let session = &self.wallet_session;
         let root = self.root_account_for_session()?;
         let mut args = vec![
@@ -714,7 +711,7 @@ impl ScriptArgs {
             OsString::from("--from"),
             root.to_string().into(),
             OsString::from("--expires"),
-            session.expires.clone().expect("validated").into(),
+            session.expires.as_deref().expect("validated").into(),
         ];
 
         for scope in &session.scopes {
@@ -734,7 +731,14 @@ impl ScriptArgs {
             args.push(limit.into());
         }
 
-        context.push_cast_args(&mut args);
+        if let Some(rpc_url) = evm_opts.fork_url.as_ref() {
+            args.push("--rpc-url".into());
+            args.push(rpc_url.into());
+        }
+        if let Some(chain_id) = evm_opts.env.chain_id {
+            args.push("--chain".into());
+            args.push(chain_id.to_string().into());
+        }
 
         session.push_root_signer_args(&mut args);
 
@@ -742,11 +746,6 @@ impl ScriptArgs {
         args.push(inner.into());
 
         Ok(WalletSessionCommand { program: cast_program, args })
-    }
-
-    fn resolved_wallet_session_context(&self) -> Result<ResolvedWalletSessionContext> {
-        let (_, evm_opts) = self.load_config_and_evm_opts()?;
-        Ok(ResolvedWalletSessionContext::from_evm_opts(&evm_opts))
     }
 
     fn root_account_for_session(&self) -> Result<Address> {
@@ -1008,29 +1007,6 @@ struct WalletSessionCommand {
     args: Vec<OsString>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct ResolvedWalletSessionContext {
-    rpc_url: Option<String>,
-    chain_id: Option<u64>,
-}
-
-impl ResolvedWalletSessionContext {
-    fn from_evm_opts(evm_opts: &EvmOpts) -> Self {
-        Self { rpc_url: evm_opts.fork_url.clone(), chain_id: evm_opts.env.chain_id }
-    }
-
-    fn push_cast_args(&self, args: &mut Vec<OsString>) {
-        if let Some(rpc_url) = self.rpc_url.as_ref() {
-            args.push("--rpc-url".into());
-            args.push(rpc_url.into());
-        }
-        if let Some(chain_id) = self.chain_id {
-            args.push("--chain".into());
-            args.push(chain_id.to_string().into());
-        }
-    }
-}
-
 fn push_opt_arg(args: &mut Vec<OsString>, name: &'static str, value: Option<&str>) {
     if let Some(value) = value {
         args.push(name.into());
@@ -1088,11 +1064,12 @@ where
         if WRAPPER_BOOL_ARGS.contains(&arg_str) {
             continue;
         }
-        if wrapper_value_arg(arg_str).is_some() {
+        let flag = arg_str.split_once('=').map_or(arg_str, |(flag, _)| flag);
+        if WRAPPER_VALUE_ARGS.contains(&flag) {
             if arg_str.contains('=') {
                 continue;
             }
-            let _ = args.next().ok_or_else(|| eyre::eyre!("{arg_str} requires a value"))?;
+            args.next().ok_or_else(|| eyre::eyre!("{arg_str} requires a value"))?;
             continue;
         }
 
@@ -1100,11 +1077,6 @@ where
     }
 
     Ok(out)
-}
-
-fn wrapper_value_arg(arg: &str) -> Option<&'static str> {
-    let flag = arg.split_once('=').map_or(arg, |(flag, _)| flag);
-    WRAPPER_VALUE_ARGS.iter().copied().find(|candidate| *candidate == flag)
 }
 
 const WRAPPER_BOOL_ARGS: &[&str] = &[
@@ -1468,7 +1440,18 @@ mod tests {
 
     fn option_value<'a>(args: &'a [std::borrow::Cow<'_, str>], option: &str) -> Option<&'a str> {
         args.windows(2)
-            .find_map(|window| (window[0].as_ref() == option).then(|| window[1].as_ref()))
+            .find_map(|window| (window[0].as_ref() == option).then_some(window[1].as_ref()))
+    }
+
+    fn wallet_session_command<I>(args: &ScriptArgs, raw_args: I) -> Result<WalletSessionCommand>
+    where
+        I: IntoIterator<Item = OsString>,
+    {
+        args.wallet_session_command_from_raw_args(
+            raw_args,
+            OsString::from("/tmp/forge"),
+            OsString::from("/tmp/cast"),
+        )
     }
 
     #[test]
@@ -1603,15 +1586,11 @@ mod tests {
             "0x2222222222222222222222222222222222222222",
         ]);
 
-        let err = args
-            .wallet_session_command_from_raw_args(
-                ["forge", "script", "Deploy.s.sol", "--wallet-session"]
-                    .into_iter()
-                    .map(OsString::from),
-                OsString::from("/tmp/forge"),
-                OsString::from("/tmp/cast"),
-            )
-            .unwrap_err();
+        let err = wallet_session_command(
+            &args,
+            ["forge", "script", "Deploy.s.sol", "--wallet-session"].into_iter().map(OsString::from),
+        )
+        .unwrap_err();
 
         assert!(err.to_string().contains("requires --broadcast or --resume"), "{err}");
     }
@@ -1666,13 +1645,7 @@ mod tests {
         .into_iter()
         .map(OsString::from);
 
-        let command = args
-            .wallet_session_command_from_raw_args(
-                raw_args,
-                OsString::from("/tmp/forge"),
-                OsString::from("/tmp/cast"),
-            )
-            .unwrap();
+        let command = wallet_session_command(&args, raw_args).unwrap();
 
         assert_eq!(command.program, OsString::from("/tmp/cast"));
         let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
@@ -1746,13 +1719,7 @@ mod tests {
         .into_iter()
         .map(OsString::from);
 
-        let command = args
-            .wallet_session_command_from_raw_args(
-                raw_args,
-                OsString::from("/tmp/forge"),
-                OsString::from("/tmp/cast"),
-            )
-            .unwrap();
+        let command = wallet_session_command(&args, raw_args).unwrap();
 
         let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
         assert_eq!(option_value(&command_args, "--rpc-url"), Some("http://127.0.0.1:8545"));
@@ -1780,15 +1747,13 @@ mod tests {
             "--browser",
         ]);
 
-        let err = args
-            .wallet_session_command_from_raw_args(
-                ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
-                    .into_iter()
-                    .map(OsString::from),
-                OsString::from("/tmp/forge"),
-                OsString::from("/tmp/cast"),
-            )
-            .unwrap_err();
+        let err = wallet_session_command(
+            &args,
+            ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
+                .into_iter()
+                .map(OsString::from),
+        )
+        .unwrap_err();
 
         assert!(err.to_string().contains("browser KeyAuthorization signing"), "{err}");
     }
@@ -1810,15 +1775,13 @@ mod tests {
             SESSION_PRIVATE_KEY,
         ]);
 
-        let err = args
-            .wallet_session_command_from_raw_args(
-                ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
-                    .into_iter()
-                    .map(OsString::from),
-                OsString::from("/tmp/forge"),
-                OsString::from("/tmp/cast"),
-            )
-            .unwrap_err();
+        let err = wallet_session_command(
+            &args,
+            ["forge", "script", "Deploy.s.sol", "--broadcast", "--wallet-session"]
+                .into_iter()
+                .map(OsString::from),
+        )
+        .unwrap_err();
 
         assert!(err.to_string().contains("explicit script wallet signer"), "{err}");
     }
