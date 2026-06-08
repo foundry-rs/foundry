@@ -712,7 +712,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         progress,
                         &campaign_state,
                         campaign_seed.clone(),
-                        corpus_seed.clone(),
+                        corpus_seed
+                            .clone()
+                            .for_worker(worker_plan.worker_id as usize, actual_worker_count),
                         corpus_persistence,
                         gas_report_samples,
                     );
