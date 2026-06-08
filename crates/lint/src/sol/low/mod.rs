@@ -30,7 +30,7 @@ mod reentrancy_events;
 use reentrancy_events::REENTRANCY_EVENTS;
 
 register_lints!(
-    (BlockTimestamp, early, (BLOCK_TIMESTAMP)),
+    (BlockTimestamp, late, (BLOCK_TIMESTAMP)),
     (CallsLoop, late, (CALLS_LOOP)),
     (DelegatecallLoop, late, (DELEGATECALL_LOOP)),
     (MsgValueLoop, late, (MSG_VALUE_LOOP)),

@@ -40,6 +40,7 @@ use foundry_evm::{
     traces::{TraceKind, TraceMode, load_contracts},
 };
 use foundry_evm_networks::NetworkVariant;
+use foundry_evm_symbolic::{SymbolicExecutor, SymbolicRunInput, SymbolicRunResult};
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::prelude::*;
@@ -62,6 +63,10 @@ use tracing::Span;
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+
+pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
+    func.name.starts_with("check") || func.name.starts_with("prove")
+}
 
 pub(crate) struct InvariantCampaignScope<'a> {
     pub config: &'a Config,
@@ -696,11 +701,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
+        let symbolic_enabled = self.config.symbolic.enabled;
         let functions = self
             .contract
             .abi
             .functions()
-            .filter(|func| filter.matches_test_function_in_contract(self.name, func))
+            .filter(|func| {
+                if symbolic_enabled && is_symbolic_entrypoint(func) {
+                    filter.matches_test(&func.signature())
+                } else {
+                    filter.matches_test_function_in_contract(self.name, func)
+                }
+            })
             .filter(|func| self.function_matches_network_pass(func))
             .collect::<Vec<_>>();
         debug!(
@@ -790,7 +802,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = func.test_function_kind();
+                let kind = if self.config.symbolic.enabled && is_symbolic_entrypoint(func) {
+                    TestFunctionKind::SymbolicTest
+                } else {
+                    func.test_function_kind()
+                };
 
                 let _guard = debug_span!(
                     "test",
@@ -866,6 +882,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self.cr.mcr.revert_decoder
     }
 
+    /// Returns whether verbose symbolic diagnostics should be rendered after progress clears.
+    fn should_defer_symbolic_diagnostics(&self) -> bool {
+        self.cr.progress.is_some() && self.config.symbolic.dump_smt
+    }
+
     /// Configures this runner with the inline configuration for the contract.
     fn apply_function_inline_config(&mut self, func: &Function) -> Result<()> {
         if self.inline_config.contains_function(self.cr.name, &func.name) {
@@ -901,6 +922,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::TableTest => self.run_table_test(func),
+            TestFunctionKind::SymbolicTest => self.run_symbolic_test(func),
             TestFunctionKind::InvariantTest => {
                 let fail_on_revert_for = |f: &Function| {
                     if self.inline_config.contains_function(self.cr.name, &f.name)
@@ -961,6 +983,93 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let success =
             self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
         self.result.single_result(success, reason, raw_call_result);
+        self.result
+    }
+
+    /// Runs a symbolic test and replays any discovered counterexample concretely.
+    fn run_symbolic_test(mut self, func: &Function) -> TestResult {
+        if self.prepare_test(func).is_err() {
+            return self.result;
+        }
+
+        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        if self.should_defer_symbolic_diagnostics() {
+            symbolic.capture_diagnostics();
+        }
+        let result = symbolic.run(SymbolicRunInput {
+            executor: self.executor.as_ref(),
+            target: self.address,
+            sender: self.sender,
+            function: func,
+            value: U256::ZERO,
+            ffi_enabled: self.config.ffi,
+        });
+        let portfolio_diagnostics = symbolic.portfolio_diagnostics();
+        let symbolic_diagnostics = symbolic.take_diagnostics();
+
+        match result {
+            SymbolicRunResult::Safe(stats) => {
+                self.result.symbolic_result(true, None, None, stats);
+            }
+            SymbolicRunResult::Incomplete { kind, reason, stats } => {
+                self.result.symbolic_result(
+                    false,
+                    Some(format!("incomplete symbolic execution ({kind:?}): {reason}")),
+                    None,
+                    stats,
+                );
+            }
+            SymbolicRunResult::Counterexample { args, calldata, stats } => {
+                let (mut raw_call_result, reason) = match self.executor.call(
+                    self.sender,
+                    self.address,
+                    func,
+                    &args,
+                    U256::ZERO,
+                    Some(self.revert_decoder()),
+                ) {
+                    Ok(res) => (res.raw, None),
+                    Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
+                    Err(EvmError::Skip(reason)) => {
+                        self.result.single_skip(reason);
+                        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+                        self.result.symbolic_diagnostics = symbolic_diagnostics;
+                        return self.result;
+                    }
+                    Err(err) => {
+                        self.result.symbolic_result(false, Some(err.to_string()), None, stats);
+                        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+                        self.result.symbolic_diagnostics = symbolic_diagnostics;
+                        return self.result;
+                    }
+                };
+
+                let success = self.executor.is_raw_call_mut_success(
+                    self.address,
+                    &mut raw_call_result,
+                    false,
+                );
+                let counterexample = CounterExample::Single(BaseCounterExample::from_fuzz_call(
+                    calldata,
+                    args,
+                    raw_call_result.traces.clone(),
+                ));
+                self.result.extend(raw_call_result);
+                self.result.symbolic_result(
+                    false,
+                    if success {
+                        Some("symbolic counterexample did not replay".to_string())
+                    } else {
+                        reason
+                    },
+                    Some(counterexample),
+                    stats,
+                );
+            }
+        }
+
+        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+        self.result.symbolic_diagnostics = symbolic_diagnostics;
         self.result
     }
 

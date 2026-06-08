@@ -6,7 +6,7 @@ use crate::{
     result::SuiteResult,
     runner::{
         ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
-        count_runnable_invariant_campaign_anchors,
+        count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
     },
 };
 use alloy_json_abi::{Function, JsonAbi};
@@ -95,12 +95,25 @@ impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
+    fn matches_test_function(
+        &self,
+        filter: &dyn TestFilter,
+        contract_id: &str,
+        func: &Function,
+    ) -> bool {
+        matches_test_function(filter, contract_id, func, self.config.symbolic.enabled)
+    }
+
+    fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
+        matches_artifact(filter, id, abi, self.config.symbolic.enabled)
+    }
+
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a: 'b, 'b>(
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = (&'a ArtifactId, &'a TestContract)> + 'b {
-        self.contracts.iter().filter(|&(id, c)| matches_artifact(filter, id, &c.abi))
+        self.contracts.iter().filter(|&(id, c)| self.matches_artifact(filter, id, &c.abi))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -112,7 +125,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             let identifier = id.identifier();
             c.abi
                 .functions()
-                .filter(move |func| filter.matches_test_function_in_contract(&identifier, func))
+                .filter(move |func| self.matches_test_function(filter, &identifier, func))
         })
     }
 
@@ -125,7 +138,9 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| func.is_any_test())
+            .filter(|func| {
+                func.is_any_test() || (self.config.symbolic.enabled && is_symbolic_entrypoint(func))
+            })
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
@@ -138,7 +153,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| filter.matches_test_function_in_contract(&identifier, func))
+                    .filter(|func| self.matches_test_function(filter, &identifier, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -612,7 +627,10 @@ impl MultiContractRunnerBuilder {
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                && abi.functions().any(|func| func.name.is_any_test())
+                && abi.functions().any(|func| {
+                    func.name.is_any_test()
+                        || self.config.symbolic.enabled && is_symbolic_entrypoint(func)
+                })
             {
                 linker.ensure_linked(contract, id)?;
 
@@ -696,8 +714,20 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-pub fn matches_artifact(filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-    matches_contract(filter, &id.source, &id.name, &id.identifier(), abi.functions())
+pub fn matches_artifact(
+    filter: &dyn TestFilter,
+    id: &ArtifactId,
+    abi: &JsonAbi,
+    symbolic_enabled: bool,
+) -> bool {
+    matches_contract(
+        filter,
+        &id.source,
+        &id.name,
+        &id.identifier(),
+        abi.functions(),
+        symbolic_enabled,
+    )
 }
 
 pub(crate) fn matches_contract(
@@ -706,9 +736,39 @@ pub(crate) fn matches_contract(
     contract_name: &str,
     contract_id: &str,
     functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
+    symbolic_enabled: bool,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
         && functions
             .into_iter()
-            .any(|func| filter.matches_test_function_in_contract(contract_id, func.borrow()))
+            .any(|func| matches_test_function(filter, contract_id, func.borrow(), symbolic_enabled))
+}
+
+fn matches_test_function(
+    filter: &dyn TestFilter,
+    contract_id: &str,
+    func: &Function,
+    symbolic_enabled: bool,
+) -> bool {
+    if symbolic_enabled && is_symbolic_entrypoint(func) {
+        filter.matches_test(&func.signature())
+    } else {
+        filter.matches_test_function_in_contract(contract_id, func)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_common::EmptyTestFilter;
+
+    #[test]
+    fn matches_contract_includes_symbolic_entrypoints_when_enabled() {
+        let filter = EmptyTestFilter::default();
+        let path = Path::new("test/Symbolic.t.sol");
+        let func = Function::parse("checkFilteredCompile(uint256)").unwrap();
+
+        assert!(matches_contract(&filter, path, "Symbolic", "Symbolic", [func.clone()], true));
+        assert!(!matches_contract(&filter, path, "Symbolic", "Symbolic", [func], false));
+    }
 }

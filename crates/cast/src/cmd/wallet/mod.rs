@@ -10,7 +10,12 @@ use alloy_signer_local::{
 };
 use clap::Parser;
 use eyre::{Context, Result};
-use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
+use foundry_cli::{
+    json::{print_json_success, print_scalar},
+    opts::RpcOpts,
+    utils,
+    utils::LoadConfig,
+};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
@@ -25,8 +30,10 @@ use vanity::VanityArgs;
 pub mod list;
 use list::ListArgs;
 
+mod process_tree;
+
 pub mod session;
-use session::SessionSubcommands;
+use session::SessionArgs;
 
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
@@ -230,10 +237,7 @@ pub enum WalletSubcommands {
     List(ListArgs),
 
     /// Manage temporary Tempo wallet sessions.
-    Session {
-        #[command(subcommand)]
-        command: SessionSubcommands,
-    },
+    Session(SessionArgs),
 
     /// Remove a wallet from the keystore.
     ///
@@ -467,8 +471,8 @@ impl WalletSubcommands {
                     }
                 }
 
-                if let Some(json) = json_values.as_ref() {
-                    sh_println!("{}", serde_json::to_string_pretty(json)?)?;
+                if let Some(json) = json_values {
+                    print_json_success(json)?;
                 }
             }
             Self::NewMnemonic { words, accounts, entropy } => {
@@ -528,11 +532,10 @@ impl WalletSubcommands {
                 }
 
                 if format_json {
-                    let obj = json!({
+                    print_json_success(json!({
                         "mnemonic": phrase,
                         "accounts": accounts,
-                    });
-                    sh_println!("{}", serde_json::to_string_pretty(&obj)?)?;
+                    }))?;
                 }
             }
             Self::Vanity(cmd) => {
@@ -548,7 +551,7 @@ impl WalletSubcommands {
                     .signer()
                     .await?;
                 let addr = wallet.address();
-                sh_println!("{}", addr.to_checksum(None))?;
+                print_scalar(addr.to_checksum(None))?;
             }
             Self::Derive { mnemonic, accounts, insecure } => {
                 let format_json = shell::is_json();
@@ -595,7 +598,7 @@ impl WalletSubcommands {
                 }
 
                 if format_json {
-                    sh_println!("{}", serde_json::to_string_pretty(&accounts_json)?)?;
+                    print_json_success(accounts_json)?;
                 }
             }
             Self::PublicKey { wallet, private_key_override } => {
@@ -613,7 +616,7 @@ impl WalletSubcommands {
                     _ => eyre::bail!("Only local wallets are supported by this command"),
                 };
 
-                sh_println!("0x{}", hex::encode(public_key))?;
+                print_scalar(format!("0x{}", hex::encode(public_key)))?;
             }
             Self::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
@@ -632,22 +635,21 @@ impl WalletSubcommands {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
 
-                if shell::is_json() {
-                    sh_println!(
-                        "{}",
-                        serde_json::to_string_pretty(&json!({
+                if shell::verbosity() > 0 {
+                    if shell::is_json() {
+                        print_json_success(json!({
                             "message": message,
                             "address": wallet.address(),
                             "signature": hex::encode(sig.as_bytes()),
-                        }))?
-                    )?;
-                } else {
-                    if shell::verbosity() > 0 {
+                        }))?;
+                    } else {
                         sh_status!("Successfully signed!")?;
                         sh_status!("   Message: {message}")?;
                         sh_status!("   Address: {}", wallet.address())?;
+                        sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
                     }
-                    sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+                } else {
+                    print_scalar(format!("0x{}", hex::encode(sig.as_bytes())))?;
                 }
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address, self_broadcast } => {
@@ -674,24 +676,23 @@ impl WalletSubcommands {
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
                 let auth = auth.into_signed(signature);
 
-                if shell::is_json() {
-                    sh_println!(
-                        "{}",
-                        serde_json::to_string_pretty(&json!({
+                if shell::verbosity() > 0 {
+                    if shell::is_json() {
+                        print_json_success(json!({
                             "nonce": nonce,
                             "chain_id": chain_id,
                             "address": wallet.address(),
                             "signature": hex::encode_prefixed(alloy_rlp::encode(&auth)),
-                        }))?
-                    )?;
-                } else {
-                    if shell::verbosity() > 0 {
+                        }))?;
+                    } else {
                         sh_status!("Successfully signed!")?;
                         sh_status!("   Nonce: {nonce}")?;
                         sh_status!("   Chain ID: {chain_id}")?;
                         sh_status!("   Address: {}", wallet.address())?;
+                        sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
                     }
-                    sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
+                } else {
+                    print_scalar(hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
                 }
             }
             Self::Verify { message, signature, address, data, from_file, no_hash } => {
@@ -714,7 +715,13 @@ impl WalletSubcommands {
                 };
 
                 if address == recovered_address {
-                    sh_println!("Validation succeeded. Address {address} signed this message.")?;
+                    if shell::is_json() {
+                        print_json_success(json!({"address": address, "result": true}))?;
+                    } else {
+                        sh_println!(
+                            "Validation succeeded. Address {address} signed this message."
+                        )?;
+                    }
                 } else {
                     eyre::bail!("Validation failed. Address {address} did not sign this message.");
                 }
@@ -771,16 +778,23 @@ flag to set your key via:
                     Some(&account_name),
                 )?;
                 let address = wallet.address();
-                let success_message = format!(
-                    "`{account_name}` keystore was saved successfully. Address: {address:?}",
-                );
-                sh_println!("{}", success_message.green())?;
+                if shell::is_json() {
+                    print_json_success(json!({"account": account_name, "address": address}))?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!(
+                            "`{account_name}` keystore was saved successfully. Address: {address:?}"
+                        )
+                        .green()
+                    )?;
+                }
             }
             Self::List(cmd) => {
                 cmd.run().await?;
             }
-            Self::Session { command } => {
-                command.run().await?;
+            Self::Session(args) => {
+                args.run().await?;
             }
             Self::Remove { name, dir, unsafe_password } => {
                 let dir = if let Some(path) = dir {
@@ -810,8 +824,14 @@ flag to set your key via:
                     format!("Failed to remove keystore file at {}", keystore_path.display())
                 })?;
 
-                let success_message = format!("`{name}` keystore was removed successfully.");
-                sh_println!("{}", success_message.green())?;
+                if shell::is_json() {
+                    print_json_success(json!({"account": name, "removed": true}))?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!("`{name}` keystore was removed successfully.").green()
+                    )?;
+                }
             }
             Self::PrivateKey {
                 wallet,
@@ -839,14 +859,20 @@ flag to set your key via:
                 .await?;
                 match wallet {
                     WalletSigner::Local(wallet) => {
+                        let private_key =
+                            format!("0x{}", hex::encode(wallet.credential().to_bytes()));
                         if shell::verbosity() > 0 {
-                            sh_println!("Address:     {}", wallet.address())?;
-                            sh_println!(
-                                "Private key: 0x{}",
-                                hex::encode(wallet.credential().to_bytes())
-                            )?;
+                            if shell::is_json() {
+                                print_json_success(json!({
+                                    "address": wallet.address(),
+                                    "private_key": private_key,
+                                }))?;
+                            } else {
+                                sh_println!("Address:     {}", wallet.address())?;
+                                sh_println!("Private key: {private_key}")?;
+                            }
                         } else {
-                            sh_println!("0x{}", hex::encode(wallet.credential().to_bytes()))?;
+                            print_scalar(private_key)?;
                         }
                     }
                     _ => {
@@ -880,10 +906,16 @@ flag to set your key via:
                 let wallet = PrivateKeySigner::decrypt_keystore(keypath, password)?;
 
                 let private_key = B256::from_slice(&wallet.credential().to_bytes());
-
-                let success_message = format!("{account_name}'s private key is: {private_key}");
-
-                sh_println!("{}", success_message.green())?;
+                if shell::is_json() {
+                    print_json_success(
+                        json!({"account": account_name, "private_key": private_key}),
+                    )?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!("{account_name}'s private key is: {private_key}").green()
+                    )?;
+                }
             }
             Self::ChangePassword {
                 account_name,
@@ -940,10 +972,17 @@ flag to set your key via:
                 )?;
 
                 let address = wallet.address();
-                let success_message = format!(
-                    "Password for keystore `{account_name}` was changed successfully. Address: {address:?}",
-                );
-                sh_println!("{}", success_message.green())?;
+                if shell::is_json() {
+                    print_json_success(json!({"account": account_name, "address": address}))?;
+                } else {
+                    sh_println!(
+                        "{}",
+                        format!(
+                            "Password for keystore `{account_name}` was changed successfully. Address: {address:?}"
+                        )
+                        .green()
+                    )?;
+                }
             }
         };
 
@@ -987,7 +1026,7 @@ flag to set your key via:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{session::SessionSubcommands, *};
     use alloy_primitives::{address, keccak256};
     use std::str::FromStr;
 
@@ -1130,15 +1169,15 @@ mod tests {
         ]);
 
         match args {
-            WalletSubcommands::Session { command } => match command {
-                SessionSubcommands::Create {
+            WalletSubcommands::Session(args) => match args.command {
+                Some(SessionSubcommands::Create {
                     root_account,
                     chain_id,
                     expires,
                     scope,
                     spend_limits,
                     wallet,
-                } => {
+                }) => {
                     assert_eq!(
                         root_account,
                         address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
@@ -1174,8 +1213,8 @@ mod tests {
             );
 
             match args {
-                WalletSubcommands::Session { command } => match command {
-                    SessionSubcommands::Revoke { session_id, local, .. } => {
+                WalletSubcommands::Session(args) => match args.command {
+                    Some(SessionSubcommands::Revoke { session_id, local, .. }) => {
                         assert_eq!(session_id, B256::from([0x11; 32]));
                         assert_eq!(local, expected_local);
                     }
@@ -1183,6 +1222,54 @@ mod tests {
                 },
                 _ => panic!("expected WalletSubcommands::Session"),
             }
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_session_run_for_command() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "session",
+            "--root",
+            "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "--chain-id",
+            "4217",
+            "--expires",
+            "10m",
+            "--target",
+            "0x20c0000000000000000000000000000000000001",
+            "--selector",
+            "transfer(address,uint256)",
+            "--spend-limit",
+            "PathUSD=0",
+            "--for",
+            "forge script Deploy --broadcast",
+            "--private-key",
+            "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0",
+        ]);
+
+        match args {
+            WalletSubcommands::Session(args) => {
+                assert!(args.command.is_none());
+                assert_eq!(
+                    args.root_account,
+                    Some(address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"))
+                );
+                assert_eq!(args.send_tx.eth.etherscan.chain.map(|chain| chain.id()), Some(4217));
+                assert_eq!(args.expires, Some(600));
+                assert_eq!(
+                    args.target,
+                    Some(address!("0x20c0000000000000000000000000000000000001"))
+                );
+                assert_eq!(args.selectors.len(), 1);
+                assert_eq!(args.spend_limits.len(), 1);
+                assert_eq!(args.for_command.as_deref(), Some("forge script Deploy --broadcast"));
+                assert_eq!(
+                    args.send_tx.eth.wallet.raw.private_key.as_deref(),
+                    Some("0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0")
+                );
+            }
+            _ => panic!("expected WalletSubcommands::Session"),
         }
     }
 

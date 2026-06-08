@@ -38,6 +38,7 @@ pub mod traits;
 pub mod transactions;
 mod utils;
 pub mod version;
+pub mod wallet;
 
 pub use compile::Analysis;
 pub use constants::*;

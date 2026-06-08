@@ -2793,9 +2793,11 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "itertools 0.14.0",
+ "libc",
  "op-alloy-consensus",
  "op-alloy-flz",
  "op-alloy-network",
+ "path-slash",
  "rand 0.8.6",
  "rand 0.9.4",
  "rayon",
@@ -2813,6 +2815,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "windows-sys 0.61.2",
  "yansi",
 ]
 
@@ -4915,6 +4918,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-evm-networks",
+ "foundry-evm-symbolic",
  "foundry-linking",
  "foundry-test-utils",
  "foundry-wallets",
@@ -5735,6 +5739,25 @@ dependencies = [
 [[package]]
 name = "foundry-evm-sancov"
 version = "1.7.2"
+
+[[package]]
+name = "foundry-evm-symbolic"
+version = "1.7.2"
+dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "base64 0.22.1",
+ "foundry-common",
+ "foundry-config",
+ "foundry-evm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
 
 [[package]]
 name = "foundry-evm-traces"
@@ -7676,7 +7699,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.10.4"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=929cb8e77d055600dbe7ebdd65a1e7c3441ef9e6#929cb8e77d055600dbe7ebdd65a1e7c3441ef9e6"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=ea69acd3a6c9c6f7c328b3e99c03b678cabf07b3#ea69acd3a6c9c6f7c328b3e99c03b678cabf07b3"
 dependencies = [
  "alloy",
  "alloy-sol-type-parser",

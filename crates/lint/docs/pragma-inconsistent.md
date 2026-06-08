@@ -8,9 +8,9 @@ pragmas.
 
 ## What it does
 
-Inspects every `pragma solidity ...;` directive across all input source files and reports when
+Inspects every `pragma solidity ...;` directive across all input source files and reports once when
 their version requirements are inconsistent (different exact versions, mixed caret/tilde/range
-shapes, etc.).
+shapes, etc.). The diagnostic lists the distinct requirements seen in the project.
 
 ## Why is this bad?
 
