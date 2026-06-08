@@ -419,7 +419,10 @@ fn test_single_mutant_isolated(
             ) {
                 Ok(true) => MutationResult::Dead,
                 Ok(false) => MutationResult::Alive,
-                Err(_) => MutationResult::Invalid,
+                Err(err) => {
+                    tracing::debug!(?err, "mutant compile/test failed");
+                    MutationResult::Invalid
+                }
             };
             drop(temp_dir); // explicit: workspace is only safe to remove now
             res
@@ -505,7 +508,8 @@ fn run_compile_and_test_with_timeout(
             let _ = handle.join();
             MutationResult::Alive
         }
-        Ok(Err(_)) => {
+        Ok(Err(err)) => {
+            tracing::debug!(?err, "mutant compile/test failed");
             let _ = handle.join();
             MutationResult::Invalid
         }

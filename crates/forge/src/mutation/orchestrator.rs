@@ -7,8 +7,8 @@
 //! - Aggregating results and reporting
 
 use std::{
-    collections::HashSet,
-    path::PathBuf,
+    collections::{BTreeSet, HashSet},
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -130,6 +130,25 @@ pub async fn run_mutation_testing(
 ) -> Result<MutationRunResult> {
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
+    let mut selected_sources_relative = BTreeSet::new();
+    selected_sources_relative.extend(mutation_config.selected_sources_relative.iter().cloned());
+
+    for source_id in output.graph().files() {
+        if let Some(path) = project_relative_path(&config.root, output.graph().node_path(source_id))
+        {
+            selected_sources_relative.insert(path);
+        }
+    }
+
+    for (_, artifact) in output.artifact_ids() {
+        for file in artifact.all_link_references().into_keys() {
+            if let Some(path) = project_relative_path(&config.root, Path::new(&file)) {
+                selected_sources_relative.insert(path);
+            }
+        }
+    }
+
+    let selected_sources_relative = selected_sources_relative.into_iter().collect::<Vec<_>>();
 
     // Determine which paths to mutate
     let mutate_paths = resolve_mutate_paths(&config, output, &mutation_config)?;
@@ -137,8 +156,7 @@ pub async fn run_mutation_testing(
         .dynamic_test_linking(config.dynamic_test_linking)
         .quiet(json_output)
         .files(
-            mutation_config
-                .selected_sources_relative
+            selected_sources_relative
                 .iter()
                 .map(|path| config.root.join(path))
                 .filter(|path| path.exists())
@@ -281,7 +299,7 @@ pub async fn run_mutation_testing(
             progress.clone(),
             json_output,
             mutation_config.filter_args.clone(),
-            Arc::new(mutation_config.selected_sources_relative.clone()),
+            Arc::new(selected_sources_relative.clone()),
             mutation_config.isolate,
             Arc::clone(&cancellation_requested),
         )?;
@@ -425,6 +443,18 @@ fn filter_args_fingerprint(filter_args: &FilterArgs) -> FilterArgsFingerprint<'_
         path_pattern: filter_args.path_pattern.as_ref().map(|glob| glob.as_str()),
         path_pattern_inverse: filter_args.path_pattern_inverse.as_ref().map(|glob| glob.as_str()),
     }
+}
+
+fn project_relative_path(root: &Path, path: &Path) -> Option<PathBuf> {
+    if path.is_relative() {
+        return Some(path.to_path_buf());
+    }
+
+    if let Ok(stripped) = path.strip_prefix(root) {
+        return Some(stripped.to_path_buf());
+    }
+
+    path.canonicalize().ok()?.strip_prefix(root.canonicalize().ok()?).ok().map(PathBuf::from)
 }
 
 fn partition_adaptively_skipped_mutants(
