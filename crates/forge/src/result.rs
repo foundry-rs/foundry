@@ -18,6 +18,7 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
+use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -97,6 +98,17 @@ impl TestOutcome {
     /// Returns an iterator over all individual tests and their names.
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|suite| suite.tests())
+    }
+
+    /// Returns merged symbolic solver portfolio diagnostics across all tests in this outcome.
+    pub fn symbolic_portfolio_diagnostics(&self) -> Option<PortfolioDiagnostics> {
+        let mut diagnostics = PortfolioDiagnostics::default();
+        for (_, result) in self.tests() {
+            if let Some(result_diagnostics) = &result.symbolic_portfolio_diagnostics {
+                diagnostics.merge(result_diagnostics);
+            }
+        }
+        (!diagnostics.is_empty()).then_some(diagnostics)
     }
 
     /// Flattens the test outcome into a list of individual tests.
@@ -683,6 +695,14 @@ pub struct TestResult {
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+
+    /// Staged solver portfolio diagnostics collected during symbolic execution.
+    #[serde(skip)]
+    pub symbolic_portfolio_diagnostics: Option<PortfolioDiagnostics>,
+
+    /// Verbose symbolic solver diagnostics deferred until test output rendering.
+    #[serde(skip)]
+    pub symbolic_diagnostics: Option<String>,
 }
 
 impl fmt::Display for TestResult {
@@ -1232,6 +1252,31 @@ impl TestResult {
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
     }
 
+    /// Returns the result for a symbolic test.
+    pub fn symbolic_result(
+        &mut self,
+        success: bool,
+        reason: Option<String>,
+        counterexample: Option<CounterExample>,
+        stats: SymbolicStats,
+    ) {
+        self.kind = TestKind::Symbolic {
+            paths: stats.paths,
+            solver_queries: stats.solver_queries,
+            smt_queries: stats.smt_queries,
+            sat_queries: stats.sat_queries,
+            model_queries: stats.model_queries,
+            sat_cache_hits: stats.sat_cache_hits,
+            model_cache_hits: stats.model_cache_hits,
+            heuristic_witnesses: stats.heuristic_witnesses,
+            solver_time_ms: stats.solver_time_ms,
+        };
+        self.status = if success { TestStatus::Success } else { TestStatus::Failure };
+        self.reason = reason;
+        self.counterexample = counterexample;
+        self.duration = Duration::default();
+    }
+
     /// Records a successful showmap replay result.
     pub fn replay_result(
         &mut self,
@@ -1353,6 +1398,17 @@ pub enum TestKindReport {
         mean_gas: u64,
         median_gas: u64,
     },
+    Symbolic {
+        paths: usize,
+        solver_queries: usize,
+        smt_queries: usize,
+        sat_queries: usize,
+        model_queries: usize,
+        sat_cache_hits: usize,
+        model_cache_hits: usize,
+        heuristic_witnesses: usize,
+        solver_time_ms: u64,
+    },
     /// Showmap corpus replay (no campaign performed).
     Replay {
         corpus_entries: usize,
@@ -1400,6 +1456,22 @@ impl fmt::Display for TestKindReport {
             Self::Table { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
+            Self::Symbolic {
+                paths,
+                solver_queries,
+                smt_queries,
+                sat_queries,
+                model_queries,
+                sat_cache_hits,
+                model_cache_hits,
+                heuristic_witnesses,
+                solver_time_ms,
+            } => {
+                write!(
+                    f,
+                    "(paths: {paths}, queries: {solver_queries}, smt: {smt_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), hard-arith: {heuristic_witnesses}, solver: {solver_time_ms}ms)"
+                )
+            }
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
                 if *skipped_entries != 0 {
                     write!(
@@ -1422,7 +1494,7 @@ impl TestKindReport {
             // We use the median for comparisons
             Self::Fuzz { median_gas, .. } | Self::Table { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
-            Self::Invariant { .. } | Self::Replay { .. } => 0,
+            Self::Invariant { .. } | Self::Symbolic { .. } | Self::Replay { .. } => 0,
         }
     }
 }
@@ -1456,6 +1528,25 @@ pub enum TestKind {
     },
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },
+    /// A symbolic test.
+    Symbolic {
+        paths: usize,
+        solver_queries: usize,
+        #[serde(default)]
+        smt_queries: usize,
+        #[serde(default)]
+        sat_queries: usize,
+        #[serde(default)]
+        model_queries: usize,
+        #[serde(default)]
+        sat_cache_hits: usize,
+        #[serde(default)]
+        model_cache_hits: usize,
+        #[serde(default)]
+        heuristic_witnesses: usize,
+        #[serde(default)]
+        solver_time_ms: u64,
+    },
     /// Showmap corpus replay (no campaign performed).
     Replay { corpus_entries: usize, showmap_files: usize, skipped_entries: usize },
 }
@@ -1516,6 +1607,27 @@ impl TestKind {
             Self::Table { runs, mean_gas, median_gas } => {
                 TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
+            Self::Symbolic {
+                paths,
+                solver_queries,
+                smt_queries,
+                sat_queries,
+                model_queries,
+                sat_cache_hits,
+                model_cache_hits,
+                heuristic_witnesses,
+                solver_time_ms,
+            } => TestKindReport::Symbolic {
+                paths: *paths,
+                solver_queries: *solver_queries,
+                smt_queries: *smt_queries,
+                sat_queries: *sat_queries,
+                model_queries: *model_queries,
+                sat_cache_hits: *sat_cache_hits,
+                model_cache_hits: *model_cache_hits,
+                heuristic_witnesses: *heuristic_witnesses,
+                solver_time_ms: *solver_time_ms,
+            },
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
                 TestKindReport::Replay {
                     corpus_entries: *corpus_entries,
