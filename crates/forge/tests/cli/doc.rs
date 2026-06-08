@@ -671,7 +671,7 @@ Recover the signer address from `v`, `r`, `s` components.
 
 <i>
 
-Overload of [ECDSA.tryRecover](/src/library.ECDSA#tryRecover) that receives the `v`,
+Overload of [ECDSA.tryRecover](/src/library.ECDSA#tryrecover) that receives the `v`,
 `r` and `s` signature fields separately.
 
 Documentation for signature generation:

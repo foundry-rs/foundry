@@ -676,6 +676,7 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
                         let safe_member: String = member
                             .chars()
                             .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                            .flat_map(char::to_lowercase)
                             .collect();
                         if !safe_member.is_empty() {
                             link.push('#');
@@ -803,6 +804,6 @@ mod tests {
             Path::new("src/contract.Child.mdx"),
         );
 
-        assert_eq!(out, "See [ERC721._safeMint-address-uint256-](/src/contract.ERC721#_safeMint).");
+        assert_eq!(out, "See [ERC721._safeMint-address-uint256-](/src/contract.ERC721#_safemint).");
     }
 }
