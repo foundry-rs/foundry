@@ -529,13 +529,14 @@ impl CallTraceDecoder {
                         if step.op == *opcode {
                             let res = match &step.storage_change {
                                 Some(change) => format!(
-                                    "[{}] {} {} <- ({})",
+                                    "[{}] {} 0x{:x} → (0x{:x})",
                                     step.gas_cost, opcode, change.key, change.value
                                 ),
                                 None => format!("[{}] {}", step.gas_cost, opcode),
                             };
 
                             step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
+                            step.storage_change = None; // show only step.decoded
                             break;
                         }
                     }

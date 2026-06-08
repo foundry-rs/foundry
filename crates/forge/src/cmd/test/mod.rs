@@ -229,8 +229,8 @@ pub struct TestArgs {
     #[arg(long)]
     pub rerun: bool,
 
-    /// Print the given opcodes in trace output, with their gas cost
-    /// and (for SLOAD/SSTORE) the storage slot and value.
+    /// Print the given opcodes in trace output, with their gas
+    /// cost and the storage slot and value, if available.
     ///
     /// Accepts a comma-separated list of opcode names, e.g.
     /// `--opcodes SLOAD,MLOAD,SSTORE`. Names are in uppercase.

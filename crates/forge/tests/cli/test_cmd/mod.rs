@@ -3330,13 +3330,11 @@ Traces:
     └─ ← [Stop]
 
   [28783] CounterTest::test_Increment()
-    ├─ [2100] SLOAD 31 <- (125813996375599159817140963330240011258305308995329)
+    ├─ [2100] SLOAD 31 → (125813996375599159817140963330240011258305308995329)
     ├─ [3] MLOAD
     ├─ [3] MLOAD
     ├─ [22418] Counter::increment()
-    │   ├─ [2100] SLOAD 0 <- (0)
-    │   ├─  storage changes:
-    │   │   @ 0: 0 → 1
+    │   ├─ [2100] SLOAD 0 → (0)
     │   └─ ← [Stop]
     ├─ [100] SLOAD
     ├─ [3] MLOAD
@@ -3410,9 +3408,7 @@ Traces:
 
   [28783] CounterTest::test_Increment()
     ├─ [22418] Counter::increment()
-    │   ├─ [20000] SSTORE 0 <- (1)
-    │   ├─  storage changes:
-    │   │   @ 0: 0 → 1
+    │   ├─ [20000] SSTORE 0x0 → (0x1)
     │   └─ ← [Stop]
     ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
