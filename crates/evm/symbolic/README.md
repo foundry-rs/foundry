@@ -41,14 +41,31 @@ Requirements:
 - The configured solver must be available. The default solver command is `z3`.
   Install it locally with your package manager, for example `brew install z3`
   on macOS or `sudo apt-get install z3` on Ubuntu.
-- `check*` and `prove*` tests are only selected when `--symbolic` is enabled.
+- `check*` and `prove*` tests are only selected when `--symbolic` is enabled
+  and the contract is in a source path Forge compiles for the current project.
 - A reported counterexample must replay concretely before Forge prints it as a
   failure.
 
-## Preview Result Semantics
+`--match-test` filters function names or signatures. To filter by contract, use
+`--match-contract`:
+
+```sh
+forge test --symbolic --match-test check_average
+forge test --symbolic --match-contract MathSymbolicTest
+```
+
+## Result Semantics
 
 Native symbolic testing is a preview feature. Results are scoped to the
 executor's current EVM model and the configured exploration bounds.
+
+Symbolic testing works best for Solidity-level properties that fit the modeled
+EVM surface: arithmetic, storage, calldata, common call/reentrancy flows,
+selected cheatcodes, and bounded stateful sequences. It finds and replays
+concrete witnesses when it can. When a test depends on unsupported or unmodeled
+behavior, Forge reports the run as incomplete instead of treating the property
+as proven. It does not model full revm behavior, arbitrary unknown fork
+accounts, or cryptographic preimage/collision search.
 
 Forge reports symbolic test outcomes as:
 
@@ -426,6 +443,8 @@ and symbolic storage keys. Supported behavior includes:
 - `SLOAD`, `SSTORE`, `TLOAD`, and `TSTORE` with concrete or symbolic keys
 - symbolic `KECCAK256` terms for Solidity mapping and dynamic-array storage
   patterns
+- concrete code and storage read from the normal Foundry setup backend,
+  including fork-backed setup state
 - balances, value transfer, nonce lifecycle, code hash, account existence, and
   pre-Cancun `SELFDESTRUCT`
 - common concrete-input precompile cases
@@ -434,20 +453,17 @@ and symbolic storage keys. Supported behavior includes:
 Unsupported symbolic constructs return an incomplete result with a `Stuck`
 reason instead of silently proving the property.
 
-## Known Gaps
+## Known limitations
 
-The symbolic engine is useful today, but it is not a complete revm-equivalent
-EVM model. The current policy is to fail closed for unsupported constructs the
-symbolic executor detects: those runs report `Incomplete` rather than a proof.
-Some preview semantics are intentionally bounded or approximated instead; those
-cases are called out below, and `PASS` should be read as scoped to the modeled
-semantics and configured bounds.
+Unsupported constructs report `Incomplete` rather than a proof. Some supported
+semantics are bounded or approximate; in those cases, `PASS` only applies to the
+modeled semantics and configured bounds.
 
-The main known incomplete, bounded, or approximate surfaces are:
+Known incomplete, bounded, or approximate surfaces include:
 
 | Area | Current behavior |
 |---|---|
-| Gas accounting and `GAS` / `gasleft()` | The engine does not track opcode gas costs, gas limits, out-of-gas, memory-expansion gas, EIP-150 63/64 forwarding, call stipends, warm/cold access costs, refunds, or precompile gas costs. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit CALL-family gas caps are not enforced. Branches, arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or solver constraints derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `snapshotGasLastCall`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
+| Gas-dependent behavior | The engine does not use gas to prove properties. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit CALL-family gas caps are not enforced. Branches, arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or solver constraints derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `snapshotGasLastCall`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
 | Cancun+ `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 same-transaction creation/deletion and end-of-transaction finalization are not fully modeled, so Cancun+ `SELFDESTRUCT` reports incomplete. |
 | Symbolic account/code queries | `BALANCE`, `EXTCODESIZE`, `EXTCODEHASH`, and `EXTCODECOPY` on symbolic addresses are scoped to the engine's known symbolic/overlay/code-cache candidates plus the documented empty-account fallback. They do not prove quantified properties over every possible fork/backend account. |
 | Symbolic CALL targets | Concrete targets and symbolic targets constrained to known deployed-contract/precompile candidates are supported. By default, a feasible symbolic target outside the known candidate set reports incomplete. With `symbolic_call_targets = true`, the outside-candidate branch is modeled as an empty-account/no-code successful call, including value transfer for `CALL`; it does not model arbitrary unknown external code or custom/future precompiles. Symbolic cheatcode addresses/selectors still report incomplete. |
@@ -457,18 +473,23 @@ The main known incomplete, bounded, or approximate surfaces are:
 | Concrete-required operands and bytecode | Symbolic data can flow through calldata, memory, storage, logs, and returndata, but some control/metadata values must resolve to concrete or solver-constrained values: `JUMP`/`JUMPI` destinations, `BLOBHASH` indices, cheatcode selectors, many cheatcode ABI decodes, fork IDs/block numbers, nonces, and created runtime bytecode opcodes. Symbolic bytecode opcodes, symbolic runtime sizes, or unconstrained control operands report incomplete. |
 | Symbolic hashing and `KECCAK256` | Concrete hashes are computed exactly. Symbolic `KECCAK256` is represented by deterministic opaque terms plus Solidity-storage-layout heuristics for common mapping and dynamic-array keys. Proof obligations that depend on cryptographic facts such as non-zero hashes, collision resistance, or preimage resistance are not proof-grade and may report incomplete or produce replay-filtered candidates. |
 | Symbolic storage base values | Writes and later reads through symbolic keys are modeled, with Solidity-layout heuristics for common mapping/dynamic-array keys. Reads of previously-unwritten symbolic keys are abstract storage variables by default, or zero under the zero-init storage layout; the engine does not enumerate arbitrary concrete backend storage slots for a symbolic key. Proofs involving unknown existing storage are scoped to the selected `symbolic.storage_layout`. |
-| Precompiles | Canonical precompiles `0x01..0x0a` are recognized. Concrete inputs for modeled precompiles execute the corresponding revm precompile with effectively unlimited gas. Symbolic identity is byte-precise; symbolic hash/ecrecover/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Symbolic BN254 inputs and symbolic BLAKE2f final flags report incomplete because precompile success depends on validity checks the symbolic model does not prove. The Cancun KZG point-evaluation precompile (`0x0a`) currently reports incomplete. Symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, future/custom precompiles, and precompile gas/OOG behavior are not fully modeled. |
+| Precompiles | Canonical precompiles `0x01..0x0a` are recognized. Concrete inputs for modeled precompiles execute the corresponding revm precompile with effectively unlimited gas. Symbolic identity is byte-precise; symbolic hash/ecrecover/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Validity-sensitive symbolic inputs, such as symbolic BN254 inputs and symbolic BLAKE2f final flags, report incomplete instead of fabricating success. The Cancun KZG point-evaluation precompile (`0x0a`) currently reports incomplete. Symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, future/custom precompiles, and precompile gas/OOG behavior are not fully modeled. |
 | Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Some expensive arithmetic has bounded helpers, but unsupported `EXP` base/exponent shapes and other solver-intractable forms can report incomplete or timeout. |
 | Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, and unsupported symbolic `assumeNoRevert` decodes/overlaps report incomplete. |
 | Approximate/no-op cheatcodes | Some recognized Foundry helpers are accepted but not semantically checked under symbolic execution, including non-observable gas metering helpers, access-list/warm/cool helpers, `allowCheatcodes`, `sleep`, and breakpoints. Observable EVM-version helpers, gas snapshot/read helpers, and safe-memory expectation helpers report incomplete instead of fabricating results or silently accepting assertions. |
 | Fork mutation during symbolic execution | Fork-backed setup is allowed before symbolic execution. Creating forks, selecting a different fork, or rolling/mutating fork blocks during symbolic execution is restricted and reports incomplete unless it stays on the already active fork in the supported form. |
-| Environment, FFI, and filesystem-shaped inputs | Environment and FFI cheatcodes are handled for supported concrete parse/command cases. Missing or unparsable env values, unsupported delimiters, disabled or failing FFI, non-UTF8 stdout, and artifact lookup failures report incomplete. |
+| Filesystem, JSON/TOML, and prompt-shaped inputs | Environment reads and `ffi` are supported for concrete values and commands, with `ffi` gated by Forge's existing `--ffi` setting. Missing or unparsable env values, disabled or failing FFI, non-UTF8 stdout, artifact lookup failures, filesystem access, JSON/TOML parsing or serialization, and interactive prompt cheatcodes report incomplete. |
 | Resource and scope bounds | `max_paths` / width, execution depth, calldata variant budget, solver query budget, and solver timeout can stop a run as incomplete. Dynamic ABI length settings, `invariant_depth`, and `symbolic.loop` define the explored input/sequence/loop scope; a `PASS` is only within those configured bounds, and skipped larger shapes, deeper sequences, or more loop iterations are not necessarily reported as incomplete. |
 
-This list is intentionally user-facing rather than exhaustive at the individual
-helper-function level. Exact failure messages are preserved in the test output,
-for example `unsupported symbolic execution feature: GAS/gasleft() not modeled`
-or `unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled`.
+Exact failure messages are preserved in the test output, for example
+`unsupported symbolic execution feature: GAS/gasleft() not modeled` or
+`unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled`.
+
+For real-world bug-shaped examples that exercise the current modeled surface,
+see the community-maintained
+[`symbolic-bug-suite`](https://github.com/grandizzy/symbolic-bug-suite). Those
+examples are written so a successful symbolic run reports a concrete
+counterexample.
 
 ## Cheatcodes
 
@@ -490,6 +511,51 @@ be modeled safely. The supported surface includes:
 
 If a cheatcode is not modeled, the executor reports an incomplete symbolic run
 with a clear unsupported-feature reason.
+
+## Troubleshooting
+
+### `No tests found` for a `check*` or `prove*` function
+
+`check*` and `prove*` are symbolic entrypoints, not normal Forge tests. They are
+discovered only when symbolic mode is enabled:
+
+```sh
+forge test --symbolic --match-test check_my_property
+```
+
+If Forge still prints `No tests found in project! Forge looks for functions that
+start with test`, check the following:
+
+1. The binary was built from a revision that includes native symbolic test
+   discovery. `forge test --help` should list `--symbolic` options, and the
+   source should include the `check*` / `prove*` symbolic entrypoint path.
+2. The file is under the current project's configured test or source paths and
+   is compiled by this `forge test` invocation. A file outside the project, or
+   outside the active profile's `src` / `test` paths, can compile in another
+   project but will not be discovered here.
+3. `--match-test` filters function names/signatures. Use `--match-contract` for
+   contract names:
+
+   ```sh
+   forge test --symbolic --match-contract MySymbolicTest
+   ```
+
+### `PASS` is surprising
+
+First check whether the property depends on one of the known limitations above.
+A `PASS` is scoped to the current symbolic model and configured bounds; it does
+not cover skipped dynamic lengths, deeper invariant sequences, larger loop
+bounds, unmodeled gas behavior, arbitrary unknown external code, or
+cryptographic preimage/collision properties. If the property should have a
+counterexample within the modeled surface, reduce the example and try raising
+`symbolic.max_paths`, `symbolic.max_depth`, `symbolic.max_solver_queries`, or
+the relevant dynamic length / invariant depth settings.
+
+### `Incomplete` is not a proof
+
+An incomplete run means the executor stopped before establishing safety or
+replaying a counterexample. To continue, adjust bounds, simplify the property,
+avoid the unsupported construct, or file a minimal repro for a missing model.
 
 ## Results
 
