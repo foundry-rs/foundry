@@ -595,7 +595,7 @@ library ECDSA {
 
     /**
      * @notice Recover the signer address from `v`, `r`, `s` components.
-     * @dev Overload of {ECDSA-tryRecover} that receives the `v`,
+     * @dev Overload of {xref-ECDSA-tryRecover-bytes32-bytes-}[ECDSA.tryRecover] that receives the `v`,
      * `r` and `s` signature fields separately.
      *
      * Documentation for signature generation:
@@ -633,6 +633,8 @@ of the private keys of a given address.
 
 ## Functions
 
+<a id="tryrecover-bytes32-bytes"></a>
+
 ### tryRecover
 
 Recover the signer address from a signed message hash.
@@ -665,13 +667,15 @@ function tryRecover(bytes32 hash, bytes memory signature) internal pure returns 
 | ---- | ---- | ----------- |
 | signer | `address` | The recovered signer address. |
 
+<a id="tryrecover-bytes32-uint8-bytes32-bytes32"></a>
+
 ### tryRecover
 
 Recover the signer address from `v`, `r`, `s` components.
 
 <i>
 
-Overload of [ECDSA.tryRecover](/src/library.ECDSA#tryrecover) that receives the `v`,
+Overload of [ECDSA.tryRecover](/src/library.ECDSA#tryrecover-bytes32-bytes) that receives the `v`,
 `r` and `s` signature fields separately.
 
 Documentation for signature generation:

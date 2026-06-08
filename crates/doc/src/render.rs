@@ -586,6 +586,10 @@ fn render_function_section(
     inherited: Option<&hir_ext::InheritedDoc>,
 ) {
     let heading = function_heading(f);
+    if let Some(anchor) = function_signature_anchor(f, ctx) {
+        writeln!(out, "<a id=\"{anchor}\"></a>").unwrap();
+        writeln!(out).unwrap();
+    }
     writeln!(out, "### {heading}").unwrap();
     writeln!(out).unwrap();
     let mut c = collect_comments(docs, name_to_page, page_path);
@@ -642,6 +646,24 @@ fn function_heading(f: &ItemFunction<'_>) -> String {
             f.header.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "function".to_string())
         }
     }
+}
+
+fn function_signature_anchor(f: &ItemFunction<'_>, ctx: &Ctx<'_>) -> Option<String> {
+    let name = match f.kind {
+        FunctionKind::Constructor => "constructor".to_string(),
+        FunctionKind::Fallback => "fallback".to_string(),
+        FunctionKind::Receive => "receive".to_string(),
+        FunctionKind::Function | FunctionKind::Modifier => f.header.name?.as_str().to_string(),
+    };
+    let params = f
+        .header
+        .parameters
+        .vars
+        .iter()
+        .map(|v| ctx.snippet(v.ty.span).trim().to_string())
+        .collect::<Vec<_>>();
+
+    Some(hir_ext::function_signature_anchor(&name, &params))
 }
 
 // ── natspec comment collection ────────────────────────────────────────────────

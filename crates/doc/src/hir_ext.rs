@@ -672,12 +672,7 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
                     // Sanitize to ASCII alphanumerics and `_` only, Solidity identifiers
                     // never contain other characters, so this drops any injection attempt.
                     if let Some(member) = part {
-                        let member = member.split('-').next().unwrap_or(member);
-                        let safe_member: String = member
-                            .chars()
-                            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
-                            .flat_map(char::to_lowercase)
-                            .collect();
+                        let safe_member = xref_part_anchor(member);
                         if !safe_member.is_empty() {
                             link.push('#');
                             link.push_str(&safe_member);
@@ -722,6 +717,48 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
         let ch = text[i..].chars().next().unwrap();
         out.push(ch);
         i += ch.len_utf8();
+    }
+
+    out
+}
+
+pub(crate) fn function_signature_anchor(name: &str, params: &[String]) -> String {
+    let mut anchor = slug_anchor_segment(name);
+    for param in params {
+        let param = slug_anchor_segment(&normalize_sol_type(param));
+        if !param.is_empty() {
+            anchor.push('-');
+            anchor.push_str(&param);
+        }
+    }
+    anchor
+}
+
+fn xref_part_anchor(part: &str) -> String {
+    let mut pieces = part.split('-').filter(|piece| !piece.is_empty());
+    let Some(member) = pieces.next() else {
+        return String::new();
+    };
+    let params = pieces.map(|piece| piece.to_string()).collect::<Vec<_>>();
+    function_signature_anchor(member, &params)
+}
+
+fn slug_anchor_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last_was_dash = false;
+
+    for ch in s.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            out.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !out.is_empty() {
+            out.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    if last_was_dash {
+        out.pop();
     }
 
     out
@@ -804,6 +841,9 @@ mod tests {
             Path::new("src/contract.Child.mdx"),
         );
 
-        assert_eq!(out, "See [ERC721._safeMint-address-uint256-](/src/contract.ERC721#_safemint).");
+        assert_eq!(
+            out,
+            "See [ERC721._safeMint-address-uint256-](/src/contract.ERC721#_safemint-address-uint256)."
+        );
     }
 }
