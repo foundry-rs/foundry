@@ -161,20 +161,9 @@ Each row's status is one of:
 
 | Command       | Text mode stdout                              | `--json` stdout       | Status |
 | ------------- | --------------------------------------------- | --------------------- | ------ |
-| `anvil`       | (empty)                                       | n/a                   | migrated |
+| `anvil`       | Banner, accounts, RPC URL on stderr           | n/a                   | todo   |
 | `chisel`      | REPL output                                   | n/a                   | todo   |
 | `forge script`| Simulation/broadcast result                   | JSON                  | todo   |
-
-`anvil` startup/status output — banner, accounts, IPC path, RPC URL, mined
-block/tx logs, `console.log` output, and `--print-traces` — is diagnostic
-output emitted on stderr. `--config-out <path>` writes anvil's JSON
-configuration to the given file and does not affect stdout, and
-`--dump-state` / `--state` write state snapshots to files (`anvil_dumpState`
-returns its payload over the RPC connection, not process stdout). As with
-other commands, global discovery modes such as `--help`, `--version`, and
-machine-mode envelopes write their primary result to stdout. The
-`anvil completions <shell>` subcommand writes its shell completion script to
-stdout because that is its primary result.
 
 Commands not listed here have not been classified yet — please open an issue or
 PR before relying on their stdout format.
