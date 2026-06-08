@@ -200,8 +200,9 @@ pub(super) async fn send_tip20_transaction(
     args: Vec<String>,
     send_tx: SendTxOpts,
     tx_params: TxParams,
+    pre_resolved_signer: Option<WalletSigner>,
+    access_key: Option<TempoAccessKeyConfig>,
 ) -> eyre::Result<()> {
-    let (pre_resolved_signer, access_key) = resolve_tip20_signer(&send_tx, &tx_params).await?;
     let mut tx_opts = tx_params.into_transaction_opts();
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let sponsor_url = tx_opts.tempo.sponsor_url.clone();

@@ -54,6 +54,8 @@ pub(super) async fn run(
         super::logo::validate_logo_uri(logo_uri)?;
     }
 
+    let (signer, tempo_access_key) = super::resolve_tip20_signer(&send_tx, &tx_opts).await?;
+
     let config = send_tx.eth.rpc.load_config()?;
 
     if !is_iso4217_currency(&currency) && !force {
@@ -112,6 +114,8 @@ pub(super) async fn run(
         std::mem::take(&mut args),
         send_tx,
         tx_opts,
+        signer,
+        tempo_access_key,
     )
     .await?;
 
