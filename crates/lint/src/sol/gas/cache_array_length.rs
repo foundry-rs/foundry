@@ -10,7 +10,7 @@ use solar::{
         Gcx,
         hir::{
             self, BinOpKind, ExprKind, ItemId, LoopSource, Res, StateMutability, StmtKind,
-            UnOpKind, VariableId,
+            VariableId,
         },
         ty::TyKind,
     },
@@ -98,21 +98,18 @@ fn collect_condition_length_reads<'hir>(
 ) {
     match &expr.peel_parens().kind {
         ExprKind::Binary(lhs, op, rhs) if is_comparison(op.kind) => {
-            collect_length_reads(gcx, lhs, reads);
-            collect_length_reads(gcx, rhs, reads);
-        }
-        ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
-            collect_condition_length_reads(gcx, lhs, reads);
-            collect_condition_length_reads(gcx, rhs, reads);
-        }
-        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
-            collect_condition_length_reads(gcx, inner, reads);
+            if matches!(lhs.peel_parens().kind, ExprKind::Ident(_)) {
+                collect_state_array_length_read(gcx, rhs, reads);
+            }
+            if matches!(rhs.peel_parens().kind, ExprKind::Ident(_)) {
+                collect_state_array_length_read(gcx, lhs, reads);
+            }
         }
         _ => {}
     }
 }
 
-fn collect_length_reads<'hir>(
+fn collect_state_array_length_read<'hir>(
     gcx: Gcx<'hir>,
     expr: &'hir hir::Expr<'hir>,
     reads: &mut Vec<LengthRead<'hir>>,
@@ -120,69 +117,9 @@ fn collect_length_reads<'hir>(
     let expr = expr.peel_parens();
     if let ExprKind::Member(base, member) = &expr.kind
         && member.name == sym::length
-        && is_array_like(gcx, base)
+        && is_state_array(gcx, base)
     {
         reads.push(LengthRead { expr, base });
-        return;
-    }
-
-    match &expr.kind {
-        ExprKind::Array(exprs) => {
-            for expr in *exprs {
-                collect_length_reads(gcx, expr, reads);
-            }
-        }
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            collect_length_reads(gcx, lhs, reads);
-            collect_length_reads(gcx, rhs, reads);
-        }
-        ExprKind::Call(callee, args, named_args) => {
-            collect_length_reads(gcx, callee, reads);
-            for arg in args.exprs() {
-                collect_length_reads(gcx, arg, reads);
-            }
-            if let Some(named_args) = named_args {
-                for arg in named_args.args {
-                    collect_length_reads(gcx, &arg.value, reads);
-                }
-            }
-        }
-        ExprKind::Delete(inner) | ExprKind::Payable(inner) | ExprKind::Unary(_, inner) => {
-            collect_length_reads(gcx, inner, reads);
-        }
-        ExprKind::Index(base, index) => {
-            collect_length_reads(gcx, base, reads);
-            if let Some(index) = index {
-                collect_length_reads(gcx, index, reads);
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            collect_length_reads(gcx, base, reads);
-            if let Some(start) = start {
-                collect_length_reads(gcx, start, reads);
-            }
-            if let Some(end) = end {
-                collect_length_reads(gcx, end, reads);
-            }
-        }
-        ExprKind::Member(base, _) => collect_length_reads(gcx, base, reads),
-        ExprKind::Ternary(condition, then_expr, else_expr) => {
-            collect_length_reads(gcx, condition, reads);
-            collect_length_reads(gcx, then_expr, reads);
-            collect_length_reads(gcx, else_expr, reads);
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().flatten() {
-                collect_length_reads(gcx, expr, reads);
-            }
-        }
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::YulMember(..)
-        | ExprKind::Err(_) => {}
     }
 }
 
@@ -485,6 +422,16 @@ const fn is_comparison(op: BinOpKind) -> bool {
 fn is_array_like<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     let Some(ty) = gcx.type_of_expr(expr.peel_parens().id) else { return false };
     matches!(ty.peel_refs().kind, TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes))
+}
+
+fn is_state_array<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+    let ExprKind::Ident(resolutions) = &expr.peel_parens().kind else { return false };
+    let Some(var_id) = variable_resolution(resolutions) else { return false };
+    gcx.hir.variable(var_id).is_state_variable()
+        && matches!(
+            gcx.type_of_expr(expr.peel_parens().id).map(|ty| ty.peel_refs().kind),
+            Some(TyKind::DynArray(_))
+        )
 }
 
 fn variable_resolution(resolutions: &[Res]) -> Option<VariableId> {
