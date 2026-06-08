@@ -188,7 +188,6 @@ impl CorpusEntry {
 #[derive(Debug, Clone)]
 pub(crate) struct CampaignCorpusEntry {
     tx_seq: Vec<BasicTxDetails>,
-    cmp_seq: Vec<Vec<CmpOperands>>,
     dedupe_by_coverage: bool,
 }
 
@@ -248,6 +247,21 @@ impl WorkerCorpusSeed {
         if let Some((value, sequence)) = load_optimization_state(config) {
             self.optimization_best_value = Some(value);
             self.optimization_best_sequence = sequence;
+        }
+        self
+    }
+
+    pub(crate) fn for_worker(mut self, worker_id: usize, worker_count: usize) -> Self {
+        if worker_count > 1 {
+            self.in_memory_corpus = self
+                .in_memory_corpus
+                .into_iter()
+                .enumerate()
+                .filter_map(|(idx, entry)| (idx % worker_count == worker_id).then_some(entry))
+                .collect();
+            self.metrics.corpus_count = self.in_memory_corpus.len();
+            self.metrics.favored_items =
+                self.in_memory_corpus.iter().filter(|entry| entry.is_favored).count();
         }
         self
     }
@@ -800,7 +814,6 @@ impl WorkerCorpus {
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
         let campaign_entry = (!persist_now).then(|| CampaignCorpusEntry {
             tx_seq: corpus_inputs.clone(),
-            cmp_seq: corpus_cmp_seq.clone(),
             dedupe_by_coverage: new_coverage,
         });
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
@@ -1599,7 +1612,7 @@ fn persist_campaign_entry(config: &FuzzCorpusConfig, entry: CampaignCorpusEntry)
         return;
     };
     let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
-    let corpus = CorpusEntry::new_with_cmp(entry.tx_seq, entry.cmp_seq, Uuid::new_v4());
+    let corpus = CorpusEntry::new(entry.tx_seq);
     let write_result = corpus.write_to_disk_in(&corpus_dir, config.corpus_gzip);
     if let Err(err) = write_result {
         debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
