@@ -22,9 +22,9 @@ use alloy_primitives::{
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
-use clap::{Parser, ValueHint};
+use clap::{Args, Parser, ValueHint};
 use dialoguer::Confirm;
-use eyre::{ContextCompat, Result};
+use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
@@ -66,7 +66,11 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{
+    ffi::{OsStr, OsString},
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 mod broadcast;
 mod build;
@@ -146,6 +150,10 @@ pub struct ScriptArgs {
     /// This is a forge-script convenience alias for `--tempo.session`.
     #[arg(long = "session", value_name = "SESSION_ID", conflicts_with = "tempo_session")]
     pub session: Option<B256>,
+
+    /// Create a temporary Tempo wallet session, run this script with it, then revoke it.
+    #[command(flatten)]
+    pub wallet_session: ScriptWalletSessionArgs,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -325,6 +333,10 @@ impl ScriptArgs {
     #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
+
+        if self.wallet_session.enabled {
+            return self.run_wallet_session_wrapper();
+        }
 
         let (config, evm_opts) = self.resolved_evm_opts().await?;
 
@@ -640,6 +652,489 @@ impl ScriptArgs {
     const fn should_broadcast(&self) -> bool {
         self.broadcast || self.resume || self.verify
     }
+
+    fn run_wallet_session_wrapper(&self) -> Result<()> {
+        let command = self.wallet_session_command_from_env()?;
+        let mut child = Command::new(&command.program);
+        child.args(&command.args);
+        child.env_remove(foundry_cli::opts::TEMPO_SESSION_ID_ENV);
+
+        let status = child.status().wrap_err_with(|| {
+            format!(
+                "failed to run `{}` for forge script wallet session",
+                command.program.to_string_lossy()
+            )
+        })?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            match status.code() {
+                Some(code) => eyre::bail!("forge script wallet session exited with code {code}"),
+                None => eyre::bail!("forge script wallet session terminated by a signal"),
+            }
+        }
+    }
+
+    fn wallet_session_command_from_env(&self) -> Result<WalletSessionCommand> {
+        let forge = std::env::current_exe().wrap_err("failed to resolve current forge binary")?;
+        let cast = sibling_binary(&forge, "cast");
+        self.wallet_session_command_from_raw_args(std::env::args_os(), forge.into(), cast.into())
+    }
+
+    fn wallet_session_command_from_raw_args<I>(
+        &self,
+        raw_args: I,
+        forge_program: OsString,
+        cast_program: OsString,
+    ) -> Result<WalletSessionCommand>
+    where
+        I: IntoIterator<Item = OsString>,
+    {
+        self.wallet_session.validate(self)?;
+
+        let inner_args = strip_wallet_session_args(raw_args)?;
+        let mut inner_args = inner_args.into_iter();
+        let mut inner = Vec::new();
+        let Some(_program) = inner_args.next() else {
+            eyre::bail!("failed to reconstruct forge script command");
+        };
+        inner.push(forge_program);
+        inner.extend(inner_args);
+        let inner = quote_command(&inner)?;
+
+        let session = &self.wallet_session;
+        let root = self.root_account_for_session()?;
+        let mut args = vec![
+            OsString::from("wallet"),
+            OsString::from("session"),
+            OsString::from("--root"),
+            root.to_string().into(),
+            OsString::from("--from"),
+            root.to_string().into(),
+            OsString::from("--expires"),
+            session.expires.clone().expect("validated").into(),
+        ];
+
+        for scope in &session.scopes {
+            args.push("--scope".into());
+            args.push(scope.into());
+        }
+        if let Some(target) = session.target {
+            args.push("--target".into());
+            args.push(target.to_string().into());
+        }
+        for selector in &session.selectors {
+            args.push("--selector".into());
+            args.push(selector.into());
+        }
+        for limit in &session.spend_limits {
+            args.push("--spend-limit".into());
+            args.push(limit.into());
+        }
+
+        if let Some(rpc_url) = self.evm.rpc.rpc_url.as_ref() {
+            args.push("--rpc-url".into());
+            args.push(rpc_url.into());
+        }
+        if let Some(chain) = self.evm.env.chain {
+            args.push("--chain".into());
+            args.push(chain.id().to_string().into());
+        }
+
+        session.push_root_signer_args(&mut args);
+
+        args.push("--for".into());
+        args.push(inner.into());
+
+        Ok(WalletSessionCommand { program: cast_program, args })
+    }
+
+    fn root_account_for_session(&self) -> Result<Address> {
+        self.wallet_session
+            .root
+            .or(self.evm.sender)
+            .ok_or_else(|| eyre::eyre!("forge script --wallet-session requires --session-root"))
+    }
+}
+
+/// Arguments that make `forge script` a thin wrapper around `cast wallet session --for`.
+#[derive(Clone, Debug, Default, Args)]
+pub struct ScriptWalletSessionArgs {
+    /// Create a temporary Tempo wallet session for this script run.
+    #[arg(
+        long = "wallet-session",
+        id = "wallet_session",
+        conflicts_with_all = ["session", "tempo_session", "unlocked"]
+    )]
+    pub enabled: bool,
+
+    /// Root account that authorizes the temporary session.
+    #[arg(
+        long = "session-root",
+        id = "wallet_session_root",
+        value_name = "ADDRESS",
+        requires = "wallet_session"
+    )]
+    pub root: Option<Address>,
+
+    /// Session lifetime, expressed as a duration like `10m`, `2h`, or `7d`.
+    #[arg(
+        long = "session-expires",
+        id = "wallet_session_expires",
+        value_name = "DURATION",
+        requires = "wallet_session"
+    )]
+    pub expires: Option<String>,
+
+    /// Allowed call scope, in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+    #[arg(
+        long = "session-scope",
+        id = "wallet_session_scope",
+        value_name = "SCOPE",
+        requires = "wallet_session"
+    )]
+    pub scopes: Vec<String>,
+
+    /// Allowed call target for issue-style `--target ... --selector ...` input.
+    #[arg(
+        long = "session-target",
+        id = "wallet_session_target",
+        value_name = "ADDRESS",
+        requires = "wallet_session"
+    )]
+    pub target: Option<Address>,
+
+    /// Function selector allowed for `--session-target`, such as `register(address)`.
+    #[arg(
+        long = "session-selector",
+        id = "wallet_session_selector",
+        value_name = "SELECTOR",
+        requires = "wallet_session"
+    )]
+    pub selectors: Vec<String>,
+
+    /// Token spend limit, in `TOKEN:AMOUNT` or `TOKEN=AMOUNT` format.
+    #[arg(
+        long = "session-spend-limit",
+        id = "wallet_session_spend_limit",
+        value_name = "LIMIT",
+        requires = "wallet_session"
+    )]
+    pub spend_limits: Vec<String>,
+
+    /// Open an interactive prompt for the root private key.
+    #[arg(
+        long = "session-interactive",
+        id = "wallet_session_interactive",
+        requires = "wallet_session"
+    )]
+    pub interactive: bool,
+
+    /// Root private key that signs the session authorization.
+    #[arg(
+        long = "session-private-key",
+        id = "wallet_session_private_key",
+        value_name = "RAW_PRIVATE_KEY",
+        requires = "wallet_session"
+    )]
+    pub private_key: Option<String>,
+
+    /// Root mnemonic phrase or mnemonic file path.
+    #[arg(
+        long = "session-mnemonic",
+        id = "wallet_session_mnemonic",
+        value_name = "MNEMONIC",
+        requires = "wallet_session"
+    )]
+    pub mnemonic: Option<String>,
+
+    /// Passphrase for `--session-mnemonic`.
+    #[arg(
+        long = "session-mnemonic-passphrase",
+        id = "wallet_session_mnemonic_passphrase",
+        value_name = "PASSPHRASE",
+        requires = "wallet_session_mnemonic"
+    )]
+    pub mnemonic_passphrase: Option<String>,
+
+    /// Wallet derivation path for the root signer.
+    #[arg(
+        long = "session-hd-path",
+        id = "wallet_session_hd_path",
+        value_name = "PATH",
+        requires = "wallet_session"
+    )]
+    pub hd_path: Option<String>,
+
+    /// Mnemonic or hardware-wallet index for the root signer.
+    #[arg(
+        long = "session-mnemonic-index",
+        id = "wallet_session_mnemonic_index",
+        value_name = "INDEX",
+        requires = "wallet_session"
+    )]
+    pub mnemonic_index: Option<u32>,
+
+    /// Root keystore path.
+    #[arg(
+        long = "session-keystore",
+        id = "wallet_session_keystore",
+        value_name = "PATH",
+        requires = "wallet_session"
+    )]
+    pub keystore: Option<String>,
+
+    /// Root account name from the default keystore directory.
+    #[arg(
+        long = "session-account",
+        id = "wallet_session_account",
+        value_name = "ACCOUNT_NAME",
+        requires = "wallet_session"
+    )]
+    pub account: Option<String>,
+
+    /// Root keystore password.
+    #[arg(
+        long = "session-password",
+        id = "wallet_session_password",
+        value_name = "PASSWORD",
+        requires = "wallet_session"
+    )]
+    pub password: Option<String>,
+
+    /// Root keystore password file.
+    #[arg(
+        long = "session-password-file",
+        id = "wallet_session_password_file",
+        value_name = "PATH",
+        requires = "wallet_session"
+    )]
+    pub password_file: Option<String>,
+
+    /// Use a Ledger as the root signer.
+    #[arg(long = "session-ledger", id = "wallet_session_ledger", requires = "wallet_session")]
+    pub ledger: bool,
+
+    /// Use a Trezor as the root signer.
+    #[arg(long = "session-trezor", id = "wallet_session_trezor", requires = "wallet_session")]
+    pub trezor: bool,
+
+    /// Use AWS KMS as the root signer.
+    #[arg(long = "session-aws", id = "wallet_session_aws", requires = "wallet_session")]
+    pub aws: bool,
+
+    /// Use Google Cloud KMS as the root signer.
+    #[arg(long = "session-gcp", id = "wallet_session_gcp", requires = "wallet_session")]
+    pub gcp: bool,
+
+    /// Use Turnkey as the root signer.
+    #[arg(long = "session-turnkey", id = "wallet_session_turnkey", requires = "wallet_session")]
+    pub turnkey: bool,
+}
+
+impl ScriptWalletSessionArgs {
+    fn validate(&self, args: &ScriptArgs) -> Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.expires.as_ref().is_none_or(|expires| expires.trim().is_empty()) {
+            eyre::bail!("forge script --wallet-session requires --session-expires");
+        }
+        args.root_account_for_session()?;
+        if self.scopes.is_empty() && self.target.is_none() {
+            eyre::bail!(
+                "forge script --wallet-session requires --session-scope or --session-target"
+            );
+        }
+        if self.target.is_some() && self.selectors.is_empty() {
+            eyre::bail!("--session-target requires at least one --session-selector");
+        }
+        if !self.selectors.is_empty() && self.target.is_none() {
+            eyre::bail!("--session-selector requires --session-target");
+        }
+        if args.wallets.browser.browser {
+            eyre::bail!(
+                "forge script --wallet-session cannot use --browser until browser KeyAuthorization signing is supported"
+            );
+        }
+        if has_explicit_script_signer(&args.wallets) {
+            eyre::bail!(
+                "forge script --wallet-session cannot be combined with explicit script wallet signer options; use --session-* root signer options instead"
+            );
+        }
+        Ok(())
+    }
+
+    fn push_root_signer_args(&self, args: &mut Vec<OsString>) {
+        if self.interactive {
+            args.push("--interactive".into());
+        }
+        push_opt_arg(args, "--private-key", self.private_key.as_deref());
+        push_opt_arg(args, "--mnemonic", self.mnemonic.as_deref());
+        push_opt_arg(args, "--mnemonic-passphrase", self.mnemonic_passphrase.as_deref());
+        push_opt_arg(args, "--hd-path", self.hd_path.as_deref());
+        if let Some(index) = self.mnemonic_index {
+            args.push("--mnemonic-index".into());
+            args.push(index.to_string().into());
+        }
+        push_opt_arg(args, "--keystore", self.keystore.as_deref());
+        push_opt_arg(args, "--account", self.account.as_deref());
+        push_opt_arg(args, "--password", self.password.as_deref());
+        push_opt_arg(args, "--password-file", self.password_file.as_deref());
+        if self.ledger {
+            args.push("--ledger".into());
+        }
+        if self.trezor {
+            args.push("--trezor".into());
+        }
+        if self.aws {
+            args.push("--aws".into());
+        }
+        if self.gcp {
+            args.push("--gcp".into());
+        }
+        if self.turnkey {
+            args.push("--turnkey".into());
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct WalletSessionCommand {
+    program: OsString,
+    args: Vec<OsString>,
+}
+
+fn push_opt_arg(args: &mut Vec<OsString>, name: &'static str, value: Option<&str>) {
+    if let Some(value) = value {
+        args.push(name.into());
+        args.push(value.into());
+    }
+}
+
+fn has_explicit_script_signer(wallets: &MultiWalletOpts) -> bool {
+    wallets.interactive
+        || wallets.interactives > 0
+        || wallets.private_key.is_some()
+        || wallets.private_keys.is_some()
+        || wallets.mnemonics.is_some()
+        || wallets.keystore_paths.is_some()
+        || wallets.keystore_account_names.is_some()
+        || wallets.ledger
+        || wallets.trezor
+        || wallets.aws
+        || wallets.gcp
+        || wallets.turnkey
+}
+
+fn sibling_binary(current: &Path, name: &str) -> PathBuf {
+    let mut binary = current.with_file_name(name);
+    if cfg!(windows) {
+        binary.set_extension("exe");
+    }
+    if binary.exists() { binary } else { PathBuf::from(name) }
+}
+
+fn strip_wallet_session_args<I>(raw_args: I) -> Result<Vec<OsString>>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut out = Vec::new();
+    let mut args = raw_args.into_iter().peekable();
+    let mut after_double_dash = false;
+
+    while let Some(arg) = args.next() {
+        if after_double_dash {
+            out.push(arg);
+            continue;
+        }
+        if arg == OsStr::new("--") {
+            after_double_dash = true;
+            out.push(arg);
+            continue;
+        }
+
+        let Some(arg_str) = arg.to_str() else {
+            out.push(arg);
+            continue;
+        };
+
+        if WRAPPER_BOOL_ARGS.contains(&arg_str) {
+            continue;
+        }
+        if wrapper_value_arg(arg_str).is_some() {
+            if arg_str.contains('=') {
+                continue;
+            }
+            let _ = args.next().ok_or_else(|| eyre::eyre!("{arg_str} requires a value"))?;
+            continue;
+        }
+
+        out.push(arg);
+    }
+
+    Ok(out)
+}
+
+fn wrapper_value_arg(arg: &str) -> Option<&'static str> {
+    let flag = arg.split_once('=').map_or(arg, |(flag, _)| flag);
+    WRAPPER_VALUE_ARGS.iter().copied().find(|candidate| *candidate == flag)
+}
+
+const WRAPPER_BOOL_ARGS: &[&str] = &[
+    "--wallet-session",
+    "--session-interactive",
+    "--session-ledger",
+    "--session-trezor",
+    "--session-aws",
+    "--session-gcp",
+    "--session-turnkey",
+];
+
+const WRAPPER_VALUE_ARGS: &[&str] = &[
+    "--session-root",
+    "--session-expires",
+    "--session-scope",
+    "--session-target",
+    "--session-selector",
+    "--session-spend-limit",
+    "--session-private-key",
+    "--session-mnemonic",
+    "--session-mnemonic-passphrase",
+    "--session-hd-path",
+    "--session-mnemonic-index",
+    "--session-keystore",
+    "--session-account",
+    "--session-password",
+    "--session-password-file",
+];
+
+fn quote_command(args: &[OsString]) -> Result<String> {
+    args.iter().map(quote_arg).collect::<Result<Vec<_>>>().map(|args| args.join(" "))
+}
+
+fn quote_arg(arg: &OsString) -> Result<String> {
+    let arg = arg
+        .to_str()
+        .ok_or_else(|| eyre::eyre!("forge script wallet session commands must be valid UTF-8"))?;
+    if arg.is_empty() {
+        return Ok("\"\"".to_string());
+    }
+    if arg.chars().all(|ch| !ch.is_whitespace() && !matches!(ch, '"' | '\'' | '\\')) {
+        return Ok(arg.to_string());
+    }
+
+    let mut quoted = String::with_capacity(arg.len() + 2);
+    quoted.push('"');
+    for ch in arg.chars() {
+        if matches!(ch, '"' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(ch);
+    }
+    quoted.push('"');
+    Ok(quoted)
 }
 
 impl Provider for ScriptArgs {
@@ -1016,6 +1511,190 @@ mod tests {
 
         assert_eq!(args.session, Some(B256::from([0x11; 32])));
         assert_eq!(args.normalized_tempo().session, Some(B256::from([0x11; 32])));
+    }
+
+    #[test]
+    fn can_parse_wallet_session_wrapper() {
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let target = address!("0x2222222222222222222222222222222222222222");
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Deploy.s.sol",
+            "--broadcast",
+            "--wallet-session",
+            "--session-root",
+            &root.to_string(),
+            "--session-expires",
+            "10m",
+            "--session-target",
+            &target.to_string(),
+            "--session-selector",
+            "register(address)",
+            "--session-spend-limit",
+            "PathUSD=0",
+            "--session-private-key",
+            SESSION_PRIVATE_KEY,
+        ]);
+
+        assert!(args.wallet_session.enabled);
+        assert_eq!(args.wallet_session.root, Some(root));
+        assert_eq!(args.wallet_session.expires.as_deref(), Some("10m"));
+        assert_eq!(args.wallet_session.target, Some(target));
+        assert_eq!(args.wallet_session.selectors, ["register(address)"]);
+        assert_eq!(args.wallet_session.spend_limits, ["PathUSD=0"]);
+        assert_eq!(args.wallet_session.private_key.as_deref(), Some(SESSION_PRIVATE_KEY));
+    }
+
+    #[test]
+    fn wallet_session_wrapper_conflicts_with_existing_session_id() {
+        let err = ScriptArgs::try_parse_from([
+            "foundry-cli",
+            "Deploy.s.sol",
+            "--wallet-session",
+            "--session",
+            SESSION_ID_HEX,
+        ])
+        .unwrap_err();
+
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
+
+    #[test]
+    fn wallet_session_wrapper_rewrites_to_cast_session_command() {
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let target = address!("0x2222222222222222222222222222222222222222");
+        let root_arg = root.to_string();
+        let target_arg = target.to_string();
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Deploy.s.sol",
+            "--broadcast",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+            "--chain",
+            "4217",
+            "--wallet-session",
+            "--session-root",
+            &root_arg,
+            "--session-expires",
+            "10m",
+            "--session-target",
+            &target_arg,
+            "--session-selector",
+            "register(address)",
+            "--session-private-key",
+            SESSION_PRIVATE_KEY,
+        ]);
+        let raw_args = [
+            "forge",
+            "script",
+            "Deploy.s.sol",
+            "--broadcast",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+            "--chain",
+            "4217",
+            "--wallet-session",
+            "--session-root",
+            &root_arg,
+            "--session-expires",
+            "10m",
+            "--session-target",
+            &target_arg,
+            "--session-selector",
+            "register(address)",
+            "--session-private-key",
+            SESSION_PRIVATE_KEY,
+        ]
+        .into_iter()
+        .map(OsString::from);
+
+        let command = args
+            .wallet_session_command_from_raw_args(
+                raw_args,
+                OsString::from("/tmp/forge"),
+                OsString::from("/tmp/cast"),
+            )
+            .unwrap();
+
+        assert_eq!(command.program, OsString::from("/tmp/cast"));
+        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
+        assert_eq!(command_args[0], "wallet");
+        assert_eq!(command_args[1], "session");
+        assert!(command_args.contains(&"--root".into()));
+        assert!(command_args.contains(&root.to_string().into()));
+        assert!(command_args.contains(&"--from".into()));
+        assert!(command_args.contains(&"--target".into()));
+        assert!(command_args.contains(&target.to_string().into()));
+        assert!(command_args.contains(&"--selector".into()));
+        assert!(command_args.contains(&"register(address)".into()));
+        assert!(command_args.contains(&"--private-key".into()));
+        assert!(command_args.contains(&SESSION_PRIVATE_KEY.into()));
+
+        let for_pos = command_args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
+        let inner = command_args[for_pos + 1].as_ref();
+        assert!(inner.starts_with("/tmp/forge script Deploy.s.sol --broadcast"), "{inner}");
+        assert!(inner.contains("--rpc-url http://127.0.0.1:8545"), "{inner}");
+        assert!(inner.contains("--chain 4217"), "{inner}");
+        assert!(!inner.contains("--wallet-session"), "{inner}");
+        assert!(!inner.contains("--session-private-key"), "{inner}");
+    }
+
+    #[test]
+    fn wallet_session_wrapper_rejects_browser_until_key_authorization_support_lands() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Deploy.s.sol",
+            "--wallet-session",
+            "--session-root",
+            "0x1111111111111111111111111111111111111111",
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+            "--browser",
+        ]);
+
+        let err = args
+            .wallet_session_command_from_raw_args(
+                ["forge", "script", "Deploy.s.sol", "--wallet-session"]
+                    .into_iter()
+                    .map(OsString::from),
+                OsString::from("/tmp/forge"),
+                OsString::from("/tmp/cast"),
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("browser KeyAuthorization signing"), "{err}");
+    }
+
+    #[test]
+    fn wallet_session_wrapper_rejects_script_wallet_signer_options() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Deploy.s.sol",
+            "--wallet-session",
+            "--session-root",
+            "0x1111111111111111111111111111111111111111",
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+            "--private-key",
+            SESSION_PRIVATE_KEY,
+        ]);
+
+        let err = args
+            .wallet_session_command_from_raw_args(
+                ["forge", "script", "Deploy.s.sol", "--wallet-session"]
+                    .into_iter()
+                    .map(OsString::from),
+                OsString::from("/tmp/forge"),
+                OsString::from("/tmp/cast"),
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("explicit script wallet signer"), "{err}");
     }
 
     #[test]
