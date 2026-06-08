@@ -19,6 +19,7 @@ members = [
     "crates/evm/evm/",
     "crates/evm/fuzz/",
     "crates/evm/sancov/",
+    "crates/evm/symbolic/",
     "crates/evm/hardforks/",
     "crates/evm/traces/",
     "crates/fmt/",
@@ -333,6 +334,7 @@ foundry-evm-hardforks = { path = "crates/evm/hardforks", default-features = fals
 foundry-evm-networks = { path = "crates/evm/networks", default-features = false }
 foundry-evm-fuzz = { path = "crates/evm/fuzz", default-features = false }
 foundry-evm-sancov = { path = "crates/evm/sancov" }
+foundry-evm-symbolic = { path = "crates/evm/symbolic", default-features = false }
 foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils", default-features = false }

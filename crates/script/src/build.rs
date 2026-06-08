@@ -227,7 +227,10 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         )
         .chain([target_path.clone()]);
 
-        let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
+        let output = ProjectCompiler::new()
+            .files(sources_to_compile)
+            .dynamic_test_linking(script_config.config.dynamic_test_linking)
+            .compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 

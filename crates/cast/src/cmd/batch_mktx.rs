@@ -17,10 +17,11 @@ use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
-    opts::{EthereumOpts, TransactionOpts},
+    opts::{EthereumOpts, TempoOpts, TransactionOpts},
     utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast batch-mktx`.
@@ -56,10 +57,18 @@ impl BatchMakeTxArgs {
     pub async fn run(self) -> Result<()> {
         let Self { calls, mut tx, eth, raw_unsigned, ethsign } = self;
         let has_nonce = tx.nonce.is_some();
+        let has_session = tx.tempo.session_id()?.is_some();
         let expires_at = tx.tempo.resolve_expires();
 
         if calls.is_empty() {
             return Err(eyre!("No calls specified. Use --call to specify at least one call."));
+        }
+
+        if has_session && raw_unsigned {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --raw-unsigned");
+        }
+        if has_session && ethsign {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --ethsign");
         }
 
         let config = eth.load_config()?;
@@ -69,15 +78,14 @@ impl BatchMakeTxArgs {
         // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
-        // Resolve signer to detect keychain mode
-        let (signer, tempo_access_key) = eth.wallet.maybe_signer().await?;
-
         // Parse all call specs
         let call_specs: Vec<CallSpec> =
             calls.iter().map(|s| CallSpec::parse(s)).collect::<Result<Vec<_>>>()?;
 
         // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
+        let (signer, tempo_access_key) =
+            resolve_signer(&tx.tempo, &eth.wallet, chain.id(), raw_unsigned).await?;
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
         let etherscan_api_url = etherscan_config.map(|c| c.api_url);
@@ -170,5 +178,54 @@ impl BatchMakeTxArgs {
         sh_println!("0x{signed_tx}")?;
 
         Ok(())
+    }
+}
+
+async fn resolve_signer(
+    tempo: &TempoOpts,
+    wallet: &WalletOpts,
+    chain_id: u64,
+    raw_unsigned: bool,
+) -> Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
+    if raw_unsigned {
+        let (_, access_key) = wallet.maybe_signer().await?;
+        return Ok((None, access_key));
+    }
+
+    tempo::resolve_session_or_wallet_signer(tempo, wallet, chain_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+
+    #[test]
+    fn raw_unsigned_resolver_discards_signer_but_keeps_access_key_metadata() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let wallet = WalletOpts {
+                tempo_access_key: Some(
+                    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+                        .to_string(),
+                ),
+                tempo_root_account: Some(address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
+                ..Default::default()
+            };
+
+            let (signer, access_key) =
+                resolve_signer(&TempoOpts::default(), &wallet, 31337, true).await.unwrap();
+
+            assert!(signer.is_none());
+            let access_key = access_key.expect("access-key metadata");
+            assert_eq!(
+                access_key.wallet_address,
+                address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+            );
+            assert_eq!(
+                access_key.key_address,
+                address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+            );
+        });
     }
 }
