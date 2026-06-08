@@ -3322,30 +3322,32 @@ forgetest_init!(should_show_opcodes, |prj, cmd| {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [137242] CounterTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [..] CounterTest::setUp()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [..] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [28783] CounterTest::test_Increment()
-    ├─ [2100] SLOAD 31 → (125813996375599159817140963330240011258305308995329)
-    ├─ [3] MLOAD
-    ├─ [3] MLOAD
-    ├─ [22418] Counter::increment()
-    │   ├─ [2100] SLOAD 0 → (0)
+  [..] CounterTest::test_Increment()
+    ├─ [..] SLOAD 0x1f → (0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f01)
+    ├─ [..] MLOAD
+    ├─ [..] MLOAD
+    ├─ [..] Counter::increment()
+    │   ├─ [..] SLOAD 0x0 → (0x0)
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [100] SLOAD
-    ├─ [3] MLOAD
-    ├─ [3] MLOAD
-    ├─ [424] Counter::number() [staticcall]
-    │   ├─ [100] SLOAD
-    │   ├─ [3] MLOAD
-    │   ├─ [3] MLOAD
+    ├─ [..] SLOAD
+    ├─ [..] MLOAD
+    ├─ [..] MLOAD
+    ├─ [..] Counter::number() [staticcall]
+    │   ├─ [..] SLOAD
+    │   ├─ [..] MLOAD
+    │   ├─ [..] MLOAD
     │   └─ ← [Return] 1
-    ├─ [3] MLOAD
-    ├─ [3] MLOAD
+    ├─ [..] MLOAD
+    ├─ [..] MLOAD
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -3399,18 +3401,18 @@ forgetest_init!(opcodes_path_after_flag, |prj, cmd| {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [137242] CounterTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [..] CounterTest::setUp()
+    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [..] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [28783] CounterTest::test_Increment()
-    ├─ [22418] Counter::increment()
-    │   ├─ [20000] SSTORE 0x0 → (0x1)
+  [..] CounterTest::test_Increment()
+    ├─ [..] Counter::increment()
+    │   ├─ [..] SSTORE 0x0 → (0x1)
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [..] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
