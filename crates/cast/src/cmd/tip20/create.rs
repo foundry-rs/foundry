@@ -54,12 +54,6 @@ pub(super) async fn run(
         super::logo::validate_logo_uri(logo_uri)?;
     }
 
-    let (signer, tempo_access_key) = if tx_opts.tempo.session_id()?.is_some() {
-        (None, None)
-    } else {
-        send_tx.eth.wallet.maybe_signer().await?
-    };
-
     let config = send_tx.eth.rpc.load_config()?;
 
     if !is_iso4217_currency(&currency) && !force {
@@ -118,8 +112,6 @@ pub(super) async fn run(
         std::mem::take(&mut args),
         send_tx,
         tx_opts,
-        signer,
-        tempo_access_key,
     )
     .await?;
 

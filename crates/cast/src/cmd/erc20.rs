@@ -297,9 +297,10 @@ impl Erc20Subcommand {
     async fn should_use_tempo_network(
         &self,
         tempo_access_key: &Option<TempoAccessKeyConfig>,
+        has_session: bool,
     ) -> eyre::Result<bool> {
         if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
-            || self.has_tempo_session()?
+            || has_session
             || tempo_access_key.is_some()
         {
             return Ok(true);
@@ -338,12 +339,12 @@ impl Erc20Subcommand {
             _ => (None, None),
         };
 
-        let is_tempo = self.should_use_tempo_network(&tempo_access_key).await?;
+        let is_tempo = self.should_use_tempo_network(&tempo_access_key, has_session).await?;
 
         if is_tempo {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await
         } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            self.run_generic::<Ethereum>(signer, None, has_session).await
         }
     }
 
@@ -351,6 +352,7 @@ impl Erc20Subcommand {
         self,
         pre_resolved_signer: Option<WalletSigner>,
         tempo_keychain: Option<TempoAccessKeyConfig>,
+        has_session: bool,
     ) -> eyre::Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -373,8 +375,7 @@ impl Erc20Subcommand {
             ) => {{
                 let mut tx_opts = $tx_opts;
                 tempo::ensure_session_not_browser(&tx_opts.tempo, $send_tx.browser.browser)?;
-                let (pre_resolved_signer, tempo_keychain) = if tx_opts.tempo.session_id()?.is_some()
-                {
+                let (pre_resolved_signer, tempo_keychain) = if has_session {
                     let $provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let chain = get_chain(config.chain, &$provider).await?;

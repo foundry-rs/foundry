@@ -1,5 +1,6 @@
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key, validate_sponsor_url},
+    tempo,
     tx::{CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -180,21 +181,17 @@ impl Tip20Subcommand {
 pub(super) async fn resolve_tip20_signer(
     send_tx: &SendTxOpts,
     tx_params: &TxParams,
-) -> eyre::Result<Option<(WalletSigner, TempoAccessKeyConfig)>> {
-    let Some(session_id) = tx_params.tempo.session_id()? else {
-        return Ok(None);
-    };
+) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
+    if tx_params.tempo.session_id()?.is_none() {
+        return send_tx.eth.wallet.maybe_signer().await;
+    }
 
-    crate::tempo::ensure_session_not_browser(&tx_params.tempo, send_tx.browser.browser)?;
+    tempo::ensure_session_not_browser(&tx_params.tempo, send_tx.browser.browser)?;
 
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let chain = get_chain(config.chain, &provider).await?;
-    let session =
-        tx_params.tempo.session_signer_for_wallet(&send_tx.eth.wallet, chain.id())?.ok_or_else(
-            || eyre::eyre!("Tempo session {session_id:?} is not active or has no live key"),
-        )?;
-    Ok(Some((session.signer, session.access_key)))
+    tempo::resolve_session_or_wallet_signer(&tx_params.tempo, &send_tx.eth.wallet, chain.id()).await
 }
 
 pub(super) async fn send_tip20_transaction(
@@ -203,15 +200,8 @@ pub(super) async fn send_tip20_transaction(
     args: Vec<String>,
     send_tx: SendTxOpts,
     tx_params: TxParams,
-    pre_resolved_signer: Option<WalletSigner>,
-    access_key: Option<TempoAccessKeyConfig>,
 ) -> eyre::Result<()> {
-    let (pre_resolved_signer, access_key) =
-        if let Some((signer, access_key)) = resolve_tip20_signer(&send_tx, &tx_params).await? {
-            (Some(signer), Some(access_key))
-        } else {
-            (pre_resolved_signer, access_key)
-        };
+    let (pre_resolved_signer, access_key) = resolve_tip20_signer(&send_tx, &tx_params).await?;
     let mut tx_opts = tx_params.into_transaction_opts();
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let sponsor_url = tx_opts.tempo.sponsor_url.clone();
