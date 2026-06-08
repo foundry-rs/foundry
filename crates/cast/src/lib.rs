@@ -665,22 +665,36 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             return Ok(None);
         };
 
-        let from = self.resolve_block_tag(from_block.unwrap_or(BlockNumberOrTag::Earliest)).await?;
-        let to = self.resolve_block_tag(to_block.unwrap_or(BlockNumberOrTag::Latest)).await?;
+        let from_tag = from_block.unwrap_or(BlockNumberOrTag::Earliest);
+        let to_tag = to_block.unwrap_or(BlockNumberOrTag::Latest);
+
+        // `pending` is not a concrete canonical range boundary; don't chunk it, so the single
+        // request preserves the provider's native `pending` semantics.
+        if from_tag.is_pending() || to_tag.is_pending() {
+            return Ok(None);
+        }
+
+        let from = self.resolve_block_tag(from_tag).await?;
+        // Resolve identical tags only once so a moving head (e.g. `latest`..`latest`) can't yield
+        // an inconsistent range.
+        let to = if from_tag == to_tag { from } else { self.resolve_block_tag(to_tag).await? };
         Ok(Some((from, to)))
     }
 
     /// Resolves a [`BlockNumberOrTag`] to a concrete block number, querying the provider for tags.
     async fn resolve_block_tag(&self, tag: BlockNumberOrTag) -> Result<u64> {
-        if let BlockNumberOrTag::Number(number) = tag {
-            return Ok(number);
+        match tag {
+            BlockNumberOrTag::Number(number) => Ok(number),
+            BlockNumberOrTag::Earliest => Ok(0),
+            tag => {
+                let block = self
+                    .provider
+                    .get_block(BlockId::Number(tag))
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("could not resolve block tag `{tag}`"))?;
+                Ok(block.header().number())
+            }
         }
-        let block = self
-            .provider
-            .get_block(BlockId::Number(tag))
-            .await?
-            .ok_or_else(|| eyre::eyre!("could not resolve block tag `{tag}`"))?;
-        Ok(block.header().number())
     }
 
     /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
