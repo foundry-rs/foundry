@@ -10,6 +10,7 @@ use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
 /// Anvil test accounts (standard mnemonic).
 mod accounts {
     pub const PK1: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    pub const PK2: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
     pub const ADDR1: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
     pub const ADDR2: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
     pub const ADDR3: &str = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
@@ -747,6 +748,42 @@ casttest!(batch_mktx_uses_tempo_session_id_env, async |_prj, cmd| {
     assert!(
         stdout.trim().starts_with("0x"),
         "expected cast batch-mktx to print raw tx hex, got:\n{stdout}"
+    );
+});
+
+casttest!(batch_mktx_raw_unsigned_resolves_tempo_access_key_metadata, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let path_usd = path_usd();
+    let call = batch_send_transfer_call(&path_usd);
+
+    cmd.cast_fuse();
+    let stderr = cmd
+        .args([
+            "batch-mktx",
+            "--call",
+            &call,
+            "--raw-unsigned",
+            "--from",
+            accounts::ADDR1,
+            "--nonce",
+            "0",
+            "--gas-price",
+            "1",
+            "--rpc-url",
+            &rpc,
+            "--tempo.fee-token",
+            &path_usd,
+            "--tempo.access-key",
+            accounts::PK2,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("--tempo.root-account is required when --tempo.access-key is set"),
+        "raw unsigned must still resolve Tempo access-key metadata, got:\n{stderr}"
     );
 });
 
