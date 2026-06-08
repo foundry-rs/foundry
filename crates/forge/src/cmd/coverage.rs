@@ -207,7 +207,8 @@ impl CoverageArgs {
 
         config.disable_optimizations(&mut project, self.ir_minimum);
 
-        let output = ProjectCompiler::default()
+        let output = ProjectCompiler::new()
+            .dynamic_test_linking(config.dynamic_test_linking)
             .compile(&project)?
             .with_stripped_file_prefixes(project.root());
 
