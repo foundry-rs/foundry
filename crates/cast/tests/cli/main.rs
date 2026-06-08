@@ -2216,22 +2216,36 @@ casttest!(logs_sig_2, |_prj, cmd| {
     .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
 });
 
-casttest!(logs_chunked_large_range, |_prj, cmd| {
+// Queries a 60k-block range (which `--query-size` splits into multiple chunks) and asserts the
+// chunked result is byte-for-byte identical to a single unchunked request. This proves chunking
+// collects logs from every chunk without gaps, duplicates, or reordering, and that the inclusive
+// `to` block is covered.
+casttest!(logs_chunked, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
-    cmd.args([
+    let args = [
         "logs",
         "--rpc-url",
         rpc.as_str(),
         "--from-block",
-        "18000000",
+        "12400000",
         "--to-block",
-        "18050000",
-        "--query-size",
-        "1000",
+        "12460000",
         "Transfer(address indexed from, address indexed to, uint256 value)",
-        "0xA0b86a33E6441d02dd8C6B2b7E5D1E3eD7F73b4b",
-    ])
-    .assert_success();
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+    ];
+
+    // Baseline: single request over the whole range.
+    let unchunked = cmd.args(args).assert_success().get_output().stdout_lossy();
+
+    // Same query split into 10k-block chunks (6 chunks).
+    cmd.cast_fuse();
+    let chunked =
+        cmd.args(args).args(["--query-size", "10000"]).assert_success().get_output().stdout_lossy();
+
+    assert_eq!(chunked, unchunked, "chunked logs must match the unchunked result");
+    // Sanity check: results actually span the first and last chunk of the range.
+    assert!(chunked.contains("12400314"), "missing log from the first chunk");
+    assert!(chunked.contains("12454418"), "missing log from the last chunk");
 });
 
 // tests that `cast create2` writes `address\tsalt` to stdout and prose to stderr

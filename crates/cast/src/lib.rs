@@ -40,7 +40,7 @@ use foundry_common::{
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
 use foundry_primitives::FoundryTxEnvelope;
-use futures::{FutureExt, StreamExt, future::Either};
+use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus as _;
 
@@ -654,98 +654,127 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(res)
     }
 
-    fn extract_block_range(filter: &Filter) -> (Option<u64>, Option<u64>) {
+    /// Resolves the filter's block range to concrete block numbers.
+    ///
+    /// Returns `None` when the filter does not target a block-number range (e.g. it filters by
+    /// block hash), in which case chunking is not possible. Tags such as `latest` and `earliest`
+    /// are resolved against the provider so that the common case (`--to-block` defaulting to
+    /// `latest`) can still be chunked.
+    async fn resolve_block_range(&self, filter: &Filter) -> Result<Option<(u64, u64)>> {
         let FilterBlockOption::Range { from_block, to_block } = &filter.block_option else {
-            return (None, None);
+            return Ok(None);
         };
 
-        (from_block.and_then(|b| b.as_number()), to_block.and_then(|b| b.as_number()))
+        let from = self.resolve_block_tag(from_block.unwrap_or(BlockNumberOrTag::Earliest)).await?;
+        let to = self.resolve_block_tag(to_block.unwrap_or(BlockNumberOrTag::Latest)).await?;
+        Ok(Some((from, to)))
     }
 
-    /// Retrieves logs with automatic chunking fallback.
-    ///
-    /// First tries to fetch logs for the entire range. If that fails,
-    /// falls back to concurrent chunked requests with rate limiting.
+    /// Resolves a [`BlockNumberOrTag`] to a concrete block number, querying the provider for tags.
+    async fn resolve_block_tag(&self, tag: BlockNumberOrTag) -> Result<u64> {
+        if let BlockNumberOrTag::Number(number) = tag {
+            return Ok(number);
+        }
+        let block = self
+            .provider
+            .get_block(BlockId::Number(tag))
+            .await?
+            .ok_or_else(|| eyre::eyre!("could not resolve block tag `{tag}`"))?;
+        Ok(block.header().number())
+    }
+
+    /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
     async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {
-        // Try the full range first
-        if let Ok(logs) = self.provider.get_logs(filter).await {
-            return Ok(logs);
+        // Only chunk a finite block-number range larger than one chunk; `chunk_size == 0`
+        // disables chunking and falls back to a single request.
+        let Some((from, to)) = self.resolve_block_range(filter).await? else {
+            return self.provider.get_logs(filter).await.map_err(Into::into);
+        };
+        // Empty range.
+        if from > to {
+            return Ok(vec![]);
+        }
+        if chunk_size == 0 || to - from < chunk_size {
+            return self.provider.get_logs(filter).await.map_err(Into::into);
         }
 
-        // Fallback: use concurrent chunked approach
-        self.get_logs_chunked_concurrent(filter, chunk_size).await
+        self.get_logs_chunked_concurrent(filter, from, to, chunk_size).await
     }
 
-    /// Retrieves logs using concurrent chunked requests with rate limiting.
-    ///
-    /// Divides the block range into chunks and processes them with a maximum of
-    /// 5 concurrent requests. Falls back to single-block queries if chunks fail.
+    /// Retrieves logs for the inclusive `[from, to]` range using concurrent chunked requests.
     async fn get_logs_chunked_concurrent(
         &self,
         filter: &Filter,
+        from: u64,
+        to: u64,
         chunk_size: u64,
     ) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {
-        let (from_block, to_block) = Self::extract_block_range(filter);
-        let (Some(from), Some(to)) = (from_block, to_block) else {
-            return self.provider.get_logs(filter).await.map_err(Into::into);
-        };
-
-        if from >= to {
-            return Ok(vec![]);
+        let mut chunk_ranges: Vec<(u64, u64)> = Vec::new();
+        let mut start = from;
+        loop {
+            let end = start.saturating_add(chunk_size - 1).min(to);
+            chunk_ranges.push((start, end));
+            if end >= to {
+                break;
+            }
+            start = end + 1;
         }
 
-        // Create chunk ranges using iterator
-        let chunk_ranges: Vec<(u64, u64)> = (from..to)
-            .step_by(chunk_size as usize)
-            .map(|chunk_start| (chunk_start, (chunk_start + chunk_size).min(to)))
-            .collect();
-
-        // Process chunks with controlled concurrency using buffered stream
-        let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
-            .map(|(start_block, chunk_end)| {
-                let chunk_filter = filter.clone().from_block(start_block).to_block(chunk_end - 1);
-                let provider = self.provider.clone();
-
-                async move {
-                    // Try direct chunk request with simplified fallback
-                    match provider.get_logs(&chunk_filter).await {
-                        Ok(logs) => (start_block, logs),
-                        Err(_) => {
-                            // Simple fallback: try individual blocks in this chunk
-                            let mut fallback_logs = Vec::new();
-                            for single_block in start_block..chunk_end {
-                                let single_filter = chunk_filter
-                                    .clone()
-                                    .from_block(single_block)
-                                    .to_block(single_block);
-                                if let Ok(logs) = provider.get_logs(&single_filter).await {
-                                    fallback_logs.extend(logs);
-                                }
-                            }
-                            (start_block, fallback_logs)
-                        }
+        // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
+        // early and surfaces the error if any chunk ultimately fails.
+        let chunks: Vec<Vec<Log>> =
+            futures::stream::iter(chunk_ranges)
+                .map(|(start_block, end_block)| {
+                    let filter = filter.clone();
+                    let provider = self.provider.clone();
+                    async move {
+                        Self::get_logs_bisecting(&provider, &filter, start_block, end_block).await
                     }
+                })
+                .buffered(5)
+                .try_collect()
+                .await?;
+
+        Ok(chunks.into_iter().flatten().collect())
+    }
+
+    /// Fetches logs for the inclusive `[from, to]` range, recursively bisecting on failure.
+    fn get_logs_bisecting<'a>(
+        provider: &'a P,
+        filter: &'a Filter,
+        from: u64,
+        to: u64,
+    ) -> futures::future::BoxFuture<'a, Result<Vec<Log>>>
+    where
+        P: Clone + Unpin,
+    {
+        Box::pin(async move {
+            let range_filter = filter.clone().from_block(from).to_block(to);
+            match provider.get_logs(&range_filter).await {
+                Ok(logs) => Ok(logs),
+                Err(e) => {
+                    // A single block already failed; nothing left to split.
+                    if from >= to {
+                        return Err(e.into());
+                    }
+
+                    // Bisect sequentially: this path is only reached after a provider failure, so
+                    // fanning out concurrently here would risk amplifying rate-limit errors and
+                    // would defeat the top-level concurrency cap.
+                    let mid = from + (to - from) / 2;
+                    let mut left = Self::get_logs_bisecting(provider, filter, from, mid).await?;
+                    let right = Self::get_logs_bisecting(provider, filter, mid + 1, to).await?;
+                    left.extend(right);
+                    Ok(left)
                 }
-            })
-            .buffered(5) // Limit to 5 concurrent requests to avoid rate limits
-            .collect()
-            .await;
-
-        // Sort once at the end by block number and flatten
-        all_results.sort_by_key(|(block_num, _)| *block_num);
-
-        let mut all_logs = Vec::new();
-        for (_, logs) in all_results {
-            all_logs.extend(logs);
-        }
-
-        Ok(all_logs)
+            }
+        })
     }
 
     /// Converts a block identifier into a block number.
