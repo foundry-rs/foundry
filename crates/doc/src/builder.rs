@@ -11,7 +11,7 @@ use solar::{config::CompilerStage, sema::Compiler};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Component, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -287,15 +287,8 @@ impl DocBuilder {
                     .map(PathBuf::from)
                     .collect()
             } else {
-                // No manifest: fall back to pruning only the legacy `src/` subtree.
-                let src_dir = pages_dir.join("src");
-                let kept: HashSet<PathBuf> = all_rel
-                    .iter()
-                    .filter_map(|p| p.strip_prefix("src").ok().map(|s| s.to_path_buf()))
-                    .collect();
-                if src_dir.exists() {
-                    prune_dir(&src_dir, &src_dir, &kept)?;
-                }
+                // No manifest: do not prune. The manifest is the ownership boundary for
+                // generated pages; without it, user-authored pages are indistinguishable.
                 HashSet::new()
             };
             let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
@@ -350,33 +343,4 @@ impl DocBuilder {
             site_elapsed,
         })
     }
-}
-
-fn prune_dir(dir: &Path, pages_dir: &Path, kept: &HashSet<PathBuf>) -> eyre::Result<bool> {
-    let mut any_left = false;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            let dir_empty = prune_dir(&path, pages_dir, kept)?;
-            if dir_empty {
-                let _ = fs::remove_dir(&path);
-            } else {
-                any_left = true;
-            }
-        } else if file_type.is_file() {
-            let rel = path.strip_prefix(pages_dir).unwrap_or(&path).to_path_buf();
-            let is_mdx = path.extension().and_then(|e| e.to_str()) == Some("mdx");
-            if is_mdx && !kept.contains(&rel) {
-                debug!("pruning stale page {}", path.display());
-                let _ = fs::remove_file(&path);
-            } else {
-                any_left = true;
-            }
-        } else {
-            any_left = true;
-        }
-    }
-    Ok(!any_left)
 }

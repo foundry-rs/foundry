@@ -108,6 +108,29 @@ contract Derived is IBase {
     );
 });
 
+forgetest_init!(doc_without_manifest_preserves_user_pages, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.0;
+
+contract Counter {
+    uint256 public value;
+}
+"#,
+    );
+
+    let user_page = prj.root().join("docs/src/pages/src/overview.mdx");
+    std::fs::create_dir_all(user_page.parent().unwrap()).unwrap();
+    std::fs::write(&user_page, "# Overview\n\nHand-written page.\n").unwrap();
+
+    cmd.args(["doc"]).assert_success();
+
+    assert!(user_page.exists(), "user-authored page should survive first run without manifest");
+    assert!(prj.root().join("docs/src/pages/.forge-doc-manifest").exists());
+});
+
 // Test that constants and immutables are documented under "Constants" section when only constants
 // are present.
 // fixes <https://github.com/foundry-rs/foundry/issues/4611>
