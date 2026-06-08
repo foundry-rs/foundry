@@ -306,17 +306,17 @@ pub enum KeychainSubcommand {
 
 /// Tempo key-authorization artifact helpers.
 #[derive(Debug, Parser)]
-pub enum KeyAuthSubcommand {
+pub enum KeyAuthorizationSubcommand {
     /// RLP-encode an unsigned Tempo key authorization.
     Encode {
         #[command(flatten)]
-        authorization: KeyAuthArgs,
+        authorization: KeyAuthorizationArgs,
     },
 
     /// Sign and RLP-encode a Tempo key authorization.
     Sign {
         #[command(flatten)]
-        authorization: KeyAuthArgs,
+        authorization: KeyAuthorizationArgs,
 
         #[command(flatten)]
         wallet: Box<WalletOpts>,
@@ -326,9 +326,9 @@ pub enum KeyAuthSubcommand {
     },
 }
 
-/// Common fields for `cast key-auth encode` and `cast key-auth sign`.
+/// Common fields for `cast key-authorization encode` and `cast key-authorization sign`.
 #[derive(Debug, Parser)]
-pub struct KeyAuthArgs {
+pub struct KeyAuthorizationArgs {
     /// Chain ID for replay protection.
     #[arg(long)]
     chain_id: u64,
@@ -715,7 +715,7 @@ impl KeychainSubcommand {
     }
 }
 
-impl KeyAuthSubcommand {
+impl KeyAuthorizationSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::Encode { authorization } => run_key_auth_encode(authorization),
@@ -2702,7 +2702,7 @@ async fn run_authorize(
     Ok(())
 }
 
-fn run_key_auth_encode(args: KeyAuthArgs) -> Result<()> {
+fn run_key_auth_encode(args: KeyAuthorizationArgs) -> Result<()> {
     let authorization = args.into_authorization()?;
     let encoded = encode_key_authorization(&authorization);
 
@@ -2722,7 +2722,7 @@ fn run_key_auth_encode(args: KeyAuthArgs) -> Result<()> {
 }
 
 async fn run_key_auth_sign(
-    args: KeyAuthArgs,
+    args: KeyAuthorizationArgs,
     wallet: WalletOpts,
     browser: BrowserWalletOpts,
 ) -> Result<()> {
@@ -2794,7 +2794,7 @@ fn encode_key_authorization<T: Encodable>(authorization: &T) -> Vec<u8> {
     out
 }
 
-impl KeyAuthArgs {
+impl KeyAuthorizationArgs {
     fn into_authorization(self) -> Result<KeyAuthorization> {
         let (scopes, explicit_scopes_json) =
             if let Some(AuthScopesJson(json_scopes)) = self.scopes_json {
@@ -3812,12 +3812,12 @@ mod tests {
     }
 
     #[test]
-    fn test_key_auth_encode_parses() {
+    fn test_key_authorization_encode_parses() {
         let key = "0x1111111111111111111111111111111111111111";
         let token = "0x20c0000000000000000000000000000000000000";
 
-        let command = KeyAuthSubcommand::try_parse_from([
-            "key-auth",
+        let command = KeyAuthorizationSubcommand::try_parse_from([
+            "key-authorization",
             "encode",
             key,
             "--chain-id",
@@ -3832,8 +3832,9 @@ mod tests {
         .unwrap();
 
         match command {
-            KeyAuthSubcommand::Encode {
-                authorization: KeyAuthArgs { chain_id, key_address, key_type, expiry, limits, .. },
+            KeyAuthorizationSubcommand::Encode {
+                authorization:
+                    KeyAuthorizationArgs { chain_id, key_address, key_type, expiry, limits, .. },
             } => {
                 assert_eq!(chain_id, 4217);
                 assert_eq!(key_address, Address::from_str(key).unwrap());
@@ -3880,8 +3881,8 @@ mod tests {
         authorization.into_signed(PrimitiveSignature::default())
     }
 
-    fn key_auth_args(witness: Option<B256>) -> KeyAuthArgs {
-        KeyAuthArgs {
+    fn key_auth_args(witness: Option<B256>) -> KeyAuthorizationArgs {
+        KeyAuthorizationArgs {
             chain_id: 31337,
             key_address: target_addr(0x42),
             key_type: AuthSignatureType::Secp256k1,
