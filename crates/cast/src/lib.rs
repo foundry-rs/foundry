@@ -2513,13 +2513,67 @@ fn explorer_client(
 #[cfg(test)]
 mod logs_bisecting {
     use super::Cast;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket, SerializedRequest};
     use alloy_network::AnyNetwork;
     use alloy_provider::ProviderBuilder;
+    use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::{Filter, Log};
-    use alloy_transport::mock::Asserter;
+    use alloy_transport::{
+        TransportError, TransportFut,
+        mock::{Asserter, MockTransport},
+    };
+    use std::{
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+    };
+    use tower::Service;
 
     fn log_at(block: u64) -> Log {
         Log { block_number: Some(block), ..Default::default() }
+    }
+
+    /// Mock transport that records the `eth_getLogs` `[fromBlock, toBlock]` ranges it is asked for
+    /// while delegating the actual responses to a FIFO [`Asserter`].
+    #[derive(Clone)]
+    struct RecordingTransport {
+        inner: MockTransport,
+        ranges: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl RecordingTransport {
+        fn new(asserter: Asserter) -> Self {
+            Self { inner: MockTransport::new(asserter), ranges: Arc::new(Mutex::new(Vec::new())) }
+        }
+
+        fn record(&self, req: &SerializedRequest) {
+            if req.method() != "eth_getLogs" {
+                return;
+            }
+            let Some(params) = req.params() else { return };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(params.get()) else { return };
+            let Some(filter) = value.get(0) else { return };
+            let field =
+                |name| filter.get(name).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            self.ranges.lock().unwrap().push((field("fromBlock"), field("toBlock")));
+        }
+    }
+
+    impl Service<RequestPacket> for RecordingTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            match &req {
+                RequestPacket::Single(req) => self.record(req),
+                RequestPacket::Batch(reqs) => reqs.iter().for_each(|req| self.record(req)),
+            }
+            self.inner.call(req)
+        }
     }
 
     // A range-limit failure splits depth-first into [0,1]/[2,3] and aggregates in range order.
@@ -2530,12 +2584,25 @@ mod logs_bisecting {
         asserter.push_success(&vec![log_at(0)]);
         asserter.push_success(&vec![log_at(2)]);
 
-        let provider =
-            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+        let transport = RecordingTransport::new(asserter);
+        let ranges = transport.ranges.clone();
+        let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+            .connect_client(RpcClient::new(transport, true));
 
         let logs = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap();
         let blocks: Vec<_> = logs.iter().map(|l| l.block_number).collect();
         assert_eq!(blocks, vec![Some(0), Some(2)]);
+
+        // The original range fails, then bisection requests exactly the two halves in order.
+        let ranges = ranges.lock().unwrap();
+        assert_eq!(
+            *ranges,
+            vec![
+                ("0x0".to_string(), "0x3".to_string()),
+                ("0x0".to_string(), "0x1".to_string()),
+                ("0x2".to_string(), "0x3".to_string()),
+            ]
+        );
     }
 
     // A single-block failure can't be split, so the error is surfaced.

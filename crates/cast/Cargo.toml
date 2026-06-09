@@ -114,6 +114,7 @@ anvil.workspace = true
 foundry-test-utils.workspace = true
 tempo-chainspec.workspace = true
 path-slash.workspace = true
+tower.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]

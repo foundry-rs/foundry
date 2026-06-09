@@ -2813,6 +2813,7 @@ dependencies = [
  "tempo-contracts",
  "tempo-primitives",
  "tokio",
+ "tower",
  "tracing",
  "url",
  "windows-sys 0.61.2",
