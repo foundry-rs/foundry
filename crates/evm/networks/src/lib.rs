@@ -121,15 +121,15 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Monad), monad: true, ..Default::default() }
     }
 
-    pub fn is_optimism(&self) -> bool {
+    pub const fn is_optimism(&self) -> bool {
         matches!(self.resolved_network(), Some(NetworkVariant::Optimism))
     }
 
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         matches!(self.resolved_network(), Some(NetworkVariant::Tempo))
     }
 
-    pub fn is_monad(&self) -> bool {
+    pub const fn is_monad(&self) -> bool {
         matches!(self.resolved_network(), Some(NetworkVariant::Monad))
     }
 
