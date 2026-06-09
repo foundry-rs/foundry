@@ -28,7 +28,7 @@ pub struct TempoOpts {
     ///
     /// When set, Foundry resolves the session from `$TEMPO_HOME/wallet/sessions.toml` and signs
     /// Tempo transactions with the session's temporary access key on behalf of its root account.
-    #[arg(long = "tempo.session", value_name = "SESSION_ID")]
+    #[arg(long = "tempo.session", id = "tempo_session", value_name = "SESSION_ID")]
     pub session: Option<B256>,
 
     /// Fee token address for Tempo transactions.

@@ -985,14 +985,14 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to print `console.log` invocations to stderr.
+    /// Sets whether to print `console.log` invocations to stdout.
     #[must_use]
     pub const fn with_print_logs(mut self, print_logs: bool) -> Self {
         self.print_logs = print_logs;
         self
     }
 
-    /// Sets whether to print traces to stderr.
+    /// Sets whether to print traces to stdout.
     #[must_use]
     pub const fn with_print_traces(mut self, print_traces: bool) -> Self {
         self.print_traces = print_traces;
@@ -1040,7 +1040,7 @@ impl NodeConfig {
             foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
         }
         if !self.silent {
-            sh_eprintln!("{}", self.as_string(fork))?;
+            sh_println!("{}", self.as_string(fork))?;
         }
         Ok(())
     }
@@ -1100,7 +1100,7 @@ impl NodeConfig {
         self
     }
 
-    /// Makes the node silent to not emit any banner/status output
+    /// Makes the node silent to not emit anything on stdout
     #[must_use]
     pub const fn silent(self) -> Self {
         self.set_silent(true)
@@ -1657,7 +1657,14 @@ pub struct PruneStateHistoryConfig {
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported
     pub const fn is_state_history_supported(&self) -> bool {
-        !self.enabled || self.max_memory_history.is_some()
+        if !self.enabled {
+            return true;
+        }
+
+        match self.max_memory_history {
+            Some(limit) => limit > 0,
+            None => false,
+        }
     }
 
     /// Returns true if this setting was enabled.
@@ -1666,7 +1673,11 @@ impl PruneStateHistoryConfig {
     }
 
     pub fn from_args(val: Option<Option<usize>>) -> Self {
-        val.map(|max_memory_history| Self { enabled: true, max_memory_history }).unwrap_or_default()
+        val.map(|max_memory_history| Self {
+            enabled: true,
+            max_memory_history: max_memory_history.filter(|limit| *limit > 0),
+        })
+        .unwrap_or_default()
     }
 }
 
@@ -1781,6 +1792,9 @@ mod tests {
         let config = PruneStateHistoryConfig::default();
         assert!(config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(None));
+        assert!(!config.is_state_history_supported());
+        let config = PruneStateHistoryConfig::from_args(Some(Some(0)));
+        assert!(config.is_config_enabled());
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());

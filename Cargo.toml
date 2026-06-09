@@ -19,6 +19,7 @@ members = [
     "crates/evm/evm/",
     "crates/evm/fuzz/",
     "crates/evm/sancov/",
+    "crates/evm/symbolic/",
     "crates/evm/hardforks/",
     "crates/evm/traces/",
     "crates/fmt/",
@@ -333,6 +334,7 @@ foundry-evm-hardforks = { path = "crates/evm/hardforks", default-features = fals
 foundry-evm-networks = { path = "crates/evm/networks", default-features = false }
 foundry-evm-fuzz = { path = "crates/evm/fuzz", default-features = false }
 foundry-evm-sancov = { path = "crates/evm/sancov" }
+foundry-evm-symbolic = { path = "crates/evm/symbolic", default-features = false }
 foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils", default-features = false }
@@ -509,7 +511,7 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "ea69acd3a6c9c6f7c328b3e99c03b678cabf07b3", default-features = false, features = [
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "0d57f96ff670b290801b2ead9e0f1d637e0f2b3e", default-features = false, features = [
     "tempo",
     "client",
     "reqwest-rustls-tls",
