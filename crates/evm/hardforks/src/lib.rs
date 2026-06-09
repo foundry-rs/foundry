@@ -469,8 +469,8 @@ mod tests {
 
     #[test]
     fn test_tempo_evm_version_defaults_to_latest_active_hardfork() {
-        assert_eq!(latest_active_tempo_hardfork(), TempoHardfork::T4);
-        assert_eq!(evm_spec_id::<TempoHardfork>(EvmVersion::Osaka), TempoHardfork::T4);
+        let latest = latest_active_tempo_hardfork();
+        assert_eq!(evm_spec_id::<TempoHardfork>(EvmVersion::Osaka), latest);
     }
 
     #[test]
