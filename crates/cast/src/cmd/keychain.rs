@@ -337,6 +337,7 @@ pub struct KeyAuthorizationArgs {
     key_address: Address,
 
     /// Type of access key being authorized: secp256k1, p256, or webauthn.
+    /// The root signature type is determined by the configured signer.
     #[arg(long, default_value = "secp256k1", value_parser = parse_auth_signature_type)]
     key_type: AuthSignatureType,
 
