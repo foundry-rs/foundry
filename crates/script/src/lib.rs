@@ -16,7 +16,7 @@ use crate::{broadcast::BundledState, runner::ScriptRunner};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
-    Address, B256, Bytes, Log, U256, hex,
+    Address, Bytes, Log, U256, hex,
     map::{AddressHashMap, HashMap},
 };
 use alloy_signer::Signer;
@@ -81,6 +81,9 @@ mod session;
 mod simulate;
 mod transaction;
 mod verify;
+mod wallet_session;
+
+pub use wallet_session::ScriptWalletSessionArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
@@ -141,11 +144,9 @@ pub struct ScriptArgs {
     #[command(flatten)]
     pub tempo: TempoOpts,
 
-    /// Use a live Tempo wallet session for signing.
-    ///
-    /// This is a forge-script convenience alias for `--tempo.session`.
-    #[arg(long = "session", value_name = "SESSION_ID", conflicts_with = "tempo_session")]
-    pub session: Option<B256>,
+    /// Create a temporary Tempo wallet session, run this script with it, then revoke it.
+    #[command(flatten)]
+    pub wallet_session: ScriptWalletSessionArgs,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -250,14 +251,8 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    fn normalized_tempo(&self) -> TempoOpts {
-        let mut tempo = self.tempo.clone();
-        tempo.session = self.session.or(tempo.session);
-        tempo
-    }
-
     fn has_tempo_session(&self) -> Result<bool> {
-        Ok(self.session.is_some() || self.tempo.session_id()?.is_some())
+        Ok(self.tempo.session_id()?.is_some())
     }
 
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
@@ -281,7 +276,7 @@ impl ScriptArgs {
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
-        let mut tempo = args.normalized_tempo();
+        let mut tempo = args.tempo.clone();
 
         let session_sender = if args.resume {
             None
@@ -325,6 +320,10 @@ impl ScriptArgs {
     #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
+
+        if self.wallet_session.enabled {
+            return self.run_wallet_session_wrapper();
+        }
 
         let (config, evm_opts) = self.resolved_evm_opts().await?;
 
@@ -878,7 +877,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
-    use alloy_primitives::address;
+    use alloy_primitives::{B256, address};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
     use foundry_common::tempo::{
         KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
@@ -893,8 +892,7 @@ mod tests {
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
     const SESSION_ID_HEX: &str =
         "0x1111111111111111111111111111111111111111111111111111111111111111";
-    const OTHER_SESSION_ID_HEX: &str =
-        "0x2222222222222222222222222222222222222222222222222222222222222222";
+    const SESSION_ROOT_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn active_session_entry(
@@ -946,6 +944,10 @@ mod tests {
         }
     }
 
+    fn session_root() -> Address {
+        SESSION_ROOT_ADDRESS.parse().unwrap()
+    }
+
     #[test]
     fn can_parse_sig() {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
@@ -977,15 +979,12 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--tempo.sponsor",
-            "0x1111111111111111111111111111111111111111",
+            SESSION_ROOT_ADDRESS,
             "--tempo.sponsor-signer",
             "env://TEMPO_SPONSOR_PK",
         ]);
 
-        assert_eq!(
-            args.tempo.sponsor,
-            Some(address!("0x1111111111111111111111111111111111111111"))
-        );
+        assert_eq!(args.tempo.sponsor, Some(session_root()));
         assert_eq!(args.tempo.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
     }
 
@@ -1009,44 +1008,11 @@ mod tests {
         assert_eq!(args.tempo.session, Some(B256::from([0x11; 32])),);
     }
 
-    #[test]
-    fn can_parse_session_alias_for_tempo_session() {
-        let args =
-            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--session", SESSION_ID_HEX]);
-
-        assert_eq!(args.session, Some(B256::from([0x11; 32])));
-        assert_eq!(args.normalized_tempo().session, Some(B256::from([0x11; 32])));
-    }
-
-    #[test]
-    fn session_alias_conflicts_with_tempo_session_opt() {
-        let err = ScriptArgs::try_parse_from([
-            "foundry-cli",
-            "Contract.sol",
-            "--session",
-            SESSION_ID_HEX,
-            "--tempo.session",
-            OTHER_SESSION_ID_HEX,
-        ])
-        .unwrap_err();
-
-        assert!(err.to_string().contains("cannot be used with"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn session_alias_selects_tempo_network() {
-        let args =
-            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--session", SESSION_ID_HEX]);
-        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
-
-        assert!(evm_opts.networks.is_tempo());
-    }
-
     #[tokio::test]
     async fn tempo_session_sets_script_sender_to_root_account() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x22; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1072,7 +1038,7 @@ mod tests {
     async fn tempo_session_resume_multi_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x55; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1096,7 +1062,7 @@ mod tests {
     async fn tempo_session_resume_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x77; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1119,7 +1085,7 @@ mod tests {
     async fn tempo_session_non_resume_multi_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x66; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1142,7 +1108,7 @@ mod tests {
     async fn tempo_session_initial_broadcast_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x88; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1179,7 +1145,7 @@ mod tests {
     async fn tempo_session_rejects_explicit_script_wallet_signer() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x33; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
