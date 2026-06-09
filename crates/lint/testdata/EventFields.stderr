@@ -30,6 +30,14 @@ LL │     event Mint(address to, uint256 tokenId);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
+note[event-fields]: event has unindexed fields that may benefit from being indexed: receiver (address payable)
+   ╭▸ ROOT/testdata/EventFields.sol:LL:CC
+   │
+LL │     event PayableAddr(address payable receiver);
+   │           ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/event-fields
+
 note[event-fields]: event has unindexed fields that may benefit from being indexed: a (address), b (address), c (address), d (address)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │

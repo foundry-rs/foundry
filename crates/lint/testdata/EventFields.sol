@@ -36,7 +36,7 @@ contract EventFieldsTest {
 
     event SnakeId(bytes32 token_id);
 
-    event PayableAddr(address payable receiver);
+    event PayableAddr(address payable receiver); //~NOTE: event has unindexed fields that may benefit from being indexed: receiver (address payable)
 
     // Anonymous events allow up to 4 indexed.
     event AnonFour(address a, address b, address c, address d) anonymous; //~NOTE: event has unindexed fields that may benefit from being indexed: a (address), b (address), c (address), d (address)

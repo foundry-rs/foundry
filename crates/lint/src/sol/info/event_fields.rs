@@ -53,7 +53,7 @@ fn check_event<'ast>(ctx: &LintContext, event: &'ast ItemEvent<'ast>) {
 
 /// Returns true when the parameter is an `address`.
 const fn is_filterable_field(param: &VariableDefinition<'_>) -> bool {
-    matches!(&param.ty.kind, TypeKind::Elementary(ElementaryType::Address(false)))
+    matches!(&param.ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
 
 /// Render a parameter as `name (type)` (or `parameter #N (type)` if unnamed) for the diagnostic.

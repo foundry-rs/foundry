@@ -1428,6 +1428,9 @@ impl<'hir> InternalCallsiteCollector<'_, 'hir> {
 
         let arity = func.parameters.len();
         let facts = self.out.entry(fid).or_insert_with(|| ParamCallsiteFacts::new(arity));
+        if facts.unknown {
+            return;
+        }
         let Some(call_args) = internal_call_args(self.hir, func, args) else {
             facts.unknown = true;
             return;
