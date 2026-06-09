@@ -252,10 +252,6 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    fn normalized_tempo(&self) -> TempoOpts {
-        self.tempo.clone()
-    }
-
     fn has_tempo_session(&self) -> Result<bool> {
         Ok(self.tempo.session_id()?.is_some())
     }
@@ -281,7 +277,7 @@ impl ScriptArgs {
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let args = self;
-        let mut tempo = args.normalized_tempo();
+        let mut tempo = args.tempo.clone();
 
         let session_sender = if args.resume {
             None
@@ -696,43 +692,34 @@ impl ScriptArgs {
         let session = &self.wallet_session;
         let mut args = vec![OsString::from("wallet"), OsString::from("session")];
         if let Some(root) = session.root {
-            args.push("--root".into());
-            args.push(root.to_string().into());
-            args.push("--from".into());
-            args.push(root.to_string().into());
+            push_arg(&mut args, "--root", root.to_string());
+            push_arg(&mut args, "--from", root.to_string());
         }
         push_opt_arg(&mut args, "--expires", session.expires.as_deref());
 
         for scope in &session.scopes {
-            args.push("--scope".into());
-            args.push(scope.into());
+            push_arg(&mut args, "--scope", scope);
         }
         if let Some(target) = session.target {
-            args.push("--target".into());
-            args.push(target.to_string().into());
+            push_arg(&mut args, "--target", target.to_string());
         }
         for selector in &session.selectors {
-            args.push("--selector".into());
-            args.push(selector.into());
+            push_arg(&mut args, "--selector", selector);
         }
         for limit in &session.spend_limits {
-            args.push("--spend-limit".into());
-            args.push(limit.into());
+            push_arg(&mut args, "--spend-limit", limit);
         }
 
         if let Some(rpc_url) = evm_opts.fork_url.as_ref() {
-            args.push("--rpc-url".into());
-            args.push(rpc_url.into());
+            push_arg(&mut args, "--rpc-url", rpc_url);
         }
         if let Some(chain_id) = evm_opts.env.chain_id {
-            args.push("--chain".into());
-            args.push(chain_id.to_string().into());
+            push_arg(&mut args, "--chain", chain_id.to_string());
         }
 
         session.push_root_signer_args(&mut args);
 
-        args.push("--for".into());
-        args.push(inner.into());
+        push_arg(&mut args, "--for", inner);
 
         Ok(WalletSessionCommand { program: cast_program, args })
     }
@@ -914,12 +901,43 @@ pub struct ScriptWalletSessionArgs {
 }
 
 impl ScriptWalletSessionArgs {
+    const STRIP_BOOL_ARGS: &'static [&'static str] = &[
+        "--session",
+        "--session-interactive",
+        "--session-ledger",
+        "--session-trezor",
+        "--session-aws",
+        "--session-gcp",
+        "--session-turnkey",
+    ];
+
+    const STRIP_VALUE_ARGS: &'static [&'static str] = &[
+        "--session-root",
+        "--session-expires",
+        "--session-scope",
+        "--session-target",
+        "--session-selector",
+        "--session-spend-limit",
+        "--session-private-key",
+        "--session-mnemonic",
+        "--session-mnemonic-passphrase",
+        "--session-hd-path",
+        "--session-mnemonic-index",
+        "--session-keystore",
+        "--session-account",
+        "--session-password",
+        "--session-password-file",
+    ];
+
     fn validate(&self, args: &ScriptArgs) -> Result<()> {
         if !self.enabled {
             return Ok(());
         }
         if !args.should_broadcast() {
             eyre::bail!("forge script --session requires --broadcast or --resume");
+        }
+        if args.debug {
+            eyre::bail!("forge script --session cannot be used with --debug");
         }
         Ok(())
     }
@@ -964,10 +982,14 @@ struct WalletSessionCommand {
     args: Vec<OsString>,
 }
 
+fn push_arg(args: &mut Vec<OsString>, name: &'static str, value: impl Into<OsString>) {
+    args.push(name.into());
+    args.push(value.into());
+}
+
 fn push_opt_arg(args: &mut Vec<OsString>, name: &'static str, value: Option<&str>) {
     if let Some(value) = value {
-        args.push(name.into());
-        args.push(value.into());
+        push_arg(args, name, value);
     }
 }
 
@@ -1003,11 +1025,11 @@ where
             continue;
         };
 
-        if WRAPPER_BOOL_ARGS.contains(&arg_str) {
+        if ScriptWalletSessionArgs::STRIP_BOOL_ARGS.contains(&arg_str) {
             continue;
         }
         let flag = arg_str.split_once('=').map_or(arg_str, |(flag, _)| flag);
-        if WRAPPER_VALUE_ARGS.contains(&flag) {
+        if ScriptWalletSessionArgs::STRIP_VALUE_ARGS.contains(&flag) {
             if arg_str.contains('=') {
                 continue;
             }
@@ -1020,34 +1042,6 @@ where
 
     Ok(out)
 }
-
-const WRAPPER_BOOL_ARGS: &[&str] = &[
-    "--session",
-    "--session-interactive",
-    "--session-ledger",
-    "--session-trezor",
-    "--session-aws",
-    "--session-gcp",
-    "--session-turnkey",
-];
-
-const WRAPPER_VALUE_ARGS: &[&str] = &[
-    "--session-root",
-    "--session-expires",
-    "--session-scope",
-    "--session-target",
-    "--session-selector",
-    "--session-spend-limit",
-    "--session-private-key",
-    "--session-mnemonic",
-    "--session-mnemonic-passphrase",
-    "--session-hd-path",
-    "--session-mnemonic-index",
-    "--session-keystore",
-    "--session-account",
-    "--session-password",
-    "--session-password-file",
-];
 
 fn quote_command(args: &[OsString]) -> Result<String> {
     args.iter().map(quote_arg).collect::<Result<Vec<_>>>().map(|args| args.join(" "))
@@ -1319,7 +1313,7 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::{NamedChain, UnresolvedEnvVarError};
-    use std::{fs, sync::LazyLock};
+    use std::{borrow::Cow, fs, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
 
@@ -1378,20 +1372,37 @@ mod tests {
         }
     }
 
-    fn option_value<'a>(args: &'a [std::borrow::Cow<'_, str>], option: &str) -> Option<&'a str> {
+    fn option_value<'a>(args: &'a [Cow<'_, str>], option: &str) -> Option<&'a str> {
         args.windows(2)
             .find_map(|window| (window[0].as_ref() == option).then_some(window[1].as_ref()))
     }
 
-    fn wallet_session_command<I>(args: &ScriptArgs, raw_args: I) -> Result<WalletSessionCommand>
-    where
-        I: IntoIterator<Item = OsString>,
-    {
+    fn parse_script_args(args: &[&str]) -> ScriptArgs {
+        ScriptArgs::parse_from(["foundry-cli"].into_iter().chain(args.iter().copied()))
+    }
+
+    fn raw_forge_script_args<'a>(args: &'a [&'a str]) -> impl Iterator<Item = OsString> + 'a {
+        ["forge", "script"].into_iter().chain(args.iter().copied()).map(OsString::from)
+    }
+
+    fn wallet_session_command(
+        args: &ScriptArgs,
+        raw_args: &[&str],
+    ) -> Result<WalletSessionCommand> {
         args.wallet_session_command_from_raw_args(
-            raw_args,
+            raw_forge_script_args(raw_args),
             OsString::from("/tmp/forge"),
             OsString::from("/tmp/cast"),
         )
+    }
+
+    fn command_args(command: &WalletSessionCommand) -> Vec<Cow<'_, str>> {
+        command.args.iter().map(|arg| arg.to_string_lossy()).collect()
+    }
+
+    fn inner_for_command<'a>(args: &'a [Cow<'_, str>]) -> &'a str {
+        let for_pos = args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
+        args[for_pos + 1].as_ref()
     }
 
     #[test]
@@ -1505,8 +1516,7 @@ mod tests {
 
     #[test]
     fn session_wrapper_rejects_dry_run() {
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
+        let raw_args = [
             "Deploy.s.sol",
             "--session",
             "--session-root",
@@ -1515,15 +1525,33 @@ mod tests {
             "10m",
             "--session-scope",
             "0x2222222222222222222222222222222222222222",
-        ]);
+        ];
+        let args = parse_script_args(&raw_args);
 
-        let err = wallet_session_command(
-            &args,
-            ["forge", "script", "Deploy.s.sol", "--session"].into_iter().map(OsString::from),
-        )
-        .unwrap_err();
+        let err = wallet_session_command(&args, &raw_args).unwrap_err();
 
         assert!(err.to_string().contains("requires --broadcast or --resume"), "{err}");
+    }
+
+    #[test]
+    fn session_wrapper_rejects_debug() {
+        let raw_args = [
+            "Deploy.s.sol",
+            "--broadcast",
+            "--debug",
+            "--session",
+            "--session-root",
+            "0x1111111111111111111111111111111111111111",
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+        ];
+        let args = parse_script_args(&raw_args);
+
+        let err = wallet_session_command(&args, &raw_args).unwrap_err();
+
+        assert!(err.to_string().contains("cannot be used with --debug"), "{err}");
     }
 
     #[test]
@@ -1532,29 +1560,7 @@ mod tests {
         let target = address!("0x2222222222222222222222222222222222222222");
         let root_arg = root.to_string();
         let target_arg = target.to_string();
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Deploy.s.sol",
-            "--broadcast",
-            "--rpc-url",
-            "http://127.0.0.1:8545",
-            "--chain",
-            "4217",
-            "--session",
-            "--session-root",
-            &root_arg,
-            "--session-expires",
-            "10m",
-            "--session-target",
-            &target_arg,
-            "--session-selector",
-            "register(address)",
-            "--session-private-key",
-            SESSION_PRIVATE_KEY,
-        ]);
         let raw_args = [
-            "forge",
-            "script",
             "Deploy.s.sol",
             "--broadcast",
             "--rpc-url",
@@ -1572,14 +1578,13 @@ mod tests {
             "register(address)",
             "--session-private-key",
             SESSION_PRIVATE_KEY,
-        ]
-        .into_iter()
-        .map(OsString::from);
+        ];
+        let args = parse_script_args(&raw_args);
 
-        let command = wallet_session_command(&args, raw_args).unwrap();
+        let command = wallet_session_command(&args, &raw_args).unwrap();
 
         assert_eq!(command.program, OsString::from("/tmp/cast"));
-        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
+        let command_args = command_args(&command);
         assert_eq!(command_args[0], "wallet");
         assert_eq!(command_args[1], "session");
         assert!(command_args.contains(&"--root".into()));
@@ -1592,8 +1597,7 @@ mod tests {
         assert!(command_args.contains(&"--private-key".into()));
         assert!(command_args.contains(&SESSION_PRIVATE_KEY.into()));
 
-        let for_pos = command_args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
-        let inner = command_args[for_pos + 1].as_ref();
+        let inner = inner_for_command(&command_args);
         assert!(inner.starts_with("/tmp/forge script Deploy.s.sol --broadcast"), "{inner}");
         assert!(inner.contains("--rpc-url http://127.0.0.1:8545"), "{inner}");
         assert!(inner.contains("--chain 4217"), "{inner}");
@@ -1618,23 +1622,7 @@ mod tests {
         let root = address!("0x1111111111111111111111111111111111111111");
         let root_arg = root.to_string();
         let project_root_arg = project_root.to_string_lossy();
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Deploy.s.sol",
-            "--root",
-            &project_root_arg,
-            "--broadcast",
-            "--session",
-            "--session-root",
-            &root_arg,
-            "--session-expires",
-            "10m",
-            "--session-scope",
-            "0x2222222222222222222222222222222222222222",
-        ]);
         let raw_args = [
-            "forge",
-            "script",
             "Deploy.s.sol",
             "--root",
             &project_root_arg,
@@ -1646,40 +1634,23 @@ mod tests {
             "10m",
             "--session-scope",
             "0x2222222222222222222222222222222222222222",
-        ]
-        .into_iter()
-        .map(OsString::from);
+        ];
+        let args = parse_script_args(&raw_args);
 
-        let command = wallet_session_command(&args, raw_args).unwrap();
+        let command = wallet_session_command(&args, &raw_args).unwrap();
 
-        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
+        let command_args = command_args(&command);
         assert_eq!(option_value(&command_args, "--rpc-url"), Some("http://127.0.0.1:8545"));
         assert_eq!(option_value(&command_args, "--chain"), Some("4217"));
 
-        let for_pos = command_args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
-        let inner = command_args[for_pos + 1].as_ref();
+        let inner = inner_for_command(&command_args);
         assert!(inner.contains("--root "), "{inner}");
         assert!(inner.contains(project_root.to_string_lossy().as_ref()), "{inner}");
     }
 
     #[test]
     fn session_wrapper_leaves_browser_for_inner_forge_validation() {
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Deploy.s.sol",
-            "--broadcast",
-            "--session",
-            "--session-root",
-            "0x1111111111111111111111111111111111111111",
-            "--session-expires",
-            "10m",
-            "--session-scope",
-            "0x2222222222222222222222222222222222222222",
-            "--browser",
-        ]);
         let raw_args = [
-            "forge",
-            "script",
             "Deploy.s.sol",
             "--broadcast",
             "--session",
@@ -1690,37 +1661,19 @@ mod tests {
             "--session-scope",
             "0x2222222222222222222222222222222222222222",
             "--browser",
-        ]
-        .into_iter()
-        .map(OsString::from);
+        ];
+        let args = parse_script_args(&raw_args);
 
-        let command = wallet_session_command(&args, raw_args).unwrap();
-        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
-        let for_pos = command_args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
-        let inner = command_args[for_pos + 1].as_ref();
+        let command = wallet_session_command(&args, &raw_args).unwrap();
+        let command_args = command_args(&command);
+        let inner = inner_for_command(&command_args);
 
         assert!(inner.contains("--browser"), "{inner}");
     }
 
     #[test]
     fn session_wrapper_leaves_script_wallet_signers_for_inner_forge_validation() {
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Deploy.s.sol",
-            "--broadcast",
-            "--session",
-            "--session-root",
-            "0x1111111111111111111111111111111111111111",
-            "--session-expires",
-            "10m",
-            "--session-scope",
-            "0x2222222222222222222222222222222222222222",
-            "--private-key",
-            SESSION_PRIVATE_KEY,
-        ]);
         let raw_args = [
-            "forge",
-            "script",
             "Deploy.s.sol",
             "--broadcast",
             "--session",
@@ -1732,14 +1685,12 @@ mod tests {
             "0x2222222222222222222222222222222222222222",
             "--private-key",
             SESSION_PRIVATE_KEY,
-        ]
-        .into_iter()
-        .map(OsString::from);
+        ];
+        let args = parse_script_args(&raw_args);
 
-        let command = wallet_session_command(&args, raw_args).unwrap();
-        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
-        let for_pos = command_args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
-        let inner = command_args[for_pos + 1].as_ref();
+        let command = wallet_session_command(&args, &raw_args).unwrap();
+        let command_args = command_args(&command);
+        let inner = inner_for_command(&command_args);
 
         assert!(inner.contains("--private-key"), "{inner}");
         assert!(!inner.contains("--session-private-key"), "{inner}");
@@ -1747,21 +1698,7 @@ mod tests {
 
     #[test]
     fn session_wrapper_does_not_infer_root_from_sender() {
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "Deploy.s.sol",
-            "--broadcast",
-            "--session",
-            "--sender",
-            "0x1111111111111111111111111111111111111111",
-            "--session-expires",
-            "10m",
-            "--session-scope",
-            "0x2222222222222222222222222222222222222222",
-        ]);
         let raw_args = [
-            "forge",
-            "script",
             "Deploy.s.sol",
             "--broadcast",
             "--session",
@@ -1771,30 +1708,25 @@ mod tests {
             "10m",
             "--session-scope",
             "0x2222222222222222222222222222222222222222",
-        ]
-        .into_iter()
-        .map(OsString::from);
+        ];
+        let args = parse_script_args(&raw_args);
 
-        let command = wallet_session_command(&args, raw_args).unwrap();
-        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
+        let command = wallet_session_command(&args, &raw_args).unwrap();
+        let command_args = command_args(&command);
         assert_eq!(option_value(&command_args, "--root"), None);
         assert_eq!(option_value(&command_args, "--from"), None);
 
-        let for_pos = command_args.iter().position(|arg| arg.as_ref() == "--for").unwrap();
-        let inner = command_args[for_pos + 1].as_ref();
+        let inner = inner_for_command(&command_args);
         assert!(inner.contains("--sender 0x1111111111111111111111111111111111111111"), "{inner}");
     }
 
     #[test]
     fn session_wrapper_leaves_session_policy_requirements_to_cast() {
-        let args =
-            ScriptArgs::parse_from(["foundry-cli", "Deploy.s.sol", "--broadcast", "--session"]);
-        let raw_args = ["forge", "script", "Deploy.s.sol", "--broadcast", "--session"]
-            .into_iter()
-            .map(OsString::from);
+        let raw_args = ["Deploy.s.sol", "--broadcast", "--session"];
+        let args = parse_script_args(&raw_args);
 
-        let command = wallet_session_command(&args, raw_args).unwrap();
-        let command_args = command.args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>();
+        let command = wallet_session_command(&args, &raw_args).unwrap();
+        let command_args = command_args(&command);
 
         assert_eq!(option_value(&command_args, "--root"), None);
         assert_eq!(option_value(&command_args, "--expires"), None);
