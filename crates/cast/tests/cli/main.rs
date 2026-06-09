@@ -31,8 +31,6 @@ mod selectors;
 const MONAD_RESERVE_BALANCE_ADDRESS: Address =
     address!("0x0000000000000000000000000000000000001001");
 const MONAD_DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
-const ABI_ENCODED_FALSE: &str =
-    "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
@@ -3936,7 +3934,8 @@ casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
         .stdout_lossy();
 
     assert!(output.contains("Traces:"), "{output}");
-    assert!(output.contains(ABI_ENCODED_FALSE), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
 });
 
 casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
@@ -3961,7 +3960,8 @@ casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
         .stdout_lossy();
 
     assert!(output.contains("Transaction successfully executed."), "{output}");
-    assert!(output.contains(ABI_ENCODED_FALSE), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
 });
 
 // tests cast send gas estimate execution failure message contains decoded custom error
