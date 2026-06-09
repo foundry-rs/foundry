@@ -1,9 +1,6 @@
 //! Test outcomes.
 
-use crate::{
-    fuzz::{BaseCounterExample, FuzzedCases},
-    gas_report::GasReport,
-};
+use crate::{fuzz::BaseCounterExample, gas_report::GasReport};
 use alloy_primitives::{
     Address, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
@@ -1191,7 +1188,8 @@ impl TestResult {
         invariant_count: Option<usize>,
         invariant_handler_failures: Vec<InvariantFailure>,
         counterexample: Option<CounterExample>,
-        cases: Vec<FuzzedCases>,
+        runs: usize,
+        calls: usize,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
@@ -1199,8 +1197,8 @@ impl TestResult {
         optimization_best_value: Option<I256>,
     ) {
         self.kind = TestKind::Invariant {
-            runs: cases.len(),
-            calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
+            runs,
+            calls,
             reverts,
             workers: workers.max(1),
             metrics,

@@ -1768,13 +1768,18 @@ mod tests {
         assert_eq!(captured.len(), 2);
 
         let open: SessionCredentialPayload = captured[0].payload_as().expect("Open payload");
-        let (open_channel_id, open_transaction, open_cumulative) = match open {
+        let (open_channel_id, open_transaction, open_cumulative, open_descriptor) = match open {
             SessionCredentialPayload::Open {
-                channel_id, transaction, cumulative_amount, ..
-            } => (channel_id, transaction, cumulative_amount),
+                channel_id,
+                transaction,
+                cumulative_amount,
+                descriptor,
+                ..
+            } => (channel_id, transaction, cumulative_amount, descriptor),
             other => panic!("first credential must be Open, got {other:?}"),
         };
         assert_eq!(open_cumulative, "1000");
+        let open_descriptor = open_descriptor.expect("precompile Open must include descriptor");
 
         let tx_bytes = alloy_primitives::hex::decode(&open_transaction).expect("hex tx");
         let envelope =
@@ -1794,14 +1799,18 @@ mod tests {
         assert_eq!(decoded.token, currency);
 
         let voucher: SessionCredentialPayload = captured[1].payload_as().expect("Voucher payload");
-        let (voucher_channel_id, voucher_cumulative) = match voucher {
-            SessionCredentialPayload::Voucher { channel_id, cumulative_amount, .. } => {
-                (channel_id, cumulative_amount)
-            }
+        let (voucher_channel_id, voucher_cumulative, voucher_descriptor) = match voucher {
+            SessionCredentialPayload::Voucher {
+                channel_id, cumulative_amount, descriptor, ..
+            } => (channel_id, cumulative_amount, descriptor),
             other => panic!("second credential must be Voucher, got {other:?}"),
         };
         assert_eq!(voucher_channel_id, open_channel_id);
         assert_eq!(voucher_cumulative, "2000");
+        assert_eq!(
+            voucher_descriptor.expect("precompile Voucher must include descriptor"),
+            open_descriptor
+        );
 
         handle.abort();
     }

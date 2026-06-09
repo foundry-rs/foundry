@@ -663,11 +663,11 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
-    /// Disable printing of `console.log` invocations to stderr.
+    /// Disable printing of `console.log` invocations to stdout.
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
-    /// Enable printing of traces for executed transactions and `eth_call` to stderr.
+    /// Enable printing of traces for executed transactions and `eth_call` to stdout.
     #[arg(long, visible_alias = "enable-trace-printing")]
     pub print_traces: bool,
 
