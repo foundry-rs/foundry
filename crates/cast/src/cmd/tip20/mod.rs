@@ -1,5 +1,6 @@
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key, validate_sponsor_url},
+    tempo,
     tx::{CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -11,7 +12,7 @@ use alloy_signer::Signer;
 use clap::Parser;
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder, provider::ProviderBuilder, tempo::TEMPO_BROWSER_GAS_BUFFER,
@@ -179,8 +180,18 @@ impl Tip20Subcommand {
 
 pub(super) async fn resolve_tip20_signer(
     send_tx: &SendTxOpts,
+    tx_params: &TxParams,
 ) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
-    send_tx.eth.wallet.maybe_signer().await
+    if tx_params.tempo.session_id()?.is_none() {
+        return send_tx.eth.wallet.maybe_signer().await;
+    }
+
+    tempo::ensure_session_not_browser(&tx_params.tempo, send_tx.browser.browser)?;
+
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let chain = get_chain(config.chain, &provider).await?;
+    tempo::resolve_session_or_wallet_signer(&tx_params.tempo, &send_tx.eth.wallet, chain.id()).await
 }
 
 pub(super) async fn send_tip20_transaction(

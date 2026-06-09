@@ -86,7 +86,7 @@ mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 tokio-tungstenite.workspace = true
 futures.workspace = true
-alloy-signer-local.workspace = true
+alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
 sha2 = "0.10"
 tempfile.workspace = true

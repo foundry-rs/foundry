@@ -90,6 +90,11 @@ pub trait TestFunctionExt {
         self.test_function_kind().is_invariant_test()
     }
 
+    /// Returns `true` if this function is a symbolic test.
+    fn is_symbolic_test(&self) -> bool {
+        self.test_function_kind().is_symbolic_test()
+    }
+
     /// Returns `true` if this function is an `afterInvariant` function.
     fn is_after_invariant(&self) -> bool {
         self.test_function_kind().is_after_invariant()
@@ -158,6 +163,8 @@ pub enum TestFunctionKind {
     InvariantTest,
     /// `table*`, with arguments.
     TableTest,
+    /// `check*` or `prove*`, when selected by symbolic test mode.
+    SymbolicTest,
     /// `afterInvariant`.
     AfterInvariant,
     /// `fixture*`.
@@ -199,6 +206,7 @@ impl TestFunctionKind {
             Self::FuzzTest { should_fail: true } => "fuzz fail",
             Self::InvariantTest => "invariant",
             Self::TableTest => "table",
+            Self::SymbolicTest => "symbolic",
             Self::AfterInvariant => "afterInvariant",
             Self::Fixture => "fixture",
             Self::Unknown => "unknown",
@@ -216,7 +224,11 @@ impl TestFunctionKind {
     pub const fn is_any_test(&self) -> bool {
         matches!(
             self,
-            Self::UnitTest { .. } | Self::FuzzTest { .. } | Self::TableTest | Self::InvariantTest
+            Self::UnitTest { .. }
+                | Self::FuzzTest { .. }
+                | Self::TableTest
+                | Self::InvariantTest
+                | Self::SymbolicTest
         )
     }
 
@@ -248,6 +260,12 @@ impl TestFunctionKind {
     #[inline]
     pub const fn is_table_test(&self) -> bool {
         matches!(self, Self::TableTest)
+    }
+
+    /// Returns `true` if this function is a symbolic test.
+    #[inline]
+    pub const fn is_symbolic_test(&self) -> bool {
+        matches!(self, Self::SymbolicTest)
     }
 
     /// Returns `true` if this function is an `afterInvariant` function.
