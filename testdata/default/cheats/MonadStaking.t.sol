@@ -40,8 +40,7 @@ contract MonadStakingTest is Test {
     MonadVm constant monad = MonadVm(0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA);
 
     function setUp() public {
-        (bool ok, bytes memory ret) =
-            address(STAKING).call(abi.encodeWithSelector(IMonadStaking.getEpoch.selector));
+        (bool ok, bytes memory ret) = address(STAKING).call(abi.encodeWithSelector(IMonadStaking.getEpoch.selector));
         if (!ok || ret.length < 64) {
             vm.skip(true, "Monad staking precompile is only available with --network monad");
         }
@@ -74,8 +73,8 @@ contract MonadStakingTest is Test {
             uint256 unclaimedRewards
         )
     {
-        (bool ok, bytes memory ret) =
-            address(STAKING).call(abi.encodeWithSelector(IMonadStaking.getValidator.selector, valId));
+        (bool ok, bytes memory ret) = address(STAKING)
+            .call(abi.encodeWithSelector(IMonadStaking.getValidator.selector, valId));
         require(ok, "getValidator call failed");
         (authAddress, flags, stake, accRewardPerToken, commission, unclaimedRewards) =
             abi.decode(ret, (address, uint64, uint256, uint256, uint256, uint256));
