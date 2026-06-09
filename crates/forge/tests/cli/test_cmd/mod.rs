@@ -3341,9 +3341,17 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Tests that test traces display opcodes when verbosity level is 5
 forgetest_init!(should_show_opcodes, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--opcodes", "SLOAD,MLOAD"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "test",
+        "--mt",
+        "test_Increment",
+        "-vvvvv",
+        "--opcodes",
+        "SLOAD,MLOAD",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
@@ -3420,6 +3428,7 @@ forgetest_init!(opcodes_path_after_flag, |prj, cmd| {
         "--opcodes",
         "SSTORE",
         "test/Counter.t.sol",
+        "--no-dynamic-test-linking",
     ])
     .assert_success()
     .stdout_eq(str![[r#"
