@@ -651,7 +651,7 @@ impl ScriptArgs {
         child.args(&command.args);
         // The outer `cast wallet session` must resolve the root signer from explicit
         // `--session-*` inputs, not from stale session/access-key env inherited from the shell.
-        for key in &command.env_remove {
+        for key in SESSION_WRAPPER_ENV_REMOVE {
             child.env_remove(key);
         }
 
@@ -715,53 +715,39 @@ impl ScriptArgs {
         }
         push_opt_arg(&mut args, "--expires", session.expires.as_deref());
 
-        for scope in &session.scopes {
-            push_arg(&mut args, "--scope", scope);
-        }
-        if let Some(target) = session.target {
-            push_arg(&mut args, "--target", target.to_string());
-        }
-        for selector in &session.selectors {
-            push_arg(&mut args, "--selector", selector);
-        }
-        for limit in &session.spend_limits {
-            push_arg(&mut args, "--spend-limit", limit);
-        }
+        push_repeated_args(&mut args, "--scope", &session.scopes);
+        push_opt_arg(&mut args, "--target", session.target);
+        push_repeated_args(&mut args, "--selector", &session.selectors);
+        push_repeated_args(&mut args, "--spend-limit", &session.spend_limits);
 
         if let Some(rpc_url) = evm_opts.fork_url.as_ref() {
             push_arg(&mut args, "--rpc-url", rpc_url);
         }
-        if let Some(chain_id) = evm_opts.env.chain_id {
-            push_arg(&mut args, "--chain", chain_id.to_string());
-        }
+        push_opt_arg(&mut args, "--chain", evm_opts.env.chain_id);
         if config.eth_rpc_accept_invalid_certs {
             args.push("--insecure".into());
         }
         if config.eth_rpc_no_proxy {
             args.push("--no-proxy".into());
         }
-        if let Some(timeout) = config.eth_rpc_timeout {
-            push_arg(&mut args, "--rpc-timeout", timeout.to_string());
-        }
+        push_opt_arg(&mut args, "--rpc-timeout", config.eth_rpc_timeout);
 
         session.push_root_signer_args(&mut args);
 
         push_arg(&mut args, "--for", inner);
 
-        Ok(WalletSessionCommand {
-            program: cast_program,
-            args,
-            env_remove: vec![
-                foundry_cli::opts::TEMPO_SESSION_ID_ENV,
-                "ETH_KEYSTORE",
-                "ETH_KEYSTORE_ACCOUNT",
-                "ETH_PASSWORD",
-                "TEMPO_ACCESS_KEY",
-                "TEMPO_ROOT_ACCOUNT",
-            ],
-        })
+        Ok(WalletSessionCommand { program: cast_program, args })
     }
 }
+
+const SESSION_WRAPPER_ENV_REMOVE: &[&str] = &[
+    foundry_cli::opts::TEMPO_SESSION_ID_ENV,
+    "ETH_KEYSTORE",
+    "ETH_KEYSTORE_ACCOUNT",
+    "ETH_PASSWORD",
+    "TEMPO_ACCESS_KEY",
+    "TEMPO_ROOT_ACCOUNT",
+];
 
 /// Arguments that make `forge script` a thin wrapper around `cast wallet session --for`.
 #[derive(Clone, Debug, Default, Args)]
@@ -927,10 +913,10 @@ pub struct ScriptWalletSessionArgs {
 }
 
 impl ScriptWalletSessionArgs {
-    const STRIP_BOOL_ARGS: &'static [&'static str] =
+    const STRIP_BOOL_ARGS: &[&str] =
         &["--session", "--session-interactive", "--session-ledger", "--session-trezor"];
 
-    const STRIP_VALUE_ARGS: &'static [&'static str] = &[
+    const STRIP_VALUE_ARGS: &[&str] = &[
         "--session-root",
         "--session-expires",
         "--session-scope",
@@ -976,18 +962,19 @@ impl ScriptWalletSessionArgs {
         if self.interactive {
             args.push("--interactive".into());
         }
-        push_opt_arg(args, "--private-key", self.private_key.as_deref());
-        push_opt_arg(args, "--mnemonic", self.mnemonic.as_deref());
-        push_opt_arg(args, "--mnemonic-passphrase", self.mnemonic_passphrase.as_deref());
-        push_opt_arg(args, "--hd-path", self.hd_path.as_deref());
-        if let Some(index) = self.mnemonic_index {
-            args.push("--mnemonic-index".into());
-            args.push(index.to_string().into());
+        for (name, value) in [
+            ("--private-key", self.private_key.as_deref()),
+            ("--mnemonic", self.mnemonic.as_deref()),
+            ("--mnemonic-passphrase", self.mnemonic_passphrase.as_deref()),
+            ("--hd-path", self.hd_path.as_deref()),
+            ("--keystore", self.keystore.as_deref()),
+            ("--account", self.account.as_deref()),
+            ("--password", self.password.as_deref()),
+            ("--password-file", self.password_file.as_deref()),
+        ] {
+            push_opt_arg(args, name, value);
         }
-        push_opt_arg(args, "--keystore", self.keystore.as_deref());
-        push_opt_arg(args, "--account", self.account.as_deref());
-        push_opt_arg(args, "--password", self.password.as_deref());
-        push_opt_arg(args, "--password-file", self.password_file.as_deref());
+        push_opt_arg(args, "--mnemonic-index", self.mnemonic_index);
         if self.ledger {
             args.push("--ledger".into());
         }
@@ -997,11 +984,10 @@ impl ScriptWalletSessionArgs {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct WalletSessionCommand {
     program: OsString,
     args: Vec<OsString>,
-    env_remove: Vec<&'static str>,
 }
 
 fn push_arg(args: &mut Vec<OsString>, name: &'static str, value: impl Into<OsString>) {
@@ -1009,9 +995,19 @@ fn push_arg(args: &mut Vec<OsString>, name: &'static str, value: impl Into<OsStr
     args.push(value.into());
 }
 
-fn push_opt_arg(args: &mut Vec<OsString>, name: &'static str, value: Option<&str>) {
+fn push_opt_arg(
+    args: &mut Vec<OsString>,
+    name: &'static str,
+    value: Option<impl std::fmt::Display>,
+) {
     if let Some(value) = value {
-        push_arg(args, name, value);
+        push_arg(args, name, value.to_string());
+    }
+}
+
+fn push_repeated_args(args: &mut Vec<OsString>, name: &'static str, values: &[String]) {
+    for value in values {
+        push_arg(args, name, value.as_str());
     }
 }
 
@@ -1055,11 +1051,12 @@ where
         if ScriptWalletSessionArgs::STRIP_BOOL_ARGS.contains(&arg_str) {
             continue;
         }
-        let flag = arg_str.split_once('=').map_or(arg_str, |(flag, _)| flag);
+        let (flag, has_value) =
+            arg_str.split_once('=').map_or((arg_str, false), |(flag, _)| (flag, true));
         if ScriptWalletSessionArgs::STRIP_VALUE_ARGS.contains(&flag) {
             // Support both `--session-root=value` and `--session-root value` while consuming only
             // the wrapper option and its value.
-            if arg_str.contains('=') {
+            if has_value {
                 continue;
             }
             args.next().ok_or_else(|| eyre::eyre!("{arg_str} requires a value"))?;
@@ -1353,6 +1350,8 @@ mod tests {
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
     const SESSION_ID_HEX: &str =
         "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const SESSION_ROOT_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
+    const SESSION_SCOPE_ADDRESS: &str = "0x2222222222222222222222222222222222222222";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn active_session_entry(
@@ -1437,6 +1436,14 @@ mod tests {
         args[for_pos + 1].as_ref()
     }
 
+    fn session_root() -> Address {
+        SESSION_ROOT_ADDRESS.parse().unwrap()
+    }
+
+    fn session_target() -> Address {
+        SESSION_SCOPE_ADDRESS.parse().unwrap()
+    }
+
     #[test]
     fn can_parse_sig() {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
@@ -1468,15 +1475,12 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--tempo.sponsor",
-            "0x1111111111111111111111111111111111111111",
+            SESSION_ROOT_ADDRESS,
             "--tempo.sponsor-signer",
             "env://TEMPO_SPONSOR_PK",
         ]);
 
-        assert_eq!(
-            args.tempo.sponsor,
-            Some(address!("0x1111111111111111111111111111111111111111"))
-        );
+        assert_eq!(args.tempo.sponsor, Some(session_root()));
         assert_eq!(args.tempo.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
     }
 
@@ -1502,8 +1506,8 @@ mod tests {
 
     #[test]
     fn can_parse_session_wrapper() {
-        let root = address!("0x1111111111111111111111111111111111111111");
-        let target = address!("0x2222222222222222222222222222222222222222");
+        let root = session_root();
+        let target = session_target();
         let args = ScriptArgs::parse_from([
             "foundry-cli",
             "Deploy.s.sol",
@@ -1552,11 +1556,11 @@ mod tests {
             "Deploy.s.sol",
             "--session",
             "--session-root",
-            "0x1111111111111111111111111111111111111111",
+            SESSION_ROOT_ADDRESS,
             "--session-expires",
             "10m",
             "--session-scope",
-            "0x2222222222222222222222222222222222222222",
+            SESSION_SCOPE_ADDRESS,
         ];
         let args = parse_script_args(&raw_args);
 
@@ -1573,11 +1577,11 @@ mod tests {
             "--debug",
             "--session",
             "--session-root",
-            "0x1111111111111111111111111111111111111111",
+            SESSION_ROOT_ADDRESS,
             "--session-expires",
             "10m",
             "--session-scope",
-            "0x2222222222222222222222222222222222222222",
+            SESSION_SCOPE_ADDRESS,
         ];
         let args = parse_script_args(&raw_args);
 
@@ -1588,8 +1592,8 @@ mod tests {
 
     #[test]
     fn session_wrapper_rewrites_to_cast_session_command() {
-        let root = address!("0x1111111111111111111111111111111111111111");
-        let target = address!("0x2222222222222222222222222222222222222222");
+        let root = session_root();
+        let target = session_target();
         let root_arg = root.to_string();
         let target_arg = target.to_string();
         let raw_args = [
@@ -1639,31 +1643,17 @@ mod tests {
 
     #[test]
     fn session_wrapper_cleans_inherited_tempo_signer_env_for_outer_cast() {
-        let root = address!("0x1111111111111111111111111111111111111111");
-        let root_arg = root.to_string();
-        let raw_args = [
-            "Deploy.s.sol",
-            "--broadcast",
-            "--session",
-            "--session-root",
-            &root_arg,
-            "--session-expires",
-            "10m",
-            "--session-scope",
-            "0x2222222222222222222222222222222222222222",
-            "--session-private-key",
-            SESSION_PRIVATE_KEY,
-        ];
-        let args = parse_script_args(&raw_args);
-
-        let command = wallet_session_command(&args, &raw_args).unwrap();
-
-        assert!(command.env_remove.contains(&foundry_cli::opts::TEMPO_SESSION_ID_ENV));
-        assert!(command.env_remove.contains(&"ETH_KEYSTORE"));
-        assert!(command.env_remove.contains(&"ETH_KEYSTORE_ACCOUNT"));
-        assert!(command.env_remove.contains(&"ETH_PASSWORD"));
-        assert!(command.env_remove.contains(&"TEMPO_ACCESS_KEY"));
-        assert!(command.env_remove.contains(&"TEMPO_ROOT_ACCOUNT"));
+        assert_eq!(
+            SESSION_WRAPPER_ENV_REMOVE,
+            [
+                foundry_cli::opts::TEMPO_SESSION_ID_ENV,
+                "ETH_KEYSTORE",
+                "ETH_KEYSTORE_ACCOUNT",
+                "ETH_PASSWORD",
+                "TEMPO_ACCESS_KEY",
+                "TEMPO_ROOT_ACCOUNT",
+            ]
+        );
     }
 
     #[test]
@@ -1680,7 +1670,7 @@ mod tests {
         )
         .unwrap();
 
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let root_arg = root.to_string();
         let project_root_arg = project_root.to_string_lossy();
         let raw_args = [
@@ -1694,7 +1684,7 @@ mod tests {
             "--session-expires",
             "10m",
             "--session-scope",
-            "0x2222222222222222222222222222222222222222",
+            SESSION_SCOPE_ADDRESS,
         ];
         let args = parse_script_args(&raw_args);
 
@@ -1711,7 +1701,7 @@ mod tests {
 
     #[test]
     fn session_wrapper_forwards_rpc_transport_flags_to_outer_cast() {
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let root_arg = root.to_string();
         let raw_args = [
             "Deploy.s.sol",
@@ -1728,7 +1718,7 @@ mod tests {
             "--session-expires",
             "10m",
             "--session-scope",
-            "0x2222222222222222222222222222222222222222",
+            SESSION_SCOPE_ADDRESS,
             "--session-private-key",
             SESSION_PRIVATE_KEY,
         ];
@@ -1754,11 +1744,11 @@ mod tests {
             "--broadcast",
             "--session",
             "--session-root",
-            "0x1111111111111111111111111111111111111111",
+            SESSION_ROOT_ADDRESS,
             "--session-expires",
             "10m",
             "--session-scope",
-            "0x2222222222222222222222222222222222222222",
+            SESSION_SCOPE_ADDRESS,
             "--browser",
         ];
         let args = parse_script_args(&raw_args);
@@ -1777,11 +1767,11 @@ mod tests {
             "--broadcast",
             "--session",
             "--session-root",
-            "0x1111111111111111111111111111111111111111",
+            SESSION_ROOT_ADDRESS,
             "--session-expires",
             "10m",
             "--session-scope",
-            "0x2222222222222222222222222222222222222222",
+            SESSION_SCOPE_ADDRESS,
             "--private-key",
             SESSION_PRIVATE_KEY,
         ];
@@ -1806,7 +1796,7 @@ mod tests {
             "--session-expires",
             "10m",
             "--session-scope",
-            "0x2222222222222222222222222222222222222222",
+            SESSION_SCOPE_ADDRESS,
         ];
         let args = parse_script_args(&raw_args);
 
@@ -1837,7 +1827,7 @@ mod tests {
     async fn tempo_session_sets_script_sender_to_root_account() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x22; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1863,7 +1853,7 @@ mod tests {
     async fn tempo_session_resume_multi_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x55; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1887,7 +1877,7 @@ mod tests {
     async fn tempo_session_resume_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x77; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1910,7 +1900,7 @@ mod tests {
     async fn tempo_session_non_resume_multi_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x66; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1933,7 +1923,7 @@ mod tests {
     async fn tempo_session_initial_broadcast_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x88; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1970,7 +1960,7 @@ mod tests {
     async fn tempo_session_rejects_explicit_script_wallet_signer() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x33; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;

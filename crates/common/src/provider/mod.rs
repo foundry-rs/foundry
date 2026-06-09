@@ -220,11 +220,10 @@ impl<N: Network> ProviderBuilder<N> {
     /// Defaults to `http://localhost:8545` and `Mainnet`.
     pub fn from_config(config: &Config) -> Result<Self> {
         let url = config.get_rpc_url_or_localhost_http()?;
-        let mut builder = Self::new(url.as_ref());
-
-        builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
-        builder = builder.no_proxy(config.eth_rpc_no_proxy);
-        builder = builder.curl_mode(config.eth_rpc_curl);
+        let mut builder = Self::new(url.as_ref())
+            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
+            .no_proxy(config.eth_rpc_no_proxy)
+            .curl_mode(config.eth_rpc_curl);
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
             builder = builder.chain(chain);
