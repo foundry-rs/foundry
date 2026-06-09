@@ -579,9 +579,17 @@ impl SessionProvider {
                 fee_token: options.currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if options.fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if options.fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer: options.fee_payer,
                 valid_before,
                 key_authorization: (!*self.key_provisioned.lock().unwrap())
