@@ -223,6 +223,7 @@ impl<N: Network> ProviderBuilder<N> {
         let mut builder = Self::new(url.as_ref());
 
         builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
+        builder = builder.no_proxy(config.eth_rpc_no_proxy);
         builder = builder.curl_mode(config.eth_rpc_curl);
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
@@ -603,5 +604,22 @@ mod tests {
 
         let url = builder.url.unwrap();
         assert_eq!(url, Url::parse("http://localhost:8545").unwrap());
+    }
+
+    #[test]
+    fn from_config_applies_rpc_transport_options() {
+        let config = Config {
+            eth_rpc_url: Some("http://example.com".to_string()),
+            eth_rpc_accept_invalid_certs: true,
+            eth_rpc_no_proxy: true,
+            eth_rpc_timeout: Some(7),
+            ..Default::default()
+        };
+
+        let builder = ProviderBuilder::<AnyNetwork>::from_config(&config).unwrap();
+
+        assert!(builder.accept_invalid_certs);
+        assert!(builder.no_proxy);
+        assert_eq!(builder.timeout, Duration::from_secs(7));
     }
 }

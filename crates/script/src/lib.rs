@@ -641,11 +641,19 @@ impl ScriptArgs {
         self.broadcast || self.resume || self.verify
     }
 
+    /// Runs `forge script --session ...` by delegating to `cast wallet session --for`.
+    ///
+    /// The outer `cast` process owns the temporary session lifecycle: create the scoped access key,
+    /// run the reconstructed inner `forge script` command, then revoke the key on exit.
     fn run_wallet_session_wrapper(&self) -> Result<()> {
         let command = self.wallet_session_command_from_env()?;
         let mut child = Command::new(&command.program);
         child.args(&command.args);
-        child.env_remove(foundry_cli::opts::TEMPO_SESSION_ID_ENV);
+        // The outer `cast wallet session` must resolve the root signer from explicit
+        // `--session-*` inputs, not from stale session/access-key env inherited from the shell.
+        for key in &command.env_remove {
+            child.env_remove(key);
+        }
 
         let status = child.status().wrap_err_with(|| {
             format!(
@@ -670,6 +678,11 @@ impl ScriptArgs {
         self.wallet_session_command_from_raw_args(std::env::args_os(), forge.into(), cast.into())
     }
 
+    /// Builds the `cast wallet session` command that implements `forge script --session`.
+    ///
+    /// `raw_args` is the original `forge script` argv. Wrapper-only `--session-*` flags are removed
+    /// from the inner command, while the corresponding policy, RPC, and root signer options are
+    /// translated onto the outer `cast wallet session` invocation.
     fn wallet_session_command_from_raw_args<I>(
         &self,
         raw_args: I,
@@ -681,6 +694,8 @@ impl ScriptArgs {
     {
         self.wallet_session.validate(self)?;
 
+        // Reconstruct the command that `cast wallet session --for` will run. The inner `forge`
+        // must not see wrapper-only flags such as `--session-private-key`.
         let mut inner = strip_wallet_session_args(raw_args)?;
         let Some(program) = inner.first_mut() else {
             eyre::bail!("failed to reconstruct forge script command");
@@ -688,9 +703,12 @@ impl ScriptArgs {
         *program = forge_program;
         let inner = quote_command(&inner)?;
 
-        let (_, evm_opts) = self.load_config_and_evm_opts()?;
+        let (config, evm_opts) = self.load_config_and_evm_opts()?;
         let session = &self.wallet_session;
         let mut args = vec![OsString::from("wallet"), OsString::from("session")];
+
+        // The outer `cast` process creates and later revokes the temporary access key, so it needs
+        // the session policy, RPC transport settings, and root signer configuration itself.
         if let Some(root) = session.root {
             push_arg(&mut args, "--root", root.to_string());
             push_arg(&mut args, "--from", root.to_string());
@@ -716,12 +734,32 @@ impl ScriptArgs {
         if let Some(chain_id) = evm_opts.env.chain_id {
             push_arg(&mut args, "--chain", chain_id.to_string());
         }
+        if config.eth_rpc_accept_invalid_certs {
+            args.push("--insecure".into());
+        }
+        if config.eth_rpc_no_proxy {
+            args.push("--no-proxy".into());
+        }
+        if let Some(timeout) = config.eth_rpc_timeout {
+            push_arg(&mut args, "--rpc-timeout", timeout.to_string());
+        }
 
         session.push_root_signer_args(&mut args);
 
         push_arg(&mut args, "--for", inner);
 
-        Ok(WalletSessionCommand { program: cast_program, args })
+        Ok(WalletSessionCommand {
+            program: cast_program,
+            args,
+            env_remove: vec![
+                foundry_cli::opts::TEMPO_SESSION_ID_ENV,
+                "ETH_KEYSTORE",
+                "ETH_KEYSTORE_ACCOUNT",
+                "ETH_PASSWORD",
+                "TEMPO_ACCESS_KEY",
+                "TEMPO_ROOT_ACCOUNT",
+            ],
+        })
     }
 }
 
@@ -929,10 +967,16 @@ impl ScriptWalletSessionArgs {
         "--session-password-file",
     ];
 
+    /// Rejects `--session` combinations that cannot be represented by the wallet-session wrapper.
+    ///
+    /// Temporary sessions only make sense for a script run that will submit or resume transactions,
+    /// and debugger runs should stay in the normal in-process execution path.
     fn validate(&self, args: &ScriptArgs) -> Result<()> {
         if !self.enabled {
             return Ok(());
         }
+        // `cast wallet session --for` creates credentials for the wrapped command; dry-run and
+        // debugger-only flows do not need a temporary signing session.
         if !args.should_broadcast() {
             eyre::bail!("forge script --session requires --broadcast or --resume");
         }
@@ -942,6 +986,11 @@ impl ScriptWalletSessionArgs {
         Ok(())
     }
 
+    /// Appends root-signer wallet flags for the outer `cast wallet session` command.
+    ///
+    /// `forge script` exposes these as `--session-*` flags so they do not leak into the inner
+    /// script command. Here they are translated back to the wallet flags that `cast` already
+    /// understands for signing the session authorization.
     fn push_root_signer_args(&self, args: &mut Vec<OsString>) {
         if self.interactive {
             args.push("--interactive".into());
@@ -980,6 +1029,7 @@ impl ScriptWalletSessionArgs {
 struct WalletSessionCommand {
     program: OsString,
     args: Vec<OsString>,
+    env_remove: Vec<&'static str>,
 }
 
 fn push_arg(args: &mut Vec<OsString>, name: &'static str, value: impl Into<OsString>) {
@@ -993,6 +1043,7 @@ fn push_opt_arg(args: &mut Vec<OsString>, name: &'static str, value: Option<&str
     }
 }
 
+/// Resolves a sibling Foundry binary first, falling back to `PATH` for source-tree test binaries.
 fn sibling_binary(current: &Path, name: &str) -> PathBuf {
     let mut binary = current.with_file_name(name);
     if cfg!(windows) {
@@ -1001,6 +1052,10 @@ fn sibling_binary(current: &Path, name: &str) -> PathBuf {
     if binary.exists() { binary } else { PathBuf::from(name) }
 }
 
+/// Removes `forge script --session` wrapper flags from the command passed to `--for`.
+///
+/// Arguments after `--` and non-UTF-8 values are preserved verbatim because they belong to the
+/// script invocation, not to the wrapper's option parser.
 fn strip_wallet_session_args<I>(raw_args: I) -> Result<Vec<OsString>>
 where
     I: IntoIterator<Item = OsString>,
@@ -1030,6 +1085,8 @@ where
         }
         let flag = arg_str.split_once('=').map_or(arg_str, |(flag, _)| flag);
         if ScriptWalletSessionArgs::STRIP_VALUE_ARGS.contains(&flag) {
+            // Support both `--session-root=value` and `--session-root value` while consuming only
+            // the wrapper option and its value.
             if arg_str.contains('=') {
                 continue;
             }
@@ -1043,10 +1100,13 @@ where
     Ok(out)
 }
 
+/// Converts the reconstructed inner argv into the single command string accepted by
+/// `cast wallet session --for`.
 fn quote_command(args: &[OsString]) -> Result<String> {
     args.iter().map(quote_arg).collect::<Result<Vec<_>>>().map(|args| args.join(" "))
 }
 
+/// Quotes one argv item for `--for` while preserving the exact value after shell-style splitting.
 fn quote_arg(arg: &OsString) -> Result<String> {
     let arg = arg
         .to_str()
@@ -1606,6 +1666,35 @@ mod tests {
     }
 
     #[test]
+    fn session_wrapper_cleans_inherited_tempo_signer_env_for_outer_cast() {
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let root_arg = root.to_string();
+        let raw_args = [
+            "Deploy.s.sol",
+            "--broadcast",
+            "--session",
+            "--session-root",
+            &root_arg,
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+            "--session-private-key",
+            SESSION_PRIVATE_KEY,
+        ];
+        let args = parse_script_args(&raw_args);
+
+        let command = wallet_session_command(&args, &raw_args).unwrap();
+
+        assert!(command.env_remove.contains(&foundry_cli::opts::TEMPO_SESSION_ID_ENV));
+        assert!(command.env_remove.contains(&"ETH_KEYSTORE"));
+        assert!(command.env_remove.contains(&"ETH_KEYSTORE_ACCOUNT"));
+        assert!(command.env_remove.contains(&"ETH_PASSWORD"));
+        assert!(command.env_remove.contains(&"TEMPO_ACCESS_KEY"));
+        assert!(command.env_remove.contains(&"TEMPO_ROOT_ACCOUNT"));
+    }
+
+    #[test]
     fn session_wrapper_uses_project_config_for_cast_session() {
         let temp = tempdir().unwrap();
         let project_root = temp.path();
@@ -1646,6 +1735,44 @@ mod tests {
         let inner = inner_for_command(&command_args);
         assert!(inner.contains("--root "), "{inner}");
         assert!(inner.contains(project_root.to_string_lossy().as_ref()), "{inner}");
+    }
+
+    #[test]
+    fn session_wrapper_forwards_rpc_transport_flags_to_outer_cast() {
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let root_arg = root.to_string();
+        let raw_args = [
+            "Deploy.s.sol",
+            "--broadcast",
+            "--rpc-url",
+            "https://127.0.0.1:8545",
+            "--insecure",
+            "--no-proxy",
+            "--rpc-timeout",
+            "7",
+            "--session",
+            "--session-root",
+            &root_arg,
+            "--session-expires",
+            "10m",
+            "--session-scope",
+            "0x2222222222222222222222222222222222222222",
+            "--session-private-key",
+            SESSION_PRIVATE_KEY,
+        ];
+        let args = parse_script_args(&raw_args);
+
+        let command = wallet_session_command(&args, &raw_args).unwrap();
+
+        let command_args = command_args(&command);
+        assert!(command_args.contains(&"--insecure".into()));
+        assert!(command_args.contains(&"--no-proxy".into()));
+        assert_eq!(option_value(&command_args, "--rpc-timeout"), Some("7"));
+
+        let inner = inner_for_command(&command_args);
+        assert!(inner.contains("--insecure"), "{inner}");
+        assert!(inner.contains("--no-proxy"), "{inner}");
+        assert!(inner.contains("--rpc-timeout 7"), "{inner}");
     }
 
     #[test]
