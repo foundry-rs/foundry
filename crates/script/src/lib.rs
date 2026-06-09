@@ -924,30 +924,11 @@ pub struct ScriptWalletSessionArgs {
     /// Use a Trezor as the root signer.
     #[arg(long = "session-trezor", id = "wallet_session_trezor", requires = "wallet_session")]
     pub trezor: bool,
-
-    /// Use AWS KMS as the root signer.
-    #[arg(long = "session-aws", id = "wallet_session_aws", requires = "wallet_session")]
-    pub aws: bool,
-
-    /// Use Google Cloud KMS as the root signer.
-    #[arg(long = "session-gcp", id = "wallet_session_gcp", requires = "wallet_session")]
-    pub gcp: bool,
-
-    /// Use Turnkey as the root signer.
-    #[arg(long = "session-turnkey", id = "wallet_session_turnkey", requires = "wallet_session")]
-    pub turnkey: bool,
 }
 
 impl ScriptWalletSessionArgs {
-    const STRIP_BOOL_ARGS: &'static [&'static str] = &[
-        "--session",
-        "--session-interactive",
-        "--session-ledger",
-        "--session-trezor",
-        "--session-aws",
-        "--session-gcp",
-        "--session-turnkey",
-    ];
+    const STRIP_BOOL_ARGS: &'static [&'static str] =
+        &["--session", "--session-interactive", "--session-ledger", "--session-trezor"];
 
     const STRIP_VALUE_ARGS: &'static [&'static str] = &[
         "--session-root",
@@ -1012,15 +993,6 @@ impl ScriptWalletSessionArgs {
         }
         if self.trezor {
             args.push("--trezor".into());
-        }
-        if self.aws {
-            args.push("--aws".into());
-        }
-        if self.gcp {
-            args.push("--gcp".into());
-        }
-        if self.turnkey {
-            args.push("--turnkey".into());
         }
     }
 }
