@@ -569,12 +569,12 @@ impl WalletSubcommands {
                             if format_json {
                                 if insecure {
                                     accounts_json.as_array_mut().unwrap().push(json!({
-                                        "address": format!("{}", address),
+                                        "address": address.clone(),
                                         "private_key": format!("0x{}", private_key),
                                     }));
                                 } else {
                                     accounts_json.as_array_mut().unwrap().push(json!({
-                                        "address": format!("{}", address)
+                                        "address": address.clone()
                                     }));
                                 }
                             } else {
