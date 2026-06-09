@@ -16,6 +16,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
+use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{
     Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
@@ -26,6 +27,7 @@ use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, state::StateOverride,
 };
+use alloy_transport::TransportErrorKind;
 use base::{Base, NumberWithBase, ToBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
@@ -707,8 +709,11 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         let Some((from, to)) = self.resolve_block_range(filter).await? else {
             return self.provider.get_logs(filter).await.map_err(Into::into);
         };
-        // Empty range.
+        // Inverted range yields no logs; warn instead of returning empty silently.
         if from > to {
+            sh_warn!(
+                "requested block range is inverted (from-block {from} > to-block {to}); no logs to return"
+            )?;
             return Ok(vec![]);
         }
         if chunk_size == 0 || to - from < chunk_size {
@@ -773,8 +778,9 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             match provider.get_logs(&range_filter).await {
                 Ok(logs) => Ok(logs),
                 Err(e) => {
-                    // A single block already failed; nothing left to split.
-                    if from >= to {
+                    // Only bisect range-limit errors with room left to split; surface anything
+                    // else immediately.
+                    if from >= to || !is_range_limit_error(&e) {
                         return Err(e.into());
                     }
 
@@ -931,6 +937,38 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
 
         Ok(())
     }
+}
+
+/// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
+/// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
+fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
+    // Only HTTP 413 (payload too large) is fixable by a smaller range; other transport errors
+    // (network, auth 401/403, rate-limit 429) are not.
+    if let RpcError::Transport(kind) = err {
+        return kind.as_http_error().is_some_and(|http| http.status == 413);
+    }
+
+    // Range/result-size limits are reported as JSON-RPC server error responses; every other
+    // variant falls through to `false`.
+    let RpcError::ErrorResp(payload) = err else { return false };
+    let message = payload.message.to_ascii_lowercase();
+
+    // Phrases providers use for range/result-size limits, kept specific so rate-limit/quota
+    // wording (e.g. "no more than 10 requests per second") doesn't match.
+    const RANGE_LIMIT_HINTS: &[&str] = &[
+        "block range",
+        "blocks range",
+        "range is too",
+        "range too",
+        "returned more than",
+        "response size",
+        "result set",
+        "too many results",
+        "too many blocks",
+        "maximum block range",
+        "max block range",
+    ];
+    RANGE_LIMIT_HINTS.iter().any(|hint| message.contains(hint))
 }
 
 impl<P: Provider<N>, N: Network> Cast<P, N>
@@ -2468,6 +2506,63 @@ fn explorer_client(
     }
 
     builder.build().map_err(Into::into)
+}
+
+/// Tests for the `eth_getLogs` chunking/bisection helpers, kept in a separate module so they can
+/// use the provider-based [`Cast`] (the `tests` module aliases `Cast` to `SimpleCast`).
+#[cfg(test)]
+mod logs_bisecting {
+    use super::Cast;
+    use alloy_network::AnyNetwork;
+    use alloy_provider::ProviderBuilder;
+    use alloy_rpc_types::{Filter, Log};
+    use alloy_transport::mock::Asserter;
+
+    fn log_at(block: u64) -> Log {
+        Log { block_number: Some(block), ..Default::default() }
+    }
+
+    // A range-limit failure splits depth-first into [0,1]/[2,3] and aggregates in range order.
+    #[tokio::test]
+    async fn bisects_failed_range_and_aggregates_in_order() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+        asserter.push_success(&vec![log_at(0)]);
+        asserter.push_success(&vec![log_at(2)]);
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let logs = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap();
+        let blocks: Vec<_> = logs.iter().map(|l| l.block_number).collect();
+        assert_eq!(blocks, vec![Some(0), Some(2)]);
+    }
+
+    // A single-block failure can't be split, so the error is surfaced.
+    #[tokio::test]
+    async fn surfaces_single_block_failure() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 5, 5).await.unwrap_err();
+        assert!(err.to_string().contains("more than 10000 results"), "got: {err}");
+    }
+
+    // A non-range error fails after one request instead of bisecting.
+    #[tokio::test]
+    async fn does_not_bisect_non_range_errors() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("unauthorized: invalid api key");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap_err();
+        assert!(err.to_string().contains("unauthorized"), "got: {err}");
+    }
 }
 
 #[cfg(test)]
