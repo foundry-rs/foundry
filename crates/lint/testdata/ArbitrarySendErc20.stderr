@@ -377,6 +377,14 @@ LL │ …     SafeTransferLib.safeTransferFrom(token, from, to, a);
 warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
    ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
    │
+LL │ …     SafeTransferLib.safeTransferFrom(token, from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
 LL │ …     token.safeTransferFrom(from, to, a);
    │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
