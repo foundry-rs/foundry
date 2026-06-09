@@ -337,7 +337,6 @@ pub struct KeyAuthorizationArgs {
     key_address: Address,
 
     /// Type of access key being authorized: secp256k1, p256, or webauthn.
-    /// The authorization itself is signed with the configured Ethereum (secp256k1) wallet.
     #[arg(long, default_value = "secp256k1", value_parser = parse_auth_signature_type)]
     key_type: AuthSignatureType,
 
@@ -367,6 +366,14 @@ pub struct KeyAuthorizationArgs {
     /// `0x000...000` is a valid present witness and is distinct from omitting the flag.
     #[arg(long)]
     witness: Option<B256>,
+
+    /// Account this authorization targets. Required when signing with an admin access key.
+    #[arg(long)]
+    account: Option<Address>,
+
+    /// Authorize the key as an admin access key.
+    #[arg(long, visible_alias = "is-admin")]
+    admin: bool,
 }
 
 /// Higher-level access-key policy editing commands.
@@ -2712,6 +2719,8 @@ fn run_key_auth_encode(args: KeyAuthorizationArgs) -> Result<()> {
             "signature_hash": authorization.signature_hash().to_string(),
             "rlp_length": encoded.len(),
             "witness": authorization.witness().map(|witness| witness.to_string()),
+            "account": authorization.account.map(|account| account.to_string()),
+            "is_admin": authorization.is_admin(),
         });
         sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
     } else {
@@ -2779,6 +2788,8 @@ fn print_signed_key_authorization(
             "authorized_key_type": authorized_key_type,
             "signature_type": signature_type,
             "witness": signed.authorization.witness().map(|witness| witness.to_string()),
+            "account": signed.authorization.account.map(|account| account.to_string()),
+            "is_admin": signed.authorization.is_admin(),
         });
         sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
     } else {
@@ -2824,6 +2835,16 @@ impl KeyAuthorizationArgs {
         if let Some(witness) = self.witness {
             authorization = authorization.with_witness(witness);
         }
+
+        authorization = match (self.admin, self.account) {
+            (true, Some(account)) => authorization.into_admin(account),
+            (true, None) => {
+                authorization.is_admin = true;
+                authorization
+            }
+            (false, Some(account)) => authorization.with_account(account),
+            (false, None) => authorization,
+        };
 
         Ok(authorization)
     }
@@ -3826,6 +3847,11 @@ mod tests {
             "secp256k1",
             "--expiry",
             "1782647677",
+            "--account",
+            "0x2222222222222222222222222222222222222222",
+            "--admin",
+            "--witness",
+            "0x5353535353535353535353535353535353535353535353535353535353535353",
             "--limit",
             "0x20c0000000000000000000000000000000000000:10000000",
         ])
@@ -3834,12 +3860,25 @@ mod tests {
         match command {
             KeyAuthorizationSubcommand::Encode {
                 authorization:
-                    KeyAuthorizationArgs { chain_id, key_address, key_type, expiry, limits, .. },
+                    KeyAuthorizationArgs {
+                        chain_id,
+                        key_address,
+                        key_type,
+                        expiry,
+                        limits,
+                        witness,
+                        account,
+                        admin,
+                        ..
+                    },
             } => {
                 assert_eq!(chain_id, 4217);
                 assert_eq!(key_address, Address::from_str(key).unwrap());
                 assert_eq!(key_type, AuthSignatureType::Secp256k1);
                 assert_eq!(expiry, Some(1_782_647_677));
+                assert_eq!(witness, Some(B256::repeat_byte(0x53)));
+                assert_eq!(account, Some(Address::repeat_byte(0x22)));
+                assert!(admin);
                 assert_eq!(limits.len(), 1);
                 assert_eq!(limits[0].token, Address::from_str(token).unwrap());
                 assert_eq!(limits[0].limit, U256::from(10_000_000));
@@ -3892,7 +3931,23 @@ mod tests {
             scope: vec![],
             scopes_json: None,
             witness,
+            account: None,
+            admin: false,
         }
+    }
+
+    #[test]
+    fn test_key_auth_encode_supports_account_bound_admin() {
+        let account = target_addr(0x11);
+        let mut args = key_auth_args(Some(B256::repeat_byte(0x53)));
+        args.account = Some(account);
+        args.admin = true;
+
+        let authorization = args.into_authorization().unwrap();
+
+        assert_eq!(authorization.account, Some(account));
+        assert!(authorization.is_admin());
+        assert_eq!(authorization.witness(), Some(B256::repeat_byte(0x53)));
     }
 
     #[test]
