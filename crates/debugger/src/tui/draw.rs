@@ -1,7 +1,7 @@
 //! TUI draw implementation.
 
 use super::context::{StatusKind, TUIContext};
-use crate::op::OpcodeParam;
+use crate::{debugger::DebuggerStats, op::OpcodeParam};
 use alloy_primitives::Address;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
@@ -405,10 +405,9 @@ impl TUIContext<'_> {
             self.address(),
             step.pc,
             step.gas_remaining,
-            self.debugger_context.stats.total_gas_used,
             call_gas_used,
             step.gas_refund_counter,
-            self.debugger_context.stats.subcalls,
+            self.debugger_context.stats,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -614,22 +613,30 @@ fn op_list_title(
     address: &Address,
     pc: usize,
     gas_remaining: u64,
-    total_gas_used: u64,
     call_gas_used: u64,
     gas_refund_counter: u64,
-    subcalls: usize,
+    stats: Option<DebuggerStats>,
 ) -> String {
-    let address = short_address(address);
-    format!(
-        "Addr: {address} | PC: 0x{pc:x} ({pc}) | gasleft: {gas_remaining} | totalGasUsed: \
-         {total_gas_used} | subcalls: {subcalls} | callGas: {call_gas_used} | refund: \
-         {gas_refund_counter}"
-    )
+    let address = short_checksum_address(address);
+    let mut title = format!(
+        "address: {address} | pc: 0x{pc:x} ({pc}) | gasLeft: {gas_remaining} | \
+         callGasUsed: {call_gas_used} | gasRefund: {gas_refund_counter}"
+    );
+
+    if let Some(stats) = stats {
+        write!(
+            title,
+            " | totalTraceGasUsed: {} | subcalls: {}",
+            stats.total_trace_gas_used, stats.subcalls
+        )
+        .unwrap();
+    }
+
+    title
 }
 
-fn short_address(address: &Address) -> String {
-    let address = address.to_string();
-    format!("{}...{}", &address[..6], &address[address.len() - 4..])
+fn short_checksum_address(address: &Address) -> String {
+    format!("{address:#}")
 }
 
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
@@ -692,20 +699,37 @@ fn hex_digits(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
+    use crate::debugger::DebuggerStats;
+    use alloy_primitives::{Address, address};
 
     #[test]
     fn op_list_title_includes_gas_and_subcall_stats() {
-        let title =
-            super::op_list_title(&Address::from([0x42; 20]), 0x2a, 123_456, 789_012, 42, 7, 3);
+        let stats = DebuggerStats { total_trace_gas_used: 789_012, subcalls: 3 };
+        let address = Address::from([0x42; 20]);
+        let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, Some(stats));
 
-        assert!(title.contains("PC: 0x2a (42)"));
-        assert!(title.contains("Addr: 0x4242...4242"));
-        assert!(title.contains("gasleft: 123456"));
-        assert!(title.contains("totalGasUsed: 789012"));
+        assert!(title.contains("pc: 0x2a (42)"));
+        assert!(title.contains(&format!("address: {}", super::short_checksum_address(&address))));
+        assert!(title.contains("gasLeft: 123456"));
+        assert!(title.contains("totalTraceGasUsed: 789012"));
         assert!(title.contains("subcalls: 3"));
-        assert!(title.contains("callGas: 42"));
-        assert!(title.contains("refund: 7"));
+        assert!(title.contains("callGasUsed: 42"));
+        assert!(title.contains("gasRefund: 7"));
+    }
+
+    #[test]
+    fn op_list_title_omits_aggregate_stats_when_unavailable() {
+        let title = super::op_list_title(&Address::from([0x42; 20]), 0x2a, 123_456, 42, 7, None);
+
+        assert!(!title.contains("totalTraceGasUsed"));
+        assert!(!title.contains("subcalls"));
+    }
+
+    #[test]
+    fn short_checksum_address_uses_standard_address_compression() {
+        let address = address!("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+
+        assert_eq!(super::short_checksum_address(&address), format!("{address:#}"));
     }
 
     #[test]

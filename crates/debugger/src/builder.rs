@@ -42,8 +42,8 @@ impl DebuggerBuilder {
     #[inline]
     pub fn trace_arena(mut self, arena: CallTraceArena) -> Self {
         if let Some(root) = arena.nodes().first() {
-            self.stats.total_gas_used =
-                self.stats.total_gas_used.saturating_add(root.trace.gas_used);
+            self.stats.total_trace_gas_used =
+                self.stats.total_trace_gas_used.saturating_add(root.trace.gas_used);
         }
         self.stats.subcalls =
             self.stats.subcalls.saturating_add(arena.nodes().len().saturating_sub(1));
@@ -127,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn trace_arena_counts_empty_step_subcalls() {
+    fn trace_arena_accumulates_stats() {
         let mut arena = CallTraceArena::default();
         let root = &mut arena.nodes_mut()[0];
         root.trace.steps.push(step());
@@ -147,7 +147,7 @@ mod tests {
         let builder = DebuggerBuilder::new().trace_arena(arena);
 
         assert_eq!(builder.stats.subcalls, 1);
-        assert_eq!(builder.stats.total_gas_used, 100);
+        assert_eq!(builder.stats.total_trace_gas_used, 100);
         assert_eq!(builder.debug_arena.len(), 1);
     }
 }

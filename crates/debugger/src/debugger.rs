@@ -9,22 +9,15 @@ use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DebuggerStats {
-    /// Total gas used by the traces passed to the debugger.
-    pub total_gas_used: u64,
+    /// Sum of root-call gas used across every trace arena passed to the debugger.
+    pub total_trace_gas_used: u64,
     /// Number of subcalls in the traces passed to the debugger.
     pub subcalls: usize,
 }
 
-impl DebuggerStats {
-    #[cfg(test)]
-    pub(crate) const fn from_debug_arena(debug_arena: &[DebugNode]) -> Self {
-        Self { subcalls: debug_arena.len().saturating_sub(1), total_gas_used: 0 }
-    }
-}
-
 pub struct DebuggerContext {
     pub debug_arena: Vec<DebugNode>,
-    pub stats: DebuggerStats,
+    pub stats: Option<DebuggerStats>,
     pub identified_contracts: AddressHashMap<String>,
     /// Source map of contract sources
     pub contracts_sources: ContractSources,
@@ -49,15 +42,15 @@ impl Debugger {
         contracts_sources: ContractSources,
         breakpoints: Breakpoints,
     ) -> Self {
-        let stats =
-            DebuggerStats { subcalls: debug_arena.len().saturating_sub(1), total_gas_used: 0 };
-        Self::new_with_stats(
-            debug_arena,
-            stats,
-            identified_contracts,
-            contracts_sources,
-            breakpoints,
-        )
+        Self {
+            context: DebuggerContext {
+                debug_arena,
+                stats: None,
+                identified_contracts,
+                contracts_sources,
+                breakpoints,
+            },
+        }
     }
 
     pub(crate) const fn new_with_stats(
@@ -70,7 +63,7 @@ impl Debugger {
         Self {
             context: DebuggerContext {
                 debug_arena,
-                stats,
+                stats: Some(stats),
                 identified_contracts,
                 contracts_sources,
                 breakpoints,
