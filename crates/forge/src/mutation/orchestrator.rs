@@ -7,7 +7,7 @@
 //! - Aggregating results and reporting
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -130,25 +130,19 @@ pub async fn run_mutation_testing(
 ) -> Result<MutationRunResult> {
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
-    let mut selected_sources_relative = BTreeSet::new();
-    selected_sources_relative.extend(mutation_config.selected_sources_relative.iter().cloned());
-
-    for source_id in output.graph().files() {
-        if let Some(path) = project_relative_path(&config.root, output.graph().node_path(source_id))
-        {
-            selected_sources_relative.insert(path);
-        }
-    }
-
-    for (_, artifact) in output.artifact_ids() {
-        for file in artifact.all_link_references().into_keys() {
-            if let Some(path) = project_relative_path(&config.root, Path::new(&file)) {
-                selected_sources_relative.insert(path);
-            }
-        }
-    }
-
-    let selected_sources_relative = selected_sources_relative.into_iter().collect::<Vec<_>>();
+    let artifact_link_references = output.artifact_ids().filter_map(|(id, artifact)| {
+        let source = project_relative_path(&config.root, &id.source)?;
+        let links = artifact
+            .all_link_references()
+            .into_keys()
+            .filter_map(|file| project_relative_path(&config.root, Path::new(&file)))
+            .collect::<BTreeSet<_>>();
+        Some((source, links))
+    });
+    let selected_sources_relative = mutation_compile_sources(
+        mutation_config.selected_sources_relative.iter().cloned(),
+        artifact_link_references,
+    );
 
     // Determine which paths to mutate
     let mutate_paths = resolve_mutate_paths(&config, output, &mutation_config)?;
@@ -455,6 +449,27 @@ fn project_relative_path(root: &Path, path: &Path) -> Option<PathBuf> {
     }
 
     path.canonicalize().ok()?.strip_prefix(root.canonicalize().ok()?).ok().map(PathBuf::from)
+}
+
+fn mutation_compile_sources(
+    selected_sources: impl IntoIterator<Item = PathBuf>,
+    artifact_link_references: impl IntoIterator<Item = (PathBuf, BTreeSet<PathBuf>)>,
+) -> Vec<PathBuf> {
+    let link_edges = artifact_link_references.into_iter().collect::<BTreeMap<_, _>>();
+    let mut selected_sources_relative = selected_sources.into_iter().collect::<BTreeSet<_>>();
+    let mut queue = selected_sources_relative.iter().cloned().collect::<Vec<_>>();
+
+    while let Some(source) = queue.pop() {
+        if let Some(links) = link_edges.get(&source) {
+            for link in links {
+                if selected_sources_relative.insert(link.clone()) {
+                    queue.push(link.clone());
+                }
+            }
+        }
+    }
+
+    selected_sources_relative.into_iter().collect()
 }
 
 fn partition_adaptively_skipped_mutants(
@@ -781,6 +796,36 @@ mod tests {
         .unwrap();
 
         assert_ne!(first_key, second_key);
+    }
+
+    #[test]
+    fn mutation_compile_sources_only_include_selected_link_reference_closure() {
+        let sources = mutation_compile_sources(
+            [PathBuf::from("test/Selected.t.sol")],
+            [
+                (
+                    PathBuf::from("test/Selected.t.sol"),
+                    BTreeSet::from([PathBuf::from("test/SelectedLinkedHelper.sol")]),
+                ),
+                (
+                    PathBuf::from("test/SelectedLinkedHelper.sol"),
+                    BTreeSet::from([PathBuf::from("test/TransitiveLinkedHelper.sol")]),
+                ),
+                (
+                    PathBuf::from("test/Unrelated.t.sol"),
+                    BTreeSet::from([PathBuf::from("test/UnusedLinkedHelper.sol")]),
+                ),
+            ],
+        );
+
+        assert_eq!(
+            sources,
+            vec![
+                PathBuf::from("test/Selected.t.sol"),
+                PathBuf::from("test/SelectedLinkedHelper.sol"),
+                PathBuf::from("test/TransitiveLinkedHelper.sol"),
+            ]
+        );
     }
 
     #[test]
