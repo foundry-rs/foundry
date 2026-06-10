@@ -60,7 +60,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
             .run_async(|| {
                 async {
                     sh_status!(
-                        "Submitting verification for [{}] {:?}.",
+                        "Submitting verification for [{}] {}.",
                         context.target_name,
                         args.address.to_string()
                     )?;

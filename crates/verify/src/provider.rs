@@ -251,10 +251,6 @@ impl VerificationProviderType {
                 }
                 // Fall through to branch 5 (Sourcify default) below.
             } else {
-                sh_status!(
-                    "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
-                     Unset it or pass `--verifier sourcify` (or another provider) to override."
-                )?;
                 return Ok(Box::<EtherscanVerificationProvider>::default());
             }
         }
