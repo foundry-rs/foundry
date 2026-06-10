@@ -7,9 +7,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  FOUNDRY_PROFILE: ci
-
 jobs:
   check:
     name: Tempo Foundry project
@@ -26,7 +23,6 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-          network: tempo
 
       - name: Show Forge version
         run: forge --version

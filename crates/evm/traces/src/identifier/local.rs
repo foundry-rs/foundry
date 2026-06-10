@@ -1,7 +1,7 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Address, Bytes, map::HashMap};
+use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_common::contracts::{ContractsByArtifact, bytecode_diff_score};
 use foundry_compilers::ArtifactId;
 use revm_inspectors::tracing::types::CallTraceNode;
@@ -14,7 +14,7 @@ pub struct LocalTraceIdentifier<'a> {
     /// Vector of pairs of artifact ID and the runtime code length of the given artifact.
     ordered_ids: Vec<(&'a ArtifactId, usize)>,
     /// The contracts bytecode.
-    contracts_bytecode: Option<&'a HashMap<Address, Bytes>>,
+    contracts_bytecode: Option<&'a AddressHashMap<Bytes>>,
 }
 
 impl<'a> LocalTraceIdentifier<'a> {
@@ -29,14 +29,14 @@ impl<'a> LocalTraceIdentifier<'a> {
         Self { known_contracts, ordered_ids, contracts_bytecode: None }
     }
 
-    pub fn with_bytecodes(mut self, contracts_bytecode: &'a HashMap<Address, Bytes>) -> Self {
+    pub const fn with_bytecodes(mut self, contracts_bytecode: &'a AddressHashMap<Bytes>) -> Self {
         self.contracts_bytecode = Some(contracts_bytecode);
         self
     }
 
     /// Returns the known contracts.
     #[inline]
-    pub fn contracts(&self) -> &'a ContractsByArtifact {
+    pub const fn contracts(&self) -> &'a ContractsByArtifact {
         self.known_contracts
     }
 

@@ -29,6 +29,38 @@ async fn test_deploy_reverting() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_invalid_opcode_rpc_error_code() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    // Deploy a contract whose runtime bytecode is the invalid opcode 0xfe.
+    let code = bytes!("60fe60005360016000f3");
+    let tx = TransactionRequest::default().from(sender).with_deploy_code(code);
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let contract = receipt.contract_address.unwrap();
+
+    for (method, params) in [
+        ("eth_call", serde_json::json!([{ "from": sender, "to": contract }, "latest"])),
+        ("eth_estimateGas", serde_json::json!([{ "from": sender, "to": contract }])),
+    ] {
+        let error = rpc_error(&handle.http_endpoint(), method, params).await;
+        assert_eq!(error["code"], serde_json::json!(-32003), "{error}");
+        assert!(error.get("data").is_none(), "{error}");
+
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains("EVM error InvalidFEOpcode"), "{error}");
+        assert!(!message.contains("execution reverted"), "{error}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_revert_messages() {
     sol!(
         #[sol(rpc, bytecode = "608080604052346025575f80546001600160a01b031916600117905560b69081602a8239f35b5f80fdfe60808060405260043610156011575f80fd5b5f3560e01c635b9fdc30146023575f80fd5b34607c575f366003190112607c575f546001600160a01b03163303604c576020604051607b8152f35b62461bcd60e51b815260206004820152600b60248201526a08585d5d1a1bdc9a5e995960aa1b6044820152606490fd5b5f80fdfea2646970667358221220f593e5ccd46935f623185de62a72d9f1492d8d15075a111b0fa4d7e16acf4a7064736f6c63430008190033")]
@@ -123,4 +155,22 @@ async fn test_solc_revert_custom_errors() {
     let err = contract.revertAddress().call().await.unwrap_err();
     let s = err.to_string();
     assert!(s.contains("execution reverted"), "{s:?}");
+}
+
+async fn rpc_error(endpoint: &str, method: &str, params: serde_json::Value) -> serde_json::Value {
+    let response = reqwest::Client::new()
+        .post(endpoint)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+    let body = response.json::<serde_json::Value>().await.unwrap();
+    body.get("error").cloned().unwrap_or_else(|| panic!("expected JSON-RPC error, got {body}"))
 }

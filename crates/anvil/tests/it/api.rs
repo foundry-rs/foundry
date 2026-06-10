@@ -54,10 +54,12 @@ async fn can_dev_get_balance() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_price() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    let _ = provider.get_gas_price().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    assert!(gas_price > 0);
+    assert_eq!(gas_price, api.gas_price());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -65,7 +67,12 @@ async fn can_get_accounts() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    let _ = provider.get_accounts().await.unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
+    let dev_accounts: Vec<_> = handle.dev_accounts().collect();
+    assert_eq!(accounts.len(), dev_accounts.len());
+    for account in dev_accounts {
+        assert!(accounts.contains(&account), "Missing dev account {account}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -101,10 +108,14 @@ async fn can_modify_chain_id() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_network_id() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
 
-    let chain_id = api.network_id().unwrap().unwrap();
-    assert_eq!(chain_id, CHAIN_ID.to_string());
+    let network_id = api.network_id().unwrap().unwrap();
+    assert_eq!(network_id, CHAIN_ID.to_string());
+
+    let provider_network_id = provider.get_net_version().await.unwrap();
+    assert_eq!(provider_network_id, CHAIN_ID);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -131,6 +142,49 @@ async fn can_get_block_by_number() {
 
     let block = provider.get_block(BlockId::hash(block.header.hash)).full().await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_resolve_safe_and_finalized_block_tags_with_configured_epoch_slots() {
+    let slots_in_an_epoch = 3;
+    let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(slots_in_an_epoch)).await;
+    let provider = handle.http_provider();
+
+    api.anvil_mine(Some(U256::from(8)), None).await.unwrap();
+    let latest = provider.get_block_number().await.unwrap();
+    assert_eq!(latest, 8);
+
+    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    assert_eq!(safe.header.number, latest - slots_in_an_epoch);
+
+    let finalized =
+        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    assert_eq!(finalized.header.number, latest - slots_in_an_epoch * 2);
+
+    let fee_history = api.fee_history(U256::from(1), BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    assert_eq!(fee_history.oldest_block, latest - slots_in_an_epoch);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_resolve_safe_and_finalized_block_tags_to_genesis_before_configured_epoch() {
+    let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(3)).await;
+    let provider = handle.http_provider();
+
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+
+    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    assert_eq!(safe.header.number, genesis.header.number);
+    assert_eq!(safe.header.hash, genesis.header.hash);
+
+    let finalized =
+        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    assert_eq!(finalized.header.number, genesis.header.number);
+    assert_eq!(finalized.header.hash, genesis.header.hash);
+
+    let fee_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+    assert_eq!(fee_history.oldest_block, genesis.header.number);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -666,4 +720,33 @@ async fn test_fill_transaction_reverts_on_gas_estimation_failure() {
         error_message.contains("execution reverted"),
         "Error should indicate a revert, got: {error_message}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_send_transaction_uses_valid_fallback_gas_on_osaka() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .enable_tx_gas_limit(true),
+    )
+    .await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    // Deploy VendingMachine contract.
+    let contract = VendingMachine::deploy(&provider).await.unwrap();
+    let contract_address = *contract.address();
+
+    // Call buy with insufficient ether and without gas limit.
+    let tx_req = TransactionRequest::default()
+        .with_from(from)
+        .with_to(contract_address)
+        .with_input(VendingMachine::buyCall { amount: U256::from(10) }.abi_encode());
+
+    let receipt = api.send_transaction_sync(WithOtherFields::new(tx_req)).await.unwrap();
+    assert!(!receipt.status(), "transaction should preserve send-path revert semantics");
 }

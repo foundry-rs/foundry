@@ -1,8 +1,4 @@
 use super::opts::EvmOpts;
-use crate::Env;
-
-mod init;
-pub use init::{configure_env, environment};
 
 pub mod database;
 
@@ -16,8 +12,6 @@ pub struct CreateFork {
     pub enable_caching: bool,
     /// The URL to a node for fetching remote state
     pub url: String,
-    /// The env to create this fork, main purpose is to provide some metadata for the fork
-    pub env: Env,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
 }

@@ -1,0 +1,224 @@
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(a, b));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(a, b));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(a, b));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(a, b));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(a, b));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(a, b, c));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(getString(), getBytes()));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(bytes(abi.encode(a)), bytes(abi.encode(b))));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(token.name(), token.symbol()));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(token.name(), token.symbol()));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(IERC20Metadata(addr).name(), IERC20Metadata(addr).symbol()));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(cfg.token.name(), cfg.token.symbol()));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(tokens[0].name(), tokens[0].symbol()));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(f(), s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(flag ? a : b, c));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(data[:4], s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(flag ? a : "x", b));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(abi.encode(a), abi.encode(b)));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(abi.encodePacked(a), abi.encodePacked(b)));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(string.concat(a, b), c));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(bytes.concat(a, b), c));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(msg.data, s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(addr.code, s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(address(this).code, s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(new bytes(n), s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(t.name(), t.symbol()));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(StringLib.toStr(a), StringLib.toStr(b)));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(f(x), s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+

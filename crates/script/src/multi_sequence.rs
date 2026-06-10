@@ -1,3 +1,4 @@
+use alloy_network::Network;
 use eyre::{ContextCompat, Result, WrapErr};
 use forge_script_sequence::{
     DRY_RUN_DIR, ScriptSequence, SensitiveScriptSequence, now, sig_to_file_name,
@@ -6,15 +7,16 @@ use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
-use std::{
-    io::{BufWriter, Write},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 /// Holds the sequences of multiple chain deployments.
 #[derive(Clone, Default, Serialize, Deserialize)]
-pub struct MultiChainSequence {
-    pub deployments: Vec<ScriptSequence>,
+#[serde(bound(
+    serialize = "N::TransactionRequest: Serialize, N::TxEnvelope: Serialize",
+    deserialize = "N::TransactionRequest: for<'de2> Deserialize<'de2>, N::TxEnvelope: for<'de2> Deserialize<'de2>"
+))]
+pub struct MultiChainSequence<N: Network> {
+    pub deployments: Vec<ScriptSequence<N>>,
     #[serde(skip)]
     pub path: PathBuf,
     #[serde(skip)]
@@ -29,16 +31,16 @@ pub struct SensitiveMultiChainSequence {
 }
 
 impl SensitiveMultiChainSequence {
-    fn from_multi_sequence(sequence: &MultiChainSequence) -> Self {
+    fn from_multi_sequence<N: Network>(sequence: &MultiChainSequence<N>) -> Self {
         Self {
             deployments: sequence.deployments.iter().map(SensitiveScriptSequence::from).collect(),
         }
     }
 }
 
-impl MultiChainSequence {
+impl<N: Network> MultiChainSequence<N> {
     pub fn new(
-        deployments: Vec<ScriptSequence>,
+        deployments: Vec<ScriptSequence<N>>,
         sig: &str,
         target: &ArtifactId,
         config: &Config,
@@ -58,8 +60,8 @@ impl MultiChainSequence {
         target: &ArtifactId,
         dry_run: bool,
     ) -> Result<(PathBuf, PathBuf)> {
-        let mut broadcast = config.broadcast.to_path_buf();
-        let mut cache = config.cache_path.to_path_buf();
+        let mut broadcast = config.broadcast.clone();
+        let mut cache = config.cache_path.clone();
         let mut common = PathBuf::new();
 
         common.push("multi");
@@ -91,7 +93,10 @@ impl MultiChainSequence {
     }
 
     /// Loads the sequences for the multi chain deployment.
-    pub fn load(config: &Config, sig: &str, target: &ArtifactId, dry_run: bool) -> Result<Self> {
+    pub fn load(config: &Config, sig: &str, target: &ArtifactId, dry_run: bool) -> Result<Self>
+    where
+        N::TxEnvelope: for<'d> Deserialize<'d>,
+    {
         let (path, sensitive_path) = Self::get_paths(config, sig, target, dry_run)?;
         let mut sequence: Self = foundry_compilers::utils::read_json_file(&path)
             .wrap_err("Multi-chain deployment not found.")?;
@@ -110,7 +115,10 @@ impl MultiChainSequence {
     }
 
     /// Saves the transactions as file if it's a standalone deployment.
-    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
+    pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()>
+    where
+        N::TxEnvelope: Serialize,
+    {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
         self.timestamp = now().as_millis();
@@ -119,9 +127,7 @@ impl MultiChainSequence {
 
         // broadcast writes
         //../Contract-latest/run.json
-        let mut writer = BufWriter::new(fs::create_file(&self.path)?);
-        serde_json::to_writer_pretty(&mut writer, &self)?;
-        writer.flush()?;
+        fs::write_pretty_json_file(&self.path, self)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json
@@ -133,9 +139,7 @@ impl MultiChainSequence {
 
         // cache writes
         //../Contract-latest/run.json
-        let mut writer = BufWriter::new(fs::create_file(&self.sensitive_path)?);
-        serde_json::to_writer_pretty(&mut writer, &sensitive_sequence)?;
-        writer.flush()?;
+        fs::write_pretty_json_file(&self.sensitive_path, &sensitive_sequence)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json

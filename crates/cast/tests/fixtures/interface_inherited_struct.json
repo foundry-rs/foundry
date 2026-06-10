@@ -1,0 +1,1 @@
+[{"type":"function","name":"test","inputs":[{"name":"param","type":"tuple","internalType":"struct IBase.TestStruct","components":[{"name":"asset","type":"address","internalType":"address"}]}],"outputs":[],"stateMutability":"nonpayable"}]

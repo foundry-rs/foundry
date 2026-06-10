@@ -24,11 +24,63 @@ const COMPILATION_RESTRICTIONS_KEYS: &[&str] = &[
 const SETTINGS_OVERRIDES_KEYS: &[&str] =
     &["name", "via_ir", "evm_version", "optimizer", "optimizer_runs", "bytecode_hash"];
 
+/// Allowed keys for VyperConfig.
+/// Required because VyperConfig uses `skip_serializing_if = "Option::is_none"` on all fields,
+/// causing the default serialization to produce an empty dict.
+const VYPER_KEYS: &[&str] = &[
+    "optimize",
+    "opt_level",
+    "optLevel",
+    "path",
+    "experimental_codegen",
+    "venom_experimental",
+    "debug",
+    "enable_decimals",
+    "venom",
+];
+
+/// Allowed keys for DocConfig.
+/// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
+/// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
+const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "path", "ignore"];
+
+/// Allowed keys for SymbolicConfig.
+/// Required because some compatibility aliases and empty length collections are skipped by default
+/// serialization, but they are still valid user-facing config keys.
+const SYMBOLIC_KEYS: &[&str] = &[
+    "enabled",
+    "solver",
+    "solver_command",
+    "solver_portfolio",
+    "timeout",
+    "loop",
+    "depth",
+    "width",
+    "max_depth",
+    "max_paths",
+    "invariant_depth",
+    "exploration_order",
+    "max_solver_queries",
+    "default_dynamic_length",
+    "max_dynamic_length",
+    "array_lengths",
+    "dynamic_lengths",
+    "default_array_lengths",
+    "default_bytes_lengths",
+    "max_calldata_bytes",
+    "symbolic_call_targets",
+    "dump_smt",
+    "storage_layout",
+];
+
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
 
 /// Keys kept for backward compatibility that should not trigger unknown key warnings.
-const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version"];
+///
+/// `tempo` and `optimism` are legacy aliases for `network = "tempo"` / `network = "optimism"` —
+/// still accepted on input but no longer serialized in the default config.
+const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism"];
 
 /// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {
@@ -79,14 +131,10 @@ impl<P: Provider> WarningsProvider<P> {
         // Add warning for deprecated keys.
         let deprecated_key_warning = |key| {
             DEPRECATIONS.iter().find_map(|(deprecated_key, new_value)| {
-                if key == *deprecated_key {
-                    Some(Warning::DeprecatedKey {
-                        old: deprecated_key.to_string(),
-                        new: new_value.to_string(),
-                    })
-                } else {
-                    None
-                }
+                (key == *deprecated_key).then(|| Warning::DeprecatedKey {
+                    old: deprecated_key.to_string(),
+                    new: new_value.to_string(),
+                })
             })
         };
         let profiles = data
@@ -183,14 +231,21 @@ impl<P: Provider> WarningsProvider<P> {
             };
 
             // Get allowed keys for this section from the default config
-            let Some(default_section_value) = default_dict.get(*section_name) else {
-                continue;
+            // Special case for vyper: VyperConfig uses skip_serializing_if on all Option fields,
+            // so the default serialization produces an empty dict. Use explicit keys instead.
+            let allowed_keys: BTreeSet<String> = if *section_name == "vyper" {
+                VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if *section_name == "doc" {
+                DOC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else {
+                let Some(default_section_value) = default_dict.get(*section_name) else {
+                    continue;
+                };
+                let Some(default_section_dict) = default_section_value.as_dict() else {
+                    continue;
+                };
+                default_section_dict.keys().cloned().collect()
             };
-            let Some(default_section_dict) = default_section_value.as_dict() else {
-                continue;
-            };
-
-            let allowed_keys: BTreeSet<String> = default_section_dict.keys().cloned().collect();
 
             for key in section_dict.keys() {
                 let is_not_allowed =
@@ -248,14 +303,23 @@ impl<P: Provider> WarningsProvider<P> {
             };
 
             // Get allowed keys from the default config for this nested section
-            let Some(default_value) = default_dict.get(key) else {
-                continue;
+            // Special case for vyper: VyperConfig uses skip_serializing_if on all Option fields,
+            // so the default serialization produces an empty dict. Use explicit keys instead.
+            let allowed_keys: BTreeSet<String> = if key == "vyper" {
+                VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "doc" {
+                DOC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "symbolic" {
+                SYMBOLIC_KEYS.iter().map(|s| s.to_string()).collect()
+            } else {
+                let Some(default_value) = default_dict.get(key) else {
+                    continue;
+                };
+                let Some(default_nested_dict) = default_value.as_dict() else {
+                    continue;
+                };
+                default_nested_dict.keys().cloned().collect()
             };
-            let Some(default_nested_dict) = default_value.as_dict() else {
-                continue;
-            };
-
-            let allowed_keys: BTreeSet<String> = default_nested_dict.keys().cloned().collect();
 
             for nested_key in nested_dict.keys() {
                 let is_not_allowed = !allowed_keys.contains(nested_key)

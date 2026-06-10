@@ -82,7 +82,7 @@ impl ArtifactArgs {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&loc, artifact)?;
-            sh_println!("Saved artifact at {}", loc.display())?;
+            sh_status!("Saved artifact at {}", loc.display())?;
         } else {
             sh_println!("{artifact}")?;
         }

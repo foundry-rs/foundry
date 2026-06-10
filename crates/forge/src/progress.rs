@@ -65,7 +65,7 @@ impl TestsProgressState {
     pub fn start_fuzz_progress(
         &mut self,
         suite_name: &str,
-        test_name: &String,
+        test_name: &str,
         timeout: Option<u32>,
         runs: u32,
     ) -> Option<ProgressBar> {
@@ -83,7 +83,7 @@ impl TestsProgressState {
             fuzz_progress.set_style(
                 indicatif::ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
             );
-            fuzz_progress.set_prefix(test_name.to_string());
+            fuzz_progress.set_prefix(test_name.to_owned());
             Some(fuzz_progress)
         } else {
             None
@@ -112,7 +112,7 @@ impl TestsProgress {
 pub fn start_fuzz_progress(
     tests_progress: Option<&TestsProgress>,
     suite_name: &str,
-    test_name: &String,
+    test_name: &str,
     timeout: Option<u32>,
     runs: u32,
 ) -> Option<ProgressBar> {

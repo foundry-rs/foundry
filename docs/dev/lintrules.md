@@ -30,7 +30,7 @@ The `forge-lint` system operates by analyzing Solidity source code through a dua
 
 We recommend you start by writing out some Solidity code that you want to trigger a lint in [`crates/lint/testdata`](https://github.com/foundry-rs/foundry/tree/master/crates/lint/testdata). Name the file after your lint rule.
 
-Next, choose whether you want an [early or late lint pass](#choosing-between-early-and-late-passes). If your lint is early, you can use use [Solar](https://github.com/paradigmxyz/solar) to dump the AST and find the patterns you need to match on in your lint code using `solar -Zdump=ast crates/lint/testdata/<file.sol>`. If your lint is late, you can use `solar -Zdump=hir crates/lint/testdata/<file.sol>`.
+Next, choose whether you want an [early or late lint pass](#choosing-between-early-and-late-passes). If your lint is early, you can use [Solar](https://github.com/paradigmxyz/solar) to dump the AST and find the patterns you need to match on in your lint code using `solar -Zdump=ast crates/lint/testdata/<file.sol>`. If your lint is late, you can use `solar -Zdump=hir crates/lint/testdata/<file.sol>`.
 
 1. Specify an issue that is being addressed in the PR description.
 2. In your PR:
@@ -59,6 +59,8 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
   ```
 
 - Implement the appropriate trait logic (`EarlyLintPass` or `LateLintPass`) for your lint. Do it in a new file within the relevant severity module (e.g., `src/sol/med/my_new_lint.rs`).
+
+- Add a markdown documentation file for the lint at `crates/lint/docs/<str_id>.md`. The file is referenced by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<str_id>`) and is consumed by the [Foundry book](https://github.com/foundry-rs/book) to render the lint reference page. Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point. The presence of this file is enforced by the `registered_lints_have_docs` unit test in `crates/lint/src/sol/mod.rs`.
 
 ### Choosing Between Early and Late Passes
 

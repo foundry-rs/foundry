@@ -1,5 +1,5 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{Comments, Document, ParseItem, ParseSource, solang_ext::SafeUnwrap};
+use crate::{Comments, Document, ParseItem, ParseSource};
 use regex::{Captures, Match, Regex};
 use std::{
     borrow::Cow,
@@ -84,7 +84,7 @@ impl InferInlineHyperlinks {
         for item in items {
             match &item.source {
                 ParseSource::Contract(contract) => {
-                    let name = &contract.name.safe_unwrap().name;
+                    let name = &contract.name;
                     if name == link.identifier {
                         if link.part.is_none() {
                             return Some(InlineLinkTarget::borrowed(
@@ -102,11 +102,8 @@ impl InferInlineHyperlinks {
                     // have so we can match the correct one
                     if let Some(id) = &fun.name {
                         // Note: constructors don't have a name
-                        if id.name == link.ref_name() {
-                            return Some(InlineLinkTarget::borrowed(
-                                &id.name,
-                                target_path.to_path_buf(),
-                            ));
+                        if id == link.ref_name() {
+                            return Some(InlineLinkTarget::borrowed(id, target_path.to_path_buf()));
                         }
                     } else if link.ref_name() == "constructor" {
                         return Some(InlineLinkTarget::borrowed(
@@ -117,7 +114,7 @@ impl InferInlineHyperlinks {
                 }
                 ParseSource::Variable(_) => {}
                 ParseSource::Event(ev) => {
-                    let ev_name = &ev.name.safe_unwrap().name;
+                    let ev_name = &ev.name;
                     if ev_name == link.ref_name() {
                         return Some(InlineLinkTarget::borrowed(
                             ev_name,
@@ -126,7 +123,7 @@ impl InferInlineHyperlinks {
                     }
                 }
                 ParseSource::Error(err) => {
-                    let err_name = &err.name.safe_unwrap().name;
+                    let err_name = &err.name;
                     if err_name == link.ref_name() {
                         return Some(InlineLinkTarget::borrowed(
                             err_name,
@@ -135,7 +132,7 @@ impl InferInlineHyperlinks {
                     }
                 }
                 ParseSource::Struct(structdef) => {
-                    let struct_name = &structdef.name.safe_unwrap().name;
+                    let struct_name = &structdef.name;
                     if struct_name == link.ref_name() {
                         return Some(InlineLinkTarget::borrowed(
                             struct_name,
@@ -203,7 +200,7 @@ struct InlineLinkTarget<'a> {
 }
 
 impl<'a> InlineLinkTarget<'a> {
-    fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
+    const fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
         Self { section: Cow::Borrowed(section), target_path }
     }
 }
@@ -261,12 +258,8 @@ impl<'a> InlineLink<'a> {
         self.exact_identifier().split('-').next().unwrap()
     }
 
-    fn exact_identifier(&self) -> &str {
-        let mut name = self.identifier;
-        if let Some(part) = self.part {
-            name = part;
-        }
-        name
+    const fn exact_identifier(&self) -> &str {
+        if let Some(part) = self.part { part } else { self.identifier }
     }
 
     /// Returns the content of the matched link.
@@ -275,7 +268,7 @@ impl<'a> InlineLink<'a> {
     }
 
     /// Returns true if the link is external.
-    fn is_external(&self) -> bool {
+    const fn is_external(&self) -> bool {
         self.part.is_some()
     }
 }
