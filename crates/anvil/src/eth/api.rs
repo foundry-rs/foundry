@@ -1377,11 +1377,10 @@ impl EthApi<FoundryNetwork> {
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // Check transfer value before any fast path, and cap gas limit by sender balance when the
-        // request has a non-zero gas price.
-        if !is_tempo_aa_tx {
-            // Match `build_call_env` caller fallback so requests without `from` still perform
-            // funds checks against the effective caller.
-            let from = request.from.unwrap_or_default();
+        // request has a non-zero gas price. Only enforce this for explicit senders: calls without
+        // `from` historically estimate against the default caller and must not be capped by the
+        // zero address balance.
+        if !is_tempo_aa_tx && let Some(from) = request.from {
             let mut available_funds = self.backend.get_balance_with_state(state, from)?;
             if let Some(value) = request.value {
                 if value > available_funds {
@@ -3482,6 +3481,9 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<FoundryTypedTx> {
         let mut request = Into::<FoundryTransactionRequest>::into(request);
         let from = request.from().or(self.accounts()?.first().copied());
+        if let Some(from) = from {
+            request.set_from(from);
+        }
 
         // Fill common fields for all tx types
         request.chain_id().is_none().then(|| request.set_chain_id(self.chain_id()));
@@ -3497,16 +3499,18 @@ impl EthApi<FoundryNetwork> {
                     block_gas_limit
                 }
             };
-            request.set_gas_limit(
-                self.do_estimate_gas(
-                    request.as_ref().clone().into(),
-                    None,
-                    EvmOverrides::default(),
-                )
+            let estimated_gas = self
+                .do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
                 .await
                 .map(|v| v as u64)
-                .unwrap_or(fallback_gas_limit),
-            );
+                .unwrap_or_else(|_| {
+                    if is_simple_transfer_request(request.as_ref()) {
+                        MIN_TRANSACTION_GAS as u64
+                    } else {
+                        fallback_gas_limit
+                    }
+                });
+            request.set_gas_limit(estimated_gas);
         }
 
         // Fill missing tx type specific fields
@@ -3681,6 +3685,15 @@ impl EthApi<FoundryNetwork> {
         self.backend.set_fee_amm_liquidity(user_token, validator_token, amount).await?;
         Ok(())
     }
+}
+
+fn is_simple_transfer_request(request: &TransactionRequest) -> bool {
+    request.to.as_ref().and_then(TxKind::to).is_some()
+        && (request.input.input().is_none()
+            || request.input.input().is_some_and(|data| data.is_empty()))
+        && request.authorization_list.is_none()
+        && request.access_list.is_none()
+        && request.blob_versioned_hashes.is_none()
 }
 
 fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> Vec<TxMarker> {
