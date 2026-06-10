@@ -549,39 +549,49 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
 
         // Use available artifacts list if present
         if let Some(artifacts) = &state.config.available_artifacts {
-            let filtered = artifacts
-                .iter()
-                .filter(|(id, _)| {
-                    // name might be in the form of "Counter.0.8.23"
-                    let id_name = id.name.split('.').next().unwrap();
-                    let contract_name_matches = contract_name.is_none_or(|name| id_name == name);
-                    let profile_matches = profile.is_none_or(|profile| id.profile == profile);
-                    let ambiguous_file_profile_matches = file.is_some()
-                        && version.is_none()
-                        && profile.is_none()
-                        && contract_name.is_some_and(|name| id.profile == name);
+            let ambiguous_file_profile =
+                file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
+            let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
+                artifacts
+                    .iter()
+                    .filter(|(id, _)| {
+                        // name might be in the form of "Counter.0.8.23"
+                        let id_name = id.name.split('.').next().unwrap();
 
-                    if let Some(path) = &file
-                        && !id.source.ends_with(path)
-                    {
-                        return false;
-                    }
-                    if !contract_name_matches && !ambiguous_file_profile_matches {
-                        return false;
-                    }
-                    if let Some(ref version) = version
-                        && (id.version.minor != version.minor
-                            || id.version.major != version.major
-                            || id.version.patch != version.patch)
-                    {
-                        return false;
-                    }
-                    if !profile_matches {
-                        return false;
-                    }
-                    true
-                })
-                .collect::<Vec<_>>();
+                        if let Some(path) = &file
+                            && !id.source.ends_with(path)
+                        {
+                            return false;
+                        }
+                        if let Some(ref version) = version
+                            && (id.version.minor != version.minor
+                                || id.version.major != version.major
+                                || id.version.patch != version.patch)
+                        {
+                            return false;
+                        }
+                        if let Some(profile) = profile
+                            && id.profile != profile
+                        {
+                            return false;
+                        }
+                        if let Some(name) = contract_name {
+                            if treat_ambiguous_as_profile && ambiguous_file_profile {
+                                return id.profile == name;
+                            }
+
+                            return id_name == name;
+                        }
+
+                        true
+                    })
+                    .collect()
+            };
+
+            let mut filtered = filter_artifacts(false);
+            if filtered.is_empty() && ambiguous_file_profile {
+                filtered = filter_artifacts(true);
+            }
 
             let artifact = match &filtered[..] {
                 [] => None,
@@ -1162,41 +1172,41 @@ mod tests {
         assert_eq!(parsed.profile, None);
     }
 
+    fn test_artifact(
+        source: &str,
+        name: &str,
+        profile: &str,
+        bytecode: Bytes,
+    ) -> (ArtifactId, CompactContractBytecode) {
+        (
+            ArtifactId {
+                path: PathBuf::from(format!("{source}/{name}.json")),
+                name: name.to_owned(),
+                source: PathBuf::from(source),
+                version: Version::new(0, 8, 30),
+                build_id: String::new(),
+                profile: profile.to_owned(),
+            },
+            CompactContractBytecode {
+                abi: Some(Default::default()),
+                bytecode: Some(CompactBytecode {
+                    object: BytecodeObject::Bytecode(bytecode),
+                    source_map: None,
+                    link_references: Default::default(),
+                }),
+                deployed_bytecode: None,
+            },
+        )
+    }
+
     #[test]
     fn test_get_artifact_code_resolves_file_profile_ambiguity() {
-        fn artifact(
-            source: &str,
-            name: &str,
-            profile: &str,
-            bytecode: Bytes,
-        ) -> (ArtifactId, CompactContractBytecode) {
-            (
-                ArtifactId {
-                    path: PathBuf::from(format!("{source}/{name}.json")),
-                    name: name.to_owned(),
-                    source: PathBuf::from(source),
-                    version: Version::new(0, 8, 30),
-                    build_id: String::new(),
-                    profile: profile.to_owned(),
-                },
-                CompactContractBytecode {
-                    abi: Some(Default::default()),
-                    bytecode: Some(CompactBytecode {
-                        object: BytecodeObject::Bytecode(bytecode),
-                        source_map: None,
-                        link_references: Default::default(),
-                    }),
-                    deployed_bytecode: None,
-                },
-            )
-        }
-
         let default_bytecode = Bytes::from_static(&[0x60, 0x01]);
         let paris_bytecode = Bytes::from_static(&[0x60, 0x02]);
         let source = "src/GetCodeProfile.t.sol";
         let artifacts = ContractsByArtifact::new([
-            artifact(source, "GetCodeProfile", "default", default_bytecode),
-            artifact(source, "GetCodeProfile", "paris", paris_bytecode.clone()),
+            test_artifact(source, "GetCodeProfile", "default", default_bytecode),
+            test_artifact(source, "GetCodeProfile", "paris", paris_bytecode.clone()),
         ]);
         let config = CheatsConfig {
             available_artifacts: Some(artifacts),
@@ -1209,6 +1219,28 @@ mod tests {
             super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
 
         assert_eq!(bytecode, paris_bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_prefers_contract_name_over_file_profile_ambiguity() {
+        let profile_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let contract_bytecode = Bytes::from_static(&[0x60, 0x03]);
+        let source = "src/GetCodeProfile.t.sol";
+        let artifacts = ContractsByArtifact::new([
+            test_artifact(source, "GetCodeProfile", "paris", profile_bytecode),
+            test_artifact(source, "paris", "default", contract_bytecode.clone()),
+        ]);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let bytecode =
+            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+
+        assert_eq!(bytecode, contract_bytecode);
     }
 
     #[test]
