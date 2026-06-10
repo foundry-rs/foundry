@@ -28,8 +28,17 @@ pub struct GlobalArgs {
     quiet: bool,
 
     /// Format log messages as JSON.
-    #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color"])]
+    #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color", "machine"])]
     json: bool,
+
+    /// Activate the agent contract: disables color and wraps CLI-runtime
+    /// exits (parse / usage / help / version) in a structured envelope.
+    /// Per-command machine output (declared `output_mode`, progress and
+    /// prompt suppression, canonical exit codes) is adopted incrementally
+    /// — see `docs/agents/spec.md` §10. Mutually exclusive with `--json`
+    /// and `--md` to keep machine-mode output unambiguous.
+    #[arg(help_heading = "Display options", global = true, long, conflicts_with_all = &["color", "md", "json"])]
+    machine: bool,
 
     /// Format log messages as Markdown.
     #[arg(
@@ -83,18 +92,25 @@ impl GlobalArgs {
     }
 
     /// Like [`check_introspect`](Self::check_introspect) but uses an explicit
-    /// [`Command`](clap::Command) and [`CommandRegistry`](crate::introspect::CommandRegistry).
+    /// [`CommandRegistry`](crate::introspect::CommandRegistry). The clap command
+    /// is built lazily so normal startup pays nothing when `--introspect` is absent.
     pub fn check_introspect_with(
-        command: clap::Command,
+        make_command: impl FnOnce() -> clap::Command,
         registry: &crate::introspect::CommandRegistry,
     ) {
         if pre_parse_flag_present("--introspect") {
-            emit_introspect_and_exit(command, registry);
+            emit_introspect_and_exit(make_command(), registry);
         }
     }
 
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
+        // Keep the runtime machine-mode flag in sync with what clap parsed.
+        // `check_machine` runs pre-parse on the binary entry point; this
+        // covers callers that construct `GlobalArgs` programmatically and
+        // ensures the flag never goes stale.
+        crate::machine::set_machine(self.machine);
+
         // Set the global shell.
         let shell = self.shell();
         // Argument takes precedence over the env var global color choice.
@@ -113,6 +129,7 @@ impl GlobalArgs {
         // Display a warning message if the current version is not stable.
         if IS_NIGHTLY_VERSION
             && !self.json
+            && !self.machine
             && std::env::var_os("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_none()
         {
             let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
@@ -123,11 +140,17 @@ impl GlobalArgs {
 
     /// Create a new shell instance.
     pub fn shell(&self) -> Shell {
-        let mode = match self.quiet {
+        // `--machine` forces Quiet; structured output goes through
+        // `print_json` / `print_stream_record`, which bypass the quiet check.
+        let mode = match self.quiet || self.machine {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,
         };
-        let color = self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default();
+        // `--machine` forces no-color; `--json` already forces no-color.
+        let color = (self.json || self.machine)
+            .then_some(ColorChoice::Never)
+            .or(self.color)
+            .unwrap_or_default();
         let format = if self.json {
             OutputFormat::Json
         } else if self.md {
@@ -183,8 +206,18 @@ fn emit_introspect_and_exit(
 /// the ASCII flags this helper supports). Values of known value-taking
 /// global options are skipped, so e.g. `forge --color always --introspect`
 /// and `forge -j 4 --introspect` still match.
-fn pre_parse_flag_present(flag: &str) -> bool {
+///
+/// Use for non-clap-global pre-parse flags (`--introspect`, `--markdown-help`).
+/// For clap-globals like `--machine`, use [`pre_parse_global_flag_present`].
+pub(crate) fn pre_parse_flag_present(flag: &str) -> bool {
     pre_parse_flag_present_in(std::env::args_os().skip(1), flag)
+}
+
+/// Like [`pre_parse_flag_present`] but scans past subcommands/positionals,
+/// honoring `clap`'s `global = true` placement (e.g. `cast call --machine --help`).
+/// Still stops at `--` and skips values of known value-taking globals.
+pub(crate) fn pre_parse_global_flag_present(flag: &str) -> bool {
+    pre_parse_global_flag_present_in(std::env::args_os().skip(1), flag)
 }
 
 /// Value-taking global options declared on [`GlobalArgs`]; their following
@@ -193,7 +226,7 @@ fn pre_parse_flag_present(flag: &str) -> bool {
 /// declarations above.
 const VALUE_TAKING_GLOBAL_OPTIONS: &[&str] = &["--color", "-j", "--threads", "--jobs"];
 
-fn pre_parse_flag_present_in<I>(args: I, flag: &str) -> bool
+pub(crate) fn pre_parse_flag_present_in<I>(args: I, flag: &str) -> bool
 where
     I: IntoIterator<Item = std::ffi::OsString>,
 {
@@ -215,6 +248,27 @@ where
         }
         // Skip the value of `--opt VALUE` form; `--opt=VALUE` is one token.
         if !s.contains('=') && VALUE_TAKING_GLOBAL_OPTIONS.contains(&s) {
+            iter.next();
+        }
+    }
+    false
+}
+
+pub(crate) fn pre_parse_global_flag_present_in<I>(args: I, flag: &str) -> bool
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut iter = args.into_iter();
+    while let Some(a) = iter.next() {
+        if a == "--" {
+            return false;
+        }
+        // Non-UTF-8 token: skip but keep scanning.
+        let Some(s) = a.to_str() else { continue };
+        if s == flag {
+            return true;
+        }
+        if s.starts_with('-') && !s.contains('=') && VALUE_TAKING_GLOBAL_OPTIONS.contains(&s) {
             iter.next();
         }
     }
@@ -263,5 +317,51 @@ mod tests {
         ] {
             assert!(!pre_parse_flag_present_in(argv(case), "--introspect"), "case: {case:?}");
         }
+    }
+
+    /// Clap-global scanner: matches `--machine` anywhere except after `--`
+    /// or as the value of a known value-taking global.
+    #[test]
+    fn pre_parse_global_flag_present_machine_cases() {
+        for case in [
+            &["--machine"][..],
+            &["--color", "always", "--machine"],
+            &["-j", "4", "--machine"],
+            &["build", "--machine"],
+            &["build", "--machine", "--help"],
+            &["call", "ADDR", "sig(string)", "--data", "0x00", "--machine"],
+        ] {
+            assert!(
+                pre_parse_global_flag_present_in(argv(case), "--machine"),
+                "expected match: {case:?}"
+            );
+        }
+        for case in [&["--", "--machine"][..], &["--color", "--machine"]] {
+            assert!(
+                !pre_parse_global_flag_present_in(argv(case), "--machine"),
+                "expected NO match: {case:?}"
+            );
+        }
+    }
+
+    /// Non-UTF-8 argv must not panic the scanner; it must short-circuit
+    /// to `false` at the offending token.
+    #[test]
+    #[cfg(unix)]
+    fn pre_parse_flag_present_handles_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![0xff, 0xfe]);
+        let args = vec![bad, OsString::from("--machine")];
+        assert!(!pre_parse_flag_present_in(args, "--machine"));
+    }
+
+    /// Non-UTF-8 token must not block a later `--machine` from matching.
+    #[test]
+    #[cfg(unix)]
+    fn pre_parse_global_flag_present_handles_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![0xff, 0xfe]);
+        let args = vec![bad, OsString::from("--machine")];
+        assert!(pre_parse_global_flag_present_in(args, "--machine"));
     }
 }

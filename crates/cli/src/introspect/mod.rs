@@ -11,10 +11,11 @@ mod document;
 mod registry;
 
 pub use build::{
-    build_document, collect_command_ids, duplicate_command_ids, render_introspect_document,
+    build_document, capability_violations, collect_command_ids, duplicate_command_ids,
+    render_introspect_document,
 };
 pub use document::*;
-pub use registry::{CommandMeta, CommandRegistry};
+pub use registry::{CommandMeta, CommandRegistry, RegistryEntry};
 
 /// Stable schema id for the introspect document.
 pub const INTROSPECT_SCHEMA_ID: &str = "foundry:introspect@v1";

@@ -1940,12 +1940,12 @@ Ran 1 test for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 [FAIL: wrong counter require] invariant_with_require
 	[SEQUENCE]
 
-Invariant/Property Tests: 2/2 invariants broken
+InvariantShrinkWithAssert invariants: 2/2 invariants broken
 ...
 [FAIL: wrong counter assert] invariant_with_assert
 [FAIL: wrong counter require] invariant_with_require
 ...
- invariant_with_assert() ([RUNS])
+ InvariantShrinkWithAssert invariants ([RUNS])
 ...
 "#]]);
 });
@@ -2129,11 +2129,11 @@ Ran 1 test for test/InvariantTest1.t.sol:InvariantTest
 [FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
 	[SEQUENCE]
 
-Invariant/Property Tests: 2/2 invariants broken
+InvariantTest invariants: 2/2 invariants broken
 [FAIL: false] invariant_neverFalse
 [FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
 2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
- invariant_neverFalse() ([RUNS])
+ InvariantTest invariants ([RUNS])
 
 [STATS]
 
@@ -2149,11 +2149,11 @@ Encountered 1 failing test in test/InvariantTest1.t.sol:InvariantTest
 [FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
 	[SEQUENCE]
 
-Invariant/Property Tests: 2/2 invariants broken
+InvariantTest invariants: 2/2 invariants broken
 [FAIL: false] invariant_neverFalse
 [FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
 2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
- invariant_neverFalse() ([RUNS])
+ InvariantTest invariants ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

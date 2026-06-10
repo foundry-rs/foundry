@@ -1,16 +1,18 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
+use url::Url;
 
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_rpc_client::BuiltInConnectionString;
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -19,7 +21,11 @@ use foundry_common::{
     tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{
+    TempoNetwork,
+    transport::{RelayConnector, SponsorshipMode},
+};
+use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 use crate::{
     cmd::tip20::iso4217_warning_message,
@@ -97,6 +103,10 @@ pub enum SendTxSubcommands {
 
 impl SendTxArgs {
     pub async fn run(self) -> Result<()> {
+        if self.tx.tempo.session_id()?.is_some() {
+            return self.run_generic::<TempoNetwork>(None, None).await;
+        }
+
         // Resolve the signer early so we know if it's a Tempo access key.
         let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
 
@@ -109,8 +119,8 @@ impl SendTxArgs {
 
     pub async fn run_generic<N: Network>(
         self,
-        pre_resolved_signer: Option<WalletSigner>,
-        access_key: Option<TempoAccessKeyConfig>,
+        mut pre_resolved_signer: Option<WalletSigner>,
+        mut access_key: Option<TempoAccessKeyConfig>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -121,10 +131,22 @@ impl SendTxArgs {
         let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
             self;
 
+        let has_session = tx.tempo.session_id()?.is_some();
+        if has_session && unlocked {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
+        }
+        if has_session && send_tx.browser.browser {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --browser");
+        }
+
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
+        let sponsor_url = tx.tempo.sponsor_url.clone();
         let expires_at = tx.tempo.resolve_expires();
-        let tempo_sponsor =
-            if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
+        let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
+            None
+        } else {
+            tx.tempo.sponsor_config().await?
+        };
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -179,7 +201,7 @@ impl SendTxArgs {
                 sh_warn!("{}", iso4217_warning_message(currency))?;
                 let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
                 if !matches!(response.trim(), "y" | "Y") {
-                    sh_println!("Aborted.")?;
+                    sh_status!("Aborted.")?;
                     return Ok(());
                 }
             }
@@ -192,6 +214,16 @@ impl SendTxArgs {
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
+        }
+
+        if has_session
+            && let Some(session) = tx.tempo.session_signer_for_wallet(
+                &send_tx.eth.wallet,
+                get_chain(config.chain, &provider).await?.id(),
+            )?
+        {
+            pre_resolved_signer = Some(session.signer);
+            access_key = Some(session.access_key);
         }
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
@@ -230,10 +262,25 @@ impl SendTxArgs {
         }
 
         if let Some(ts) = expires_at {
-            sh_println!("Transaction expires at unix timestamp {ts}")?;
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+
+        // --sponsor-url is only valid with a local signer (Case 4). Bail early with a clear
+        // error rather than silently ignoring it in the other signing paths.
+        if let Some(ref url) = sponsor_url {
+            validate_sponsor_url(url)?;
+            if unlocked {
+                eyre::bail!("--sponsor-url cannot be combined with --unlocked");
+            }
+            if send_tx.browser.browser {
+                eyre::bail!("--sponsor-url cannot be combined with --browser");
+            }
+            if access_key.is_some() {
+                eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
+            }
+        }
 
         // Launch browser signer if `--browser` flag is set
         let browser = send_tx.browser.run::<N>().await?;
@@ -279,12 +326,13 @@ impl SendTxArgs {
                 send_tx.confirmations,
                 timeout,
             )
-            .await
+            .await?;
         // Case 2:
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
             let chain = builder.chain();
-            let (mut tx_request, _) = builder.build(browser.address()).await?;
+            let (mut tx_request, _) =
+                builder.with_browser_wallet().build(browser.address()).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
                 tx_request.nonce().unwrap_or_default(),
@@ -305,7 +353,8 @@ impl SendTxArgs {
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
             let cast = CastTxSender::new(&provider);
-            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+                .await?;
         // Case 3:
         // Tempo access key (keychain) signing. Uses `sign_with_access_key` which
         // handles the provisioning check and embeds `key_authorization` when needed.
@@ -331,8 +380,48 @@ impl SendTxArgs {
                 send_tx.confirmations,
                 timeout,
             )
-            .await
+            .await?;
         // Case 4:
+        // Remote sponsor URL: sign locally, ask the sponsor service for a fee-payer signature,
+        // then submit the fully-sponsored tx to the regular RPC.
+        } else if let Some(sponsor_url) = sponsor_url {
+            let signer = match pre_resolved_signer {
+                Some(s) => s,
+                None => send_tx.eth.wallet.signer().await?,
+            };
+            let from = signer.address();
+
+            tx::validate_from_address(send_tx.eth.wallet.from, from)?;
+
+            let (mut tx_request, _) = builder.build(&signer).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
+
+            tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+
+            let wallet = EthereumWallet::from(signer);
+            let default_rpc = config.get_rpc_url_or_localhost_http()?.into_owned();
+            let default = BuiltInConnectionString::from_str(&default_rpc)?;
+            let relay = BuiltInConnectionString::from_str(&sponsor_url)?;
+            let connector =
+                RelayConnector::with_config(default, relay, SponsorshipMode::SignOnly, false);
+            let provider = AlloyProviderBuilder::<_, _, N>::default()
+                .wallet(wallet)
+                .connect_with(&connector)
+                .await?;
+
+            cast_send(
+                provider,
+                tx_request,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+            )
+            .await?;
+        // Case 5:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
@@ -368,8 +457,10 @@ impl SendTxArgs {
                 send_tx.confirmations,
                 timeout,
             )
-            .await
+            .await?;
         }
+
+        Ok(())
     }
 }
 
@@ -380,7 +471,7 @@ pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     sync: bool,
     confs: u64,
     timeout: u64,
-) -> Result<()>
+) -> Result<B256>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
@@ -388,16 +479,17 @@ where
     let cast = CastTxSender::new(provider);
 
     if sync {
-        // Send transaction and wait for receipt synchronously
-        let receipt = cast.send_sync(tx).await?;
+        // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
+        // Serialize; adding Serialize would ripple across all network-generic callers.
+        let (tx_hash, receipt) = cast.send_sync(tx).await?;
         sh_println!("{receipt}")?;
+        Ok(tx_hash)
     } else {
         let pending_tx = cast.send(tx).await?;
         let tx_hash = *pending_tx.inner().tx_hash();
         cast.print_tx_result(tx_hash, cast_async, confs, timeout).await?;
+        Ok(tx_hash)
     }
-
-    Ok(())
 }
 
 /// Signs a transaction with a Tempo access key and sends it via `send_raw_transaction`.
@@ -414,7 +506,7 @@ pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
     cast_async: bool,
     confirmations: u64,
     timeout: u64,
-) -> Result<()>
+) -> Result<B256>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
@@ -431,5 +523,52 @@ where
         )
         .await?;
     let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-    CastTxSender::new(provider).print_tx_result(tx_hash, cast_async, confirmations, timeout).await
+    CastTxSender::new(provider)
+        .print_tx_result(tx_hash, cast_async, confirmations, timeout)
+        .await?;
+    Ok(tx_hash)
+}
+
+/// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).
+pub(crate) fn validate_sponsor_url(raw: &str) -> Result<()> {
+    let url = Url::parse(raw)
+        .map_err(|e| eyre::eyre!("--sponsor-url is not a valid URL ({raw}): {e}"))?;
+
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let host = url.host_str().unwrap_or("");
+            if host == "localhost" || host == "127.0.0.1" {
+                return Ok(());
+            }
+            eyre::bail!(
+                "--sponsor-url must use https:// for non-local endpoints (got {raw}). \
+                 The sponsor relay is a trusted third party; use an encrypted channel."
+            );
+        }
+        _ => eyre::bail!(
+            "--sponsor-url must start with https:// (got {raw}). \
+             The sponsor relay is a trusted third party; use an encrypted channel."
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_sponsor_url() {
+        // accepted
+        assert!(validate_sponsor_url("https://sponsor.tempo.xyz/tp_abc").is_ok());
+        assert!(validate_sponsor_url("http://localhost:8545").is_ok());
+        assert!(validate_sponsor_url("http://127.0.0.1:8545").is_ok());
+
+        // rejected
+        assert!(validate_sponsor_url("http://sponsor.tempo.xyz").is_err());
+        assert!(validate_sponsor_url("not-a-url").is_err());
+        // bypass attempts that fooled the old starts_with check
+        assert!(validate_sponsor_url("http://localhost.evil.com").is_err());
+        assert!(validate_sponsor_url("http://127.0.0.1.evil.com").is_err());
+    }
 }

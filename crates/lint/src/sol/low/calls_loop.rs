@@ -4,15 +4,16 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{DataLocation, ElementaryType, Visibility},
+    ast::{DataLocation, ElementaryType, StateMutability, Visibility},
     interface::{kw, sym},
     sema::{
         Gcx, Ty,
+        builtins::Builtin,
         hir::{
             self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt,
             StmtKind, TypeKind,
         },
-        ty::TyKind,
+        ty::{TyFn, TyKind},
     },
 };
 use std::collections::HashSet;
@@ -20,7 +21,7 @@ use std::collections::HashSet;
 declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop", "external call inside a loop");
 
 impl<'hir> LateLintPass<'hir> for CallsLoop {
-    fn check_function_with_gcx(
+    fn check_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
@@ -150,7 +151,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.analyze_modifier_chain(modifiers, index, body, loop_depth);
                 }
             }
-            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Err(_) => {}
+            StmtKind::Return(None)
+            | StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => {}
         }
     }
 
@@ -159,7 +165,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, loop_depth);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, loop_depth);
                     }
                 }
@@ -219,6 +225,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             | ExprKind::New(_)
             | ExprKind::TypeCall(_)
             | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
             | ExprKind::Err(_) => {}
         }
     }
@@ -246,21 +253,25 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 }
 
-fn is_external_call<'gcx>(
+pub(super) fn is_external_call<'gcx>(
     gcx: Gcx<'gcx>,
-    hir: &Hir<'gcx>,
+    hir: &'gcx Hir<'gcx>,
     callee: &Expr<'gcx>,
     explicit_arg_count: usize,
 ) -> bool {
+    // `new Foo(...)` runs the deployed contract's constructor — an external interaction.
+    if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+        return true;
+    }
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
     if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
-        && is_address_like(hir, base)
+        && is_address_like(gcx, base)
     {
         return true;
     }
 
-    if matches!(member.name, sym::send | sym::transfer) && is_address_like(hir, base) {
+    if matches!(member.name, sym::send | sym::transfer) && is_address_like(gcx, base) {
         return true;
     }
 
@@ -268,11 +279,112 @@ fn is_external_call<'gcx>(
         return true;
     }
 
+    // `super.<member>(...)` is internal base-chain dispatch, not an external call.
+    // Short-circuit before any code that would ask Solar for `super`'s type (panics).
+    if is_super(base) {
+        return false;
+    }
+
     if resolves_to_internal_library_extension(gcx, hir, base, *member, explicit_arg_count) {
         return false;
     }
 
-    matches!(semantic_member_ty(gcx, hir, base, member.name).map(|ty| ty.kind), Some(TyKind::FnPtr(func)) if func.visibility >= Visibility::Public)
+    // Iterate matching members so overloads aren't dropped by a unique-name lookup.
+    external_member_signatures(gcx, hir, base, member.name, explicit_arg_count)
+        .into_iter()
+        .any(|(vis, _)| vis >= Visibility::Public)
+}
+
+/// Like [`is_external_call`], but excludes calls that cannot affect log ordering or
+/// observable state: `staticcall` and high-level `view`/`pure` callees (including `this.*`).
+pub(super) fn is_state_mutating_external_call<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &'gcx Hir<'gcx>,
+    callee: &Expr<'gcx>,
+    explicit_arg_count: usize,
+    enclosing_contract: Option<ContractId>,
+) -> bool {
+    // Contract deployment: the constructor runs arbitrary code and can emit logs.
+    if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+        return true;
+    }
+    let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
+
+    // Low-level address calls: `call` and `delegatecall` are in scope; `staticcall` is not.
+    if matches!(member.name, kw::Call | kw::Delegatecall) && is_address_like(gcx, base) {
+        return true;
+    }
+
+    if member.name == kw::Staticcall && is_address_like(gcx, base) {
+        return false;
+    }
+
+    if matches!(member.name, sym::send | sym::transfer) && is_address_like(gcx, base) {
+        return true;
+    }
+
+    if is_this(base) {
+        // `this.<view|pure>()` compiles to a STATICCALL and cannot reorder events; only
+        // taint when the resolved self-call is state-mutating.
+        return self_call_is_state_mutating(
+            hir,
+            enclosing_contract,
+            member.name,
+            explicit_arg_count,
+        );
+    }
+
+    // `super.<member>(...)` is internal dispatch — not an external call.
+    if is_super(base) {
+        return false;
+    }
+
+    if resolves_to_internal_library_extension(gcx, hir, base, *member, explicit_arg_count) {
+        return false;
+    }
+
+    // Iterate overloads: conservatively flag if any matching public/external member is
+    // not `view`/`pure` (rather than silently dropping overloaded names).
+    external_member_signatures(gcx, hir, base, member.name, explicit_arg_count).into_iter().any(
+        |(vis, mut_)| {
+            vis >= Visibility::Public
+                && !matches!(mut_, StateMutability::View | StateMutability::Pure)
+        },
+    )
+}
+
+/// Returns `true` when a `this.<member>(...)` call may emit logs or mutate state.
+/// Conservative on unresolved/overloaded names (avoids `gcx.type_of_res` for the `this` builtin,
+/// which panics).
+fn self_call_is_state_mutating(
+    hir: &Hir<'_>,
+    enclosing_contract: Option<ContractId>,
+    member_name: solar::interface::Symbol,
+    explicit_arg_count: usize,
+) -> bool {
+    let Some(contract_id) = enclosing_contract else { return true };
+
+    let mut matched = false;
+    for item_id in hir.contract_item_ids(contract_id) {
+        let Some(func_id) = item_id.as_function() else { continue };
+        let func = hir.function(func_id);
+        if func.name.is_none_or(|name| name.name != member_name) {
+            continue;
+        }
+        if func.parameters.len() != explicit_arg_count {
+            continue;
+        }
+        // Only externally-callable functions can appear in a `this.<member>(...)` call.
+        if func.visibility < Visibility::Public {
+            continue;
+        }
+        matched = true;
+        if !matches!(func.state_mutability, StateMutability::View | StateMutability::Pure) {
+            return true;
+        }
+    }
+    // No public/external match resolved → conservatively taint.
+    !matched
 }
 
 fn resolves_to_internal_library_extension<'gcx>(
@@ -299,17 +411,63 @@ fn member_function_ids<'gcx>(
     let Some(base_ty) = semantic_expr_ty(gcx, hir, base) else { return Vec::new() };
 
     gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-        .iter()
         .filter(|member| member.name == member_name)
         .filter_map(|member| match (member.res, member.ty.kind) {
             (Some(Res::Item(ItemId::Function(func_id))), _) => Some(func_id),
-            (_, TyKind::FnPtr(func)) => func.function_id,
+            (_, TyKind::Fn(func)) => func.function_id,
             _ => None,
         })
         .collect()
 }
 
-fn resolved_internal_function_ids<'hir>(
+/// `(visibility, state_mutability)` for every callable member named `member_name`.
+/// When `explicit_arg_count` matches one or more overloads, narrows to those; otherwise
+/// returns the full set. Preserves overloads (no `unique` collapse).
+fn external_member_signatures<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    base: &Expr<'gcx>,
+    member_name: solar::interface::Symbol,
+    explicit_arg_count: usize,
+) -> Vec<(Visibility, StateMutability)> {
+    let Some(base_ty) = semantic_expr_ty(gcx, hir, base) else { return Vec::new() };
+
+    // (visibility, state_mutability, arity) for every matching callable member.
+    let all: Vec<(Visibility, StateMutability, usize)> = gcx
+        .members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
+        .filter(|member| member.name == member_name)
+        .filter_map(|member| match (member.res, member.ty.kind) {
+            (Some(Res::Item(ItemId::Function(func_id))), _) => {
+                let f = hir.function(func_id);
+                Some((f.visibility, f.state_mutability, f.parameters.len()))
+            }
+            (_, TyKind::Fn(func)) => Some(function_signature_from_ty_fn(hir, func)),
+            _ => None,
+        })
+        .collect();
+
+    // Prefer arity-matched overloads; fall back to the full set when none match.
+    let arity_matched: Vec<_> =
+        all.iter().filter(|(_, _, n)| *n == explicit_arg_count).copied().collect();
+    let chosen = if arity_matched.is_empty() { all } else { arity_matched };
+    chosen.into_iter().map(|(v, m, _)| (v, m)).collect()
+}
+
+fn function_signature_from_ty_fn(
+    hir: &Hir<'_>,
+    func: &TyFn<'_>,
+) -> (Visibility, StateMutability, usize) {
+    if let Some(func_id) = func.function_id {
+        let f = hir.function(func_id);
+        (f.visibility, f.state_mutability, f.parameters.len())
+    } else if func.is_internal() {
+        (Visibility::Internal, func.state_mutability, func.parameters.len())
+    } else {
+        (Visibility::External, func.state_mutability, func.parameters.len())
+    }
+}
+
+pub(super) fn resolved_internal_function_ids<'hir>(
     hir: &'hir Hir<'hir>,
     callee: &'hir Expr<'hir>,
 ) -> impl Iterator<Item = FunctionId> + 'hir {
@@ -324,6 +482,38 @@ fn resolved_internal_function_ids<'hir>(
         }
         _ => None,
     })
+}
+
+/// Resolves `super.<member>(...)` to the matching base-chain function(s) — for transitive
+/// analysis of external calls reached through C3 super dispatch.
+pub(super) fn resolved_super_function_ids<'hir>(
+    hir: &'hir Hir<'hir>,
+    enclosing_contract: Option<ContractId>,
+    callee: &'hir Expr<'hir>,
+    explicit_arg_count: usize,
+) -> Vec<FunctionId> {
+    let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return Vec::new() };
+    if !is_super(base) {
+        return Vec::new();
+    }
+    let Some(contract_id) = enclosing_contract else { return Vec::new() };
+
+    let mut out = Vec::new();
+    // Skip the contract itself; super dispatch starts at the next base in linearization order.
+    for base_id in hir.contract(contract_id).linearized_bases.iter().skip(1).copied() {
+        for item_id in hir.contract(base_id).items {
+            let Some(func_id) = item_id.as_function() else { continue };
+            let func = hir.function(func_id);
+            if func.name.is_some_and(|name| name.name == member.name)
+                && func.parameters.len() == explicit_arg_count
+                && matches!(func.visibility, Visibility::Internal | Visibility::Public)
+            {
+                out.push(func_id);
+                return out;
+            }
+        }
+    }
+    out
 }
 
 const fn is_internal_callable(func: &Function<'_>) -> bool {
@@ -344,22 +534,22 @@ fn is_this(expr: &Expr<'_>) -> bool {
     )
 }
 
-fn is_address_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+/// `super` is the C3-linearized base-chain dispatch builtin; `gcx.type_of_res` panics on it.
+fn is_super(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Ident(reses)
+            if reses.iter().any(|res| {
+                matches!(res, Res::Builtin(builtin) if builtin.name() == sym::super_)
+            })
+    )
+}
+
+fn is_address_like<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Payable(_) => true,
         ExprKind::Call(callee, _, _) if is_address_type_expr(callee) => true,
-        _ => expr_type(hir, expr).is_some_and(type_is_address_like),
-    }
-}
-
-fn contract_type_expr_id(expr: &Expr<'_>) -> Option<ContractId> {
-    match &expr.peel_parens().kind {
-        ExprKind::Type(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Contract(id)) => Some(*id),
-            _ => None,
-        }),
-        _ => None,
+        _ => semantic_expr_ty(gcx, &gcx.hir, expr).is_some_and(type_is_address_like),
     }
 }
 
@@ -370,111 +560,17 @@ fn is_address_type_expr(expr: &Expr<'_>) -> bool {
     )
 }
 
-const fn type_contract_id(ty: &hir::Type<'_>) -> Option<ContractId> {
-    match ty.kind {
-        TypeKind::Custom(ItemId::Contract(id)) => Some(id),
-        _ => None,
-    }
-}
-
-const fn type_is_address_like(ty: &hir::Type<'_>) -> bool {
-    matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
-}
-
-fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &Expr<'hir>) -> Option<&'hir hir::Type<'hir>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
-            let var_id = res.as_variable()?;
-            Some(&hir.variable(var_id).ty)
-        }),
-        ExprKind::Call(callee, args, _) => single_return_type(hir, callee, args.len()),
-        ExprKind::Index(base, _) => indexed_element_type(hir, base),
-        ExprKind::Member(base, member) => member_type(hir, base, *member),
-        _ => None,
-    }
-}
-
-fn single_return_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    callee: &Expr<'hir>,
-    arity: usize,
-) -> Option<&'hir hir::Type<'hir>> {
-    match &callee.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
-            let Res::Item(ItemId::Function(func_id)) = res else { return None };
-            let func = hir.function(*func_id);
-            let [ret] = func.returns else { return None };
-            Some(&hir.variable(*ret).ty)
-        }),
-        ExprKind::Member(base, member) => member_return_type(hir, base, *member, arity),
-        _ => None,
-    }
-}
-
-fn member_return_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    base: &Expr<'hir>,
-    member: solar::interface::Ident,
-    arity: usize,
-) -> Option<&'hir hir::Type<'hir>> {
-    let contract_id = receiver_contract_id(hir, base)?;
-    let mut ret = None;
-    for item in hir.contract_item_ids(contract_id) {
-        let Some(func_id) = item.as_function() else { continue };
-        let func = hir.function(func_id);
-        if func.name.is_none_or(|name| name.name != member.name) || func.parameters.len() != arity {
-            continue;
-        }
-        let [ret_id] = func.returns else { return None };
-        if ret.replace(&hir.variable(*ret_id).ty).is_some() {
-            return None;
-        }
-    }
-    ret
-}
-
-fn receiver_contract_id(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Contract(id)) => Some(*id),
-            Res::Item(ItemId::Variable(id)) => type_contract_id(&hir.variable(*id).ty),
-            _ => None,
-        }),
-        ExprKind::Call(callee, _, _) => contract_type_expr_id(callee)
-            .or_else(|| expr_type(hir, expr).and_then(type_contract_id)),
-        ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
-        _ => expr_type(hir, expr).and_then(type_contract_id),
-    }
-}
-
-fn indexed_element_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    expr: &Expr<'hir>,
-) -> Option<&'hir hir::Type<'hir>> {
-    expr_type(hir, expr).and_then(|ty| match &ty.kind {
-        TypeKind::Array(array) => Some(&array.element),
-        TypeKind::Mapping(mapping) => Some(&mapping.value),
-        _ => None,
-    })
-}
-
-fn member_type<'hir>(
-    hir: &'hir Hir<'hir>,
-    expr: &Expr<'hir>,
-    member: solar::interface::Ident,
-) -> Option<&'hir hir::Type<'hir>> {
-    expr_type(hir, expr).and_then(|ty| match ty.kind {
-        TypeKind::Custom(ItemId::Struct(struct_id)) => {
-            hir.strukt(struct_id).fields.iter().find_map(|field_id| {
-                let field = hir.variable(*field_id);
-                (field.name?.name == member.name).then_some(&field.ty)
-            })
-        }
-        _ => None,
-    })
+fn type_is_address_like(ty: Ty<'_>) -> bool {
+    matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
 }
 
 fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
+    if !is_typeless_builtin_expr(expr)
+        && let Some(ty) = gcx.type_of_expr(expr.peel_parens().id)
+    {
+        return Some(ty);
+    }
+
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => {
             let res = unique(reses.iter().filter(|res| !matches!(res, Res::Err(_))).copied())
@@ -483,6 +579,9 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
                         res.as_variable().map(|var_id| Res::Item(ItemId::Variable(var_id)))
                     }))
                 })?;
+            if matches!(res, Res::Builtin(builtin) if is_typeless_builtin(builtin)) {
+                return None;
+            }
             let ty = gcx.type_of_res(res);
             Some(match res {
                 Res::Item(ItemId::Variable(var_id)) => {
@@ -496,7 +595,7 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
         ExprKind::Call(callee, _, _) => {
             let callee_ty = semantic_expr_ty(gcx, hir, callee)?;
             match callee_ty.kind {
-                TyKind::FnPtr(func) => semantic_fn_call_return_ty(gcx, func.returns),
+                TyKind::Fn(func) => semantic_fn_call_return_ty(gcx, func.returns),
                 TyKind::Type(to) => Some(to),
                 _ => None,
             }
@@ -507,6 +606,31 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
         ExprKind::Payable(_) => Some(gcx.types.address_payable),
         _ => None,
     }
+}
+
+fn is_typeless_builtin_expr(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Ident(reses)
+            if reses.iter().any(|res| {
+                matches!(res, Res::Builtin(builtin) if is_typeless_builtin(*builtin))
+            })
+    )
+}
+
+const fn is_typeless_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::This
+            | Builtin::Super
+            | Builtin::ArrayPush0
+            | Builtin::ArrayPush
+            | Builtin::ArrayPop
+            | Builtin::TypeMin
+            | Builtin::TypeMax
+            | Builtin::UdvtWrap
+            | Builtin::UdvtUnwrap
+    )
 }
 
 fn semantic_index_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, base: &Expr<'gcx>) -> Option<Ty<'gcx>> {
@@ -535,7 +659,6 @@ fn semantic_member_ty<'gcx>(
     let base_ty = semantic_expr_ty(gcx, hir, base)?;
     unique(
         gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-            .iter()
             .filter(|member| member.name == member_name)
             .map(|member| member.ty),
     )
@@ -569,7 +692,7 @@ fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
 fn variable_data_location(hir: &Hir<'_>, var_id: hir::VariableId) -> Option<DataLocation> {
     let var = hir.variable(var_id);
     var.data_location.or_else(|| {
-        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
+        (var.parent.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
     })
 }
 

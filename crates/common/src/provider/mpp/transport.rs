@@ -44,6 +44,8 @@ const DEFAULT_DEPOSIT: u128 = 100_000;
 const MPP_RETRY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Resolve the deposit amount from `MPP_DEPOSIT` env var or the default.
+/// Only applied at channel open. On T5 precompile channels the cumulative
+/// amount is capped at `uint96`.
 fn default_deposit() -> u128 {
     env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_DEPOSIT)
 }
@@ -609,10 +611,12 @@ where
                 }
             }
 
-            // Retry with key_authorization when the error explicitly indicates
-            // the access key is not provisioned on-chain, or when verification
-            // failed and the key appears provisioned (first-time provisioning
-            // where key_auth was stripped but not yet provisioned on-chain).
+            // Retry with key_authorization only when the error explicitly
+            // indicates the access key is not provisioned on-chain. Retrying on
+            // a generic verification-failed is unsafe: if the key is already
+            // provisioned, including a fresh key_authorization causes the chain
+            // to reject the open with KeyAlreadyExists, masking the real first-
+            // attempt failure.
             //
             // We fetch a fresh challenge because the server may have consumed
             // the original challenge ID on first use.
@@ -620,14 +624,10 @@ where
                 || detail.contains("access key does not exist")
                 || detail.contains("key is not provisioned");
 
-            let needs_verification_retry = (problem_type.ends_with("/verification-failed")
-                || detail.contains("verification-failed"))
-                && self.provider.is_key_provisioned();
-
-            if needs_key_provisioning || needs_verification_retry {
+            if needs_key_provisioning {
                 debug!(
                     problem_type,
-                    "MPP 402 key not provisioned/verification-failed, retrying with key_authorization"
+                    "MPP 402 key not provisioned, retrying with key_authorization"
                 );
                 self.provider.set_key_provisioned(false);
                 self.provider.rollback_pending();
@@ -984,9 +984,6 @@ pub(crate) trait ResolveProvider {
     }
     fn resolve_for(&self, opts: DiscoverOptions) -> TransportResult<Self::Provider>;
     fn set_key_provisioned(&self, _provisioned: bool) {}
-    fn is_key_provisioned(&self) -> bool {
-        true
-    }
     fn clear_channels(&self) {}
     fn flush_pending(&self) {}
     fn rollback_pending(&self) {}
@@ -1040,9 +1037,6 @@ impl ResolveProvider for LazySessionProvider {
     }
     fn set_key_provisioned(&self, provisioned: bool) {
         Self::set_key_provisioned(self, provisioned)
-    }
-    fn is_key_provisioned(&self) -> bool {
-        self.inner.lock().unwrap().as_ref().is_none_or(|p| p.is_key_provisioned())
     }
     fn clear_channels(&self) {
         Self::clear_channels(self)
@@ -1198,6 +1192,10 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
+    fn test_client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
     #[tokio::test]
     async fn test_mpp_transport_no_402() {
         let app = axum::Router::new().route(
@@ -1213,7 +1211,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1275,7 +1273,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1296,7 +1294,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1330,7 +1328,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             InsufficientBalanceProvider,
         );
@@ -1382,7 +1380,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1436,7 +1434,7 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
         let mut transport = MppHttpTransport::new(
-            reqwest::Client::new(),
+            test_client(),
             Url::parse(&base_url).unwrap(),
             MockPaymentProvider,
         );
@@ -1667,6 +1665,154 @@ mod tests {
             b64(serde_json::json!({"amount":"1000","currency":"0x20c0","recipient":"0xabc"}))
         );
         assert_eq!(extract(vec![&no_details]), vec![(None, Some("0x20c0".into()))]);
+    }
+
+    /// Real `SessionProvider` + mock server: 402 with precompile escrow →
+    /// `Open` credential, then second 402 → `Voucher` reusing the channel.
+    #[tokio::test]
+    async fn mpp_transport_t5_precompile_open_then_voucher() {
+        use alloy_eips::eip2718::Decodable2718;
+        use alloy_primitives::{Address, TxKind};
+        use alloy_sol_types::SolCall;
+        use mpp::protocol::methods::tempo::session::SessionCredentialPayload;
+        use tempo_alloy::contracts::precompiles::{
+            ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS,
+        };
+        use tempo_primitives::transaction::TempoTxEnvelope;
+
+        let payee = Address::repeat_byte(0x11);
+        let currency = Address::repeat_byte(0x22);
+        let operator = Address::repeat_byte(0x99);
+        let chain_id = 4217u64;
+
+        let request_json = serde_json::json!({
+            "amount": "1000",
+            "currency": format!("{currency:#x}"),
+            "recipient": format!("{payee:#x}"),
+            "methodDetails": {
+                "chainId": chain_id,
+                "escrowContract": format!("{TIP20_CHANNEL_RESERVE_ADDRESS:#x}"),
+                "operator": format!("{operator:#x}"),
+            },
+        });
+        let request = Base64UrlJson::from_value(&request_json).unwrap();
+        let challenge = PaymentChallenge {
+            id: "t5-precompile-challenge".to_string(),
+            realm: "test-t5".to_string(),
+            method: MethodName::new("tempo"),
+            intent: IntentName::new("session"),
+            request,
+            expires: None,
+            description: None,
+            digest: None,
+            opaque: None,
+        };
+        let www_auth = format_www_authenticate(&challenge).unwrap();
+
+        #[derive(Clone)]
+        struct AppState {
+            www_auth: String,
+            captured: Arc<Mutex<Vec<PaymentCredential>>>,
+        }
+        let state = AppState { www_auth, captured: Arc::new(Mutex::new(Vec::new())) };
+
+        let captured = state.captured.clone();
+        let app =
+            axum::Router::new()
+                .route(
+                    "/",
+                    post(
+                        |State(state): State<AppState>,
+                         req: axum::http::Request<axum::body::Body>| async move {
+                            if let Some(auth) = req.headers().get("authorization") {
+                                let auth_str = auth.to_str().unwrap();
+                                let credential = parse_authorization(auth_str).unwrap();
+                                state.captured.lock().unwrap().push(credential);
+                                (
+                                    AxumStatusCode::OK,
+                                    axum::Json(serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": 1,
+                                        "result": "0xabc",
+                                    })),
+                                )
+                                    .into_response()
+                            } else {
+                                (
+                                    AxumStatusCode::PAYMENT_REQUIRED,
+                                    [("www-authenticate", state.www_auth.clone())],
+                                    "Payment Required",
+                                )
+                                    .into_response()
+                            }
+                        },
+                    ),
+                )
+                .with_state(state);
+
+        let (base_url, handle) = spawn_server(app).await;
+
+        let signer = mpp::PrivateKeySigner::random();
+        let session_provider =
+            super::super::session::SessionProvider::new(signer, base_url.clone())
+                .with_default_deposit(100_000);
+        let mut transport =
+            MppHttpTransport::new(test_client(), Url::parse(&base_url).unwrap(), session_provider);
+
+        let resp1 = tower::Service::call(&mut transport, test_request()).await.unwrap();
+        assert!(matches!(resp1, ResponsePacket::Single(r) if r.is_success()));
+        let resp2 = tower::Service::call(&mut transport, test_request()).await.unwrap();
+        assert!(matches!(resp2, ResponsePacket::Single(r) if r.is_success()));
+
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+
+        let open: SessionCredentialPayload = captured[0].payload_as().expect("Open payload");
+        let (open_channel_id, open_transaction, open_cumulative, open_descriptor) = match open {
+            SessionCredentialPayload::Open {
+                channel_id,
+                transaction,
+                cumulative_amount,
+                descriptor,
+                ..
+            } => (channel_id, transaction, cumulative_amount, descriptor),
+            other => panic!("first credential must be Open, got {other:?}"),
+        };
+        assert_eq!(open_cumulative, "1000");
+        let open_descriptor = open_descriptor.expect("precompile Open must include descriptor");
+
+        let tx_bytes = alloy_primitives::hex::decode(&open_transaction).expect("hex tx");
+        let envelope =
+            TempoTxEnvelope::decode_2718(&mut tx_bytes.as_slice()).expect("decode envelope");
+        let TempoTxEnvelope::AA(aa_signed) = envelope else {
+            panic!("expected AA envelope (0x76)");
+        };
+        let unsigned = aa_signed.strip_signature();
+        // Single-call (no TIP20.approve per TIP-1035), targets the precompile.
+        assert_eq!(unsigned.calls.len(), 1);
+        let call = &unsigned.calls[0];
+        assert_eq!(call.to, TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS));
+        let decoded =
+            ITIP20ChannelReserve::openCall::abi_decode(&call.input).expect("decode openCall");
+        assert_eq!(decoded.operator, operator);
+        assert_eq!(decoded.payee, payee);
+        assert_eq!(decoded.token, currency);
+
+        let voucher: SessionCredentialPayload = captured[1].payload_as().expect("Voucher payload");
+        let (voucher_channel_id, voucher_cumulative, voucher_descriptor) = match voucher {
+            SessionCredentialPayload::Voucher {
+                channel_id, cumulative_amount, descriptor, ..
+            } => (channel_id, cumulative_amount, descriptor),
+            other => panic!("second credential must be Voucher, got {other:?}"),
+        };
+        assert_eq!(voucher_channel_id, open_channel_id);
+        assert_eq!(voucher_cumulative, "2000");
+        assert_eq!(
+            voucher_descriptor.expect("precompile Voucher must include descriptor"),
+            open_descriptor
+        );
+
+        handle.abort();
     }
 
     /// Auth must trigger when a key matches the chain but not the currency.

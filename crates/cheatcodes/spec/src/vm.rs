@@ -597,6 +597,16 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setTip20LogoURI(address token, string calldata newLogoURI) external;
+
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setLogoURI(address token, string calldata newLogoURI) external;
+
     /// Marks the slots of an account and the account address as cold.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function cool(address target) external;
@@ -628,6 +638,16 @@ interface Vm {
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
     function setEvmVersion(string calldata evm) external;
+
+    /// Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,
+    /// meaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.
+    /// Returns `false` on non-Tempo networks.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
+
+    /// Skips a fuzz/invariant input unless `spender` is implicitly approved.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeImplicitApproval(address spender) external view;
 
     // -------- Call Manipulation --------
     // --- Mocks ---
@@ -911,6 +931,16 @@ interface Vm {
         external
         returns (bytes memory data);
 
+    /// Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+
+    /// Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params)
+        external
+        returns (string memory data);
+
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)
@@ -1151,6 +1181,14 @@ interface Vm {
     /// Expects the deployment of the specified bytecode by the specified address using the CREATE2 opcode
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCreate2(bytes calldata bytecode, address deployer) external;
+
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
+
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
 
     /// Expects an error on next call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]

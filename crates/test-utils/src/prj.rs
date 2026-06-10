@@ -448,21 +448,50 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let mut cmd = Command::new(self.forge_path());
+        let mut cmd = Command::new(self.foundry_bin_path("forge"));
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
-    pub(crate) fn forge_path(&self) -> PathBuf {
-        canonicalize(self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)))
+    /// Returns the path to a sibling Foundry executable in the current test target directory.
+    pub fn foundry_bin_path(&self, name: &str) -> PathBuf {
+        canonicalize(self.exe_root.join(format!("../{name}{}", env::consts::EXE_SUFFIX)))
+    }
+
+    /// Returns the path to a sibling Foundry executable, building it when cargo did not.
+    pub fn ensure_foundry_bin(&self, name: &str) -> PathBuf {
+        let bin = self.foundry_bin_path(name);
+        if bin.exists() {
+            return bin;
+        }
+
+        let package = format!("{name}@{}", env!("CARGO_PKG_VERSION"));
+        let (target_dir, profile) = cargo_build_target_dir_and_profile(&self.exe_root);
+        let mut cmd = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        cmd.args(["build", "-p", &package, "--bin", name, "--manifest-path"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
+            .arg("--target-dir")
+            .arg(target_dir);
+        if let Some(profile) = profile {
+            cmd.arg("--profile").arg(profile);
+        }
+
+        let output = cmd.output().expect("build Foundry sibling binary");
+        assert!(
+            output.status.success(),
+            "failed to build {name} for CLI test\nstdout:\n{}\nstderr:\n{}",
+            output.stdout_lossy(),
+            output.stderr_lossy(),
+        );
+
+        bin
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = canonicalize(self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX)));
-        let mut cmd = Command::new(cast);
+        let mut cmd = Command::new(self.foundry_bin_path("cast"));
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
         cmd
@@ -808,7 +837,7 @@ fn test_redactions() -> snapbox::Redactions {
     static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
         make_redactions(&[
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
-            ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
+            ("[ELAPSED]", r"(finished )?in (\d+m )?\d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
             ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
             ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
@@ -877,4 +906,16 @@ pub fn lossy_string(bytes: &[u8]) -> String {
 fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
     foundry_common::fs::canonicalize_path(path.as_ref())
         .unwrap_or_else(|_| path.as_ref().to_path_buf())
+}
+
+fn cargo_build_target_dir_and_profile(exe_root: &Path) -> (&Path, Option<&str>) {
+    let profile_dir = exe_root.parent().expect("test executable profile directory");
+    let target_dir = profile_dir.parent().expect("Cargo target directory");
+    let profile = match profile_dir.file_name().and_then(OsStr::to_str) {
+        // Cargo's dev profile writes to `debug`, so the default `cargo build` profile is correct.
+        Some("debug") => None,
+        Some(profile) => Some(profile),
+        None => panic!("test executable profile directory must be UTF-8"),
+    };
+    (target_dir, profile)
 }

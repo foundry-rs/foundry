@@ -24,6 +24,12 @@ fi
 
 echo -e "\n=== USING FEE TOKEN: $FEE_TOKEN ==="
 
+wallet_json_field() {
+  local wallet_json="$1"
+  local field="$2"
+  jq -r --arg field "$field" '(.data // .)[0][$field]' <<<"$wallet_json"
+}
+
 echo -e "\n=== INIT TEMPO PROJECT ==="
 tmp_dir=$(mktemp -d)
 cd "$tmp_dir"
@@ -38,8 +44,8 @@ if [[ -n "${PRIVATE_KEY:-}" ]]; then
 else
   echo -e "\n=== CREATE AND FUND ADDRESS ==="
   wallet_json="$(cast wallet new --json)"
-  ADDR="$(jq -r '.[0].address' <<<"$wallet_json")"
-  PK="$(jq -r '.[0].private_key' <<<"$wallet_json")"
+  ADDR="$(wallet_json_field "$wallet_json" address)"
+  PK="$(wallet_json_field "$wallet_json" private_key)"
 
   for i in {1..100}; do
     OUT=$(cast rpc tempo_fundAddress "$ADDR" --rpc-url "$ETH_RPC_URL" 2>&1 || true)

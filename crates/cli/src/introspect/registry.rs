@@ -95,7 +95,7 @@ impl CommandRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::introspect::document::OutputMode;
+    use crate::introspect::document::{OutputMode, SideEffects};
     use std::borrow::Cow;
 
     fn fixture_registry() -> CommandRegistry {
@@ -105,13 +105,13 @@ mod tests {
                 command_id: Some("forge.build"),
                 capabilities: Capabilities {
                     output_mode: OutputMode::Envelope,
-                    result_schema_ref: None,
+                    result_schema_ref: Some(Cow::Borrowed("foundry:forge.build@v1")),
                     event_schema_ref: None,
                     session_schema_ref: None,
                     reads_stdin: false,
                     supports_output_path: false,
                     requires_project: true,
-                    side_effects: super::super::document::SideEffects::FsWrite,
+                    side_effects: SideEffects::FsWrite,
                     long_running: false,
                     stateful: false,
                 },
@@ -160,12 +160,19 @@ mod tests {
 
     /// A registry with real strings (schema refs, exit-code names) must be
     /// authorable in a plain `static` without lazy allocation.
+    ///
+    /// The example pins values that comply with the agent contract:
+    ///
+    /// - the exit code (`10`) is outside the global table (codes 0..=8 per
+    ///   `docs/agents/exit-codes.md`), so it does not collide;
+    /// - the `result_schema_ref` stem (`forge.test`) matches `command_id`, the rule enforced by
+    ///   `capability_violations` per spec §8.
     #[test]
     fn static_registry_supports_real_strings() {
         static EXITS: &[ExitCodeInfo] = &[ExitCodeInfo {
-            code: 2,
-            name: Cow::Borrowed("TestFailure"),
-            description: Cow::Borrowed("at least one test failed"),
+            code: 10,
+            name: Cow::Borrowed("CompilationFailed"),
+            description: Cow::Borrowed("test-only command-specific code (non-colliding)"),
         }];
         static ENTRIES: &[RegistryEntry] = &[RegistryEntry {
             path: &["test"],
@@ -173,13 +180,13 @@ mod tests {
                 command_id: Some("forge.test"),
                 capabilities: Capabilities {
                     output_mode: OutputMode::Envelope,
-                    result_schema_ref: Some(Cow::Borrowed("foundry:test-result@v1")),
+                    result_schema_ref: Some(Cow::Borrowed("foundry:forge.test@v1")),
                     event_schema_ref: None,
                     session_schema_ref: None,
                     reads_stdin: false,
                     supports_output_path: false,
                     requires_project: true,
-                    side_effects: super::super::document::SideEffects::None,
+                    side_effects: SideEffects::None,
                     long_running: false,
                     stateful: false,
                 },
@@ -190,7 +197,7 @@ mod tests {
         let registry = CommandRegistry::new(ENTRIES);
 
         let meta = registry.lookup(&["test"]).unwrap();
-        assert_eq!(meta.capabilities.result_schema_ref.as_deref(), Some("foundry:test-result@v1"));
-        assert_eq!(meta.exit_codes[0].name, "TestFailure");
+        assert_eq!(meta.capabilities.result_schema_ref.as_deref(), Some("foundry:forge.test@v1"));
+        assert_eq!(meta.exit_codes[0].name, "CompilationFailed");
     }
 }

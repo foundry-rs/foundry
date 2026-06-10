@@ -2,12 +2,16 @@
 //! and Sourcify.
 
 use crate::utils::{self, EnvExternalities};
+use alloy_primitives::hex;
+use anvil::{NodeConfig, spawn};
+use axum::{Router, extract::Query};
 use foundry_common::retry::Retry;
 use foundry_test_utils::{
-    forgetest,
+    forgetest, forgetest_async, str,
     util::{OutputExt, TestCommand, TestProject},
 };
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
+use tokio::net::TcpListener;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -74,16 +78,13 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
     // Give Etherscan some time to verify the contract.
     Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
         let output = cmd.execute();
-        let out = String::from_utf8_lossy(&output.stdout);
-        test_debug!("{out}");
-        if out.contains("Contract successfully verified") {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        test_debug!("stdout: {stdout}\nstderr: {stderr}");
+        if stderr.contains("Contract successfully verified") {
             return Ok(());
         }
-        eyre::bail!(
-            "Failed to get verification, stdout: {}, stderr: {}",
-            out,
-            String::from_utf8_lossy(&output.stderr)
-        )
+        eyre::bail!("Failed to get verification, stdout: {stdout}, stderr: {stderr}")
     })
 }
 
@@ -232,15 +233,14 @@ fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut 
         add_single_verify_target_file(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
-        let output = cmd
+        let assert = cmd
             .arg("create")
             .args(info.create_args())
             .args([contract_path, "--etherscan-api-key", info.etherscan.as_str(), "--verify"])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-
-        assert!(output.contains("Contract successfully verified"), "{}", output);
+            .assert_success();
+        let output = assert.get_output();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Contract successfully verified"), "stderr: {stderr}");
     }
 }
 
@@ -330,6 +330,7 @@ forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
+Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
 Error: No verifier URL specified for verifier blockscout
 
 "#]]);
@@ -347,16 +348,244 @@ Error: No verifier URL specified for verifier blockscout
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
+Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
 Error: No known Etherscan API URL for chain `4202`. To fix this, please:
 1. Specify a `url` when using Etherscan verifier
 2. Verify the chain `4202` is correct
 
 "#]]);
 
-    cmd.forge_fuse().args(["verify-contract", "--rpc-url", "https://rpc.sepolia-api.lisk.com", "--verifier", "blockscout", "--verifier-url", "https://sepolia-blockscout.lisk.com/api", "0x19b248616E4964f43F611b5871CE1250f360E9d3", "src/Counter.sol:Counter"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args([
+            "verify-contract",
+            "--rpc-url",
+            "https://rpc.sepolia-api.lisk.com",
+            "--verifier",
+            "blockscout",
+            "--verifier-url",
+            "https://sepolia-blockscout.lisk.com/api",
+            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "src/Counter.sol:Counter",
+        ])
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
 Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
-
 Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
 
 "#]]);
+});
+
+// Tests that `forge script --broadcast --verify` fails before broadcasting when
+// the verifier rejects the API key (credential preflight check).
+forgetest_async!(script_fails_early_on_bad_verifier_credentials, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+contract Noop {}
+contract Deploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Noop();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let (verifier_url, _server) =
+        spawn_mock_verifier(r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#).await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "script",
+            "script/Deploy.s.sol:Deploy",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "FAKE_KEY_1234",
+        ])
+        .execute();
+
+    assert!(!output.status.success(), "expected command to fail");
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("Verification preflight check failed"),
+        "expected preflight error in stderr, got: {stderr}"
+    );
+    // The broadcast phase prints "ONCHAIN EXECUTION COMPLETE" and "Sending transactions";
+    // neither must appear if the preflight check stopped execution before broadcasting.
+    let stdout = output.stdout_lossy();
+    assert!(
+        !stdout.contains("ONCHAIN EXECUTION COMPLETE") && !stdout.contains("Sending transactions"),
+        "transactions were broadcast but preflight check should have prevented it: {stdout}"
+    );
+});
+
+/// Spawns a local HTTP server that returns the given body for Etherscan-style ABI requests.
+async fn spawn_mock_verifier(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app =
+        Router::new().fallback(move |Query(query): Query<HashMap<String, String>>| async move {
+            if query.get("module").is_some_and(|value| value == "contract")
+                && query.get("action").is_some_and(|value| value == "getabi")
+                && query.contains_key("address")
+                && query.contains_key("apikey")
+            {
+                body
+            } else {
+                r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#
+            }
+        });
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{addr}"), handle)
+}
+
+// Tests that the preflight check passes (does not block deploy) when the verifier responds
+// with ContractCodeNotVerified (the normal "valid key, unknown address" response).
+forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Server returns a well-formed "source code not verified" Etherscan response.
+    let (verifier_url, _server) = spawn_mock_verifier(
+        r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#,
+    )
+    .await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "VALID_KEY",
+        ])
+        .execute();
+
+    // Preflight must pass — the command may fail for other reasons (e.g. post-deploy
+    // verification), but it must NOT fail with the preflight error.
+    let stderr = output.stderr_lossy();
+    assert!(
+        !stderr.contains("Verification preflight check failed"),
+        "preflight should not block on ContractCodeNotVerified, got: {stderr}"
+    );
+});
+
+// Tests that the preflight check fails (blocks deploy) when the verifier explicitly
+// rejects the API key with an InvalidApiKey response.
+forgetest_async!(create_preflight_fails_on_invalid_api_key, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Server returns a well-formed "invalid API key" Etherscan response.
+    let (verifier_url, _server) =
+        spawn_mock_verifier(r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#).await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "BAD_KEY",
+        ])
+        .execute();
+
+    assert!(!output.status.success(), "expected command to fail");
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("Verification preflight check failed"),
+        "expected preflight error in stderr, got: {stderr}"
+    );
+    let stdout = output.stdout_lossy();
+    assert!(
+        !stdout.contains("Contract Address"),
+        "contract was deployed but preflight check should have prevented it"
+    );
+});
+
+// Tests that the preflight check does NOT block deployment when the verifier responds
+// with a rate-limit error (transient, not an auth failure).
+forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Server returns a well-formed "rate limit exceeded" Etherscan response.
+    let (verifier_url, _server) = spawn_mock_verifier(
+        r#"{"status":"0","message":"NOTOK","result":"Max rate limit reached"}"#,
+    )
+    .await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+            "--verifier",
+            "blockscout",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "VALID_KEY",
+        ])
+        .execute();
+
+    // Rate limit must not block the deploy.
+    let stderr = output.stderr_lossy();
+    assert!(
+        !stderr.contains("Verification preflight check failed"),
+        "preflight should not block on rate limit, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("verifier credential check inconclusive"),
+        "preflight should warn on rate limit, got: {stderr}"
+    );
 });

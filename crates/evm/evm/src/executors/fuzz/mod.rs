@@ -4,7 +4,10 @@ use crate::executors::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Log, U256, keccak256, map::HashMap};
+use alloy_primitives::{
+    Address, Bytes, Log, U256, keccak256,
+    map::{AddressHashMap, HashMap},
+};
 use eyre::Result;
 use foundry_common::sh_println;
 use foundry_config::FuzzConfig;
@@ -59,6 +62,8 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     ///
     /// Stores up to `max_traces_to_collect` which is `config.gas_report_samples / num_workers`
     traces: Vec<SparsedTraceArena>,
+    /// Runtime bytecodes for the last collected trace.
+    debug_bytecodes: AddressHashMap<Bytes>,
     /// Last breakpoints from this worker
     breakpoints: Option<Breakpoints>,
     /// Coverage collected by this worker
@@ -89,6 +94,7 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
             gas_by_case: Vec::new(),
             counterexample: (Bytes::new(), RawCallResult::default()),
             traces: Vec::new(),
+            debug_bytecodes: HashMap::default(),
             breakpoints: None,
             coverage: None,
             logs: Vec::new(),
@@ -311,6 +317,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
+                debug_bytecodes: call.debug_bytecodes,
                 coverage: call.line_coverage,
                 breakpoints,
                 logs: call.logs,
@@ -369,6 +376,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             let (calldata, call) = std::mem::take(&mut failed_worker.counterexample);
             result.labels = call.labels;
             result.traces = call.traces.clone();
+            result.debug_bytecodes = call.debug_bytecodes.clone();
             result.breakpoints = call.cheatcodes.map(|c| c.breakpoints);
 
             match &failed_worker.failure {
@@ -400,6 +408,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             let last_run_worker = &workers[last_run_worker_idx];
             result.success = true;
             result.traces = last_run_worker.traces.last().cloned();
+            result.debug_bytecodes.clone_from(&last_run_worker.debug_bytecodes);
             result.breakpoints = last_run_worker.breakpoints.clone();
         }
 
@@ -461,6 +470,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             (worker_id == 0).then_some(&self.executor_f),
             Some(func),
             None, // fuzzed_contracts for invariant tests
+            None, // dynamic target ctx (invariant-only)
         )?;
         let mut executor = self.executor_f.clone();
 
@@ -540,6 +550,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         self.num_workers,
                         &executor,
                         Some(func),
+                        None,
                         None,
                         &shared_state.global_corpus_metrics,
                     )?;
@@ -630,6 +641,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                                 worker.traces.pop();
                             }
                             worker.traces.push(call_traces);
+                            worker.debug_bytecodes = case.debug_bytecodes;
                             worker.breakpoints = Some(case.breakpoints);
                         }
 

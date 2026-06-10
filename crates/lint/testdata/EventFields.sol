@@ -16,7 +16,7 @@ interface IEvents {
 
 library LibEvents {
     // Library event with unindexed id.
-    event LibCreated(uint256 id, uint256 amount); //~NOTE: event has unindexed fields that may benefit from being indexed: id (uint256)
+    event LibCreated(uint256 id, uint256 amount);
 }
 
 contract EventFieldsTest {
@@ -24,17 +24,17 @@ contract EventFieldsTest {
 
     event Transfer(address from, address to, uint256 value); //~NOTE: event has unindexed fields that may benefit from being indexed: from (address), to (address)
 
-    event Mint(address to, uint256 tokenId); //~NOTE: event has unindexed fields that may benefit from being indexed: to (address), tokenId (uint256)
+    event Mint(address to, uint256 tokenId); //~NOTE: event has unindexed fields that may benefit from being indexed: to (address)
 
-    event Order(bytes32 orderId, uint256 amount); //~NOTE: event has unindexed fields that may benefit from being indexed: orderId (bytes32)
+    event Order(bytes32 orderId, uint256 amount);
 
-    event CreatedAlias(uint id); //~NOTE: event has unindexed fields that may benefit from being indexed: id (uint256)
+    event CreatedAlias(uint id);
 
-    event ScreamingId(uint256 ID); //~NOTE: event has unindexed fields that may benefit from being indexed: ID (uint256)
+    event ScreamingId(uint256 ID);
 
-    event CamelCapsId(uint256 tokenID); //~NOTE: event has unindexed fields that may benefit from being indexed: tokenID (uint256)
+    event CamelCapsId(uint256 tokenID);
 
-    event SnakeId(bytes32 token_id); //~NOTE: event has unindexed fields that may benefit from being indexed: token_id (bytes32)
+    event SnakeId(bytes32 token_id);
 
     event PayableAddr(address payable receiver); //~NOTE: event has unindexed fields that may benefit from being indexed: receiver (address payable)
 
@@ -58,7 +58,7 @@ contract EventFieldsTest {
     // Same rule for anonymous events.
     event AnonPartial(address indexed a, address indexed b, address indexed c, address d, address e) anonymous;
 
-    // Non-id uint/bytes are not flagged.
+    // Uint/bytes fields are not flagged.
     event AmountOnly(uint256 amount);
     event HashOnly(bytes32 hash);
 

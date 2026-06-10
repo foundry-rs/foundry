@@ -52,6 +52,16 @@ pub struct BatchSendArgs {
 impl BatchSendArgs {
     pub async fn run(self) -> Result<()> {
         let Self { calls, send_tx, mut tx, unlocked } = self;
+        let has_session = tx.tempo.session_id()?.is_some();
+        // Tempo sessions must sign with the session key; these modes route signing through a
+        // node-managed account or browser wallet instead.
+        if has_session && unlocked {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
+        }
+        if has_session && send_tx.browser.browser {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --browser");
+        }
+
         let expires_at = tx.tempo.resolve_expires();
 
         if calls.is_empty() {
@@ -69,8 +79,10 @@ impl BatchSendArgs {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
-        // Resolve signer to detect keychain mode
-        let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+        // Resolve signer to detect keychain mode. Tempo sessions are resolved after chain lookup
+        // so they can fail closed on wrong-chain session use.
+        let (mut signer, mut tempo_access_key) =
+            if has_session { (None, None) } else { send_tx.eth.wallet.maybe_signer().await? };
 
         // Parse all call specs
         let call_specs: Vec<CallSpec> =
@@ -78,6 +90,13 @@ impl BatchSendArgs {
 
         // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
+        if has_session
+            && let Some(session) =
+                tx.tempo.session_signer_for_wallet(&send_tx.eth.wallet, chain.id())?
+        {
+            (signer, tempo_access_key) = (Some(session.signer), Some(session.access_key));
+        }
+
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
         let etherscan_api_url = etherscan_config.map(|c| c.api_url);
@@ -97,7 +116,7 @@ impl BatchSendArgs {
             );
         }
 
-        sh_println!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
+        sh_status!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
         tempo::print_expires(expires_at)?;
 
         // Preserve key_id for modes that do not call build_with_access_key, such as unlocked.
@@ -133,6 +152,7 @@ impl BatchSendArgs {
                 timeout,
             )
             .await
+            .map(drop)
         } else {
             let signer = match signer {
                 Some(s) => s,
