@@ -77,7 +77,7 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "v")]
     VerifyContract(VerifyArgs),
 
-    /// Check verification status on Etherscan and Sourcify.
+    /// Check verification status on the selected verifier.
     #[command(visible_alias = "vc")]
     VerifyCheck(VerifyCheckArgs),
 
