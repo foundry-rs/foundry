@@ -15,7 +15,9 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{
+            FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE, create_fee_history_cache_item,
+        },
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -30,7 +32,8 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    transaction::Recovered,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
@@ -1102,7 +1105,10 @@ impl<N: Network> EthApi<N> {
         block_count: U256,
         newest_block: BlockNumber,
         reward_percentiles: Vec<f64>,
-    ) -> Result<FeeHistory> {
+    ) -> Result<FeeHistory>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
@@ -1143,29 +1149,51 @@ impl<N: Network> EthApi<N> {
         let mut rewards = Vec::new();
 
         {
-            let fee_history = self.fee_history_cache.lock();
+            let storage_info = self.storage_info();
+            let blob_params = self.backend.blob_params();
 
             // iter over the requested block range
             for n in lowest..=highest {
                 // <https://eips.ethereum.org/EIPS/eip-1559>
-                if let Some(block) = fee_history.get(&n) {
-                    response.base_fee_per_gas.push(block.base_fee);
-                    response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
-                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
-                    response.gas_used_ratio.push(block.gas_used_ratio);
-
-                    // requested percentiles
-                    if !reward_percentiles.is_empty() {
-                        let mut block_rewards = Vec::new();
-                        let resolution_per_percentile: f64 = 2.0;
-                        for p in &reward_percentiles {
-                            let p = p.clamp(0.0, 100.0);
-                            let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                            let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
-                            block_rewards.push(reward);
+                // Prefer the cache, but the `FeeHistoryService` populates it asynchronously and can
+                // lag the chain head. Rather than silently dropping a missing block from the
+                // response (which yields fewer entries than requested), compute it on demand with
+                // the same logic and warm the cache for subsequent reads.
+                let block = match self.fee_history_cache.lock().get(&n).cloned() {
+                    Some(block) => block,
+                    None => {
+                        let Some(b) = self.backend.get_block(n) else { continue };
+                        let header = b.header;
+                        let hash = header.hash_slow();
+                        let (item, block_number) = create_fee_history_cache_item(
+                            hash,
+                            &header,
+                            &storage_info,
+                            blob_params,
+                        );
+                        if block_number.is_some() {
+                            self.fee_history_cache.lock().insert(n, item.clone());
                         }
-                        rewards.push(block_rewards);
+                        item
                     }
+                };
+
+                response.base_fee_per_gas.push(block.base_fee);
+                response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
+                response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
+                response.gas_used_ratio.push(block.gas_used_ratio);
+
+                // requested percentiles
+                if !reward_percentiles.is_empty() {
+                    let mut block_rewards = Vec::new();
+                    let resolution_per_percentile: f64 = 2.0;
+                    for p in &reward_percentiles {
+                        let p = p.clamp(0.0, 100.0);
+                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                        let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
+                        block_rewards.push(reward);
+                    }
+                    rewards.push(block_rewards);
                 }
             }
         }
