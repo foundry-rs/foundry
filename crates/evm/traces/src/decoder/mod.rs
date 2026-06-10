@@ -536,7 +536,6 @@ impl CallTraceDecoder {
                             };
 
                             step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
-                            step.storage_change = None; // show only step.decoded
                             break;
                         }
                     }

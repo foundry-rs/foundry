@@ -208,7 +208,17 @@ pub fn render_trace_arena_inner(
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
-    let resolved = arena.resolve_arena();
+    // Remove overlapping decoded trace data
+    let mut cloned_arena = arena.clone();
+    for node in cloned_arena.nodes_mut() {
+        for step in &mut node.trace.steps {
+            if step.decoded.is_some() {
+                step.storage_change = None;
+            }
+        }
+    }
+
+    let resolved = cloned_arena.resolve_arena();
     let mut w = TraceWriter::new(Vec::<u8>::new())
         .color_cheatcodes(true)
         .use_colors(convert_color_choice(shell::color_choice()))
@@ -218,7 +228,7 @@ pub fn render_trace_arena_inner(
     let mut rendered =
         String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
     if with_storage_changes {
-        append_tempo_channel_storage_decodes(&mut rendered, &resolved);
+        append_tempo_channel_storage_decodes(&mut rendered, &arena.resolve_arena());
     }
     rendered
 }
