@@ -21,6 +21,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
     shell,
+    tempo::{print_fee_token_selection, resolve_fee_token},
 };
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -182,11 +183,19 @@ async fn register(
     tempo::print_expires(expires_at)?;
     tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
 
+    // Default to the chain's canonical fee token unless the user supplied one, so the resolved
+    // selection is materialized (and reported) consistently with the other cast send paths.
+    if let Some(fee_token) = resolve_fee_token(Some(chain), tx.fee_token()) {
+        tx.set_fee_token(fee_token);
+    }
+
     sh_status!("Submitting registerVirtualMaster({salt})...")?;
 
     if let Some(ref access_key) = tempo_access_key {
         tempo::fill_access_key_transaction(&provider, &mut tx, access_key, chain).await?;
         if shell::is_json() {
+            // JSON mode bypasses `cast_send_with_access_key`, so report the selection here.
+            print_fee_token_selection(tx.fee_token())?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -221,6 +230,8 @@ async fn register(
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         if shell::is_json() {
+            // JSON mode bypasses `cast_send`, so report the selection here.
+            print_fee_token_selection(tx.fee_token())?;
             let cast = CastTxSender::new(&provider);
             if send_tx.sync {
                 cast.send_sync(tx).await.map(|(tx_hash, _)| tx_hash)

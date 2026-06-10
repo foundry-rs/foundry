@@ -15,7 +15,9 @@ use foundry_cli::{
     utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::TEMPO_BROWSER_GAS_BUFFER,
+    FoundryTransactionBuilder,
+    provider::ProviderBuilder,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_fee_token_selection},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{str::FromStr, time::Duration};
@@ -274,6 +276,7 @@ pub(super) async fn send_tip20_transaction(
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         }
+        print_fee_token_selection(tx.fee_token())?;
         let tx_hash = browser.send_transaction_via_browser(tx).await?;
         CastTxSender::new(&provider)
             .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)

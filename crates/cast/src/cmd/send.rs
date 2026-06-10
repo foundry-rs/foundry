@@ -18,7 +18,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::TEMPO_BROWSER_GAS_BUFFER,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_fee_token_selection},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::{
@@ -349,6 +349,7 @@ impl SendTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             }
+            print_fee_token_selection(tx_request.fee_token())?;
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
@@ -477,6 +478,7 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     let cast = CastTxSender::new(provider);
+    print_fee_token_selection(tx.fee_token())?;
 
     if sync {
         // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
@@ -513,6 +515,7 @@ where
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
+    print_fee_token_selection(tx.fee_token())?;
     let raw_tx = tx
         .sign_with_access_key(
             provider,
