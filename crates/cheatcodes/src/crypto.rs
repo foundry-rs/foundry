@@ -11,6 +11,7 @@ use alloy_signer_local::{
     },
 };
 use alloy_sol_types::SolValue;
+use foundry_common::wallet::{derive_private_key, derive_private_key_with_language};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use k256::{
     FieldBytes, Scalar,
@@ -486,36 +487,14 @@ pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
 }
 
 fn derive_key_str(mnemonic: &str, path: &str, index: u32, language: &str) -> Result {
-    match language {
-        "chinese_simplified" => derive_key::<ChineseSimplified>(mnemonic, path, index),
-        "chinese_traditional" => derive_key::<ChineseTraditional>(mnemonic, path, index),
-        "czech" => derive_key::<Czech>(mnemonic, path, index),
-        "english" => derive_key::<English>(mnemonic, path, index),
-        "french" => derive_key::<French>(mnemonic, path, index),
-        "italian" => derive_key::<Italian>(mnemonic, path, index),
-        "japanese" => derive_key::<Japanese>(mnemonic, path, index),
-        "korean" => derive_key::<Korean>(mnemonic, path, index),
-        "portuguese" => derive_key::<Portuguese>(mnemonic, path, index),
-        "spanish" => derive_key::<Spanish>(mnemonic, path, index),
-        _ => Err(fmt_err!("unsupported mnemonic language: {language:?}")),
-    }
+    let private_key = derive_private_key_with_language(mnemonic, path, index, language)
+        .map_err(|e| fmt_err!("{e}"))?;
+    Ok(private_key.abi_encode())
 }
 
 fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
-    fn derive_key_path(path: &str, index: u32) -> String {
-        let mut out = path.to_string();
-        if !out.ends_with('/') {
-            out.push('/');
-        }
-        out.push_str(&index.to_string());
-        out
-    }
-
-    let wallet = MnemonicBuilder::<W>::default()
-        .phrase(mnemonic)
-        .derivation_path(derive_key_path(path, index))?
-        .build()?;
-    let private_key = U256::from_be_bytes(wallet.credential().to_bytes().into());
+    let private_key =
+        derive_private_key::<W>(mnemonic, path, index).map_err(|e| fmt_err!("{e}"))?;
     Ok(private_key.abi_encode())
 }
 

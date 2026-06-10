@@ -6,7 +6,7 @@ use alloy_signer::Signer;
 use eyre::ensure;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroU64, path::PathBuf};
+use std::{fmt, num::NonZeroU64, path::PathBuf};
 use tempo_primitives::transaction::{
     CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
 };
@@ -24,6 +24,8 @@ pub enum SessionStatus {
     #[default]
     Pending,
     Active,
+    /// Local use has stopped and key material has been erased, but on-chain revoke is still
+    /// pending or retryable.
     Revoking,
     Revoked,
     Expired,
@@ -38,10 +40,11 @@ impl SessionStatus {
 
     /// Returns `true` if entering this status must erase local key material.
     const fn clears_key_material(self) -> bool {
-        self.is_terminal()
+        matches!(self, Self::Revoking) || self.is_terminal()
     }
 
-    /// Returns `true` if the session is still in-flight or usable.
+    /// Returns `true` if the session is not terminal. This does not imply usable key material:
+    /// [`Self::Revoking`] is in-flight cleanup state and has no local signing key.
     pub const fn is_live(self) -> bool {
         !self.is_terminal()
     }
@@ -59,7 +62,7 @@ pub struct SessionTokenLimit {
 /// Session keys live with their lifecycle record in `wallet/sessions.toml`.
 /// Persistent Tempo wallet login keys remain in `wallet/keys.toml`, so creating
 /// or cleaning up a session cannot replace a user's long-lived access key.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SessionKeyMaterial {
     #[serde(default)]
     pub key_type: KeyType,
@@ -69,6 +72,20 @@ pub struct SessionKeyMaterial {
     /// provisioning on first use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_authorization: Option<String>,
+}
+
+// Manual `Debug` redacts the secret key material; propagates to containers.
+impl fmt::Debug for SessionKeyMaterial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionKeyMaterial")
+            .field("key_type", &self.key_type)
+            .field("key", &super::redacted_debug(&self.key))
+            .field(
+                "key_authorization",
+                &self.key_authorization.as_deref().map(super::redacted_debug),
+            )
+            .finish()
+    }
 }
 
 impl SessionKeyMaterial {
@@ -176,7 +193,7 @@ impl SessionRecord {
         self.get(session_id).filter(|session| session.has_live_key_at(now))
     }
 
-    /// Update a session status by id. Terminal statuses clear local key material.
+    /// Update a session status by id. Cleanup and terminal statuses clear local key material.
     ///
     /// Returns `true` when the record changed. Missing sessions and idempotent
     /// updates return `false`.
@@ -554,9 +571,8 @@ pub fn upsert_session_entry(entry: SessionEntry) -> eyre::Result<()> {
 
 /// Atomically update a session status in the registry.
 ///
-/// Terminal statuses (`revoked`, `expired`, `failed`) also clear the
-/// session-scoped private key material. Returns `true` when an entry was found
-/// and changed.
+/// Cleanup and terminal statuses (`revoking`, `revoked`, `expired`, `failed`) also clear the
+/// session-scoped private key material. Returns `true` when an entry was found and changed.
 pub fn update_session_status(session_id: B256, status: SessionStatus) -> eyre::Result<bool> {
     mutate_session_record(|record| {
         let changed = record.set_status(session_id, status);
@@ -619,6 +635,27 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const SESSION_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[test]
+    fn debug_redacts_session_key_material() {
+        // Distinctive sentinels so a leak can't accidentally pass.
+        let mut entry = sample_entry_with_key(B256::from([0x77; 32]), 200, SessionStatus::Active);
+        let key = entry.key.as_mut().unwrap();
+        key.key = "0xPRIVATE_KEY_MUST_NOT_LEAK".to_string();
+        key.key_authorization = Some("0xKEY_AUTH_MUST_NOT_LEAK".to_string());
+
+        let entry_dbg = format!("{entry:?}");
+        let record_dbg = format!("{:?}", SessionRecord { sessions: vec![entry] });
+
+        for rendered in [&entry_dbg, &record_dbg] {
+            assert!(!rendered.contains("PRIVATE_KEY_MUST_NOT_LEAK"), "key leaked in: {rendered}");
+            assert!(!rendered.contains("KEY_AUTH_MUST_NOT_LEAK"), "auth leaked in: {rendered}");
+        }
+        assert!(entry_dbg.contains("key: \"<redacted>\""), "got: {entry_dbg}");
+        assert!(entry_dbg.contains("key_authorization: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        // Non-secret metadata is still visible for diagnostics.
+        assert!(entry_dbg.contains("key_type"));
+    }
 
     fn sample_entry(session_id: B256, expiry: u64, status: SessionStatus) -> SessionEntry {
         SessionEntry {
@@ -793,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn session_record_status_updates_preserve_retryable_keys_and_clear_terminal_keys() {
+    fn session_record_status_updates_clear_cleanup_and_terminal_keys() {
         let active_id = B256::from([0x67; 32]);
         let revoking_id = B256::from([0x68; 32]);
         let revoked_id = B256::from([0x69; 32]);
@@ -818,7 +855,7 @@ mod tests {
         assert_eq!(record.get(active_id).unwrap().status, SessionStatus::Active);
         assert!(record.get(active_id).unwrap().key.is_some());
         assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
-        assert!(record.get(revoking_id).unwrap().key.is_some());
+        assert!(record.get(revoking_id).unwrap().key.is_none());
         assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
         assert!(record.get(revoked_id).unwrap().key.is_none());
         assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
@@ -827,7 +864,7 @@ mod tests {
 
     #[test]
     fn session_entry_roundtrips_scope_limits_and_status() {
-        let entry = sample_entry_with_key(B256::from([0x66; 32]), 1234, SessionStatus::Revoking);
+        let entry = sample_entry(B256::from([0x66; 32]), 1234, SessionStatus::Revoking);
         let toml = toml::to_string(&entry).unwrap();
         let decoded: SessionEntry = toml::from_str(&toml).unwrap();
 
@@ -835,8 +872,8 @@ mod tests {
         assert_eq!(decoded.scope.as_ref().unwrap().len(), 1);
         assert_eq!(decoded.limits.as_ref().unwrap().len(), 1);
         assert_eq!(decoded.status, SessionStatus::Revoking);
-        assert_eq!(decoded.key.as_ref().unwrap().key, "0xdeadbeef");
-        assert!(decoded.has_inline_key());
+        assert!(decoded.key.is_none());
+        assert!(!decoded.has_inline_key());
         assert!(decoded.is_expired_at(1234));
     }
 
@@ -1206,11 +1243,12 @@ key = "0x1111"
     }
 
     #[test]
-    fn mark_expired_session_entries_clears_terminal_session_keys() {
+    fn mark_expired_session_entries_clears_unusable_session_keys() {
         with_tempo_home(|| {
             let expired_id = B256::from([0xbc; 32]);
             let revoked_id = B256::from([0xbd; 32]);
             let failed_id = B256::from([0xbe; 32]);
+            let revoking_id = B256::from([0xbf; 32]);
 
             upsert_session_entry(sample_entry_with_key(expired_id, 100, SessionStatus::Expired))
                 .unwrap();
@@ -1218,15 +1256,18 @@ key = "0x1111"
                 .unwrap();
             upsert_session_entry(sample_entry_with_key(failed_id, 200, SessionStatus::Failed))
                 .unwrap();
+            upsert_session_entry(sample_entry_with_key(revoking_id, 200, SessionStatus::Revoking))
+                .unwrap();
 
-            assert_eq!(mark_expired_session_entries(100).unwrap(), 3);
+            assert_eq!(mark_expired_session_entries(100).unwrap(), 4);
             let record = read_session_record().unwrap();
-            for session_id in [expired_id, revoked_id, failed_id] {
+            for session_id in [expired_id, revoked_id, failed_id, revoking_id] {
                 assert!(record.get(session_id).unwrap().key.is_none());
             }
             assert_eq!(record.get(expired_id).unwrap().status, SessionStatus::Expired);
             assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
             assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
+            assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
         });
     }
 
@@ -1247,7 +1288,7 @@ key = "0x1111"
             let record = read_session_record().unwrap();
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Revoking);
-            assert!(session.key.is_some());
+            assert!(session.key.is_none());
 
             assert!(update_session_status(session_id, SessionStatus::Revoked).unwrap());
             let record = read_session_record().unwrap();
@@ -1295,7 +1336,7 @@ key = "0x1111"
             let record = read_session_record().unwrap();
             let session = record.get(session_id).unwrap();
             assert_eq!(session.status, SessionStatus::Revoking);
-            assert!(session.key.is_some());
+            assert!(session.key.is_none());
 
             assert!(!update_session_status_if(
                 session_id,

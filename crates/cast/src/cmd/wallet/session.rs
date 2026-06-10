@@ -217,17 +217,22 @@ async fn run_for_command(
     upsert_session_entry(entry)?;
 
     let child_result = command.run(session_id).await;
-    let cleanup_result = cleanup_session_run(session_id, tx, send_tx).await;
+    let cleanup_result = cleanup_session_run(session_id, child_result.is_ok(), tx, send_tx).await;
 
     finish_session_run(session_id, child_result, cleanup_result)
 }
 
 async fn cleanup_session_run(
     session_id: B256,
+    child_succeeded: bool,
     tx: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
-    let retire_result = retire_session_run_locally(session_id);
+    let retire_result = if child_succeeded {
+        mark_session_run_revoking(session_id)
+    } else {
+        retire_session_run_locally(session_id)
+    };
     let revoke_result =
         run_revoke_with_policy(session_id, false, tx, send_tx, UnprovisionedKeyPolicy::Fail).await;
 
@@ -242,14 +247,22 @@ async fn cleanup_session_run(
     }
 }
 
+fn mark_session_run_revoking(session_id: B256) -> Result<()> {
+    update_session_run_status(session_id, SessionStatus::Revoking)
+        .wrap_err_with(|| format!("failed to mark Tempo session {session_id:?} as revoking"))
+}
+
 fn retire_session_run_locally(session_id: B256) -> Result<()> {
+    update_session_run_status(session_id, SessionStatus::Failed)
+        .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"))
+}
+
+fn update_session_run_status(session_id: B256, status: SessionStatus) -> Result<()> {
     let Some(entry) = read_session_entry(session_id)? else {
         return Ok(());
     };
-    let status = if entry.status.is_terminal() { entry.status } else { SessionStatus::Failed };
-    update_session_status(session_id, status)
-        .map(|_| ())
-        .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"))
+    let status = if entry.status.is_terminal() { entry.status } else { status };
+    update_session_status(session_id, status).map(|_| ())
 }
 
 fn finish_session_run(
@@ -959,6 +972,33 @@ mod tests {
     }
 
     #[test]
+    fn run_for_success_marks_session_revoking_before_revoke_preflight() {
+        with_tempo_home(|| {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let session_id = B256::from([0xd7; 32]);
+                upsert_session_entry(sample_session_entry(session_id, SessionStatus::Active))
+                    .unwrap();
+
+                let mut send_tx = empty_send_tx_opts();
+                send_tx.eth.rpc.common.rpc_url = Some("http://127.0.0.1:9".to_string());
+                let err = cleanup_session_run(
+                    session_id,
+                    true,
+                    TransactionOpts::parse_from(["cast"]),
+                    send_tx,
+                )
+                .await
+                .unwrap_err();
+
+                let session = read_session_entry(session_id).unwrap().unwrap();
+                assert_eq!(session.status, SessionStatus::Revoking, "{err:#}");
+                assert!(session.key.is_none());
+            });
+        });
+    }
+
+    #[test]
     fn run_for_retire_local_session_before_revoke_preflight() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -1071,7 +1111,7 @@ mod tests {
 
                 let session = read_session_entry(session_id).unwrap().unwrap();
                 assert_eq!(session.status, SessionStatus::Revoking);
-                assert!(session.key.is_some());
+                assert!(session.key.is_none());
             });
         });
     }
@@ -1162,7 +1202,10 @@ mod tests {
 
     fn sample_session_entry(session_id: B256, status: SessionStatus) -> SessionEntry {
         let key = match status {
-            SessionStatus::Revoked | SessionStatus::Expired | SessionStatus::Failed => None,
+            SessionStatus::Revoking
+            | SessionStatus::Revoked
+            | SessionStatus::Expired
+            | SessionStatus::Failed => None,
             _ => Some(foundry_common::tempo::SessionKeyMaterial {
                 key_type: foundry_common::tempo::KeyType::Secp256k1,
                 key: ROOT_PRIVATE_KEY.to_string(),

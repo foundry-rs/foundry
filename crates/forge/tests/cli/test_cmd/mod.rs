@@ -23,6 +23,21 @@ mod mutation;
 mod repros;
 mod showmap;
 mod spec;
+mod symbolic;
+mod symbolic_calls;
+mod symbolic_cheatcodes;
+mod symbolic_conformance;
+mod symbolic_creates;
+mod symbolic_engine_capabilities;
+mod symbolic_false_pass_prevention;
+mod symbolic_helpers;
+mod symbolic_invariant;
+mod symbolic_limits;
+mod symbolic_memory;
+mod symbolic_opcodes;
+mod symbolic_parity;
+mod symbolic_precompiles;
+mod symbolic_storage;
 mod table;
 mod trace;
 
@@ -2580,7 +2595,9 @@ contract MetadataTraceTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-dynamic-test-linking"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -2603,7 +2620,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
     // Check consistent traces for running with no metadata.
     cmd.forge_fuse()
-        .args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-metadata"])
+        .args([
+            "test",
+            "--mt",
+            "test_proxy_trace",
+            "-vvvv",
+            "--no-metadata",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3284,7 +3308,9 @@ Ran 1 test for test/ForkTest.t.sol:ForkTest
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--no-dynamic-test-linking"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
@@ -3382,9 +3408,17 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
-        .assert_success()
-        .stdout_eq(file!["../../fixtures/colored_traces.svg": TermSvg]);
+    cmd.args([
+        "test",
+        "--mt",
+        "test_Increment",
+        "--color",
+        "always",
+        "-vvvvv",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../../fixtures/colored_traces.svg": TermSvg]);
 });
 
 // Tests that traces for successful tests can be suppressed by using `-s` flag.
@@ -3422,8 +3456,9 @@ contract SuppressTracesTest is Test {
     );
 
     // Show traces and logs for failed test only.
-    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvvv", "-s"]).assert_failure().stdout_eq(
-        str![[r#"
+    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvvv", "-s", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -3471,12 +3506,11 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
-"#]],
-    );
+"#]]);
 
     // Show traces and logs for all tests.
     cmd.forge_fuse()
-        .args(["test", "--mc", "SuppressTracesTest", "-vvvv"])
+        .args(["test", "--mc", "SuppressTracesTest", "-vvvv", "--no-dynamic-test-linking"])
         .assert_failure()
         .stdout_eq(str![[r#"
 No files changed, compilation skipped
@@ -4289,7 +4323,7 @@ contract NonContractCallRevertTest is Test {
      "#,
     );
 
-    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvvvv"])
+    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvvvv", "--no-dynamic-test-linking"])
         .assert_failure()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -4533,7 +4567,9 @@ contract PrankTest is Test {
 "#,
     );
 
-    cmd.args(["test", "--mc", "PrankTest", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "PrankTest", "-vvvvv", "--no-dynamic-test-linking"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!

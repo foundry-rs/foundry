@@ -3,12 +3,14 @@
 pub mod auth;
 
 use crate::FoundryTransactionBuilder;
+use alloy_chains::Chain;
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, Signature};
 use alloy_signer::Signer;
 use eyre::{Context, Result};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
+use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
 
 mod keystore;
 mod registry;
@@ -37,6 +39,11 @@ pub(crate) use test_utils::{test_env_mutex, with_tempo_home};
 #[cfg(test)]
 mod tests;
 
+/// Placeholder rendered by `Debug` impls in place of secret key material.
+fn redacted_debug(value: &str) -> &'static str {
+    if value.trim().is_empty() { "<empty>" } else { "<redacted>" }
+}
+
 /// Conservative gas buffer for browser wallet transactions on Tempo chains.
 ///
 /// Browser wallets may sign with P256 or WebAuthn instead of secp256k1, which costs more gas
@@ -47,6 +54,14 @@ mod tests;
 ///
 /// See <https://github.com/tempoxyz/tempo/blob/6ebf1a8/crates/revm/src/handler.rs#L108-L124>
 pub const TEMPO_BROWSER_GAS_BUFFER: u64 = 7_000;
+
+/// Resolves an explicit Tempo fee token or the canonical default for a known Tempo network.
+pub fn resolve_fee_token(
+    chain: Option<Chain>,
+    explicit_fee_token: Option<Address>,
+) -> Option<Address> {
+    explicit_fee_token.or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))
+}
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]

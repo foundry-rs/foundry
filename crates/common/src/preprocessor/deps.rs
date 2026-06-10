@@ -153,10 +153,9 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     /// Project source dir, used to determine if referenced contract is a source contract.
     src_dir: &'src Path,
     /// Whether the contract being analyzed lives in a script file.
-    /// Salted `new Contract{salt:...}()` in scripts must not be rewritten: at broadcast depth
-    /// Foundry redirects native CREATE2 through the deterministic factory, preserving the salt.
-    /// `vm.deployCode` runs at a deeper call depth and bypasses that redirect, so the broadcast
-    /// would record a plain CREATE and deploy at the wrong address.
+    /// `new Contract(...)` in scripts must not be rewritten: native script CREATE/CREATE2 frames
+    /// are handled by the script execution inspector, but `vm.deployCode` runs at a deeper call
+    /// depth and bypasses that machinery.
     is_script: bool,
     /// Dependencies collected for current contract.
     dependencies: Vec<BytecodeDependency>,
@@ -180,11 +179,9 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
     /// Discards any reference that is not in project src directory (e.g. external
     /// libraries or mock contracts that extend source contracts).
     fn collect_dependency(&mut self, dependency: BytecodeDependency) {
-        // Salted new-expressions in scripts must not be rewritten. See field doc on `is_script`.
-        if self.is_script
-            && let BytecodeDependencyKind::New { salt: Some(_), .. } = &dependency.kind
-        {
-            trace!("skip salted new-expression in script");
+        // New-expressions in scripts must not be rewritten. See field doc on `is_script`.
+        if self.is_script && matches!(&dependency.kind, BytecodeDependencyKind::New { .. }) {
+            trace!("skip new-expression in script");
             return;
         }
 

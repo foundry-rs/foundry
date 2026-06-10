@@ -26,7 +26,7 @@ use foundry_evm_core::{
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
-    BasicTxDetails, FuzzCase, FuzzFixtures, FuzzedCases,
+    BasicTxDetails, FuzzCase, FuzzFixtures,
     invariant::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
@@ -356,8 +356,10 @@ fn build_invariant_progress_json<M: Serialize>(
 
 /// Contains data collected during invariant test runs.
 struct InvariantTestData {
-    // Consumed gas and calldata of every successful fuzz call.
-    fuzz_cases: Vec<FuzzedCases>,
+    // Number of completed invariant runs.
+    runs: usize,
+    // Number of completed fuzzed calls across all invariant runs.
+    calls: usize,
     // Data related to reverts or failed assertions of the test.
     failures: InvariantFailures,
     // Calldata in the last invariant run.
@@ -400,7 +402,8 @@ impl InvariantTest {
         branch_runner: TestRunner,
     ) -> Self {
         let test_data = InvariantTestData {
-            fuzz_cases: vec![],
+            runs: 0,
+            calls: 0,
             failures,
             last_run_inputs: vec![],
             gas_report_traces: vec![],
@@ -460,7 +463,8 @@ impl InvariantTest {
                 .gas_report_traces
                 .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
         }
-        self.test_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
+        self.test_data.runs += 1;
+        self.test_data.calls += run.fuzz_runs.len();
 
         // Revert state to not persist values between runs.
         self.fuzz_state.revert();
@@ -527,6 +531,19 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             optimization_value: None,
             optimization_prefix_len: 0,
         }
+    }
+
+    /// Releases per-run corpus payloads once the worker corpus manager has consumed them.
+    ///
+    /// Successful runs only need `fuzz_runs`, traces, and created-contract bookkeeping for final
+    /// reporting. Counterexample inputs are copied into `InvariantTestData::last_run_inputs`
+    /// before this point, so retaining the full per-run input/cmp buffers until `end_run` only
+    /// extends peak memory in long invariant campaigns.
+    fn drop_corpus_payloads(&mut self) {
+        self.inputs.clear();
+        self.inputs.shrink_to_fit();
+        self.cmp_seq.clear();
+        self.cmp_seq.shrink_to_fit();
     }
 }
 
@@ -695,7 +712,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         progress,
                         &campaign_state,
                         campaign_seed.clone(),
-                        corpus_seed.clone(),
+                        corpus_seed
+                            .clone_for_worker(worker_plan.worker_id as usize, actual_worker_count),
                         corpus_persistence,
                         gas_report_samples,
                     );
@@ -1122,6 +1140,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
+            current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
             runs += 1;
             let total_runs = campaign_state.increment_runs();
@@ -1204,13 +1223,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             campaign_state.early_exit(),
         );
 
-        let result = invariant_test.test_data;
+        // Move out the final test data and drop worker-local fuzz state before returning this
+        // worker's aggregate output. Long invariant campaigns can leave large dictionaries and
+        // target state behind; once shrinking is complete, only `test_data` is needed.
+        let InvariantTest { fuzz_state: _, targeted_contracts: _, test_data: result } =
+            invariant_test;
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
         let worker_result = InvariantFuzzTestResult::new(
             errors,
             handler_errors,
-            result.fuzz_cases,
+            result.runs,
+            result.calls,
             reverts,
             result.last_run_inputs,
             result.gas_report_traces,
@@ -1221,6 +1245,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
+        drop(corpus_manager);
         let reported_plan = if campaign_state.is_timed_campaign() {
             InvariantWorkerPlan { runs, ..plan }
         } else {
