@@ -286,6 +286,20 @@ async fn test_estimate_gas_simple_transfer_checks_funds_without_from() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_without_from_caps_limit_by_zero_address_balance() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+
+    // No `from` and a non-zero gas price: the gas allowance is capped by the zero address's
+    // balance (0 on a fresh chain), so the estimate must fail instead of returning 21000.
+    let tx = TransactionRequest::default().with_to(to).with_gas_price(INITIAL_BASE_FEE as u128);
+    let err =
+        api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
+
+    assert!(err.to_string().contains("gas required exceeds allowance"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let to = handle.dev_accounts().next().unwrap();
