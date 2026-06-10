@@ -34,7 +34,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand.workspace = true
 snapbox.workspace = true
 tempfile.workspace = true
-ui_test = "0.30.5"
+ui_test = "0.30.7"
 reqwest.workspace = true
 svm.workspace = true
 
