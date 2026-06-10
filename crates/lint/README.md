@@ -60,10 +60,10 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `redundant-base-constructor-call`: Flags explicit empty base-constructor arguments (e.g. `is A()`) when the base requires no arguments.
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
-  - `event-fields`: `address` and id-like (`uint256`/`bytes32` named `id`/`*Id`) event parameters should be `indexed` for efficient log filtering.
+  - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
-  - `cache-array-length`: Recommends caching dynamic array or `bytes` lengths used in `for` loop conditions.
+  - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.
   - `costly-loop`: Flags storage variable writes inside loops; accumulate into a local variable and write once after the loop instead.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.
