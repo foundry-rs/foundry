@@ -15,14 +15,19 @@ contract IncorrectShift {
         uint256 localShiftAmount = 3;
 
         // SHOULD FAIL:
-        // - Literal << NonLiteral
-        // - Literal >> NonLiteral
+        // - Yul shl/shr with a dynamic first argument and literal second argument
 
-        result = 2 << stateValue; //~WARN: the order of args in a shift operation is incorrect
-        result = 8 >> localValue; //~WARN: the order of args in a shift operation is incorrect
-        result = 16 << (stateValue + 1); //~WARN: the order of args in a shift operation is incorrect
-        result = 32 >> getAmount(); //~WARN: the order of args in a shift operation is incorrect
-        result = 1 << (localValue > 10 ? localShiftAmount : stateShiftAmount); //~WARN: the order of args in a shift operation is incorrect
+        result = 2 << stateValue;
+        result = 8 >> localValue;
+        result = 16 << (stateValue + 1);
+        result = 32 >> getAmount();
+        result = 1 << (localValue > 10 ? localShiftAmount : stateShiftAmount);
+
+        assembly {
+            result := shl(result, 8) //~WARN: the order of args in a shift operation is incorrect
+            result := shr(add(result, 1), 16) //~WARN: the order of args in a shift operation is incorrect
+            result := sar(add(result, 1), 8) //~WARN: the order of args in a shift operation is incorrect
+        }
 
         // SHOULD PASS:
         result = stateValue << 2;
@@ -34,5 +39,12 @@ contract IncorrectShift {
 
         result = 1 << 8;
         result = 255 >> 4;
+
+        assembly {
+            result := shl(8, result)
+            result := shr(16, result)
+            result := sar(8, result)
+            result := shl(8, 1)
+        }
     }
 }

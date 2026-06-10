@@ -40,6 +40,18 @@ contract WhileStatement {
 
         while (condition) doIt();
 
+        while (condition) {
+            doIt();
+            doIt();
+        }
+
+        while (condition) {
+            if (condition) {
+                doIt();
+                doIt();
+            }
+        }
+
         while (condition) doIt();
 
         while ( // comment1

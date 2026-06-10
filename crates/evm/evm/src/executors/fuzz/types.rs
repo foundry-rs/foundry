@@ -1,6 +1,9 @@
 use crate::executors::RawCallResult;
-use alloy_primitives::{Bytes, Log, map::HashMap};
-use foundry_evm_core::Breakpoints;
+use alloy_primitives::{
+    Bytes, Log,
+    map::{AddressHashMap, HashMap},
+};
+use foundry_evm_core::{Breakpoints, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::FuzzCase;
 use foundry_evm_traces::SparsedTraceArena;
@@ -13,6 +16,8 @@ pub struct CaseOutcome {
     pub case: FuzzCase,
     /// The traces of the call.
     pub traces: Option<SparsedTraceArena>,
+    /// Runtime bytecodes for contracts seen in the trace.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// The coverage info collected during the call.
     pub coverage: Option<HitMaps>,
     /// Breakpoints char pc map.
@@ -25,9 +30,9 @@ pub struct CaseOutcome {
 
 /// Returned by a single fuzz when a counterexample has been discovered
 #[derive(Debug)]
-pub struct CounterExampleOutcome {
+pub struct CounterExampleOutcome<FEN: FoundryEvmNetwork> {
     /// Minimal reproduction test case for failing test.
-    pub counterexample: (Bytes, RawCallResult),
+    pub counterexample: (Bytes, RawCallResult<FEN>),
     /// The status of the call.
     pub exit_reason: Option<InstructionResult>,
     /// Breakpoints char pc map.
@@ -37,7 +42,7 @@ pub struct CounterExampleOutcome {
 /// Outcome of a single fuzz
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
-pub enum FuzzOutcome {
+pub enum FuzzOutcome<FEN: FoundryEvmNetwork> {
     Case(CaseOutcome),
-    CounterExample(CounterExampleOutcome),
+    CounterExample(CounterExampleOutcome<FEN>),
 }

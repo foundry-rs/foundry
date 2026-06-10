@@ -1,4 +1,7 @@
-use solar::sema::hir::{CallArgs, CallArgsKind, Expr, ExprKind, ItemId, Res};
+use solar::sema::{
+    Gcx,
+    hir::{CallArgs, CallArgsKind, Expr, ExprKind, ItemId, Res},
+};
 
 use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
@@ -16,6 +19,7 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
     fn check_expr(
         &mut self,
         ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         hir: &'hir solar::sema::hir::Hir<'hir>,
         expr: &'hir solar::sema::hir::Expr<'hir>,
     ) {

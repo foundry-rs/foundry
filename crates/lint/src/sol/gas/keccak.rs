@@ -6,7 +6,10 @@ use crate::{
 use solar::{
     ast::{self as ast, Span},
     interface::kw,
-    sema::hir::{self},
+    sema::{
+        Gcx,
+        hir::{self},
+    },
 };
 
 declare_forge_lint!(
@@ -20,6 +23,7 @@ impl<'hir> LateLintPass<'hir> for AsmKeccak256 {
     fn check_stmt(
         &mut self,
         ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {
@@ -91,7 +95,7 @@ fn extract_keccak256_arg<'hir>(expr: &'hir hir::Expr<'hir>) -> Option<&'hir hir:
         return None;
     };
 
-    if is_keccak && args.len() == 1 { Some(&args[0]) } else { None }
+    (is_keccak && args.len() == 1).then(|| &args[0])
 }
 
 // -- HELPER FUNCTIONS AND STRUCTS ----------------------------------------------------------------

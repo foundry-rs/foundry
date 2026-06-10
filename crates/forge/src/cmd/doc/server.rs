@@ -38,13 +38,13 @@ impl Server {
     }
 
     /// Set the port to serve on.
-    pub fn with_port(mut self, port: usize) -> Self {
+    pub const fn with_port(mut self, port: usize) -> Self {
         self.port = port;
         self
     }
 
     /// Set whether to open the browser after serving.
-    pub fn open(mut self, open: bool) -> Self {
+    pub const fn open(mut self, open: bool) -> Self {
         self.open = open;
         self
     }
@@ -74,7 +74,7 @@ impl Server {
             .unwrap_or_else(|| "404.html".to_string());
 
         let serving_url = format!("http://{address}");
-        sh_println!("Serving on: {serving_url}")?;
+        sh_status!("Serving on: {serving_url}")?;
 
         let thread_handle = std::thread::spawn(move || serve(build_dir, sockaddr, &file_404));
 

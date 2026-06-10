@@ -7,10 +7,7 @@ use foundry_evm_core::{
 use revm::{
     Inspector,
     context::ContextTr,
-    interpreter::{
-        CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult,
-        interpreter::EthInterpreter,
-    },
+    interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
 };
 
 /// An inspector that collects logs during execution.
@@ -33,10 +30,11 @@ impl LogCollector {
     }
 
     #[cold]
-    fn do_hardhat_log<CTX>(&mut self, context: &mut CTX, inputs: &CallInputs) -> Option<CallOutcome>
-    where
-        CTX: ContextTr,
-    {
+    fn do_hardhat_log<CTX: ContextTr>(
+        &mut self,
+        context: &mut CTX,
+        inputs: &CallInputs,
+    ) -> Option<CallOutcome> {
         if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
             let result = InstructionResult::Revert;
             let output = err.abi_encode_revert();
@@ -45,6 +43,7 @@ impl LogCollector {
                 memory_offset: inputs.return_memory_offset.clone(),
                 was_precompile_called: true,
                 precompile_call_logs: vec![],
+                charged_new_account_state_gas: false,
             });
         }
         None
@@ -52,7 +51,9 @@ impl LogCollector {
 
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
         let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
-        self.push_msg(&decoded.fmt(Default::default()));
+        for line in decoded.fmt(Default::default()).lines() {
+            self.push_msg(line);
+        }
         Ok(())
     }
 
@@ -80,10 +81,7 @@ impl LogCollector {
     }
 }
 
-impl<CTX> Inspector<CTX, EthInterpreter> for LogCollector
-where
-    CTX: ContextTr,
-{
+impl<CTX: ContextTr> Inspector<CTX> for LogCollector {
     fn log(&mut self, _context: &mut CTX, log: Log) {
         self.push_raw_log(log);
     }

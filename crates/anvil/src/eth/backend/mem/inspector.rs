@@ -7,7 +7,8 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     traces::{
-        CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig, render_trace_arena_inner,
+        CallTraceDecoder, CallTraceNode, SparsedTraceArena, TracingInspectorConfig,
+        render_trace_arena_inner,
     },
 };
 use revm::{
@@ -33,7 +34,48 @@ pub struct AnvilInspector {
     pub transfer: Option<TransferInspector>,
 }
 
+/// Configuration for per-transaction inspector lifecycle.
+#[derive(Clone, Debug)]
+pub struct InspectorTxConfig {
+    /// Whether to print traces to stdout.
+    pub print_traces: bool,
+    /// Whether to print logs to stdout.
+    pub print_logs: bool,
+    /// Whether to enable step-level tracing (with state diffs).
+    pub enable_steps_tracing: bool,
+    /// Decoder for populating trace labels.
+    pub call_trace_decoder: Arc<CallTraceDecoder>,
+}
+
 impl AnvilInspector {
+    /// Finish a transaction: print traces/logs, drain the tracer, and reset for the next tx.
+    ///
+    /// Returns the collected call trace nodes from the finished transaction.
+    pub fn finish_transaction(&mut self, config: &InspectorTxConfig) -> Vec<CallTraceNode> {
+        // Print before draining so the tracer is still populated.
+        if config.print_traces {
+            self.print_traces(config.call_trace_decoder.clone());
+        }
+        self.print_logs();
+
+        let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
+
+        // Reinstall tracer for next tx.
+        let tracing_config = if config.enable_steps_tracing {
+            TracingInspectorConfig::all().with_state_diffs()
+        } else {
+            TracingInspectorConfig::all().set_steps(false)
+        };
+        self.tracer = Some(TracingInspector::new(tracing_config));
+
+        // Reset log collector for next tx.
+        if config.print_logs {
+            self.log_collector = Some(LogCollector::Capture { logs: Vec::new() });
+        }
+
+        traces
+    }
+
     /// Called after the inspecting the evm
     ///
     /// This will log all `console.sol` logs
