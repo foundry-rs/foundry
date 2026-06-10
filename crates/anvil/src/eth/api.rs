@@ -17,6 +17,7 @@ use crate::{
         },
         fees::{
             FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE, create_fee_history_cache_item,
+            insert_fee_history_cache_item,
         },
         macros::node_info,
         miner::FixedBlockTimeMiner,
@@ -1171,9 +1172,14 @@ impl<N: Network> EthApi<N> {
                             &storage_info,
                             blob_params,
                         );
-                        if block_number.is_some() {
-                            self.fee_history_cache.lock().insert(n, item.clone());
-                        }
+                        // Reuse the bounded insertion so the fallback honors the same cache limit
+                        // as the async service instead of growing the cache unbounded.
+                        insert_fee_history_cache_item(
+                            &self.fee_history_cache,
+                            item.clone(),
+                            block_number,
+                            self.fee_history_limit,
+                        );
                         item
                     }
                 };

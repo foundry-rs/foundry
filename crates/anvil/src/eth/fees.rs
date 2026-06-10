@@ -246,19 +246,32 @@ where
     }
 
     fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
-        if let Some(block_number) = block_number {
-            trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
-            let mut cache = self.cache.lock();
-            cache.insert(block_number, item);
+        insert_fee_history_cache_item(&self.cache, item, block_number, self.fee_history_limit);
+    }
+}
 
-            // adhere to cache limit
-            let pop_next = block_number.saturating_sub(self.fee_history_limit);
+/// Inserts an entry into the fee history cache and trims it back to `fee_history_limit`.
+///
+/// Shared by the async [`FeeHistoryService`] and the `eth_feeHistory` fallback so both paths
+/// enforce [`MAX_FEE_HISTORY_CACHE_SIZE`]; inserting directly would let the cache grow unbounded.
+pub(crate) fn insert_fee_history_cache_item(
+    cache: &FeeHistoryCache,
+    item: FeeHistoryCacheItem,
+    block_number: Option<u64>,
+    fee_history_limit: u64,
+) {
+    if let Some(block_number) = block_number {
+        trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
+        let mut cache = cache.lock();
+        cache.insert(block_number, item);
 
-            let num_remove = (cache.len() as u64).saturating_sub(self.fee_history_limit);
-            for num in 0..num_remove {
-                let key = pop_next - num;
-                cache.remove(&key);
-            }
+        // adhere to cache limit
+        let pop_next = block_number.saturating_sub(fee_history_limit);
+
+        let num_remove = (cache.len() as u64).saturating_sub(fee_history_limit);
+        for num in 0..num_remove {
+            let key = pop_next - num;
+            cache.remove(&key);
         }
     }
 }
