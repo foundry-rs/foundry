@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::parse_tokens,
     provider::ProviderBuilder,
     shell,
-    tempo::TEMPO_BROWSER_GAS_BUFFER,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, resolve_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -42,7 +42,7 @@ use foundry_wallets::{
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use tempo_alloy::{TempoNetwork, contracts::precompiles::DEFAULT_FEE_TOKEN};
+use tempo_alloy::TempoNetwork;
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -433,13 +433,9 @@ impl CreateArgs {
             deployer.tx.set_create();
         }
 
-        // If Tempo chain fee token must be set
-        if chain.is_tempo() {
-            if let Some(fee_token) = self.tx.tempo.fee_token {
-                deployer.tx.set_fee_token(fee_token);
-            } else {
-                deployer.tx.set_fee_token(DEFAULT_FEE_TOKEN);
-            }
+        // If the chain has a canonical fee token, set it unless the user supplied one.
+        if let Some(fee_token) = resolve_fee_token(Some(chain), self.tx.tempo.fee_token) {
+            deployer.tx.set_fee_token(fee_token);
         }
 
         // Apply user-provided gas, fee, nonce, and Tempo options.
