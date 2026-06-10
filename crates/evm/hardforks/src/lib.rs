@@ -272,7 +272,7 @@ pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
 }
 
 /// Map a `TempoHardfork` enum into its corresponding Ethereum `SpecId`.
-pub fn spec_id_from_tempo_hardfork(_: TempoHardfork) -> SpecId {
+pub const fn spec_id_from_tempo_hardfork(_: TempoHardfork) -> SpecId {
     SpecId::OSAKA
 }
 
