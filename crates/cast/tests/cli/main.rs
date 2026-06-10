@@ -22,7 +22,7 @@ use foundry_test_utils::{
     util::OutputExt,
 };
 use serde_json::json;
-use std::{fs, path::Path, str::FromStr};
+use std::{fs, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::TempoTxEnvelope;
 
@@ -3759,16 +3759,20 @@ async fn deploy_counter_and_set_number(
     prj.initialize_default_contracts();
 
     // Deploy counter contract.
-    cmd.args([
-        "script",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        endpoint,
-        "--broadcast",
-        "CounterScript",
-    ])
-    .assert_success();
+    let mut forge = Command::new(prj.ensure_foundry_bin("forge"));
+    forge.current_dir(prj.root());
+    forge.env("NO_COLOR", "1");
+    cmd.set_cmd(forge)
+        .args([
+            "script",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+            "--broadcast",
+            "CounterScript",
+        ])
+        .assert_success();
 
     // Send tx to change counter storage value.
     cmd.cast_fuse()
@@ -3799,7 +3803,8 @@ forgetest_async!(cast_run_prestate_tracer, |prj, cmd| {
     let endpoint = handle.http_endpoint();
     let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
 
-    cmd.cast_fuse()
+    let assert = cmd
+        .cast_fuse()
         .args(["run", "--prestate-tracer", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -3811,8 +3816,14 @@ Traces:
 Transaction successfully executed.
 [GAS]
 
-"#]])
-        .stderr_eq(str![[r#""#]]);
+"#]]);
+    assert!(
+        !assert
+            .get_output()
+            .stderr_lossy()
+            .contains("Executing previous transactions from the block."),
+        "prestate tracer path should not replay previous block transactions"
+    );
 });
 
 // `cast run` defaults to replaying the block (conservative default) even on a node that supports
