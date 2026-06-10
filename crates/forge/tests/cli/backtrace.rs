@@ -300,7 +300,8 @@ forgetest!(test_library_backtrace, |prj, cmd| {
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
+Compiler run successful with warnings:
+...
 
 Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])

@@ -113,6 +113,7 @@ assertions_revert = true
 legacy_assertions = false
 celo = false
 tempo = false
+monad = false
 bypass_prevrandao = false
 transaction_timeout = 120
 additional_compiler_profiles = []
@@ -1439,6 +1440,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "legacy_assertions": false,
   "celo": false,
   "tempo": false,
+  "monad": false,
   "bypass_prevrandao": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],
