@@ -3792,50 +3792,56 @@ async fn deploy_counter_and_set_number(
 }
 
 // `cast run --prestate-tracer` uses the prestate tracer when the node exposes the debug API
-// (Anvil does), skipping the block replay while still producing correct traces.
+// (Anvil does), skipping the block replay while still producing correct traces. The block replay
+// message must be absent from stderr.
 forgetest_async!(cast_run_prestate_tracer, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
 
-    let assert = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args(["run", "--prestate-tracer", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
-        .assert_success();
-    let output = assert.get_output();
-    let stdout = output.stdout_lossy();
-    let stderr = output.stderr_lossy();
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Stop]
 
-    // The block replay message (printed to stderr) must be absent when the prestate tracer is used.
-    assert!(
-        !stderr.contains("Executing previous transactions from the block"),
-        "expected prestate tracer to be used, but block replay message was found:\n{stderr}"
-    );
 
-    // Traces should still be produced and correctly decoded.
-    assert!(stdout.contains("Traces:"), "expected traces to be shown:\n{stdout}");
-    assert!(stdout.contains("setNumber"), "expected setNumber call in traces:\n{stdout}");
+Transaction successfully executed.
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#""#]]);
 });
 
 // `cast run` defaults to replaying the block (conservative default) even on a node that supports
-// the debug API. The prestate tracer must be explicitly opted into via `--prestate-tracer`.
+// the debug API. The prestate tracer must be explicitly opted into via `--prestate-tracer`, so the
+// block replay message is present on stderr.
 forgetest_async!(cast_run_default_uses_block_replay, |prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
 
-    let stderr = cmd
-        .cast_fuse()
+    cmd.cast_fuse()
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
         .assert_success()
-        .get_output()
-        .stderr_lossy();
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Stop]
 
-    // Without `--prestate-tracer`, cast must fall back to replaying the block.
-    assert!(
-        stderr.contains("Executing previous transactions from the block"),
-        "expected block replay to be used by default:\n{stderr}"
-    );
+
+Transaction successfully executed.
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
+
+"#]]);
 });
 
 // The prestate tracer path produces the same traces as the block replay path, proving the prestate
