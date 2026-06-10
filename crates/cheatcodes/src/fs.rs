@@ -554,15 +554,19 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
                 .filter(|(id, _)| {
                     // name might be in the form of "Counter.0.8.23"
                     let id_name = id.name.split('.').next().unwrap();
+                    let contract_name_matches = contract_name.is_none_or(|name| id_name == name);
+                    let profile_matches = profile.is_none_or(|profile| id.profile == profile);
+                    let ambiguous_file_profile_matches = file.is_some()
+                        && version.is_none()
+                        && profile.is_none()
+                        && contract_name.is_some_and(|name| id.profile == name);
 
                     if let Some(path) = &file
                         && !id.source.ends_with(path)
                     {
                         return false;
                     }
-                    if let Some(name) = contract_name
-                        && id_name != name
-                    {
+                    if !contract_name_matches && !ambiguous_file_profile_matches {
                         return false;
                     }
                     if let Some(ref version) = version
@@ -572,9 +576,7 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
                     {
                         return false;
                     }
-                    if let Some(profile) = profile
-                        && id.profile != profile
-                    {
+                    if !profile_matches {
                         return false;
                     }
                     true
@@ -1022,6 +1024,11 @@ mod tests {
     use super::*;
     use crate::CheatsConfig;
     use alloy_primitives::{address, b256};
+    use foundry_common::ContractsByArtifact;
+    use foundry_compilers::{
+        ArtifactId,
+        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+    };
     use foundry_evm_core::evm::TempoEvmNetwork;
     use std::{env, fs as stdfs, sync::Arc};
 
@@ -1146,13 +1153,62 @@ mod tests {
 
     #[test]
     fn test_parse_artifact_path_file_and_profile() {
-        // Note: When file has a dot and next segment has no dot and is not a valid version,
-        // it's treated as contract_name, not profile. This is the expected behavior.
+        // The parser keeps the two-part file form ambiguous. Artifact lookup can resolve this
+        // segment as a profile when no contract name matches.
         let parsed = super::parse_artifact_path("Contract.sol:paris").unwrap();
         assert_eq!(parsed.file, Some(PathBuf::from("Contract.sol")));
         assert_eq!(parsed.contract_name, Some("paris"));
         assert_eq!(parsed.version, None);
         assert_eq!(parsed.profile, None);
+    }
+
+    #[test]
+    fn test_get_artifact_code_resolves_file_profile_ambiguity() {
+        fn artifact(
+            source: &str,
+            name: &str,
+            profile: &str,
+            bytecode: Bytes,
+        ) -> (ArtifactId, CompactContractBytecode) {
+            (
+                ArtifactId {
+                    path: PathBuf::from(format!("{source}/{name}.json")),
+                    name: name.to_owned(),
+                    source: PathBuf::from(source),
+                    version: Version::new(0, 8, 30),
+                    build_id: String::new(),
+                    profile: profile.to_owned(),
+                },
+                CompactContractBytecode {
+                    abi: Some(Default::default()),
+                    bytecode: Some(CompactBytecode {
+                        object: BytecodeObject::Bytecode(bytecode),
+                        source_map: None,
+                        link_references: Default::default(),
+                    }),
+                    deployed_bytecode: None,
+                },
+            )
+        }
+
+        let default_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let paris_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let source = "src/GetCodeProfile.t.sol";
+        let artifacts = ContractsByArtifact::new([
+            artifact(source, "GetCodeProfile", "default", default_bytecode),
+            artifact(source, "GetCodeProfile", "paris", paris_bytecode.clone()),
+        ]);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let bytecode =
+            super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
+
+        assert_eq!(bytecode, paris_bytecode);
     }
 
     #[test]
