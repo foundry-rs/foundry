@@ -24,7 +24,7 @@ use foundry_common::{
     sh_warn, shell,
     tempo::{
         self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, read_tempo_keys_file,
-        resolve_fee_token, tempo_keys_path,
+        tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -1231,9 +1231,6 @@ async fn run_doctor(
             return finalize_doctor(steps, context);
         }
     };
-    context.fee_token =
-        resolve_fee_token(config.chain, requested_fee_token).unwrap_or(DEFAULT_FEE_TOKEN);
-
     let provider = match ProviderBuilder::<TempoNetwork>::from_config(&config)
         .and_then(|builder| builder.build())
     {

@@ -309,11 +309,8 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
 
-        // Resolve the fee token based on the chain and Tempo settings.
-        // If no chain is set, use the Tempo mainnet chain when the Tempo network is active.
-        let chain = config
-            .chain
-            .or_else(|| evm_opts.networks.is_tempo().then(|| Chain::from_named(NamedChain::Tempo)));
+        // Resolve the fee token: default only when the active EVM network is Tempo.
+        let chain = evm_opts.networks.is_tempo().then(|| Chain::from_named(NamedChain::Tempo));
         tempo.fee_token = resolve_fee_token(chain, tempo.fee_token);
 
         let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
