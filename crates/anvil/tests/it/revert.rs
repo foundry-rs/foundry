@@ -61,6 +61,22 @@ async fn test_invalid_opcode_rpc_error_code() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_empty_revert_data_rpc_error() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let sender = handle.dev_accounts().next().unwrap();
+
+    for (method, params) in [
+        ("eth_call", serde_json::json!([{ "from": sender, "data": "0x5f5ffd" }, "latest"])),
+        ("eth_estimateGas", serde_json::json!([{ "from": sender, "data": "0x5f5ffd" }])),
+    ] {
+        let error = rpc_error(&handle.http_endpoint(), method, params).await;
+        assert_eq!(error["code"], serde_json::json!(3), "{error}");
+        assert_eq!(error["message"], serde_json::json!("execution reverted"), "{error}");
+        assert_eq!(error["data"], serde_json::json!("0x"), "{error}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_revert_messages() {
     sol!(
         #[sol(rpc, bytecode = "608080604052346025575f80546001600160a01b031916600117905560b69081602a8239f35b5f80fdfe60808060405260043610156011575f80fd5b5f3560e01c635b9fdc30146023575f80fd5b34607c575f366003190112607c575f546001600160a01b03163303604c576020604051607b8152f35b62461bcd60e51b815260206004820152600b60248201526a08585d5d1a1bdc9a5e995960aa1b6044820152606490fd5b5f80fdfea2646970667358221220f593e5ccd46935f623185de62a72d9f1492d8d15075a111b0fa4d7e16acf4a7064736f6c63430008190033")]
