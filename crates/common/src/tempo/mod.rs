@@ -3,12 +3,14 @@
 pub mod auth;
 
 use crate::FoundryTransactionBuilder;
+use alloy_chains::Chain;
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, Signature};
 use alloy_signer::Signer;
 use eyre::{Context, Result};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
+use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
 
 mod keystore;
 mod registry;
@@ -52,6 +54,14 @@ fn redacted_debug(value: &str) -> &'static str {
 ///
 /// See <https://github.com/tempoxyz/tempo/blob/6ebf1a8/crates/revm/src/handler.rs#L108-L124>
 pub const TEMPO_BROWSER_GAS_BUFFER: u64 = 7_000;
+
+/// Resolves an explicit Tempo fee token or the canonical default for a known Tempo network.
+pub fn resolve_fee_token(
+    chain: Option<Chain>,
+    explicit_fee_token: Option<Address>,
+) -> Option<Address> {
+    explicit_fee_token.or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))
+}
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
