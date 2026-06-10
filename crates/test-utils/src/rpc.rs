@@ -101,6 +101,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("mainnet2", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
         ("sepolia", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Sepolia))),
         ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
+        ("base", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Base))),
         ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
         ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
         ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),
@@ -137,12 +138,12 @@ pub fn next_ws_endpoint(chain: NamedChain) -> String {
     next_url(true, chain)
 }
 
-/// Returns a websocket URL that has access to archive state
+/// Returns an HTTP URL that has access to archive state
 pub fn next_http_archive_rpc_url() -> String {
     next_archive_url(false)
 }
 
-/// Returns an HTTP URL that has access to archive state
+/// Returns a websocket URL that has access to archive state
 pub fn next_ws_archive_rpc_url() -> String {
     next_archive_url(true)
 }
@@ -276,8 +277,6 @@ mod tests {
                 first_abi = Some(abi);
             }
         }
-        if !failed.is_empty() {
-            panic!("failed keys: {failed:#?}");
-        }
+        assert!(failed.is_empty(), "failed keys: {failed:#?}")
     }
 }

@@ -22,7 +22,7 @@ pub struct NodeLogLayer {
 
 impl NodeLogLayer {
     /// Returns a new instance of this layer
-    pub fn new(state: LoggingManager) -> Self {
+    pub const fn new(state: LoggingManager) -> Self {
         Self { state }
     }
 }

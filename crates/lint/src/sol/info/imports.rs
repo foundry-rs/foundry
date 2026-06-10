@@ -76,6 +76,7 @@ impl<'ast> UnusedChecker<'ast> {
         for item in ast.items.iter() {
             let span = item.span;
             let ast::ItemKind::Import(import) = &item.kind else { continue };
+            #[allow(clippy::collapsible_match)]
             match &import.items {
                 ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
                     if let Some(alias) = import.source_alias()

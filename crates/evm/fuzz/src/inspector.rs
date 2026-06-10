@@ -1,10 +1,10 @@
-use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
-use foundry_common::mapping_slots::step as mapping_step;
+use crate::invariant::RandomCallGenerator;
+use alloy_primitives::{B256, map::AddressMap};
+use foundry_common::mapping_slots::{MappingSlots, step as mapping_step};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
-    inspector::JournalExt,
     interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
 };
 
@@ -15,20 +15,21 @@ pub struct Fuzzer {
     pub collect: bool,
     /// Given a strategy, it generates a random call.
     pub call_generator: Option<RandomCallGenerator>,
-    /// If `collect` is set, we store the collected values in this fuzz dictionary.
-    pub fuzz_state: EvmFuzzState,
+    /// If `collect` is set, we store collected values until the invariant worker drains them.
+    pub collected_values: Vec<B256>,
+    /// Maximum number of stack words staged before the invariant worker drains them.
+    pub max_collected_values: usize,
+    /// Mapping accesses observed during execution, used for storage slot sampling.
+    pub mapping_slots: Option<AddressMap<MappingSlots>>,
 }
 
-impl<CTX> Inspector<CTX> for Fuzzer
-where
-    CTX: ContextTr<Journal: JournalExt>,
-{
+impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interp);
-            if let Some(mapping_slots) = &mut self.fuzz_state.mapping_slots {
+            if let Some(mapping_slots) = &mut self.mapping_slots {
                 mapping_step(mapping_slots, interp);
             }
         }
@@ -65,7 +66,9 @@ impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
     fn collect_data(&mut self, interpreter: &Interpreter) {
-        self.fuzz_state.collect_values(interpreter.stack.data().iter().copied().map(Into::into));
+        let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
+        self.collected_values
+            .extend(interpreter.stack.data().iter().take(remaining).copied().map(B256::from));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {
@@ -76,6 +79,11 @@ impl Fuzzer {
         // }
 
         self.collect = false;
+    }
+
+    /// Drains values observed by the inspector since the last call.
+    pub fn drain_collected_values(&mut self) -> Vec<B256> {
+        std::mem::take(&mut self.collected_values)
     }
 
     /// Overrides an external call to simulate reentrancy attacks.
@@ -91,10 +99,7 @@ impl Fuzzer {
     /// - Replaces the call entirely with a reentrant callback
     ///
     /// This simulates malicious contracts that immediately reenter when called.
-    fn override_call<CTX>(&mut self, ecx: &mut CTX, call: &mut CallInputs)
-    where
-        CTX: ContextTr<Journal: JournalExt>,
-    {
+    fn override_call<CTX: ContextTr>(&mut self, ecx: &mut CTX, call: &mut CallInputs) {
         let Some(ref mut call_generator) = self.call_generator else {
             return;
         };
@@ -135,14 +140,18 @@ impl Fuzzer {
         }
 
         // Replace the call with a reentrant callback
-        call.input = CallInput::Bytes(tx.call_details.calldata.0.into());
+        call.input = CallInput::Bytes(tx.call_details.calldata);
         call.caller = tx.sender;
         call.target_address = tx.call_details.target;
         call.bytecode_address = tx.call_details.target;
+        let target = ecx
+            .journal_mut()
+            .load_account_with_code(tx.call_details.target)
+            .expect("failed to load account");
         // Clear known_bytecode to force REVM to load bytecode from the new target.
         // Without this, REVM uses cached bytecode from the original target (e.g., empty
         // bytecode for EOA), causing the call to short-circuit before executing any code.
-        call.known_bytecode = None;
+        call.known_bytecode = (target.info.code_hash, target.info.code.clone().unwrap_or_default());
         // Clear value since ETH was already transferred above
         call.value = CallValue::Transfer(alloy_primitives::U256::ZERO);
 

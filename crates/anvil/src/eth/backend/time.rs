@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Duration};
 
 /// Returns the `Utc` datetime for the given seconds since unix epoch
 pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
-    DateTime::from_timestamp(secs as i64, 0).unwrap()
+    DateTime::from_timestamp(secs as i64, 0).unwrap_or(DateTime::<Utc>::MAX_UTC)
 }
 
 /// Manages block time

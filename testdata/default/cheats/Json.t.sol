@@ -510,4 +510,19 @@ contract WriteJsonTest is Test {
         vm.removeFile(path);
         vm.writeJson("{\"a\": 123, \"b\": \"0x000000000000000000000000000000000000bEEF\"}", path);
     }
+
+    function test_writeJson_createFile() public {
+        string memory path = "fixtures/Json/write_test_nonexistent.json";
+
+        // Write to a file that does not exist using the 3-arg overload
+        vm.writeJson(vm.toString(uint256(99)), path, ".x.y");
+
+        // Verify the file was created with the correct content
+        string memory json = vm.readFile(path);
+        uint256 value = abi.decode(vm.parseJson(json, ".x.y"), (uint256));
+        assertEq(value, 99);
+
+        // Clean up
+        vm.removeFile(path);
+    }
 }

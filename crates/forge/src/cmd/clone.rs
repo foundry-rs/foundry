@@ -120,6 +120,13 @@ pub struct CloneArgs {
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
+    /// Do not create a commit after cloning.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge clone` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
     #[command(flatten)]
     pub install: DependencyInstallOpts,
 }
@@ -135,6 +142,7 @@ impl CloneArgs {
             keep_directory_structure,
             source,
             sourcify_url,
+            no_commit: _,
         } = self;
 
         // step 0. get the chain and api key from the config
@@ -147,16 +155,19 @@ impl CloneArgs {
         // step 1. get the metadata from client based on source type
         let (meta, explorer_name, sourcify_client) = match source {
             SourceExplorer::Etherscan => {
-                let etherscan_api_key =
-                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-                let client = Client::new(chain, etherscan_api_key.clone())?;
-                sh_println!("Downloading the source code of {address} from Etherscan...")?;
+                let client = config
+                    .get_etherscan_config_with_chain(Some(chain))?
+                    .ok_or_else(|| {
+                        eyre::eyre!("No Etherscan API key configured for chain {chain}")
+                    })?
+                    .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
+                sh_status!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Etherscan", None)
             }
             SourceExplorer::Sourcify => {
                 let client = SourcifyClient::with_url(chain, sourcify_url.as_deref());
-                sh_println!("Downloading the source code of {address} from Sourcify...")?;
+                sh_status!("Downloading the source code of {address} from Sourcify...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Sourcify", Some(client))
             }
@@ -173,17 +184,19 @@ impl CloneArgs {
             .await?;
 
         // step 4. collect the compilation metadata
-        sh_println!("Collecting the creation information of {address} from {explorer_name}...")?;
+        sh_status!("Collecting the creation information of {address} from {explorer_name}...")?;
 
         match source {
             SourceExplorer::Etherscan => {
-                let etherscan_api_key =
-                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-                let client = Client::new(chain, etherscan_api_key.clone())?;
-                if etherscan_api_key.is_empty() {
+                let etherscan_config =
+                    config.get_etherscan_config_with_chain(Some(chain))?.ok_or_else(|| {
+                        eyre::eyre!("No Etherscan API key configured for chain {chain}")
+                    })?;
+                if etherscan_config.key.is_empty() {
                     sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
+                let client = etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
             SourceExplorer::Sourcify => {
@@ -256,7 +269,7 @@ impl CloneArgs {
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
-            main_artifact.storage_layout.to_owned().expect("storage layout not found");
+            main_artifact.storage_layout.clone().expect("storage layout not found");
 
         // dump the metadata to the root directory
         let creation_tx = client.contract_creation_data(address).await?;
@@ -832,7 +845,12 @@ impl ExplorerClient for SourcifyClient {
     ) -> std::result::Result<ContractMetadata, EtherscanError> {
         // Request all fields including creation data to cache them
         let url = self.get_contract_url(address, "sources,abi,compilation,deployment");
-        let response = self.client.get(&url).send().await?;
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| EtherscanError::Unknown(e.to_string()))?;
 
         let status = response.status();
         trace!("Sourcify API response: status={:?}, url={}", status, url);
@@ -844,7 +862,8 @@ impl ExplorerClient for SourcifyClient {
         }
 
         // Read response body once
-        let response_text = response.text().await?;
+        let response_text =
+            response.text().await.map_err(|e| EtherscanError::Unknown(e.to_string()))?;
         trace!("Sourcify API response body: {}", response_text);
 
         if !status.is_success() {
@@ -1010,8 +1029,8 @@ mod tests {
         contract_name: &str,
         stripped_creation_code: &str,
     ) {
-        compiled.compiled_contracts_by_compiler_version().iter().for_each(|(_, contracts)| {
-            contracts.iter().for_each(|(name, contract)| {
+        for contracts in compiled.compiled_contracts_by_compiler_version().values() {
+            for (name, contract) in contracts {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.bin_ref().expect("creation code not found");
@@ -1021,8 +1040,8 @@ mod tests {
                         "inconsistent creation code"
                     );
                 }
-            });
-        });
+            }
+        }
     }
 
     fn mock_etherscan(address: Address) -> impl super::ExplorerClient {
@@ -1090,7 +1109,8 @@ mod tests {
 
     /// Run the clone command with the specified contract address and assert the compilation.
     async fn one_test_case(address: Address, check_compilation_result: bool) {
-        let mut project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut project_root = temp_dir.path().to_path_buf();
         let client = mock_etherscan(address);
         let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default())
@@ -1115,7 +1135,6 @@ mod tests {
                 pick_creation_info(&address.to_string()).expect("creation code not found");
             assert_compilation_result(rv, contract_name, stripped_creation_code);
         }
-        std::fs::remove_dir_all(project_root).unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1143,7 +1162,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_clone_contract_with_relative_import() {
+    async fn flaky_test_clone_contract_with_relative_import() {
         let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
         one_test_case(address, false).await
     }

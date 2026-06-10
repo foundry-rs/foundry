@@ -115,7 +115,7 @@ pub struct LcovReporter {
 
 impl LcovReporter {
     /// Create a new LCOV reporter.
-    pub fn new(path: PathBuf, version: Version) -> Self {
+    pub const fn new(path: PathBuf, version: Version) -> Self {
         Self { path, version }
     }
 }
@@ -173,10 +173,10 @@ impl CoverageReporter for LcovReporter {
                         }
                     }
                     // Add lines / statement hits only once.
-                    CoverageItemKind::Line | CoverageItemKind::Statement => {
-                        if recorded_lines.insert(line) {
-                            writeln!(out, "DA:{line},{hits}")?;
-                        }
+                    CoverageItemKind::Line | CoverageItemKind::Statement
+                        if recorded_lines.insert(line) =>
+                    {
+                        writeln!(out, "DA:{line},{hits}")?;
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         // Per LCOV spec: "-" means the expression was never evaluated (line not
@@ -192,6 +192,7 @@ impl CoverageReporter for LcovReporter {
                         };
                         writeln!(out, "BRDA:{line},{branch_id},{path_id},{hits_str}")?;
                     }
+                    _ => {}
                 }
             }
 
@@ -269,7 +270,7 @@ pub struct BytecodeReporter {
 }
 
 impl BytecodeReporter {
-    pub fn new(root: PathBuf, destdir: PathBuf) -> Self {
+    pub const fn new(root: PathBuf, destdir: PathBuf) -> Self {
         Self { root, destdir }
     }
 }

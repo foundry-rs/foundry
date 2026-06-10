@@ -72,7 +72,7 @@ impl Eip712Args {
                 sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
             } else {
                 for output in &outputs {
-                    sh_println!("{output}")?;
+                    sh_eprintln!("{output}")?;
                 }
             }
 
@@ -100,7 +100,7 @@ pub struct Resolver<'gcx> {
 
 impl<'gcx> Resolver<'gcx> {
     /// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
-    pub fn new(gcx: Gcx<'gcx>) -> Self {
+    pub const fn new(gcx: Gcx<'gcx>) -> Self {
         Self { gcx }
     }
 
@@ -206,7 +206,7 @@ impl<'gcx> Resolver<'gcx> {
             TyKind::Struct(id) => {
                 let def = self.hir().strukt(id);
                 let name = match subtypes.iter().find(|(_, cached_id)| id == **cached_id) {
-                    Some((name, _)) => name.to_string(),
+                    Some((name, _)) => name.clone(),
                     None => {
                         // Otherwise, assign new name
                         let mut i = 0;

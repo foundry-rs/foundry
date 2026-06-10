@@ -1,0 +1,232 @@
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(counter);
+   │       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(counter);
+   │       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(counter);
+   │       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(counter);
+   │       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(counter);
+   │       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(i);
+   │       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(i);
+   │       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(counter);
+   │       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(d.notify(1) ? 1 : 0);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(x);
+   │       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(x);
+   │       ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Counter(counter);
+   │       ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/ReentrancyEvents.sol:LL:CC
+   │
+LL │ …     emit Tick();
+   │       ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+

@@ -1,13 +1,15 @@
 use crate::receipts::{PendingReceiptError, TxStatus, check_tx_status, format_receipt};
 use alloy_chains::Chain;
+use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{
     B256,
     map::{B256HashMap, HashMap},
 };
+use alloy_provider::RootProvider;
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;
 use foundry_cli::utils::init_progress;
-use foundry_common::{provider::RetryProvider, shell};
+use foundry_common::shell;
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
@@ -30,7 +32,11 @@ pub struct SequenceProgressState {
 }
 
 impl SequenceProgressState {
-    pub fn new(sequence_idx: usize, sequence: &ScriptSequence, multi: MultiProgress) -> Self {
+    pub fn new<N: Network>(
+        sequence_idx: usize,
+        sequence: &ScriptSequence<N>,
+        multi: MultiProgress,
+    ) -> Self {
         let mut state = if shell::is_quiet() || shell::is_json() {
             let top_spinner = ProgressBar::hidden();
             let txs = ProgressBar::hidden();
@@ -141,7 +147,11 @@ pub struct SequenceProgress {
 }
 
 impl SequenceProgress {
-    pub fn new(sequence_idx: usize, sequence: &ScriptSequence, multi: MultiProgress) -> Self {
+    pub fn new<N: Network>(
+        sequence_idx: usize,
+        sequence: &ScriptSequence<N>,
+        multi: MultiProgress,
+    ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(SequenceProgressState::new(sequence_idx, sequence, multi))),
         }
@@ -158,10 +168,10 @@ pub struct ScriptProgress {
 impl ScriptProgress {
     /// Returns a [SequenceProgress] instance for the given sequence index. If it doesn't exist,
     /// creates one.
-    pub fn get_sequence_progress(
+    pub fn get_sequence_progress<N: Network>(
         &self,
         sequence_idx: usize,
-        sequence: &ScriptSequence,
+        sequence: &ScriptSequence<N>,
     ) -> SequenceProgress {
         if let Some(progress) = self.state.read().get(&sequence_idx) {
             return progress.clone();
@@ -181,11 +191,11 @@ impl ScriptProgress {
     /// has not confirmed, and cannot be found in the mempool, we remove it from
     /// the `deploy_sequence.pending` vector so that it will be rebroadcast in
     /// later steps.
-    pub async fn wait_for_pending(
+    pub async fn wait_for_pending<N: Network>(
         &self,
         sequence_idx: usize,
-        deployment_sequence: &mut ScriptSequence,
-        provider: &RetryProvider,
+        deployment_sequence: &mut ScriptSequence<N>,
+        provider: &RootProvider<N>,
         timeout: u64,
     ) -> Result<()> {
         if deployment_sequence.pending.is_empty() {
@@ -249,7 +259,7 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
-                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    deployment_sequence.remove_pending(receipt.transaction_hash());
                     deployment_sequence.add_receipt(receipt);
                 }
                 Ok(TxStatus::Revert(receipt)) => {
@@ -257,7 +267,7 @@ impl ScriptProgress {
                     // if this is not removed from pending, then the script becomes
                     // un-resumable. Is this desirable on reverts?
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
-                    deployment_sequence.remove_pending(receipt.transaction_hash);
+                    deployment_sequence.remove_pending(receipt.transaction_hash());
 
                     let msg = format_receipt(
                         deployment_sequence.chain.into(),
@@ -266,7 +276,7 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
-                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash));
+                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
                 }
             }
         }
