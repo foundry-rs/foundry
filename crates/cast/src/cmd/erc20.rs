@@ -24,13 +24,12 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::TEMPO_BROWSER_GAS_BUFFER,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, resolve_fee_token},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
-use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
 sol! {
     #[sol(rpc)]
@@ -348,6 +347,7 @@ impl Erc20Subcommand {
         }
     }
 
+    #[allow(clippy::large_stack_frames)]
     pub async fn run_generic<N: Network + RecommendedFillers>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
@@ -450,8 +450,8 @@ impl Erc20Subcommand {
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
-                    if chain.is_tempo() && tx.fee_token().is_none() {
-                        tx.set_fee_token(PATH_USD_ADDRESS);
+                    if let Some(fee_token) = resolve_fee_token(Some(chain), tx.fee_token()) {
+                        tx.set_fee_token(fee_token);
                     }
                     fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
                     if print_sponsor_hash {
