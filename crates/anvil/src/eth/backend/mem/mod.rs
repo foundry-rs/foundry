@@ -3898,10 +3898,10 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
         // reset the block env
         if let Some(block) = state.block.clone() {
-            self.evm_env.write().block_env = block.clone();
-            if self.is_tempo() && self.is_fork() {
+            {
                 let mut env = self.evm_env.write();
-                if env.block_env.beneficiary.is_zero() {
+                env.block_env = block.clone();
+                if self.is_tempo() && self.is_fork() && env.block_env.beneficiary.is_zero() {
                     env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
                 }
             }
