@@ -757,6 +757,104 @@ contract FooBrokenTest {
     );
 });
 
+forgetest_init!(mutation_compiles_dynamic_linking_artifacts_for_selected_tests, |prj, cmd| {
+    prj.add_source(
+        "Target.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Target {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "helpers/LinkedHelper.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+library LinkedHelper {
+    function adjust(uint256 value) public pure returns (uint256) {
+        return value + 1;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "BaseLinked.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Target.sol";
+import "./helpers/LinkedHelper.sol";
+
+contract BaseLinkedTest {
+    Target internal target;
+    uint256 internal helperValue;
+
+    function setUp() public {
+        target = new Target();
+        helperValue = LinkedHelper.adjust(1);
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "SelectedLinked.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "./BaseLinked.t.sol";
+
+contract SelectedLinkedTest is BaseLinkedTest {
+    function test_AddsHelperValue() public view {
+        assert(target.add(helperValue, 1) == 3);
+    }
+}
+"#,
+    );
+
+    let out = cmd
+        .args([
+            "test",
+            "--mutate",
+            "src/Target.sol",
+            "--match-contract",
+            "SelectedLinkedTest",
+            "--mutation-jobs",
+            "1",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let summary = mutation_summary(&out);
+
+    let total = summary["total"].as_u64().unwrap_or(0);
+    let invalid = summary["invalid"].as_u64().unwrap_or(u64::MAX);
+    let killed = summary["killed"].as_u64().unwrap_or(0);
+    let survived = summary["survived"].as_u64().unwrap_or(0);
+
+    assert!(total > 0, "expected mutation testing to generate mutants: summary={summary}");
+    assert!(
+        invalid < total,
+        "dynamic-linking helper artifacts should compile inside mutant workspaces: summary={summary}"
+    );
+    assert!(
+        killed + survived >= 1,
+        "expected at least one Killed/Survived mutant from arithmetic ops; summary={summary}"
+    );
+});
+
 forgetest_init!(mutation_workspace_copies_include_paths, |prj, cmd| {
     let include_dir = prj.root().join("include");
     fs::create_dir_all(&include_dir).unwrap();

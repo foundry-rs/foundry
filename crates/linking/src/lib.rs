@@ -64,11 +64,56 @@ impl<'a> Linker<'a> {
     ///
     /// Strips project root path from source file path.
     fn convert_artifact_id_to_lib_path(&self, id: &ArtifactId) -> (PathBuf, String) {
-        let path = id.source.strip_prefix(self.root.as_path()).unwrap_or(&id.source);
         // name is either {LibName} or {LibName}.{version}
         let name = id.name.split('.').next().unwrap();
 
-        (path.to_path_buf(), name.to_owned())
+        (self.project_relative_path(&id.source), name.to_owned())
+    }
+
+    fn project_relative_path(&self, path: &Path) -> PathBuf {
+        if path.is_relative() {
+            return path.to_path_buf();
+        }
+
+        if let Ok(stripped) = path.strip_prefix(&self.root) {
+            return stripped.to_path_buf();
+        }
+
+        if let Ok(root) = self.root.canonicalize()
+            && let Ok(path) = path.canonicalize()
+            && let Ok(stripped) = path.strip_prefix(root)
+        {
+            return stripped.to_path_buf();
+        }
+
+        path.to_path_buf()
+    }
+
+    fn link_bytecode(
+        &self,
+        bytecode: &mut CompactBytecode,
+        file: &Path,
+        name: &str,
+        address: Address,
+    ) {
+        let file_relative = self.project_relative_path(file);
+        let references = bytecode
+            .link_references
+            .keys()
+            .filter(|reference| {
+                let reference = Path::new(reference);
+                reference == file || self.project_relative_path(reference) == file_relative
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if references.is_empty() {
+            bytecode.link(&file.to_string_lossy(), name, address);
+        } else {
+            for reference in references {
+                bytecode.link(&reference, name, address);
+            }
+        }
     }
 
     /// Finds an [ArtifactId] object in the given [ArtifactContracts] keys which corresponds to the
@@ -88,8 +133,9 @@ impl<'a> Linker<'a> {
                 continue;
             }
             let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
+            let library_path = self.project_relative_path(Path::new(file));
 
-            if artifact_name == *name && artifact_path == Path::new(file) {
+            if artifact_name == *name && artifact_path == library_path {
                 return Some(id);
             }
         }
@@ -261,12 +307,12 @@ impl<'a> Linker<'a> {
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
                 if let Some(bytecode) = contract.bytecode.as_mut() {
-                    bytecode.to_mut().link(&file.to_string_lossy(), name, address);
+                    self.link_bytecode(bytecode.to_mut(), file, name, address);
                 }
                 if let Some(deployed_bytecode) =
                     contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
                 {
-                    deployed_bytecode.link(&file.to_string_lossy(), name, address);
+                    self.link_bytecode(deployed_bytecode, file, name, address);
                 }
             }
         }

@@ -384,11 +384,66 @@ pub async fn watch_fmt(args: FmtArgs) -> Result<()> {
     run(config).await
 }
 
-/// Executes a [`Watchexec`] that listens for changes in the project's sources directory
+/// Executes a [`Watchexec`] that listens for changes affecting the generated
+/// documentation: project sources, optionally library sources, the README that
+/// becomes the homepage, the deployments directory, and the foundry config file
+/// itself. Without these, the live preview goes silently stale on common edits.
 pub async fn watch_doc(args: DocArgs) -> Result<()> {
+    let include_libraries = args.include_libraries;
+    let deployments_arg = args.deployments.clone();
     let config = args.watch.watchexec_config(|| {
         let config = args.config()?;
-        Ok([config.src])
+        let root = config.root.clone();
+
+        let mut paths = Vec::new();
+
+        // Solidity sources.
+        paths.push(config.src.clone());
+
+        // External libraries when explicitly opted in.
+        if include_libraries {
+            for lib in &config.libs {
+                paths.push(lib.clone());
+            }
+        }
+
+        // Homepage source: explicit override, else <root>/README.md when present.
+        if let Some(hp) = &config.doc.homepage {
+            let hp_path = if hp.is_absolute() { hp.clone() } else { root.join(hp) };
+            if hp_path.exists() {
+                paths.push(hp_path);
+            }
+        }
+        // Mirror vocs homepage resolution: <sources>/README.md takes priority over
+        // <root>/README.md.
+        let src_readme = config.src.join("README.md");
+        if src_readme.exists() {
+            paths.push(src_readme);
+        }
+        let readme = root.join("README.md");
+        if readme.exists() {
+            paths.push(readme);
+        }
+
+        // Deployments directory: only when the user enabled `--deployments`.
+        if let Some(dir_opt) = deployments_arg.as_ref() {
+            let dep_dir = match dir_opt {
+                Some(p) if p.is_absolute() => p.clone(),
+                Some(p) => root.join(p),
+                None => root.join("deployments"),
+            };
+            if dep_dir.exists() {
+                paths.push(dep_dir);
+            }
+        }
+
+        // Foundry config file (`foundry.toml`), when present.
+        let toml = root.join("foundry.toml");
+        if toml.exists() {
+            paths.push(toml);
+        }
+
+        Ok(paths)
     })?;
     run(config).await
 }

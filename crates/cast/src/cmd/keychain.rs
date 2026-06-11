@@ -33,9 +33,9 @@ use foundry_wallets::{WalletOpts, WalletSigner, wallet_browser::signer::BrowserS
 use serde::Deserialize;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain,
+    ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
     IAccountKeychain::{
-        CallScope, KeyInfo, KeyRestrictions, LegacyTokenLimit, SelectorRule, SignatureType,
+        self, CallScope, KeyInfo, KeyRestrictions, LegacyTokenLimit, SelectorRule, SignatureType,
         TokenLimit,
     },
     ITIP20, PATH_USD_ADDRESS,
@@ -1098,8 +1098,7 @@ struct DoctorContext {
     key_address: Option<Address>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chain_id: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fee_token: Option<Address>,
+    fee_token: Address,
 }
 
 /// Result of resolving a local registry entry for the doctor.
@@ -1220,9 +1219,13 @@ async fn run_doctor(
     rpc: RpcOpts,
 ) -> Result<()> {
     let mut steps: Vec<DoctorStep> = Vec::new();
-    let fee_token = fee_token.or(tempo.fee_token).unwrap_or(PATH_USD_ADDRESS);
-    let mut context =
-        DoctorContext { root_account, key_address, chain_id: None, fee_token: Some(fee_token) };
+    let requested_fee_token = fee_token.or(tempo.fee_token);
+    let mut context = DoctorContext {
+        root_account,
+        key_address,
+        chain_id: None,
+        fee_token: requested_fee_token.unwrap_or(DEFAULT_FEE_TOKEN),
+    };
 
     // Step 1: local registry lookup.
     let candidates = match collect_local_candidates(key_address, root_account) {
@@ -1249,7 +1252,6 @@ async fn run_doctor(
             return finalize_doctor(steps, context);
         }
     };
-
     let provider = match ProviderBuilder::<TempoNetwork>::from_config(&config)
         .and_then(|builder| builder.build())
     {
@@ -1387,7 +1389,9 @@ async fn run_doctor(
             steps.push(step);
 
             // Step 9: spending limits.
-            steps.push(check_spending_limits(&provider, &subject, &info, fee_token, is_t3).await);
+            steps.push(
+                check_spending_limits(&provider, &subject, &info, context.fee_token, is_t3).await,
+            );
 
             // Step 10: allowed calls (TIP-1011, T3+ only).
             steps.push(
@@ -1410,7 +1414,7 @@ async fn run_doctor(
 
             let (step, is_t3) = check_hardfork(&provider).await;
             steps.push(step);
-            steps.push(check_authorization_spending_limits(&signed, fee_token, is_t3));
+            steps.push(check_authorization_spending_limits(&signed, context.fee_token, is_t3));
             steps.push(check_authorization_allowed_calls(&signed, is_t3, to, selector, recipient));
         }
     }
@@ -1435,7 +1439,8 @@ async fn run_doctor(
         let balance_account = fee_payer.unwrap_or(subject.root_account);
         let balance_owner = if fee_payer.is_some() { "sponsor" } else { "root account" };
         steps.push(
-            check_fee_token_balance(&provider, balance_account, fee_token, balance_owner).await,
+            check_fee_token_balance(&provider, balance_account, context.fee_token, balance_owner)
+                .await,
         );
     }
 

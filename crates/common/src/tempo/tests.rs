@@ -3,6 +3,12 @@ use eyre::WrapErr;
 use foundry_evm_hardforks::TempoHardfork;
 use serde::Deserialize;
 use std::env;
+use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
+
+use alloy_chains::{Chain, NamedChain};
+use alloy_primitives::Address;
+
+use super::resolve_fee_token;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,4 +58,36 @@ async fn test_fork_schedule_parses_configured_rpcs() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+#[test]
+fn resolves_canonical_fee_token_for_tempo_chains() {
+    for chain in [
+        NamedChain::Tempo,
+        NamedChain::TempoModerato,
+        NamedChain::TempoTestnet,
+        NamedChain::TempoDevnet,
+    ] {
+        assert_eq!(resolve_fee_token(Some(chain.into()), None), Some(DEFAULT_FEE_TOKEN));
+    }
+}
+
+#[test]
+fn leaves_non_tempo_chains_without_a_default() {
+    assert_eq!(resolve_fee_token(Some(NamedChain::Mainnet.into()), None), None);
+}
+
+#[test]
+fn leaves_unknown_chain_without_a_default() {
+    assert_eq!(resolve_fee_token(None, None), None);
+}
+
+#[test]
+fn explicit_fee_token_overrides_chain_default() {
+    let explicit = Address::repeat_byte(0x42);
+    assert_eq!(
+        resolve_fee_token(Some(Chain::from_named(NamedChain::Tempo)), Some(explicit)),
+        Some(explicit)
+    );
+    assert_eq!(resolve_fee_token(None, Some(explicit)), Some(explicit));
 }

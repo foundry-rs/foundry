@@ -99,7 +99,7 @@ impl ExtTester {
         // Export vyper and forge in test command - workaround for snekmate venom tests.
         if let Some(vyper) = &prj.inner.project().compiler.vyper {
             let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
-            let forge_bin = prj.forge_path();
+            let forge_bin = prj.foundry_bin_path("forge");
             let forge_dir = forge_bin.parent().expect("forge path should have a parent");
 
             let existing_path = std::env::var_os("PATH").unwrap_or_default();

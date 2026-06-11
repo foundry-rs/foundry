@@ -188,7 +188,6 @@ impl CorpusEntry {
 #[derive(Debug, Clone)]
 pub(crate) struct CampaignCorpusEntry {
     tx_seq: Vec<BasicTxDetails>,
-    cmp_seq: Vec<Vec<CmpOperands>>,
     dedupe_by_coverage: bool,
 }
 
@@ -250,6 +249,31 @@ impl WorkerCorpusSeed {
             self.optimization_best_sequence = sequence;
         }
         self
+    }
+
+    pub(crate) fn clone_for_worker(&self, worker_id: usize, worker_count: usize) -> Self {
+        let in_memory_corpus = self
+            .in_memory_corpus
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| idx % worker_count == worker_id)
+            .map(|(_, entry)| entry.clone())
+            .collect::<Vec<_>>();
+
+        let mut metrics = self.metrics.clone();
+        metrics.corpus_count = in_memory_corpus.len();
+        metrics.favored_items = in_memory_corpus.iter().filter(|entry| entry.is_favored).count();
+
+        Self {
+            in_memory_corpus,
+            history_map: self.history_map.clone(),
+            edge_indices: self.edge_indices.clone(),
+            sancov_history_map: self.sancov_history_map.clone(),
+            metrics,
+            failed_replays: self.failed_replays,
+            optimization_best_value: self.optimization_best_value,
+            optimization_best_sequence: self.optimization_best_sequence.clone(),
+        }
     }
 
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
@@ -800,7 +824,6 @@ impl WorkerCorpus {
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
         let campaign_entry = (!persist_now).then(|| CampaignCorpusEntry {
             tx_seq: corpus_inputs.clone(),
-            cmp_seq: corpus_cmp_seq.clone(),
             dedupe_by_coverage: new_coverage,
         });
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
@@ -1599,7 +1622,7 @@ fn persist_campaign_entry(config: &FuzzCorpusConfig, entry: CampaignCorpusEntry)
         return;
     };
     let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
-    let corpus = CorpusEntry::new_with_cmp(entry.tx_seq, entry.cmp_seq, Uuid::new_v4());
+    let corpus = CorpusEntry::new(entry.tx_seq);
     let write_result = corpus.write_to_disk_in(&corpus_dir, config.corpus_gzip);
     if let Err(err) = write_result {
         debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
@@ -1911,6 +1934,75 @@ mod tests {
         let (value, sequence) = manager.optimization_initial_state();
         assert_eq!(value, Some(I256::try_from(17).unwrap()));
         assert_eq!(sequence.len(), 1);
+    }
+
+    #[test]
+    fn clone_for_worker_shards_warmed_corpus_and_recomputes_metrics() {
+        let entries = (0..10)
+            .map(|idx| {
+                let mut entry = CorpusEntry::new(vec![basic_tx()]);
+                entry.is_favored = idx % 2 == 0;
+                entry
+            })
+            .collect::<Vec<_>>();
+        let entry_ids = entries.iter().map(|entry| entry.uuid).collect::<Vec<_>>();
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: entries,
+            history_map: vec![1, 2, 3],
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: vec![4, 5],
+            metrics: CorpusMetrics {
+                cumulative_edges_seen: 7,
+                cumulative_features_seen: 11,
+                corpus_count: 10,
+                favored_items: 5,
+            },
+            failed_replays: 13,
+            optimization_best_value: Some(I256::try_from(17).unwrap()),
+            optimization_best_sequence: vec![basic_tx()],
+        };
+
+        let worker_count = 3;
+        let shards = (0..worker_count)
+            .map(|worker_id| seed.clone_for_worker(worker_id, worker_count))
+            .collect::<Vec<_>>();
+        let mut sharded_ids = shards
+            .iter()
+            .flat_map(|shard| shard.in_memory_corpus.iter().map(|entry| entry.uuid))
+            .collect::<Vec<_>>();
+        let mut expected_ids = entry_ids.clone();
+        sharded_ids.sort_unstable();
+        expected_ids.sort_unstable();
+
+        assert_eq!(sharded_ids, expected_ids);
+        assert_eq!(
+            shards[0].in_memory_corpus.iter().map(|entry| entry.uuid).collect::<Vec<_>>(),
+            [entry_ids[0], entry_ids[3], entry_ids[6], entry_ids[9]]
+        );
+        assert_eq!(
+            shards[1].in_memory_corpus.iter().map(|entry| entry.uuid).collect::<Vec<_>>(),
+            [entry_ids[1], entry_ids[4], entry_ids[7]]
+        );
+        assert_eq!(
+            shards[2].in_memory_corpus.iter().map(|entry| entry.uuid).collect::<Vec<_>>(),
+            [entry_ids[2], entry_ids[5], entry_ids[8]]
+        );
+        assert_eq!(
+            shards.iter().map(|shard| shard.in_memory_corpus.len()).collect::<Vec<_>>(),
+            [4, 3, 3]
+        );
+        assert_eq!(
+            shards.iter().map(|shard| shard.metrics.corpus_count).collect::<Vec<_>>(),
+            [4, 3, 3]
+        );
+        assert_eq!(
+            shards.iter().map(|shard| shard.metrics.favored_items).collect::<Vec<_>>(),
+            [2, 1, 2]
+        );
+        assert!(shards.iter().all(|shard| shard.history_map == seed.history_map));
+        assert!(shards.iter().all(|shard| shard.sancov_history_map == seed.sancov_history_map));
+        assert!(shards.iter().all(|shard| shard.metrics.cumulative_edges_seen == 7));
+        assert!(shards.iter().all(|shard| shard.metrics.cumulative_features_seen == 11));
     }
 
     #[test]

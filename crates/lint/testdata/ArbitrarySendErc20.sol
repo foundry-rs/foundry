@@ -785,6 +785,34 @@ contract SoladyCallSites {
     }
 }
 
+contract InternalForwardedPulls {
+    address token;
+
+    function okDeposit(address to, uint256 a) public {
+        _pull(msg.sender, to, a);
+    }
+
+    function okMint(address to, uint256 a) public {
+        _pull(payable(msg.sender), to, a);
+    }
+
+    function badForward(address from, address to, uint256 a) public {
+        _mixedPull(from, to, a);
+    }
+
+    function okForward(address to, uint256 a) public {
+        _mixedPull(msg.sender, to, a);
+    }
+
+    function _pull(address from, address to, uint256 a) internal {
+        SafeTransferLib.safeTransferFrom(token, from, to, a);
+    }
+
+    function _mixedPull(address from, address to, uint256 a) internal {
+        SafeTransferLib.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+}
+
 // `using ... for address`: 3-arg `safeTransferFrom` member call on an `address`.
 contract SoladyUsingForAddress {
     using SafeTransferLib for address;

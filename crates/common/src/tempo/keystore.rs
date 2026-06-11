@@ -6,7 +6,7 @@
 use alloy_primitives::{Address, hex};
 use alloy_rlp::Decodable;
 use serde::{Deserialize, Serialize};
-use std::{env, path::PathBuf};
+use std::{env, fmt, path::PathBuf};
 
 use super::registry::{read_toml_file, write_toml_file_atomic};
 
@@ -52,7 +52,7 @@ pub struct StoredTokenLimit {
 ///
 /// Mirrors the fields from `tempo-common::keys::model::KeyEntry`.
 /// Unknown fields are ignored by serde.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct KeyEntry {
     /// Wallet type: "local" or "passkey".
     #[serde(default)]
@@ -82,6 +82,26 @@ pub struct KeyEntry {
     /// Per-token spending limits.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limits: Vec<StoredTokenLimit>,
+}
+
+// Manual `Debug` redacts the persistent key material; propagates to `KeysFile`.
+impl fmt::Debug for KeyEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeyEntry")
+            .field("wallet_type", &self.wallet_type)
+            .field("wallet_address", &self.wallet_address)
+            .field("chain_id", &self.chain_id)
+            .field("key_type", &self.key_type)
+            .field("key_address", &self.key_address)
+            .field("key", &self.key.as_deref().map(super::redacted_debug))
+            .field(
+                "key_authorization",
+                &self.key_authorization.as_deref().map(super::redacted_debug),
+            )
+            .field("expiry", &self.expiry)
+            .field("limits", &self.limits)
+            .finish()
+    }
 }
 
 impl KeyEntry {
@@ -164,6 +184,27 @@ mod tests {
     use super::*;
     use crate::tempo::with_tempo_home;
     use std::{fs, str::FromStr};
+
+    #[test]
+    fn debug_redacts_key_entry_secrets() {
+        let entry = KeyEntry {
+            key: Some("0xPRIVATE_KEY_MUST_NOT_LEAK".to_string()),
+            key_authorization: Some("0xKEY_AUTH_MUST_NOT_LEAK".to_string()),
+            ..Default::default()
+        };
+
+        let entry_dbg = format!("{entry:?}");
+        let file_dbg = format!("{:?}", KeysFile { keys: vec![entry] });
+
+        for rendered in [&entry_dbg, &file_dbg] {
+            assert!(!rendered.contains("PRIVATE_KEY_MUST_NOT_LEAK"), "key leaked in: {rendered}");
+            assert!(!rendered.contains("KEY_AUTH_MUST_NOT_LEAK"), "auth leaked in: {rendered}");
+        }
+        assert!(entry_dbg.contains("key: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        assert!(entry_dbg.contains("key_authorization: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        // Non-secret metadata stays visible.
+        assert!(entry_dbg.contains("wallet_type"));
+    }
 
     #[test]
     fn upsert_replaces_matching_entry_atomically() {
