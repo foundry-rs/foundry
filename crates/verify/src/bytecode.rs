@@ -334,19 +334,30 @@ impl VerifyBytecodeArgs {
         // code cannot be verified. Verify the runtime bytecode instead by deploying the local
         // creation code and comparing the resulting runtime code with the onchain one.
         if creation_data.is_none() {
-            let deploy_block = if maybe_predeploy {
-                if !shell::is_json() {
+            if !shell::is_json() {
+                if maybe_predeploy {
                     sh_warn!(
                         "Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.",
                         self.address
                     )?;
+                } else {
+                    sh_warn!("Creation data is unavailable. Ignoring creation code verification.")?;
                 }
+            }
+
+            // Without creation data there is nothing else to verify when the runtime bytecode is
+            // ignored.
+            if self.ignore.is_some_and(|b| b.is_runtime()) {
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&json_results)?)?;
+                }
+                return Ok(());
+            }
+
+            let deploy_block = if maybe_predeploy {
                 // Deploy at genesis
                 0_u64
             } else {
-                if !shell::is_json() {
-                    sh_warn!("Creation data is unavailable. Ignoring creation code verification.")?;
-                }
                 match self.block {
                     Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
                     Some(_) => eyre::bail!("Invalid block number"),
@@ -405,13 +416,15 @@ impl VerifyBytecodeArgs {
                 kind,
             )?;
 
-            // Compare runtime bytecode
+            // Compare runtime bytecode. The onchain code is read at `deploy_block` to stay
+            // anchored to the same height as the local fork. Predeploys keep reading at the
+            // latest block: their code is stable and genesis state often isn't served by RPCs.
             let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes::<FEN>(
                 &mut executor,
                 &provider,
                 self.address,
                 fork_address,
-                None,
+                (!maybe_predeploy).then_some(deploy_block),
             )
             .await?;
 

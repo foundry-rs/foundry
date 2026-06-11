@@ -429,4 +429,25 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
 
     assert!(stdout.contains("Runtime code matched"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+
+    // `--ignore runtime` must skip the runtime fallback as well: with no creation data either,
+    // there is nothing left to verify.
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "verify-bytecode",
+            &address,
+            "Counter",
+            "--rpc-url",
+            rpc.as_str(),
+            "--ignore",
+            "runtime",
+        ])
+        .assert_success();
+    let output = assert.get_output();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+
+    assert!(!stdout.contains("Runtime code matched"), "{stdout}");
+    assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
 });
