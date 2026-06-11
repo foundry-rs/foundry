@@ -2741,6 +2741,12 @@ async fn run_key_auth_sign(
     browser: BrowserWalletOpts,
 ) -> Result<()> {
     let authorization = args.into_authorization()?;
+
+    // TODO: remove this check once browser supports T5 KeyAuthorization fields
+    if browser.browser && authorization.witness().is_some() {
+        eyre::bail!("browser key authorization signing does not support T5 fields yet: witness");
+    }
+
     let authorized_key_type = auth_signature_type_name(&authorization.key_type);
     let signature_hash = authorization.signature_hash();
 
@@ -2782,9 +2788,9 @@ fn print_signed_key_authorization(
     authorized_key_type: &'static str,
 ) -> Result<()> {
     let encoded = encode_key_authorization(signed);
-    let signature_type = auth_signature_type_name(&signed.signature.signature_type());
 
     if shell::is_json() {
+        let signature_type = auth_signature_type_name(&signed.signature.signature_type());
         let json = serde_json::json!({
             "signed_key_authorization": hex::encode_prefixed(&encoded),
             "signature_hash": signature_hash.to_string(),
@@ -2792,6 +2798,7 @@ fn print_signed_key_authorization(
             "signer": signer_address.to_string(),
             "authorized_key_type": authorized_key_type,
             "signature_type": signature_type,
+            "witness": signed.authorization.witness().map(|witness| witness.to_string()),
         });
         sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
     } else {
