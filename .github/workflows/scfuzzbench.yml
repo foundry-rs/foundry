@@ -1,0 +1,270 @@
+---
+# yamllint disable rule:line-length
+name: scfuzzbench
+
+permissions: {}
+
+'on':
+  issue_comment:
+    types: [created]
+
+jobs:
+  publish:
+    if: >-
+      github.event.issue.pull_request &&
+      (
+        startsWith(github.event.comment.body, 'derek scfuzzbench') ||
+        startsWith(github.event.comment.body, 'decofe scfuzzbench') ||
+        startsWith(github.event.comment.body, '@decofe scfuzzbench')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Validate request
+        id: request
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const usage = [
+              '**Usage:** `derek scfuzzbench` or `decofe scfuzzbench` with optional `[target-repo=URL] [target-ref=REF] ',
+              '[compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization] ',
+              '[scfuzzbench-ref=REF]`',
+            ].join('');
+            const actor = context.payload.comment.user.login;
+            const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const association = context.payload.comment.author_association;
+
+            const failWithComment = async (message) => {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `cc @${actor}\n\n${message}\n\n${usage}`,
+              });
+              core.setFailed(message);
+            };
+
+            if (!trustedAssociations.has(association)) {
+              await failWithComment('Only repository owners, members, and collaborators can trigger scfuzzbench.');
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const repoFullName = `${context.repo.owner}/${context.repo.repo}`;
+            if (pr.head.repo.full_name !== repoFullName) {
+              await failWithComment('scfuzzbench only runs for branches in `foundry-rs/foundry`, not external forks.');
+              return;
+            }
+
+            const body = context.payload.comment.body.trim();
+            const prefix = /^(?:(?:@?decofe|derek)\s+)scfuzzbench\b/i;
+            const rawArgs = body.replace(prefix, '').trim();
+            const parts = [];
+            const argRegex = /(\S+?="[^"]*"|\S+?='[^']*'|\S+?=\S+|\S+)/g;
+            let match;
+            while ((match = argRegex.exec(rawArgs)) !== null) parts.push(match[1]);
+
+            const defaults = {
+              'target-repo': 'https://github.com/0xalpharush/aave-v4-scfuzzbench',
+              'target-ref': 'fix',
+              'compare-ref': 'master',
+              timeout: '3600',
+              workers: '',
+              'benchmark-type': 'property',
+              'scfuzzbench-ref': 'main',
+            };
+            const stringArgs = new Set(['target-repo', 'target-ref', 'compare-ref', 'scfuzzbench-ref']);
+            const intArgs = new Set(['timeout', 'workers']);
+            const enumArgs = {
+              'benchmark-type': new Set(['property', 'optimization']),
+            };
+            const unknown = [];
+            const invalid = [];
+
+            for (const part of parts) {
+              const eq = part.indexOf('=');
+              if (eq === -1) {
+                unknown.push(part);
+                continue;
+              }
+
+              const key = part.slice(0, eq);
+              let value = part.slice(eq + 1);
+              if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+                value = value.slice(1, -1);
+              }
+
+              if (stringArgs.has(key)) {
+                defaults[key] = value;
+              } else if (intArgs.has(key)) {
+                if (value !== '' && !/^[1-9]\d*$/.test(value)) {
+                  invalid.push(`\`${key}=${value}\` (must be a positive integer)`);
+                } else {
+                  defaults[key] = value;
+                }
+              } else if (enumArgs[key]) {
+                if (!enumArgs[key].has(value)) {
+                  invalid.push(`\`${key}=${value}\` (must be one of: ${Array.from(enumArgs[key]).join(', ')})`);
+                } else {
+                  defaults[key] = value;
+                }
+              } else {
+                unknown.push(key);
+              }
+            }
+
+            const safeRef = /^[A-Za-z0-9._/-]{1,128}$/;
+            const safeRepo = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/;
+            if (!safeRepo.test(defaults['target-repo'])) {
+              invalid.push('`target-repo` must be an HTTPS GitHub repository URL');
+            }
+            for (const key of ['target-ref', 'compare-ref', 'scfuzzbench-ref']) {
+              if (!safeRef.test(defaults[key])) {
+                invalid.push(`\`${key}\` may only contain letters, numbers, '.', '_', '-', and '/'`);
+              }
+            }
+            const timeout = Number(defaults.timeout);
+            if (!Number.isInteger(timeout) || timeout < 60 || timeout > 14400) {
+              invalid.push('`timeout` must be between 60 and 14400 seconds');
+            }
+            if (defaults.workers) {
+              const workers = Number(defaults.workers);
+              if (!Number.isInteger(workers) || workers < 1 || workers > 256) {
+                invalid.push('`workers` must be between 1 and 256');
+              }
+            }
+
+            const errors = [];
+            if (unknown.length) errors.push(`Unknown argument(s): \`${unknown.join('`, `')}\``);
+            if (invalid.length) errors.push(`Invalid value(s): ${invalid.join(', ')}`);
+            if (errors.length) {
+              await failWithComment(`Invalid scfuzzbench command\n\n${errors.join('\n')}`);
+              return;
+            }
+
+            const foundryGitRepo = `https://github.com/${repoFullName}`;
+            const payload = {
+              repository: repoFullName,
+              event: 'scfuzzbench',
+              data: {
+                pr_number: String(context.issue.number),
+                sha: pr.head.sha,
+                head_ref: pr.head.ref,
+                head_repo: pr.head.repo.full_name,
+                actor,
+                trigger_comment_id: String(context.payload.comment.id),
+                foundry_git_repo: foundryGitRepo,
+                foundry_git_ref: pr.head.sha,
+                foundry_label: `pr-${context.issue.number}`,
+                compare_foundry_git_repo: foundryGitRepo,
+                compare_foundry_git_ref: defaults['compare-ref'],
+                compare_foundry_label: defaults['compare-ref'].replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 64),
+                target_repo: defaults['target-repo'],
+                target_ref: defaults['target-ref'],
+                fuzzer: 'foundry',
+                benchmark_type: defaults['benchmark-type'],
+                timeout_seconds: defaults.timeout,
+                workers: defaults.workers,
+                compare_workers: '',
+                scfuzzbench_ref: defaults['scfuzzbench-ref'],
+                install: 'true',
+                foundry_version: '',
+                foundry_test_args: '',
+                extra_args: '',
+              },
+            };
+
+            const summary = [
+              `PR SHA: \`${pr.head.sha.slice(0, 12)}\``,
+              `compare-ref: \`${defaults['compare-ref']}\``,
+              `target: \`${defaults['target-repo']}@${defaults['target-ref']}\``,
+              `timeout: \`${defaults.timeout}s\``,
+              defaults.workers ? `workers: \`${defaults.workers}\`` : 'workers: `default`',
+              `benchmark-type: \`${defaults['benchmark-type']}\``,
+              `scfuzzbench-ref: \`${defaults['scfuzzbench-ref']}\``,
+            ].join(', ');
+
+            core.setOutput('actor', actor);
+            core.setOutput('summary', summary);
+            core.setOutput('payload-b64', Buffer.from(JSON.stringify(payload), 'utf8').toString('base64'));
+
+      - name: Acknowledge request
+        id: ack
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          ACTOR: ${{ steps.request.outputs.actor }}
+          SUMMARY: ${{ steps.request.outputs.summary }}
+        with:
+          script: |
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'eyes',
+              });
+            } catch (error) {
+              core.warning(`Could not add acknowledgement reaction: ${error.message}`);
+            }
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: comment } = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `cc @${process.env.ACTOR}\n\nscfuzzbench event queued. [View publisher run](${runUrl})\n\n**Config:** ${process.env.SUMMARY}`,
+            });
+            core.setOutput('comment-id', String(comment.id));
+
+      - name: Publish event
+        id: publish
+        continue-on-error: true
+        env:
+          PAYLOAD_B64: ${{ steps.request.outputs.payload-b64 }}
+        run: |
+          set -euo pipefail
+
+          printf '%s' '${{ secrets.EVENTS_KEY }}' > "${RUNNER_TEMP}/key"
+          printf '%s' '${{ secrets.EVENTS_CERT }}' > "${RUNNER_TEMP}/cert"
+          printf '%s' "$PAYLOAD_B64" \
+            | base64 --decode \
+            > "${RUNNER_TEMP}/scfuzzbench-event.json"
+
+          # EVENTS_ARGS may contain additional curl arguments, not just a URL.
+          curl -sf -o /dev/null -X POST ${{ secrets.EVENTS_ARGS }} \
+            -H "Content-Type: application/json" \
+            --key "${RUNNER_TEMP}/key" \
+            --cert "${RUNNER_TEMP}/cert" \
+            -d @"${RUNNER_TEMP}/scfuzzbench-event.json"
+
+      - name: Update queued comment
+        if: ${{ always() && steps.ack.outputs.comment-id != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          ACTOR: ${{ steps.request.outputs.actor }}
+          COMMENT_ID: ${{ steps.ack.outputs.comment-id }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+          SUMMARY: ${{ steps.request.outputs.summary }}
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const success = process.env.PUBLISH_OUTCOME === 'success';
+            const body = success
+              ? `cc @${process.env.ACTOR}\n\nscfuzzbench event published. Results will be reported in Slack. [View publisher run](${runUrl})\n\n**Config:** ${process.env.SUMMARY}`
+              : `cc @${process.env.ACTOR}\n\nscfuzzbench event failed to publish. [View publisher run](${runUrl})\n\n**Config:** ${process.env.SUMMARY}`;
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: Number(process.env.COMMENT_ID),
+              body,
+            });
+            if (!success) core.setFailed('Failed to publish scfuzzbench event');
