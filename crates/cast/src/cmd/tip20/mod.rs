@@ -17,7 +17,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_fee_token_selection},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_resolved_fee_token_selection},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{str::FromStr, time::Duration};
@@ -242,6 +242,7 @@ pub(super) async fn send_tip20_transaction(
         .await?
         .with_code_sig_and_args(None, Some(sig.to_string()), args)
         .await?;
+    let chain = builder.chain();
 
     if print_sponsor_hash {
         let (tx, from) = if let Some(ref ak) = access_key {
@@ -276,7 +277,7 @@ pub(super) async fn send_tip20_transaction(
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         }
-        print_fee_token_selection(tx.fee_token())?;
+        print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
         let tx_hash = browser.send_transaction_via_browser(tx).await?;
         CastTxSender::new(&provider)
             .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
@@ -295,6 +296,7 @@ pub(super) async fn send_tip20_transaction(
             tx,
             signer,
             &ak,
+            Some(chain),
             send_tx.cast_async,
             send_tx.confirmations,
             timeout,
@@ -322,8 +324,16 @@ pub(super) async fn send_tip20_transaction(
             .wallet(wallet)
             .connect_with(&connector)
             .await?;
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
-            .await?;
+        cast_send(
+            provider,
+            tx,
+            Some(chain),
+            send_tx.cast_async,
+            send_tx.sync,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     } else {
         let signer = match pre_resolved_signer {
             Some(signer) => signer,
@@ -342,8 +352,16 @@ pub(super) async fn send_tip20_transaction(
         let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
             .wallet(wallet)
             .connect_provider(&provider);
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
-            .await?;
+        cast_send(
+            provider,
+            tx,
+            Some(chain),
+            send_tx.cast_async,
+            send_tx.sync,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     }
 
     Ok(())

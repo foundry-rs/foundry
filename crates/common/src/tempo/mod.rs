@@ -100,6 +100,15 @@ pub fn print_fee_token_selection(fee_token: Option<Address>) -> Result<()> {
     Ok(())
 }
 
+/// Prints the fee token selected for display, resolving the chain default without mutating a
+/// transaction request.
+pub fn print_resolved_fee_token_selection(
+    chain: Option<Chain>,
+    fee_token: Option<Address>,
+) -> Result<()> {
+    print_fee_token_selection(resolve_fee_token(chain, fee_token))
+}
+
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
 pub struct TempoSponsor {

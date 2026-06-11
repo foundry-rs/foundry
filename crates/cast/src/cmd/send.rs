@@ -18,8 +18,9 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_fee_token_selection},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_resolved_fee_token_selection},
 };
+use foundry_config::Chain;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::{
     TempoNetwork,
@@ -309,6 +310,7 @@ impl SendTxArgs {
                 }
             }
 
+            let chain = builder.chain();
             let (mut tx_request, _) = builder.build(config.sender).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -321,6 +323,7 @@ impl SendTxArgs {
             cast_send(
                 provider,
                 tx_request,
+                Some(chain),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -349,7 +352,7 @@ impl SendTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             }
-            print_fee_token_selection(tx_request.fee_token())?;
+            print_resolved_fee_token_selection(Some(chain), tx_request.fee_token())?;
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
@@ -364,6 +367,7 @@ impl SendTxArgs {
                 Some(s) => s,
                 None => send_tx.eth.wallet.signer().await?,
             };
+            let chain = builder.chain();
             let (mut tx_request, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -377,6 +381,7 @@ impl SendTxArgs {
                 tx_request,
                 &signer,
                 &ak,
+                Some(chain),
                 send_tx.cast_async,
                 send_tx.confirmations,
                 timeout,
@@ -394,6 +399,7 @@ impl SendTxArgs {
 
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
+            let chain = builder.chain();
             let (mut tx_request, _) = builder.build(&signer).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -416,6 +422,7 @@ impl SendTxArgs {
             cast_send(
                 provider,
                 tx_request,
+                Some(chain),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -435,6 +442,7 @@ impl SendTxArgs {
 
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
+            let chain = builder.chain();
             let (mut tx_request, _) = builder.build(&signer).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -453,6 +461,7 @@ impl SendTxArgs {
             cast_send(
                 provider,
                 tx_request,
+                Some(chain),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -468,6 +477,7 @@ impl SendTxArgs {
 pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     provider: P,
     tx: N::TransactionRequest,
+    chain: Option<Chain>,
     cast_async: bool,
     sync: bool,
     confs: u64,
@@ -478,7 +488,7 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     let cast = CastTxSender::new(provider);
-    print_fee_token_selection(tx.fee_token())?;
+    print_resolved_fee_token_selection(chain, tx.fee_token())?;
 
     if sync {
         // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
@@ -505,6 +515,7 @@ pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
     mut tx: N::TransactionRequest,
     signer: &WalletSigner,
     access_key: &TempoAccessKeyConfig,
+    chain: Option<Chain>,
     cast_async: bool,
     confirmations: u64,
     timeout: u64,
@@ -515,7 +526,7 @@ where
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
-    print_fee_token_selection(tx.fee_token())?;
+    print_resolved_fee_token_selection(chain, tx.fee_token())?;
     let raw_tx = tx
         .sign_with_access_key(
             provider,
