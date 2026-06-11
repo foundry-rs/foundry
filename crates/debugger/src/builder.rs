@@ -42,11 +42,11 @@ impl DebuggerBuilder {
     #[inline]
     pub fn trace_arena(mut self, arena: CallTraceArena) -> Self {
         if let Some(root) = arena.nodes().first() {
-            self.stats.total_trace_gas_used =
-                self.stats.total_trace_gas_used.saturating_add(root.trace.gas_used);
+            self.stats.session_trace_gas_used =
+                self.stats.session_trace_gas_used.saturating_add(root.trace.gas_used);
         }
-        self.stats.subcalls =
-            self.stats.subcalls.saturating_add(arena.nodes().len().saturating_sub(1));
+        self.stats.session_subcalls =
+            self.stats.session_subcalls.saturating_add(arena.nodes().len().saturating_sub(1));
         flatten_call_trace(arena, &mut self.debug_arena);
         self
     }
@@ -126,28 +126,51 @@ mod tests {
         }
     }
 
+    fn trace_arena(gas_used: u64, subcalls: usize) -> CallTraceArena {
+        let mut arena = CallTraceArena::default();
+
+        {
+            let root = &mut arena.nodes_mut()[0];
+            root.trace.steps.push(step());
+            root.trace.gas_limit = 1;
+            root.trace.gas_used = gas_used;
+            root.ordering.push(TraceMemberOrder::Step(0));
+
+            for idx in 1..=subcalls {
+                root.ordering.push(TraceMemberOrder::Call(idx - 1));
+                root.children.push(idx);
+            }
+        }
+
+        for idx in 1..=subcalls {
+            arena.nodes_mut().push(CallTraceNode {
+                parent: Some(0),
+                idx,
+                trace: CallTrace { depth: 1, kind: CallKind::Call, ..Default::default() },
+                ..Default::default()
+            });
+        }
+
+        arena
+    }
+
     #[test]
     fn trace_arena_accumulates_stats() {
-        let mut arena = CallTraceArena::default();
-        let root = &mut arena.nodes_mut()[0];
-        root.trace.steps.push(step());
-        root.trace.gas_limit = 1;
-        root.trace.gas_used = 100;
-        root.ordering.push(TraceMemberOrder::Step(0));
-        root.ordering.push(TraceMemberOrder::Call(0));
-        root.children.push(1);
+        let builder = DebuggerBuilder::new().trace_arena(trace_arena(100, 1));
 
-        arena.nodes_mut().push(CallTraceNode {
-            parent: Some(0),
-            idx: 1,
-            trace: CallTrace { depth: 1, kind: CallKind::Call, ..Default::default() },
-            ..Default::default()
-        });
-
-        let builder = DebuggerBuilder::new().trace_arena(arena);
-
-        assert_eq!(builder.stats.subcalls, 1);
-        assert_eq!(builder.stats.total_trace_gas_used, 100);
+        assert_eq!(builder.stats.session_subcalls, 1);
+        assert_eq!(builder.stats.session_trace_gas_used, 100);
         assert_eq!(builder.debug_arena.len(), 1);
+    }
+
+    #[test]
+    fn trace_arena_accumulates_session_stats_across_multiple_arenas() {
+        let builder = DebuggerBuilder::new()
+            .trace_arena(trace_arena(100, 1))
+            .trace_arena(trace_arena(200, 2));
+
+        assert_eq!(builder.stats.session_subcalls, 3);
+        assert_eq!(builder.stats.session_trace_gas_used, 300);
+        assert_eq!(builder.debug_arena.len(), 2);
     }
 }

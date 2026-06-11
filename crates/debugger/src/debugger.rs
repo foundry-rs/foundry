@@ -10,9 +10,9 @@ use std::path::Path;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DebuggerStats {
     /// Sum of root-call gas used across every trace arena passed to the debugger.
-    pub total_trace_gas_used: u64,
+    pub session_trace_gas_used: u64,
     /// Number of subcalls in the traces passed to the debugger.
-    pub subcalls: usize,
+    pub session_subcalls: usize,
 }
 
 pub struct DebuggerContext {

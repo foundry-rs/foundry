@@ -617,7 +617,7 @@ fn op_list_title(
     gas_refund_counter: u64,
     stats: Option<DebuggerStats>,
 ) -> String {
-    let address = short_checksum_address(address);
+    let address = full_checksum_address(address);
     let mut title = format!(
         "address: {address} | pc: 0x{pc:x} ({pc}) | gasLeft: {gas_remaining} | \
          callGasUsed: {call_gas_used} | gasRefund: {gas_refund_counter}"
@@ -626,8 +626,8 @@ fn op_list_title(
     if let Some(stats) = stats {
         write!(
             title,
-            " | totalTraceGasUsed: {} | subcalls: {}",
-            stats.total_trace_gas_used, stats.subcalls
+            " | sessionTraceGasUsed: {} | sessionSubcalls: {}",
+            stats.session_trace_gas_used, stats.session_subcalls
         )
         .unwrap();
     }
@@ -635,8 +635,8 @@ fn op_list_title(
     title
 }
 
-fn short_checksum_address(address: &Address) -> String {
-    format!("{address:#}")
+fn full_checksum_address(address: &Address) -> String {
+    address.to_string()
 }
 
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
@@ -704,15 +704,15 @@ mod tests {
 
     #[test]
     fn op_list_title_includes_gas_and_subcall_stats() {
-        let stats = DebuggerStats { total_trace_gas_used: 789_012, subcalls: 3 };
+        let stats = DebuggerStats { session_trace_gas_used: 789_012, session_subcalls: 3 };
         let address = Address::from([0x42; 20]);
         let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, Some(stats));
 
         assert!(title.contains("pc: 0x2a (42)"));
-        assert!(title.contains(&format!("address: {}", super::short_checksum_address(&address))));
+        assert!(title.contains(&format!("address: {}", super::full_checksum_address(&address))));
         assert!(title.contains("gasLeft: 123456"));
-        assert!(title.contains("totalTraceGasUsed: 789012"));
-        assert!(title.contains("subcalls: 3"));
+        assert!(title.contains("sessionTraceGasUsed: 789012"));
+        assert!(title.contains("sessionSubcalls: 3"));
         assert!(title.contains("callGasUsed: 42"));
         assert!(title.contains("gasRefund: 7"));
     }
@@ -721,15 +721,17 @@ mod tests {
     fn op_list_title_omits_aggregate_stats_when_unavailable() {
         let title = super::op_list_title(&Address::from([0x42; 20]), 0x2a, 123_456, 42, 7, None);
 
-        assert!(!title.contains("totalTraceGasUsed"));
-        assert!(!title.contains("subcalls"));
+        assert!(!title.contains("sessionTraceGasUsed"));
+        assert!(!title.contains("sessionSubcalls"));
     }
 
     #[test]
-    fn short_checksum_address_uses_standard_address_compression() {
+    fn op_list_title_uses_full_checksum_address() {
         let address = address!("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+        let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, None);
 
-        assert_eq!(super::short_checksum_address(&address), format!("{address:#}"));
+        assert!(title.contains("address: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"));
+        assert!(!title.contains('…'));
     }
 
     #[test]
