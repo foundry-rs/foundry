@@ -287,7 +287,7 @@ impl VerifyBytecodeArgs {
         };
 
         // Obtain Etherscan compilation metadata.
-        let etherscan_metadata = source_code.as_ref().map(|source| source.items.first().unwrap());
+        let etherscan_metadata = source_code.as_ref().and_then(|source| source.items.first());
 
         // The EVM version to verify against: the explorer-reported version when available,
         // otherwise the local project configuration.
@@ -321,7 +321,7 @@ impl VerifyBytecodeArgs {
             provided.into()
         } else if let Some(source_code) = &source_code {
             // If no constructor args were provided, try to retrieve them from the explorer.
-            check_explorer_args(source_code.clone())?
+            check_explorer_args(source_code)?
         } else {
             Bytes::new()
         };
@@ -369,7 +369,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
             evm_env.block_env.set_number(U256::from(deploy_block));
-            let genesis_block = provider.get_block(deploy_block.into()).full().await?;
+            let deploy_block_info = provider.get_block(deploy_block.into()).full().await?;
 
             // Setup genesis tx_env and evm_evm.
             let deployer = Address::with_last_byte(0x1);
@@ -381,7 +381,7 @@ impl VerifyBytecodeArgs {
             tx_env.set_gas_limit(evm_env.block_env.gas_limit());
             tx_env.set_gas_price(evm_env.block_env.basefee() as u128);
 
-            if let Some(ref block) = genesis_block {
+            if let Some(ref block) = deploy_block_info {
                 configure_env_block::<FEN>(&mut evm_env, block, config.networks);
                 tx_env.set_gas_limit(block.header().gas_limit());
                 tx_env.set_gas_price(block.header().base_fee_per_gas().unwrap_or_default() as u128);
