@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
 
@@ -265,16 +265,30 @@ pub(crate) fn insert_fee_history_cache_item(
         let mut cache = cache.lock();
         cache.insert(block_number, item);
 
-        // adhere to cache limit
-        let pop_next = block_number.saturating_sub(fee_history_limit);
-
-        let num_remove = (cache.len() as u64).saturating_sub(fee_history_limit);
-        for num in 0..num_remove {
-            let key = pop_next - num;
-            cache.remove(&key);
+        // Trim to the cache limit by dropping the oldest entries (smallest block numbers).
+        // `pop_first` is saturating and correct regardless of insertion order, unlike the
+        // previous index math which could underflow when the `eth_feeHistory` fallback inserts
+        // entries out of order.
+        while cache.len() as u64 > fee_history_limit {
+            cache.pop_first();
         }
     }
 }
+
+/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
+///
+/// Constant across blocks, so it is computed once instead of being rebuilt on every
+/// `create_fee_history_cache_item` call.
+static REWARD_PERCENTILES: LazyLock<Vec<f64>> = LazyLock::new(|| {
+    let mut percentile: f64 = 0.0;
+    (0..=200)
+        .map(|_| {
+            let val = percentile;
+            percentile += 0.5;
+            val
+        })
+        .collect()
+});
 
 /// Builds the [`FeeHistoryCacheItem`] for a single block.
 ///
@@ -290,19 +304,6 @@ pub(crate) fn create_fee_history_cache_item<N: Network>(
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    // percentile list from 0.0 to 100.0 with a 0.5 resolution.
-    // this will create 200 percentile points
-    let reward_percentiles: Vec<f64> = {
-        let mut percentile: f64 = 0.0;
-        (0..=200)
-            .map(|_| {
-                let val = percentile;
-                percentile += 0.5;
-                val
-            })
-            .collect()
-    };
-
     let mut block_number: Option<u64> = None;
     let base_fee = header.base_fee_per_gas().unwrap_or_default();
     let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
@@ -358,9 +359,9 @@ where
         transactions.sort_by_key(|(_, reward)| *reward);
 
         // calculate percentile rewards
-        item.rewards = reward_percentiles
-            .into_iter()
-            .filter_map(|p| {
+        item.rewards = REWARD_PERCENTILES
+            .iter()
+            .filter_map(|&p| {
                 let target_gas = (p * gas_used / 100f64) as u64;
                 let mut sum_gas = 0;
                 for (gas_used, effective_reward) in transactions.iter().copied() {
@@ -373,7 +374,7 @@ where
             })
             .collect();
     } else {
-        item.rewards = vec![0; reward_percentiles.len()];
+        item.rewards = vec![0; REWARD_PERCENTILES.len()];
     }
     (item, block_number)
 }

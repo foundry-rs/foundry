@@ -16,8 +16,8 @@ use crate::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
         fees::{
-            FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE, create_fee_history_cache_item,
-            insert_fee_history_cache_item,
+            FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, MIN_SUGGESTED_PRIORITY_FEE,
+            create_fee_history_cache_item,
         },
         macros::node_info,
         miner::FixedBlockTimeMiner,
@@ -1153,41 +1153,52 @@ impl<N: Network> EthApi<N> {
             let storage_info = self.storage_info();
             let blob_params = self.backend.blob_params();
 
-            // iter over the requested block range
-            for n in lowest..=highest {
-                // <https://eips.ethereum.org/EIPS/eip-1559>
-                // Prefer the cache, but the `FeeHistoryService` populates it asynchronously and can
-                // lag the chain head. Rather than silently dropping a missing block from the
-                // response (which yields fewer entries than requested), compute it on demand with
-                // the same logic and warm the cache for subsequent reads.
-                let block = match self.fee_history_cache.lock().get(&n).cloned() {
-                    Some(block) => block,
-                    None => {
-                        let Some(b) = self.backend.get_block(n) else { continue };
-                        let header = b.header;
-                        let hash = header.hash_slow();
-                        let (item, block_number) = create_fee_history_cache_item(
-                            hash,
-                            &header,
-                            &storage_info,
-                            blob_params,
-                        );
-                        // Reuse the bounded insertion so the fallback honors the same cache limit
-                        // as the async service instead of growing the cache unbounded.
-                        insert_fee_history_cache_item(
-                            &self.fee_history_cache,
-                            item.clone(),
-                            block_number,
-                            self.fee_history_limit,
-                        );
-                        item
-                    }
-                };
+            // Snapshot the cached entries for the whole range under a single lock. The
+            // `FeeHistoryService` populates the cache asynchronously and can lag the chain head,
+            // so some entries may still be missing here.
+            let mut items: Vec<Option<FeeHistoryCacheItem>> = {
+                let cache = self.fee_history_cache.lock();
+                (lowest..=highest).map(|n| cache.get(&n).cloned()).collect()
+            };
 
-                response.base_fee_per_gas.push(block.base_fee);
-                response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
-                response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
-                response.gas_used_ratio.push(block.gas_used_ratio);
+            // Compute any missing entries on demand (without holding the lock), using the same
+            // logic as the service. A block that can't be found is a hard error rather than a
+            // silently dropped entry, which would otherwise shorten or misalign the response.
+            let mut warmed: Vec<(u64, FeeHistoryCacheItem)> = Vec::new();
+            for (idx, n) in (lowest..=highest).enumerate() {
+                if items[idx].is_none() {
+                    let block = self
+                        .backend
+                        .get_block(n)
+                        .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                    let header = block.header;
+                    let hash = header.hash_slow();
+                    let (item, block_number) =
+                        create_fee_history_cache_item(hash, &header, &storage_info, blob_params);
+                    if let Some(block_number) = block_number {
+                        warmed.push((block_number, item.clone()));
+                    }
+                    items[idx] = Some(item);
+                }
+            }
+
+            // Warm the cache with the on-demand entries under a single lock, then trim to the
+            // limit by dropping the oldest blocks so the fallback can't grow the cache unbounded.
+            if !warmed.is_empty() {
+                let mut cache = self.fee_history_cache.lock();
+                for (block_number, item) in warmed {
+                    cache.insert(block_number, item);
+                }
+                while cache.len() as u64 > self.fee_history_limit {
+                    cache.pop_first();
+                }
+            }
+
+            for item in items.into_iter().flatten() {
+                response.base_fee_per_gas.push(item.base_fee);
+                response.base_fee_per_blob_gas.push(item.base_fee_per_blob_gas.unwrap_or(0));
+                response.blob_gas_used_ratio.push(item.blob_gas_used_ratio);
+                response.gas_used_ratio.push(item.gas_used_ratio);
 
                 // requested percentiles
                 if !reward_percentiles.is_empty() {
@@ -1196,7 +1207,7 @@ impl<N: Network> EthApi<N> {
                     for p in &reward_percentiles {
                         let p = p.clamp(0.0, 100.0);
                         let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                        let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
+                        let reward = item.rewards.get(index as usize).map_or(0, |r| *r);
                         block_rewards.push(reward);
                     }
                     rewards.push(block_rewards);
