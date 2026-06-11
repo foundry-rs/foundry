@@ -29,7 +29,8 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use foundry_evm::core::tempo::{
-    ITIP20ChannelReserve, PATH_USD_ADDRESS, TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS,
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
+    TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
 };
 use tempo_alloy::primitives::TempoTxEnvelope;
@@ -45,9 +46,9 @@ use tempo_primitives::{
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
-const ALPHA_USD: Address = address!("0x20C0000000000000000000000000000000000001");
-const BETA_USD: Address = address!("0x20C0000000000000000000000000000000000002");
-const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003");
+const ALPHA_USD: Address = ALPHA_USD_ADDRESS;
+const BETA_USD: Address = BETA_USD_ADDRESS;
+const THETA_USD: Address = THETA_USD_ADDRESS;
 const TEMPO_ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 
