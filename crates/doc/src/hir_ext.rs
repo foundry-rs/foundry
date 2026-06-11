@@ -8,13 +8,12 @@
 
 use path_slash::PathBufExt;
 use solar::{
-    ast::{
-        CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind, ParameterList,
-    },
+    ast::{CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind},
     interface::source_map::FileName,
     sema::{
         Gcx,
         hir::{ContractId, FunctionId, ItemId, SourceId, VariableId},
+        ty::{TyAbiPrinter, TyAbiPrinterMode},
     },
 };
 use std::{
@@ -318,8 +317,8 @@ pub fn resolve_inheritdoc(
         {
             // Try to find a signature-exact match with docs; fall through to name matches below.
             for &fid in &name_matches {
-                if let Some(got) = function_param_types(gcx, fid)
-                    && got.len() == want.len()
+                let got = function_param_types(gcx, fid);
+                if got.len() == want.len()
                     && got.iter().zip(want).all(|(a, b)| a == b)
                     && let Some(doc) = extract_inherited_doc(gcx, fid)
                     && (!doc.notices.is_empty()
@@ -395,7 +394,7 @@ pub fn resolve_inheritdoc_var(
                 ItemId::Function(fid) => {
                     let f = gcx.hir.function(fid);
                     if f.name.map(|n| n.as_str() == var_name).unwrap_or(false)
-                        && function_param_types(gcx, fid).map(|p| p.is_empty()).unwrap_or(false)
+                        && function_param_types(gcx, fid).is_empty()
                         && let Some(doc) = extract_inherited_doc(gcx, fid)
                         && (!doc.notices.is_empty()
                             || !doc.devs.is_empty()
@@ -434,44 +433,18 @@ fn extract_inherited_doc_var(gcx: Gcx<'_>, vid: VariableId) -> Option<InheritedD
     Some(collect_inherited_doc(docs))
 }
 
-/// Extract the parameter type strings (in source order) for a function.
-///
-/// Returns `None` if the function's AST item cannot be located.
-fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
+/// Extract the canonical ABI parameter type strings (in source order) for a function.
+pub(crate) fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Vec<String> {
     let f = gcx.hir.function(fid);
-    let ast_source = gcx.sources.get(f.source)?;
-    let ast = ast_source.ast.as_ref()?;
-    let fn_span = f.span;
-
-    let params = ast.items.iter().find_map(|item| match &item.kind {
-        solar::ast::ItemKind::Function(func) if item.span == fn_span => {
-            Some(&func.header.parameters)
-        }
-        solar::ast::ItemKind::Contract(c) => c.body.iter().find_map(|m| match &m.kind {
-            solar::ast::ItemKind::Function(func) if m.span == fn_span => {
-                Some(&func.header.parameters)
-            }
-            _ => None,
-        }),
-        _ => None,
-    })?;
-
-    Some(parameter_type_strings(gcx, params))
-}
-
-/// Compute the parameter type strings of a [`ParameterList`] from the source map.
-///
-/// Types are normalized to their canonical ABI form so that `uint` and `uint256`
-/// (and `int` / `int256`) compare equal during overload matching.
-pub fn parameter_type_strings(gcx: Gcx<'_>, params: &ParameterList<'_>) -> Vec<String> {
-    let sm = gcx.sess.source_map();
-    params
-        .vars
+    f.parameters
         .iter()
-        .map(|v| {
-            let raw = sm.span_to_snippet(v.ty.span).unwrap_or_default();
-            let t = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-            normalize_sol_type(&t)
+        .map(|&param| {
+            let ty = gcx.type_of_item(param.into());
+            let mut out = String::new();
+            TyAbiPrinter::new(gcx, &mut out, TyAbiPrinterMode::Signature)
+                .print(ty)
+                .expect("writing ABI signature type to a String cannot fail");
+            out
         })
         .collect()
 }

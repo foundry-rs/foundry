@@ -525,6 +525,62 @@ contract Alias is IAlias {
     );
 });
 
+// Test that overload matching uses canonical HIR/ABI parameter types so that
+// semantically identical type spellings (`I.Status` vs `Status`) still match.
+forgetest_init!(inheritdoc_overload_matches_qualified_enum_alias, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    enum Status { Inactive, Active }
+
+    /// @notice Sets the account status.
+    /// @param s the new status
+    function configure(I.Status s) external;
+
+    /// @notice Configures by raw id.
+    /// @param id the raw id
+    function configure(uint256 id) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function configure(Status s) external override {}
+
+    /// @inheritdoc I
+    function configure(uint256 id) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let content =
+        std::fs::read_to_string(prj.root().join("docs/src/pages/src/contract.C.mdx")).unwrap();
+
+    assert!(
+        content.contains("Sets the account status"),
+        "@inheritdoc should match I.Status and Status as the same overload, found:\n{content}"
+    );
+    assert!(
+        content.contains("Configures by raw id"),
+        "uint256 overload should still inherit its notice, found:\n{content}"
+    );
+});
+
 // Test that @inheritdoc resolves docs from a deeply inherited chain
 // (Base inherits from an interface without redeclaring NatSpec).
 forgetest_init!(inheritdoc_resolves_deep_chain, |prj, cmd| {
