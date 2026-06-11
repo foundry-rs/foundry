@@ -7,6 +7,7 @@ use alloy_primitives::{
 };
 use eyre::Report;
 use foundry_common::{ContractsByArtifact, get_contract_name, get_file_name, shell};
+use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
     core::{Breakpoints, evm::FoundryEvmNetwork},
     coverage::HitMaps,
@@ -15,7 +16,7 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats};
+use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats, SymbolicStopReason};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -30,6 +31,11 @@ pub(crate) fn invariant_campaign_display_name(contract_name: &str) -> String {
 }
 
 const INVARIANT_CAMPAIGN_FALLBACK_NAME: &str = "Invariant campaign";
+const SYMBOLIC_RESULT_SCHEMA_VERSION: u32 = 1;
+
+const fn symbolic_result_schema_version() -> u32 {
+    SYMBOLIC_RESULT_SCHEMA_VERSION
+}
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -601,6 +607,398 @@ pub struct InvariantPredicateResult {
     pub reason: Option<String>,
 }
 
+/// Stable machine-readable outcome for `forge test --symbolic` JSON output.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicResult {
+    /// Schema version for the symbolic result object.
+    #[serde(default = "symbolic_result_schema_version")]
+    pub schema_version: u32,
+    /// Normalized symbolic outcome.
+    pub status: SymbolicResultStatus,
+    /// Incomplete reason when [`Self::status`] is [`SymbolicResultStatus::Incomplete`].
+    pub incomplete: Option<SymbolicIncomplete>,
+    /// Effective bounds used by this symbolic run.
+    pub bounds: SymbolicBounds,
+    /// Solver identity and counters collected during this run.
+    pub solver: SymbolicSolverMetadata,
+    /// Soundness assumptions that bound what a `pass` proves.
+    pub assumptions: Vec<SymbolicAssumption>,
+    /// Where an agent can find the concrete replay trace, when one was produced.
+    pub call_trace: SymbolicCallTrace,
+    /// Concrete replay metadata for counterexample candidates.
+    pub replay: SymbolicReplayMetadata,
+    /// Concrete counterexample data, when the solver produced a candidate.
+    pub counterexample: Option<SymbolicCounterexample>,
+}
+
+impl SymbolicResult {
+    /// Creates a symbolic pass result.
+    pub fn pass(config: &SymbolicConfig, stats: SymbolicStats) -> Self {
+        Self::new(
+            SymbolicResultStatus::Pass,
+            config,
+            stats,
+            None,
+            SymbolicReplayMetadata::not_required(),
+            SymbolicCallTrace::none(),
+            None,
+        )
+    }
+
+    /// Creates a symbolic counterexample result that concrete replay confirmed.
+    pub fn fail_counterexample(
+        config: &SymbolicConfig,
+        stats: SymbolicStats,
+        call_trace: SymbolicCallTrace,
+        counterexample: SymbolicCounterexample,
+    ) -> Self {
+        Self::new(
+            SymbolicResultStatus::FailCounterexample,
+            config,
+            stats,
+            None,
+            SymbolicReplayMetadata::confirmed(),
+            call_trace,
+            Some(counterexample),
+        )
+    }
+
+    /// Creates an incomplete symbolic result.
+    pub fn incomplete(
+        config: &SymbolicConfig,
+        kind: SymbolicStopReason,
+        reason: impl Into<String>,
+        stats: SymbolicStats,
+        replay: SymbolicReplayMetadata,
+        call_trace: SymbolicCallTrace,
+        counterexample: Option<SymbolicCounterexample>,
+    ) -> Self {
+        Self::new(
+            SymbolicResultStatus::Incomplete,
+            config,
+            stats,
+            Some(SymbolicIncomplete::new(kind, reason)),
+            replay,
+            call_trace,
+            counterexample,
+        )
+    }
+
+    fn new(
+        status: SymbolicResultStatus,
+        config: &SymbolicConfig,
+        stats: SymbolicStats,
+        incomplete: Option<SymbolicIncomplete>,
+        replay: SymbolicReplayMetadata,
+        call_trace: SymbolicCallTrace,
+        counterexample: Option<SymbolicCounterexample>,
+    ) -> Self {
+        Self {
+            schema_version: SYMBOLIC_RESULT_SCHEMA_VERSION,
+            status,
+            incomplete,
+            bounds: SymbolicBounds::from_config(config),
+            solver: SymbolicSolverMetadata::from_config_and_stats(config, stats),
+            assumptions: SymbolicAssumption::default_assumptions(),
+            call_trace,
+            replay,
+            counterexample,
+        }
+    }
+}
+
+/// Normalized symbolic outcome names for agents and other JSON consumers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolicResultStatus {
+    /// All explored paths completed without a feasible failure.
+    Pass,
+    /// A solver counterexample was replayed concretely and still failed.
+    FailCounterexample,
+    /// The engine stopped before a proof or replayed counterexample.
+    Incomplete,
+}
+
+/// Incomplete symbolic run reason.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicIncomplete {
+    /// Stable reason kind.
+    pub kind: String,
+    /// Human-readable detail.
+    pub reason: String,
+}
+
+impl SymbolicIncomplete {
+    fn new(kind: SymbolicStopReason, reason: impl Into<String>) -> Self {
+        Self { kind: symbolic_stop_reason_kind(kind).to_string(), reason: reason.into() }
+    }
+}
+
+const fn symbolic_stop_reason_kind(kind: SymbolicStopReason) -> &'static str {
+    match kind {
+        SymbolicStopReason::Stuck => "stuck",
+        SymbolicStopReason::RevertAll => "revert_all",
+        SymbolicStopReason::Timeout => "timeout",
+        SymbolicStopReason::Error => "error",
+    }
+}
+
+/// Effective symbolic exploration bounds used by the run.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicBounds {
+    /// Optional solver timeout in seconds.
+    pub timeout_seconds: Option<u32>,
+    /// Optional loop-unrolling bound.
+    pub loop_bound: Option<u32>,
+    /// Effective per-path opcode depth limit.
+    pub max_depth: u32,
+    /// Effective symbolic path width limit.
+    pub max_paths: u32,
+    /// Maximum calls in a bounded symbolic invariant sequence.
+    pub invariant_depth: u32,
+    /// Pending path exploration order.
+    pub exploration_order: SymbolicExplorationOrder,
+    /// Maximum normalized solver queries.
+    pub max_solver_queries: u32,
+    /// Default bounded length for dynamic ABI inputs.
+    pub default_dynamic_length: u32,
+    /// Maximum permitted bounded dynamic ABI input length.
+    pub max_dynamic_length: u32,
+    /// Positional dynamic-leaf bounded lengths.
+    pub array_lengths: Vec<u32>,
+    /// Named dynamic-leaf bounded lengths.
+    pub dynamic_lengths: BTreeMap<String, Vec<u32>>,
+    /// Default array lengths when no explicit dynamic length exists.
+    pub default_array_lengths: Vec<u32>,
+    /// Default bytes/string lengths when no explicit dynamic length exists.
+    pub default_bytes_lengths: Vec<u32>,
+    /// Maximum generated symbolic calldata size in bytes.
+    pub max_calldata_bytes: u32,
+    /// Whether symbolic call targets can range over known deployed contracts.
+    pub symbolic_call_targets: bool,
+    /// Storage modelling mode.
+    pub storage_layout: SymbolicStorageLayout,
+}
+
+impl SymbolicBounds {
+    fn from_config(config: &SymbolicConfig) -> Self {
+        Self {
+            timeout_seconds: config.timeout,
+            loop_bound: config.loop_bound,
+            max_depth: config.execution_depth(),
+            max_paths: config.path_width(),
+            invariant_depth: config.invariant_depth,
+            exploration_order: config.exploration_order,
+            max_solver_queries: config.max_solver_queries,
+            default_dynamic_length: config.default_dynamic_length,
+            max_dynamic_length: config.max_dynamic_length,
+            array_lengths: config.array_lengths.clone(),
+            dynamic_lengths: config.dynamic_lengths.clone(),
+            default_array_lengths: config.default_array_lengths.clone(),
+            default_bytes_lengths: config.default_bytes_lengths.clone(),
+            max_calldata_bytes: config.max_calldata_bytes,
+            symbolic_call_targets: config.symbolic_call_targets,
+            storage_layout: config.storage_layout,
+        }
+    }
+}
+
+/// Solver identity and counters.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicSolverMetadata {
+    /// Configured solver name.
+    pub name: String,
+    /// Exact configured solver command, when set.
+    pub command: Option<String>,
+    /// Configured solver portfolio entries, when any.
+    pub portfolio: Vec<String>,
+    /// Run counters.
+    pub stats: SymbolicSolverStats,
+}
+
+impl SymbolicSolverMetadata {
+    fn from_config_and_stats(config: &SymbolicConfig, stats: SymbolicStats) -> Self {
+        Self {
+            name: config.solver.clone(),
+            command: config.solver_command.clone(),
+            portfolio: config.solver_portfolio.clone(),
+            stats: SymbolicSolverStats::from(stats),
+        }
+    }
+}
+
+/// Symbolic engine and solver counters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicSolverStats {
+    /// Number of explored symbolic paths.
+    pub paths: usize,
+    /// Number of normalized solver queries issued during the run.
+    pub solver_queries: usize,
+    /// Number of queries sent to the SMT backend after local fast paths.
+    pub smt_queries: usize,
+    /// Number of satisfiability checks requested by the executor.
+    pub sat_queries: usize,
+    /// Number of concrete model requests requested by the executor.
+    pub model_queries: usize,
+    /// Number of satisfiability checks served from the normalized cache.
+    pub sat_cache_hits: usize,
+    /// Number of model requests served from the normalized model cache.
+    pub model_cache_hits: usize,
+    /// Number of satisfiable witnesses produced by local hard-arithmetic search.
+    pub heuristic_witnesses: usize,
+    /// Wall-clock time spent waiting on backend solver subprocesses, in milliseconds.
+    pub solver_time_ms: u64,
+}
+
+impl From<SymbolicStats> for SymbolicSolverStats {
+    fn from(stats: SymbolicStats) -> Self {
+        Self {
+            paths: stats.paths,
+            solver_queries: stats.solver_queries,
+            smt_queries: stats.smt_queries,
+            sat_queries: stats.sat_queries,
+            model_queries: stats.model_queries,
+            sat_cache_hits: stats.sat_cache_hits,
+            model_cache_hits: stats.model_cache_hits,
+            heuristic_witnesses: stats.heuristic_witnesses,
+            solver_time_ms: stats.solver_time_ms,
+        }
+    }
+}
+
+/// Explicit symbolic assumption attached to a result.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicAssumption {
+    /// Stable assumption kind.
+    pub kind: String,
+    /// Human-readable detail.
+    pub description: String,
+}
+
+impl SymbolicAssumption {
+    fn default_assumptions() -> Vec<Self> {
+        vec![
+            Self {
+                kind: "bounded_exploration".to_string(),
+                description: "Result is scoped to the configured path, depth, solver-query, loop, calldata, and dynamic-length bounds.".to_string(),
+            },
+            Self {
+                kind: "hash_model".to_string(),
+                description: "Symbolic Keccak and hash-like precompile reasoning assumes collision and preimage resistance for modeled cases.".to_string(),
+            },
+        ]
+    }
+}
+
+/// Concrete replay trace locator.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicCallTrace {
+    /// Whether replay produced a trace that may be present in this test result.
+    pub available: bool,
+    /// JSON location for the trace when available.
+    pub source: Option<String>,
+    /// Trace format at the source location.
+    pub format: Option<String>,
+}
+
+impl SymbolicCallTrace {
+    /// No concrete trace was produced.
+    pub const fn none() -> Self {
+        Self { available: false, source: None, format: None }
+    }
+
+    /// A concrete replay trace may be available in the normal test result traces field.
+    pub fn test_result_traces(available: bool) -> Self {
+        if !available {
+            return Self::none();
+        }
+
+        Self {
+            available: true,
+            source: Some("test_result.traces".to_string()),
+            format: Some("foundry_call_trace_arena".to_string()),
+        }
+    }
+}
+
+/// Counterexample replay status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolicReplayStatus {
+    /// No replay was required for this result.
+    NotRequired,
+    /// Concrete replay confirmed the symbolic counterexample.
+    Confirmed,
+    /// Concrete replay did not reproduce the symbolic counterexample.
+    Mismatch,
+    /// Concrete replay could not execute because of an error.
+    Error,
+    /// Concrete replay was skipped by `vm.skip`.
+    Skipped,
+}
+
+/// Replay metadata for symbolic counterexample candidates.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicReplayMetadata {
+    /// Whether the symbolic outcome required concrete replay.
+    pub required: bool,
+    /// Stable replay status.
+    pub status: SymbolicReplayStatus,
+    /// Optional replay detail or mismatch reason.
+    pub reason: Option<String>,
+}
+
+impl SymbolicReplayMetadata {
+    /// No replay was required.
+    pub const fn not_required() -> Self {
+        Self { required: false, status: SymbolicReplayStatus::NotRequired, reason: None }
+    }
+
+    /// Concrete replay confirmed the counterexample.
+    pub const fn confirmed() -> Self {
+        Self { required: true, status: SymbolicReplayStatus::Confirmed, reason: None }
+    }
+
+    /// Concrete replay did not reproduce the symbolic counterexample.
+    pub fn mismatch(reason: impl Into<String>) -> Self {
+        Self { required: true, status: SymbolicReplayStatus::Mismatch, reason: Some(reason.into()) }
+    }
+
+    /// Concrete replay errored before the candidate could be confirmed.
+    pub fn error(reason: impl Into<String>) -> Self {
+        Self { required: true, status: SymbolicReplayStatus::Error, reason: Some(reason.into()) }
+    }
+
+    /// Concrete replay was skipped by the test.
+    pub fn skipped(reason: impl Into<String>) -> Self {
+        Self { required: true, status: SymbolicReplayStatus::Skipped, reason: Some(reason.into()) }
+    }
+}
+
+/// Stable symbolic counterexample payload.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SymbolicCounterexample {
+    /// ABI-encoded calldata for replay.
+    pub calldata: Bytes,
+    /// Pretty-formatted ABI arguments, when decoded.
+    pub args: Option<String>,
+    /// Raw ABI arguments, when decoded.
+    pub raw_args: Option<String>,
+    /// Ether value sent with the call, when any.
+    pub value: Option<U256>,
+}
+
+impl From<&BaseCounterExample> for SymbolicCounterexample {
+    fn from(counterexample: &BaseCounterExample) -> Self {
+        Self {
+            calldata: counterexample.calldata.clone(),
+            args: counterexample.args.clone(),
+            raw_args: counterexample.raw_args.clone(),
+            value: counterexample.value,
+        }
+    }
+}
+
 /// The result of an executed test.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
@@ -658,6 +1056,10 @@ pub struct TestResult {
 
     /// What kind of test this was
     pub kind: TestKind,
+
+    /// Stable symbolic result object for `forge test --symbolic --json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbolic: Option<SymbolicResult>,
 
     /// Traces
     pub traces: Traces,
@@ -1253,11 +1655,12 @@ impl TestResult {
     /// Returns the result for a symbolic test.
     pub fn symbolic_result(
         &mut self,
-        success: bool,
+        status: TestStatus,
         reason: Option<String>,
         counterexample: Option<CounterExample>,
-        stats: SymbolicStats,
+        symbolic: SymbolicResult,
     ) {
+        let stats = symbolic.solver.stats;
         self.kind = TestKind::Symbolic {
             paths: stats.paths,
             solver_queries: stats.solver_queries,
@@ -1269,9 +1672,10 @@ impl TestResult {
             heuristic_witnesses: stats.heuristic_witnesses,
             solver_time_ms: stats.solver_time_ms,
         };
-        self.status = if success { TestStatus::Success } else { TestStatus::Failure };
+        self.status = status;
         self.reason = reason;
         self.counterexample = counterexample;
+        self.symbolic = Some(symbolic);
         self.duration = Duration::default();
     }
 
