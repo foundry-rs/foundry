@@ -103,7 +103,7 @@ pub fn print_result(
     res: Option<VerificationType>,
     bytecode_type: BytecodeType,
     json_results: &mut Vec<JsonResult>,
-    etherscan_config: &Metadata,
+    etherscan_config: Option<&Metadata>,
     config: &Config,
 ) {
     if let Some(res) = res {
@@ -121,9 +121,11 @@ pub fn print_result(
         let _ = sh_err!(
             "{bytecode_type:?} code did not match - this may be due to varying compiler settings"
         );
-        let mismatches = find_mismatch_in_settings(etherscan_config, config);
-        for mismatch in mismatches {
-            let _ = sh_eprintln!("{}", mismatch.red().bold());
+        if let Some(etherscan_config) = etherscan_config {
+            let mismatches = find_mismatch_in_settings(etherscan_config, config);
+            for mismatch in mismatches {
+                let _ = sh_eprintln!("{}", mismatch.red().bold());
+            }
         }
     } else {
         let json_res = JsonResult {
