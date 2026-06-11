@@ -23,8 +23,8 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, read_tempo_keys_file,
-        tempo_keys_path,
+        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
+        print_resolved_fee_token_selection, read_tempo_keys_file, tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3133,6 +3133,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             }
+            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
 
             before_submit()?;
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
@@ -3142,6 +3143,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         }
         KeychainRootSigner::Wallet(signer) => {
             let from = signer.address();
+            let chain = builder.chain();
             let (mut tx, _) = builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
@@ -3157,6 +3159,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             cast_send(
                 provider,
                 tx,
+                Some(chain),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,

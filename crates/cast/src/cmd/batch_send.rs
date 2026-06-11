@@ -146,6 +146,7 @@ impl BatchSendArgs {
             cast_send(
                 provider,
                 tx,
+                Some(chain),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -171,6 +172,7 @@ impl BatchSendArgs {
                     tx_request,
                     &signer,
                     access_key,
+                    Some(chain),
                     send_tx.cast_async,
                     send_tx.confirmations,
                     timeout,
@@ -191,6 +193,7 @@ impl BatchSendArgs {
                 cast_send(
                     provider,
                     tx_request,
+                    Some(chain),
                     send_tx.cast_async,
                     send_tx.sync,
                     send_tx.confirmations,

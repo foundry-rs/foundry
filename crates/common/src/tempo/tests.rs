@@ -8,7 +8,10 @@ use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
 use alloy_chains::{Chain, NamedChain};
 use alloy_primitives::Address;
 
-use super::resolve_fee_token;
+use super::{
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    format_fee_token_selection, known_fee_token_symbol, resolve_fee_token,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,4 +93,27 @@ fn explicit_fee_token_overrides_chain_default() {
         Some(explicit)
     );
     assert_eq!(resolve_fee_token(None, Some(explicit)), Some(explicit));
+}
+
+#[test]
+fn formats_known_fee_token_selection_with_label() {
+    for (fee_token, symbol) in [
+        (PATH_USD_ADDRESS, "PathUSD"),
+        (ALPHA_USD_ADDRESS, "AlphaUSD"),
+        (BETA_USD_ADDRESS, "BetaUSD"),
+        (THETA_USD_ADDRESS, "ThetaUSD"),
+    ] {
+        assert_eq!(known_fee_token_symbol(fee_token), Some(symbol));
+        assert_eq!(
+            format_fee_token_selection(fee_token),
+            format!("Paying gas in {symbol} ({fee_token})")
+        );
+    }
+}
+
+#[test]
+fn formats_unknown_fee_token_selection_as_address() {
+    let fee_token = Address::repeat_byte(0x42);
+    assert_eq!(known_fee_token_symbol(fee_token), None);
+    assert_eq!(format_fee_token_selection(fee_token), format!("Paying gas in {fee_token}"));
 }

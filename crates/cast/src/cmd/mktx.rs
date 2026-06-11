@@ -15,7 +15,9 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{
+    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::print_resolved_fee_token_selection,
+};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 
@@ -136,6 +138,7 @@ impl MakeTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
+        let chain = tx_builder.chain();
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
@@ -178,6 +181,7 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             }
+            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             print_scalar(raw_tx)?;
@@ -192,6 +196,7 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             }
+            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
             let signed_tx = provider.sign_transaction(tx).await?;
 
             print_scalar(signed_tx)?;
@@ -210,6 +215,7 @@ impl MakeTxArgs {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         }
+        print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;
 

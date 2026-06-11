@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::parse_tokens,
     provider::ProviderBuilder,
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, resolve_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_resolved_fee_token_selection},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -433,11 +433,6 @@ impl CreateArgs {
             deployer.tx.set_create();
         }
 
-        // If the chain has a canonical fee token, set it unless the user supplied one.
-        if let Some(fee_token) = resolve_fee_token(Some(chain), self.tx.tempo.fee_token) {
-            deployer.tx.set_fee_token(fee_token);
-        }
-
         // Apply user-provided gas, fee, nonce, and Tempo options.
         self.tx.apply::<N>(&mut deployer.tx, is_legacy);
 
@@ -576,6 +571,7 @@ impl CreateArgs {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         }
+        print_resolved_fee_token_selection(Some(chain), deployer.tx.fee_token())?;
 
         // Deploy the actual contract
         let (deployed_contract, receipt) = if let Some(browser) = browser_signer {

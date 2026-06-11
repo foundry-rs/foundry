@@ -692,6 +692,7 @@ mod tests {
     fn context_with_arena(arena: Vec<DebugNode>) -> DebuggerContext {
         DebuggerContext {
             debug_arena: arena,
+            stats: None,
             identified_contracts: Default::default(),
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
