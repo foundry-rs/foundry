@@ -164,8 +164,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             if cmd.is_watch() {
                 global.block_on(watch::watch_doc(cmd))
             } else {
-                global.block_on(cmd.run())?;
-                Ok(())
+                global.block_on(cmd.run())
             }
         }
         ForgeSubcommand::Selectors { command } => global.block_on(command.run()),
