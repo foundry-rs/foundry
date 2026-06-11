@@ -686,7 +686,14 @@ mod tests {
     }
 
     fn node(address: Address, kind: CallKind, pcs: &[usize]) -> DebugNode {
-        DebugNode::new(address, kind, pcs.iter().copied().map(step).collect(), Bytes::new(), 0)
+        DebugNode::new(
+            address,
+            kind,
+            pcs.iter().copied().map(step).collect(),
+            Bytes::new(),
+            0,
+            None,
+        )
     }
 
     fn context_with_arena(arena: Vec<DebugNode>) -> DebuggerContext {

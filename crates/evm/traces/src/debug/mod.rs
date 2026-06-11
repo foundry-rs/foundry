@@ -9,7 +9,7 @@ use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
-pub use sources::{ArtifactData, ContractSources, SourceData};
+pub use sources::{ArtifactData, ContractSources, DebugSourceScope, DebugVariable, SourceData};
 
 #[derive(Clone, Debug)]
 pub struct DebugTraceIdentifier {
@@ -283,13 +283,13 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
 
 /// Decodes given [DynSolType] from memory.
 fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option<DynSolValue> {
-    let first_word = memory.get(location..location + 32)?;
+    let first_word = memory_range(memory, location, 32)?;
 
     match ty {
         // For `string` and `bytes` layout is a word with length followed by the data
         DynSolType::String | DynSolType::Bytes => {
             let length: usize = U256::from_be_slice(first_word).try_into().ok()?;
-            let data = memory.get(location + 32..location + 32 + length)?;
+            let data = memory_range(memory, location.checked_add(32)?, length)?;
 
             match ty {
                 DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
@@ -305,18 +305,19 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
             let (length, start) = match ty {
                 DynSolType::FixedArray(_, length) => (*length, location),
                 DynSolType::Array(_) => {
-                    (U256::from_be_slice(first_word).try_into().ok()?, location + 32)
+                    (U256::from_be_slice(first_word).try_into().ok()?, location.checked_add(32)?)
                 }
                 _ => unreachable!(),
             };
+            memory_range(memory, start, length.checked_mul(32)?)?;
             let mut decoded = Vec::with_capacity(length);
 
             for i in 0..length {
-                let offset = start + i * 32;
+                let offset = start.checked_add(i.checked_mul(32)?)?;
                 let location = match inner.as_ref() {
                     // Arrays of variable length types are arrays of pointers to the values
                     DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
-                        U256::from_be_slice(memory.get(offset..offset + 32)?).try_into().ok()?
+                        U256::from_be_slice(memory_range(memory, offset, 32)?).try_into().ok()?
                     }
                     _ => offset,
                 };
@@ -330,14 +331,33 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
     }
 }
 
+fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
+    memory.get(start..start.checked_add(len)?)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::source_span;
+    use super::{decode_from_memory, source_span};
+    use alloy_dyn_abi::DynSolType;
+    use alloy_primitives::U256;
 
     #[test]
     fn source_span_returns_none_for_invalid_ranges() {
         assert_eq!(source_span("abcdef", 2, 3), Some(("cde", 5)));
         assert_eq!(source_span("abcdef", 7, 1), None);
         assert_eq!(source_span("abcdef", usize::MAX, 1), None);
+    }
+
+    #[test]
+    fn decode_from_memory_rejects_overflow_location() {
+        assert_eq!(decode_from_memory(&DynSolType::Bytes, &[0; 64], usize::MAX), None);
+    }
+
+    #[test]
+    fn decode_from_memory_rejects_oversized_dynamic_array_length() {
+        let memory = U256::from(1_000_000).to_be_bytes::<32>();
+        let ty = DynSolType::Array(Box::new(DynSolType::Uint(256)));
+
+        assert_eq!(decode_from_memory(&ty, &memory, 0), None);
     }
 }
