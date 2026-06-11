@@ -226,7 +226,7 @@ pub enum PoolError {
 pub enum FeeHistoryError {
     #[error("requested block range is out of bounds")]
     InvalidBlockRange,
-    #[error("could not find newest block number requested: {0}")]
+    #[error("could not find block number requested: {0}")]
     BlockNotFound(BlockNumberOrTag),
 }
 
