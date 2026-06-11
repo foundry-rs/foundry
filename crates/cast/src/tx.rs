@@ -604,13 +604,17 @@ where
         Ok((self.tx, self.state.func))
     }
 
-    /// Sets the core transaction fields from the builder state: kind, input, from, and chain id.
+    /// Sets the core transaction fields from the builder state: kind, input, optional from, and
+    /// chain id.
     fn prepare(&mut self, sender: &SenderKind<'_>) {
         self.tx.set_kind(self.state.kind);
         // We set both fields to the same value because some nodes only accept the legacy
         // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
         self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
-        self.tx.set_from(sender.address());
+        let sender = sender.address();
+        if !sender.is_zero() {
+            self.tx.set_from(sender);
+        }
         self.tx.set_chain_id(self.chain.id());
     }
 
