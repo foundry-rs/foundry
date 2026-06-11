@@ -28,7 +28,9 @@ use foundry_common::{
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
-use foundry_wallets::{WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner};
+use foundry_wallets::{
+    BrowserWalletOpts, WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner,
+};
 use serde::Deserialize;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
@@ -319,6 +321,9 @@ pub enum KeyAuthSubcommand {
 
         #[command(flatten)]
         wallet: Box<WalletOpts>,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 }
 
@@ -708,7 +713,9 @@ impl KeyAuthSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::Encode { authorization } => run_key_auth_encode(authorization),
-            Self::Sign { authorization, wallet } => run_key_auth_sign(authorization, *wallet).await,
+            Self::Sign { authorization, wallet, browser } => {
+                run_key_auth_sign(authorization, *wallet, browser).await
+            }
         }
     }
 }
@@ -1005,15 +1012,10 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
 // `cast keychain doctor`
 // ---------------------------------------------------------------------------
 //
-// TODO(OSS-160 follow-up): browser-wallet KeyAuthorization signing still needs a
-// wallet-facing probe once the upstream browser-wallet surface lands. TIP-1009
-// and sponsorship have config-level diagnostics below, but full fee-payer digest
+// TODO(OSS-160 follow-up): doctor can probe browser-wallet KeyAuthorization
+// signing once it has a non-mutating wallet-facing check. TIP-1009 and
+// sponsorship have config-level diagnostics below, but full fee-payer digest
 // validation needs a concrete transaction payload.
-//
-//   * Browser-wallet `KeyAuthorization` signing — wallet capability is being added in
-//     foundry-rs/foundry#14743 + foundry-rs/foundry-core#67 + foundry-rs/foundry-browser-wallet#67.
-//     Once merged, doctor can probe whether the connected browser/passkey wallet can sign the
-//     digest.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -2713,25 +2715,44 @@ fn run_key_auth_encode(args: KeyAuthArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_key_auth_sign(args: KeyAuthArgs, wallet: WalletOpts) -> Result<()> {
+async fn run_key_auth_sign(
+    args: KeyAuthArgs,
+    wallet: WalletOpts,
+    browser: BrowserWalletOpts,
+) -> Result<()> {
     let authorization = args.into_authorization()?;
     let authorized_key_type = auth_signature_type_name(&authorization.key_type);
     let signature_hash = authorization.signature_hash();
-    let (signer, tempo_access_key) = wallet.maybe_signer().await?;
-    if tempo_access_key.is_some() {
-        eyre::bail!(
-            "Tempo access keys cannot sign key authorizations; use a persistent root signer"
-        );
-    }
-    let signer = signer.ok_or_else(|| {
-        eyre::eyre!(
-            "a persistent root signer is required to sign key authorizations; pass a signer with \
-             --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
-        )
-    })?;
-    let signer_address = signer.address();
-    let signature = signer.sign_hash(&signature_hash).await?;
-    let signed = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
+    let (signed, signer_address, signature_type) =
+        if let Some(browser) = browser.run::<TempoNetwork>().await? {
+            let signer_address = browser.address();
+            let preferred_signature_type = Some(authorization.key_type);
+            (
+                browser.sign_key_authorization(authorization, preferred_signature_type).await?,
+                signer_address,
+                authorized_key_type,
+            )
+        } else {
+            let (signer, tempo_access_key) = wallet.maybe_signer().await?;
+            if tempo_access_key.is_some() {
+                eyre::bail!(
+                    "Tempo access keys cannot sign key authorizations; use a persistent root signer"
+                );
+            }
+            let signer = signer.ok_or_else(|| {
+                eyre::eyre!(
+                    "a persistent root signer is required to sign key authorizations; pass a \
+                     signer with --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+                )
+            })?;
+            let signer_address = signer.address();
+            let signature = signer.sign_hash(&signature_hash).await?;
+            (
+                authorization.into_signed(PrimitiveSignature::Secp256k1(signature)),
+                signer_address,
+                "secp256k1",
+            )
+        };
     let encoded = encode_key_authorization(&signed);
 
     if shell::is_json() {
@@ -2741,7 +2762,7 @@ async fn run_key_auth_sign(args: KeyAuthArgs, wallet: WalletOpts) -> Result<()> 
             "rlp_length": encoded.len(),
             "signer": signer_address.to_string(),
             "authorized_key_type": authorized_key_type,
-            "signature_type": "secp256k1",
+            "signature_type": signature_type,
             "witness": signed.authorization.witness().map(|witness| witness.to_string()),
         });
         sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
