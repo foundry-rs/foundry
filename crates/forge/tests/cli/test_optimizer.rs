@@ -1818,3 +1818,37 @@ contract TargetTest is Test {
 
     cmd.args(["build"]).assert_success();
 });
+
+// Test that `type(Contract).creationCode` keeps native pure semantics when it is used in a
+// modifier body that is applied to a pure function.
+forgetest_init!(preprocess_creation_code_in_modifier_used_by_pure_function, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {}
+        "#,
+    );
+
+    prj.add_test(
+        "ModifierCreationCode.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract ModifierCreationCodeTest {
+    modifier usesCreationCode() {
+        bytes memory code = type(Target).creationCode;
+        code;
+        _;
+    }
+
+    function testModifierCreationCode() public pure usesCreationCode {}
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
+});

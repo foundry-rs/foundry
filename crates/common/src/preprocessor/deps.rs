@@ -7,8 +7,8 @@ use itertools::Itertools;
 use solar::sema::{
     Gcx, Hir,
     hir::{
-        CallArgs, CallOptions, ContractId, Expr, ExprKind, Function, StateMutability, Stmt,
-        StmtKind, TypeKind, Visit,
+        CallArgs, CallOptions, ContractId, Expr, ExprKind, Function, FunctionKind, StateMutability,
+        Stmt, StmtKind, TypeKind, Visit,
     },
     interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
@@ -160,8 +160,8 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     /// are handled by the script execution inspector, and `type(Contract).creationCode` must keep
     /// its native mutability semantics.
     is_script: bool,
-    /// Whether the visitor is currently inside a pure function.
-    in_pure_function: bool,
+    /// Whether `type(Contract).creationCode` should keep native Solidity semantics.
+    preserve_native_creation_code: bool,
     /// Dependencies collected for current contract.
     dependencies: Vec<BytecodeDependency>,
     /// Unique HIR ids of contracts referenced from current contract.
@@ -175,7 +175,7 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
             src,
             src_dir,
             is_script,
-            in_pure_function: false,
+            preserve_native_creation_code: false,
             dependencies: vec![],
             referenced_contracts: HashSet::default(),
         }
@@ -201,9 +201,10 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
 
         // `type(Contract).creationCode` has native `pure` semantics. Rewriting it to a `view`
         // cheatcode call would make valid pure functions fail to compile.
-        if self.in_pure_function && matches!(&dependency.kind, BytecodeDependencyKind::CreationCode)
+        if self.preserve_native_creation_code
+            && matches!(&dependency.kind, BytecodeDependencyKind::CreationCode)
         {
-            trace!("skip creationCode in pure function");
+            trace!("skip creationCode in native creationCode context");
             return;
         }
 
@@ -232,10 +233,12 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
     }
 
     fn visit_function(&mut self, func: &'gcx Function<'gcx>) -> ControlFlow<Self::BreakValue> {
-        let previous = self.in_pure_function;
-        self.in_pure_function = func.state_mutability == StateMutability::Pure;
+        let previous = self.preserve_native_creation_code;
+        self.preserve_native_creation_code = previous
+            || func.state_mutability == StateMutability::Pure
+            || matches!(func.kind, FunctionKind::Modifier);
         self.walk_function(func)?;
-        self.in_pure_function = previous;
+        self.preserve_native_creation_code = previous;
         ControlFlow::Continue(())
     }
 
