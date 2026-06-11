@@ -43,8 +43,7 @@ pub use tempo_precompiles::{
 };
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
-pub const TEMPO_TIP20_TOKENS: &[Address] =
-    &[PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
+pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
 
 /// Initialize Tempo precompiles and contracts using a storage provider.
 ///
