@@ -203,6 +203,14 @@ impl VerifyBytecodeArgs {
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
+        // Whether the user explicitly configured a block explorer. Client setup errors are only
+        // treated as "no explorer available" when nothing was configured: an explicitly provided
+        // verifier or API key that fails to resolve must still surface as an error.
+        let has_explorer_config = self.verifier.verifier.is_some()
+            || self.verifier.verifier_url.is_some()
+            || self.verifier.verifier_api_key.is_some()
+            || self.etherscan.key.is_some();
+
         // Etherscan client. May be unavailable (e.g. unknown chain, missing configuration), in
         // which case verification proceeds with local data only.
         let etherscan = match EtherscanVerificationProvider.client(
@@ -212,6 +220,9 @@ impl VerifyBytecodeArgs {
         ) {
             Ok(client) => Some(client),
             Err(err) => {
+                if has_explorer_config {
+                    return Err(err);
+                }
                 if !shell::is_json() {
                     sh_warn!(
                         "Failed to create a block explorer client: {err}. Continuing with the local project configuration."

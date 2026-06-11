@@ -450,4 +450,18 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
 
     assert!(!stdout.contains("Runtime code matched"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
+
+    // An explicitly configured but broken verifier must surface an error instead of being
+    // silently treated as "no explorer".
+    cmd.forge_fuse()
+        .args([
+            "verify-bytecode",
+            &address,
+            "Counter",
+            "--rpc-url",
+            rpc.as_str(),
+            "--verifier-url",
+            "this-is-not-a-url",
+        ])
+        .assert_failure();
 });
