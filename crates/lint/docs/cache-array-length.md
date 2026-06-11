@@ -3,14 +3,13 @@
 **Severity**: `Gas`
 **ID**: `cache-array-length`
 
-Flags `for` loop conditions that read a dynamic array or `bytes` value's `.length` on every
-iteration instead of comparing against a cached local length.
+Flags `for` loop conditions that read a storage dynamic array's `.length` on every iteration
+instead of comparing against a cached local length.
 
 ## What it does
 
-Reports comparison expressions in `for` loop conditions when either side reads `.length` from a
-dynamic array-like value, such as `i < values.length`, `values.length > i`, or compound conditions
-that repeat the same pattern.
+Reports simple comparison expressions in `for` loop conditions when either side reads `.length`
+from a state dynamic array, such as `i < values.length` or `values.length > i`.
 
 The lint does not report loops that already compare against a local cached length variable.
 It also skips loops that mutate an array length in the loop body, such as calling `push()` or
@@ -21,9 +20,9 @@ dynamic length lookup. This lint currently checks `for` loops.
 
 ## Why is this bad?
 
-Reading `.length` in the loop condition repeats the length lookup for every iteration. Caching the
-length once before entering the loop avoids repeated storage, memory, or calldata reads and can
-reduce gas for hot loops.
+Reading `.length` in the loop condition repeats the storage length lookup for every iteration.
+Caching the length once before entering the loop avoids repeated storage reads and can reduce gas
+for hot loops.
 
 ## Example
 

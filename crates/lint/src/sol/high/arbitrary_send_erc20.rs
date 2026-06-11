@@ -16,8 +16,10 @@ use solar::{
     },
 };
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     ops::ControlFlow,
+    rc::Rc,
 };
 
 declare_forge_lint!(
@@ -69,6 +71,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         if let Some(cid) = func.contract {
             seed_immutable_facts(gcx, hir, has_solady_lib, cid, &mut a);
         }
+        seed_internal_callsite_facts(gcx, hir, has_solady_lib, func, &mut a);
         for m in func.modifiers {
             collect_modifier_safety(
                 gcx,
@@ -169,6 +172,30 @@ struct FlowState {
     repayments: HashMap<PendingRepayment, u32>,
     aliases: HashMap<hir::VariableId, hir::VariableId>,
     sum_of: HashMap<hir::VariableId, (hir::VariableId, hir::VariableId)>,
+}
+
+#[derive(Default)]
+struct ProjectIndex {
+    function_ids_by_ptr: HashMap<usize, hir::FunctionId>,
+    internal_callsites: HashMap<hir::FunctionId, ParamCallsiteFacts>,
+}
+
+struct ParamCallsiteFacts {
+    seen: Vec<bool>,
+    all_safe: Vec<bool>,
+    all_self: Vec<bool>,
+    unknown: bool,
+}
+
+impl ParamCallsiteFacts {
+    fn new(len: usize) -> Self {
+        Self {
+            seen: vec![false; len],
+            all_safe: vec![true; len],
+            all_self: vec![true; len],
+            unknown: false,
+        }
+    }
 }
 
 impl FlowState {
@@ -1280,6 +1307,170 @@ fn seed_immutable_facts<'hir>(
             if var.kind.is_state() && (var.is_immutable() || var.is_constant()) {
                 out.self_vars.insert(*v);
             }
+        }
+    }
+}
+
+fn seed_internal_callsite_facts<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    has_solady_lib: bool,
+    func: &'hir hir::Function<'hir>,
+    out: &mut Analyzer<'hir>,
+) {
+    if !is_internal_callsite_seed_candidate(func) {
+        return;
+    }
+
+    let index = project_index_for(gcx, hir, has_solady_lib);
+    let ptr = std::ptr::from_ref::<hir::Function<'_>>(func) as usize;
+    let Some(fid) = index.function_ids_by_ptr.get(&ptr).copied() else { return };
+    let Some(facts) = index.internal_callsites.get(&fid) else { return };
+    if facts.unknown {
+        return;
+    }
+
+    for (i, param) in func.parameters.iter().copied().enumerate() {
+        if facts.seen.get(i).copied().unwrap_or(false)
+            && facts.all_safe.get(i).copied().unwrap_or(false)
+        {
+            out.safe_vars.insert(param);
+            if facts.all_self.get(i).copied().unwrap_or(false) {
+                out.self_vars.insert(param);
+            }
+        }
+    }
+}
+
+const fn is_internal_callsite_seed_candidate(func: &hir::Function<'_>) -> bool {
+    func.kind.is_function()
+        && matches!(func.visibility, ast::Visibility::Private | ast::Visibility::Internal)
+        && !func.parameters.is_empty()
+}
+
+thread_local! {
+    static PROJECT_INDEX: RefCell<Option<(usize, Rc<ProjectIndex>)>> = const { RefCell::new(None) };
+}
+
+fn project_index_for<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    has_solady_lib: bool,
+) -> Rc<ProjectIndex> {
+    let key = std::ptr::from_ref::<hir::Hir<'_>>(hir) as usize;
+    PROJECT_INDEX.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if let Some((cached_key, cached)) = slot.as_ref()
+            && *cached_key == key
+        {
+            return cached.clone();
+        }
+        let fresh = Rc::new(build_project_index(gcx, hir, has_solady_lib));
+        *slot = Some((key, fresh.clone()));
+        fresh
+    })
+}
+
+fn build_project_index<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    has_solady_lib: bool,
+) -> ProjectIndex {
+    let mut index = ProjectIndex::default();
+    for fid in hir.function_ids() {
+        let func = hir.function(fid);
+        index
+            .function_ids_by_ptr
+            .insert(std::ptr::from_ref::<hir::Function<'_>>(func) as usize, fid);
+    }
+
+    let mut collector =
+        InternalCallsiteCollector { gcx, hir, has_solady_lib, out: &mut index.internal_callsites };
+    for fid in hir.function_ids() {
+        let Some(body) = hir.function(fid).body else { continue };
+        for stmt in body.stmts {
+            let _ = collector.visit_stmt(stmt);
+        }
+    }
+    index
+}
+
+struct InternalCallsiteCollector<'a, 'hir> {
+    gcx: Gcx<'hir>,
+    hir: &'hir hir::Hir<'hir>,
+    has_solady_lib: bool,
+    out: &'a mut HashMap<hir::FunctionId, ParamCallsiteFacts>,
+}
+
+impl<'hir> hir::Visit<'hir> for InternalCallsiteCollector<'_, 'hir> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let ExprKind::Call(callee, args, _) = &expr.kind
+            && let Some(fid) = resolve_internal_fn(callee)
+        {
+            self.record_call(fid, args);
+        }
+        self.walk_expr(expr)
+    }
+}
+
+impl<'hir> InternalCallsiteCollector<'_, 'hir> {
+    fn record_call(&mut self, fid: hir::FunctionId, args: &'hir hir::CallArgs<'hir>) {
+        let func = self.hir.function(fid);
+        if !is_internal_callsite_seed_candidate(func) {
+            return;
+        }
+
+        let arity = func.parameters.len();
+        let facts = self.out.entry(fid).or_insert_with(|| ParamCallsiteFacts::new(arity));
+        if facts.unknown {
+            return;
+        }
+        let Some(call_args) = internal_call_args(self.hir, func, args) else {
+            facts.unknown = true;
+            return;
+        };
+        if call_args.len() != arity || facts.seen.len() != arity {
+            facts.unknown = true;
+            return;
+        }
+
+        let analyzer = Analyzer::new(self.gcx, self.hir, self.has_solady_lib);
+        for (i, arg) in call_args.into_iter().enumerate() {
+            facts.seen[i] = true;
+            facts.all_safe[i] &= analyzer.is_safe(arg);
+            facts.all_self[i] &= analyzer.is_self_expr(arg);
+        }
+    }
+}
+
+fn internal_call_args<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    func: &'hir hir::Function<'hir>,
+    args: &'hir hir::CallArgs<'hir>,
+) -> Option<Vec<&'hir hir::Expr<'hir>>> {
+    match args.kind {
+        hir::CallArgsKind::Unnamed(exprs) => {
+            (exprs.len() == func.parameters.len()).then(|| exprs.iter().collect())
+        }
+        hir::CallArgsKind::Named(named) => {
+            if named.len() != func.parameters.len() {
+                return None;
+            }
+            func.parameters
+                .iter()
+                .map(|param| {
+                    let name = hir.variable(*param).name?;
+                    named
+                        .iter()
+                        .find_map(|arg| (arg.name.as_str() == name.as_str()).then_some(&arg.value))
+                })
+                .collect()
         }
     }
 }
