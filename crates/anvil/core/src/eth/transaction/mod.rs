@@ -1,6 +1,6 @@
 //! Transaction related types
 use alloy_consensus::{
-    Transaction, Typed2718,
+    BlobTransactionSidecarVariant, Transaction, Typed2718,
     crypto::RecoveryError,
     transaction::{SignerRecoverable, TxHashRef},
 };
@@ -50,6 +50,33 @@ impl<T> MaybeImpersonatedTransaction<T> {
     /// Returns the inner transaction.
     pub fn into_inner(self) -> T {
         self.transaction
+    }
+}
+
+impl MaybeImpersonatedTransaction<FoundryTxEnvelope> {
+    /// Removes the blob sidecar from the wrapped transaction so it can be included in a block
+    /// body in its canonical (non-pooled) form, returning the sidecar, if any.
+    ///
+    /// Impersonated transactions are left untouched: their synthetic hash is derived from the
+    /// encoded transaction (see [`Self::hash`]), so stripping the sidecar would change the hash
+    /// users received at submission. Their sidecar is still returned so callers can index it.
+    pub fn strip_blob_sidecar(self) -> (Self, Option<BlobTransactionSidecarVariant>) {
+        let Self { transaction, impersonated_sender } = self;
+        if impersonated_sender.is_some() {
+            let sidecar = transaction.sidecar().map(|tx| tx.sidecar.clone());
+            (Self { transaction, impersonated_sender }, sidecar)
+        } else {
+            let (transaction, sidecar) = transaction.strip_blob_sidecar();
+            (Self { transaction, impersonated_sender }, sidecar)
+        }
+    }
+
+    /// Reattaches a blob sidecar to the wrapped transaction, returning the pooled (sidecarful)
+    /// form. No-op for non-EIP-4844 transactions and transactions that already carry a sidecar,
+    /// so the hash is unchanged in all cases (see [`FoundryTxEnvelope::with_blob_sidecar`]).
+    pub fn with_blob_sidecar(self, sidecar: BlobTransactionSidecarVariant) -> Self {
+        let Self { transaction, impersonated_sender } = self;
+        Self { transaction: transaction.with_blob_sidecar(sidecar), impersonated_sender }
     }
 }
 
