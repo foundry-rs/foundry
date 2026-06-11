@@ -187,9 +187,7 @@ mod tests {
 
     #[test]
     fn flatten_keeps_trace_node_ids_unique_when_appending_multiple_arenas() {
-        let mut existing = DebugNode::default();
-        existing.trace_node_idx = 1;
-        let mut flattened = vec![existing];
+        let mut flattened = vec![DebugNode { trace_node_idx: 1, ..Default::default() }];
 
         let mut arena = CallTraceArena::default();
         {
