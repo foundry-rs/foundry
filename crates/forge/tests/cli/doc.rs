@@ -1,4 +1,9 @@
-use foundry_test_utils::util::{RemoteProject, setup_forge_remote};
+use foundry_test_utils::{
+    assert_data_eq,
+    snapbox::Data,
+    str,
+    util::{RemoteProject, setup_forge_remote},
+};
 
 #[test]
 fn can_generate_solmate_docs() {
@@ -54,15 +59,33 @@ contract Example is IExample {
     cmd.args(["doc"]).assert_success();
 
     let doc_path = prj.root().join("docs/src/pages/src/contract.Example.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&doc_path, None),
+        str![[r#"
+...
+<a id="deposit-uint256"></a>
 
-    assert!(
-        content.contains("Deposit tokens into the vault"),
-        "deposit notice should be inherited"
-    );
-    assert!(
-        content.contains("Withdraw tokens from the vault"),
-        "withdraw notice should be inherited"
+### deposit
+
+Deposit tokens into the vault
+
+```solidity
+function deposit(uint256 amount) external;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| amount | `uint256` | The amount to deposit |
+
+<a id="withdraw-uint256"></a>
+
+### withdraw
+
+Withdraw tokens from the vault
+...
+"#]],
     );
 });
 
@@ -482,46 +505,145 @@ interface IMultiline {
     );
 });
 
-// Test that overload matching normalizes uint/int aliases inside compound types so that
-// `Base.foo(uint256[] calldata)` is correctly matched by `Child.foo(uint[] calldata)`.
-forgetest_init!(inheritdoc_overload_normalizes_uint_aliases_in_arrays, |prj, cmd| {
+// Test that overload matching uses canonical HIR/ABI parameter types so that
+// `Base.configure(uint)` is correctly matched by `Child.configure(uint256)`.
+forgetest_init!(inheritdoc_overload_matches_uint_alias, |prj, cmd| {
     prj.add_source(
-        "IAlias.sol",
+        "I.sol",
         r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-interface IAlias {
-    /// @notice Process values
-    /// @param values The input array
-    function process(uint256[] calldata values) external;
+interface I {
+    /// @notice Configure by amount.
+    /// @param amount The configured amount
+    function configure(uint amount) external;
+
+    /// @notice Configure by account.
+    /// @param account The configured account
+    function configure(address account) external;
 }
 "#,
     );
 
     prj.add_source(
-        "Alias.sol",
+        "C.sol",
         r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "./IAlias.sol";
+import "./I.sol";
 
-contract Alias is IAlias {
-    /// @inheritdoc IAlias
-    function process(uint[] calldata values) external {}
+contract C is I {
+    /// @inheritdoc I
+    function configure(uint256 amount) external override {}
+
+    /// @inheritdoc I
+    function configure(address account) external override {}
 }
 "#,
     );
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.Alias.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+<a id="configure-uint256"></a>
 
-    assert!(
-        content.contains("Process values"),
-        "@inheritdoc with uint[] calldata should match uint256[] calldata in base, found:\n{content}"
+### configure
+
+Configure by amount.
+
+```solidity
+function configure(uint256 amount) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| amount | `uint256` | The configured amount |
+
+<a id="configure-address"></a>
+
+### configure
+
+Configure by account.
+...
+"#]],
+    );
+});
+
+// Test that overload matching uses canonical HIR/ABI parameter types so that
+// `Base.batch(uint[])` is correctly matched by `Child.batch(uint256[])`.
+forgetest_init!(inheritdoc_overload_matches_uint_array_alias, |prj, cmd| {
+    prj.add_source(
+        "I.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface I {
+    /// @notice Batch values.
+    /// @param values The input array
+    function batch(uint[] calldata values) external;
+
+    /// @notice Batch accounts.
+    /// @param accounts The account array
+    function batch(address[] calldata accounts) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./I.sol";
+
+contract C is I {
+    /// @inheritdoc I
+    function batch(uint256[] calldata values) external override {}
+
+    /// @inheritdoc I
+    function batch(address[] calldata accounts) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+<a id="batch-uint256"></a>
+
+### batch
+
+Batch values.
+
+```solidity
+function batch(uint256[] calldata values) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| values | `uint256[]` | The input array |
+
+<a id="batch-address"></a>
+
+### batch
+
+Batch accounts.
+...
+"#]],
     );
 });
 
@@ -568,16 +690,104 @@ contract C is I {
 
     cmd.args(["doc"]).assert_success();
 
-    let content =
-        std::fs::read_to_string(prj.root().join("docs/src/pages/src/contract.C.mdx")).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+<a id="configure-status"></a>
 
-    assert!(
-        content.contains("Sets the account status"),
-        "@inheritdoc should match I.Status and Status as the same overload, found:\n{content}"
+### configure
+
+Sets the account status.
+
+```solidity
+function configure(Status s) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| s | `Status` | the new status |
+
+<a id="configure-uint256"></a>
+
+### configure
+
+Configures by raw id.
+...
+"#]],
     );
-    assert!(
-        content.contains("Configures by raw id"),
-        "uint256 overload should still inherit its notice, found:\n{content}"
+});
+
+// Test that internal overloads with non-ABI-printable parameters use source text
+// as a fallback instead of panicking while resolving @inheritdoc.
+forgetest_init!(inheritdoc_overload_matches_mapping_fallback, |prj, cmd| {
+    prj.add_source(
+        "Base.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+abstract contract Base {
+    /// @notice Configure by store.
+    /// @param store The storage mapping
+    function configure(mapping(uint256 => uint256) storage store) internal virtual;
+
+    /// @notice Configure by account.
+    /// @param account The configured account
+    function configure(address account) internal virtual;
+}
+"#,
+    );
+
+    prj.add_source(
+        "C.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./Base.sol";
+
+contract C is Base {
+    /// @inheritdoc Base
+    function configure(mapping(uint256 => uint256) storage store) internal override {}
+
+    /// @inheritdoc Base
+    function configure(address account) internal override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.C.mdx"), None),
+        str![[r#"
+...
+<a id="configure-mapping-uint256-uint256"></a>
+
+### configure
+
+Configure by store.
+
+```solidity
+function configure(mapping(uint256 => uint256) storage store) internal override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| store | `mapping(uint256 => uint256)` | The storage mapping |
+
+<a id="configure-address"></a>
+
+### configure
+
+Configure by account.
+...
+"#]],
     );
 });
 

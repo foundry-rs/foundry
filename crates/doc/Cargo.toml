@@ -17,6 +17,7 @@ workspace = true
 solar.workspace = true
 
 foundry-compilers.workspace = true
+foundry-common.workspace = true
 foundry-config.workspace = true
 
 alloy-primitives.workspace = true
@@ -29,4 +30,4 @@ tracing.workspace = true
 
 [features]
 default = ["optimism"]
-optimism = []
+optimism = ["foundry-common/optimism"]
