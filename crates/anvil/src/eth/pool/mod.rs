@@ -95,6 +95,17 @@ impl<T> Pool<T> {
         self.inner.read().contains(tx_hash)
     }
 
+    /// Returns true if this pool contains a transaction from `sender` with `nonce`.
+    pub fn contains_sender_nonce(&self, sender: Address, nonce: u64) -> bool
+    where
+        T: Transaction,
+    {
+        self.inner
+            .read()
+            .transactions_by_sender(sender)
+            .any(|tx| tx.pending_transaction.nonce() == nonce)
+    }
+
     /// Removes all transactions from the pool
     pub fn clear(&self) {
         let mut pool = self.inner.write();

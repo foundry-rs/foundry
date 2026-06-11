@@ -1515,6 +1515,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).await.to_rpc_result()
             }
+            EthRequest::EthResend(request, gas_price, gas_limit) => {
+                self.resend_transaction(*request, gas_price, gas_limit).await.to_rpc_result()
+            }
             EthRequest::EthSendTransactionSync(request) => {
                 self.send_transaction_sync(*request).await.to_rpc_result()
             }
@@ -2214,6 +2217,65 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
+        {
+            (requires, provides)
+        } else {
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+        };
+
+        self.add_pending_transaction(pending_transaction, requires, provides)
+    }
+
+    /// Resends a pending transaction with an updated gas price or gas limit.
+    ///
+    /// Handler for ETH RPC call: `eth_resend`
+    pub async fn resend_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+        gas_price: Option<U256>,
+        gas_limit: Option<U64>,
+    ) -> Result<TxHash> {
+        node_info!("eth_resend");
+
+        let from = request.from.map(Ok).unwrap_or_else(|| {
+            self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
+        })?;
+        let nonce = request.nonce.ok_or_else(|| {
+            BlockchainError::InvalidTransactionRequest(
+                "missing transaction nonce in transaction spec".to_string(),
+            )
+        })?;
+
+        if !self.pool.contains_sender_nonce(from, nonce) {
+            return Err(BlockchainError::TransactionNotFound);
+        }
+
+        if let Some(gas_price) = gas_price.filter(|gas_price| !gas_price.is_zero()) {
+            request.set_gas_price(gas_price.saturating_to());
+        }
+
+        if let Some(gas_limit) = gas_limit.filter(|gas_limit| *gas_limit != U64::ZERO) {
+            request.set_gas_limit(gas_limit.to());
+        }
+
+        let typed_tx = self.build_tx_request(request, nonce).await?;
+
+        let pending_transaction = if self.is_impersonated(from) {
+            let transaction = sign::build_impersonated(typed_tx);
+            self.ensure_typed_transaction_supported(&transaction)?;
+            trace!(target : "node", ?from, "eth_resend: impersonating");
+            PendingTransaction::with_impersonated(transaction, from)
+        } else {
+            let transaction = self.sign_request(&from, typed_tx)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
+            PendingTransaction::new(transaction)?
+        };
+
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
+
+        let on_chain_nonce = self.backend.current_nonce(from).await?;
         let (requires, provides) = if let Some((requires, provides)) =
             tempo_parallel_nonce_markers(&pending_transaction)
         {
