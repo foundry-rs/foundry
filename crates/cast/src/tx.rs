@@ -17,7 +17,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder, TransactionReceiptWithRevertReason, fmt::*,
-    get_pretty_receipt_w_reason_attr, shell, tempo::resolve_fee_token,
+    get_pretty_receipt_w_reason_attr, shell,
 };
 use foundry_config::{Chain, Config};
 use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
@@ -433,12 +433,6 @@ where
 
         // Apply gas, value, fee, and network-specific options.
         tx_opts.apply::<N>(&mut tx, legacy);
-
-        // Default to the chain's canonical fee token unless the user supplied one, so the
-        // resolved selection is materialized (and reported) consistently across cast commands.
-        if let Some(fee_token) = resolve_fee_token(Some(chain), tx.fee_token()) {
-            tx.set_fee_token(fee_token);
-        }
 
         Ok(Self {
             provider,
