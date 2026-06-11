@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "07:00"
+      time: "09:00"
       timezone: UTC
     cooldown:
       default-days: 7
@@ -18,7 +18,7 @@ updates:
     schedule:
       interval: weekly
       day: monday
-      time: "07:00"
+      time: "09:00"
       timezone: UTC
     cooldown:
       default-days: 7
