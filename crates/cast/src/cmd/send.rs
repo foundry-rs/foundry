@@ -510,6 +510,7 @@ where
 /// with [`CastTxBuilder`] (fields already set) and also with sol!-bindings (fields not yet set).
 ///
 /// NOTE: The default implementation returns an error. Only `TempoNetwork` supports this.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
     provider: &P,
     mut tx: N::TransactionRequest,
