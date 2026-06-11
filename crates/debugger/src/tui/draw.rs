@@ -2,7 +2,7 @@
 
 use super::context::{StatusKind, TUIContext};
 use crate::{debugger::DebuggerStats, op::OpcodeParam};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::SourceData;
@@ -437,33 +437,7 @@ impl TUIContext<'_> {
                     .skip(self.draw_memory.current_stack_startline)
                     .map(|(i, stack_item)| {
                         let param = params.iter().find(|param| param.index == i);
-                        let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
-
-                        // Stack index.
-                        spans.push(Span::styled(
-                            format!("{i:0min_len$}| "),
-                            Style::new().fg(Color::White),
-                        ));
-
-                        // Item hex bytes.
-                        hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
-                            if param.is_some() {
-                                Style::new().fg(Color::Cyan)
-                            } else {
-                                Style::new().fg(Color::White)
-                            }
-                        });
-
-                        if self.stack_labels
-                            && let Some(param) = param
-                        {
-                            spans.push(Span::raw("| "));
-                            spans.push(Span::raw(param.name));
-                        }
-
-                        spans.push(Span::raw("\n"));
-
-                        Line::from(spans)
+                        stack_item_line(i, min_len, stack_item, param, self.stack_labels)
                     })
                     .collect()
             })
@@ -639,6 +613,36 @@ fn full_checksum_address(address: &Address) -> String {
     address.to_string()
 }
 
+fn stack_item_line(
+    i: usize,
+    min_len: usize,
+    stack_item: &U256,
+    param: Option<&OpcodeParam>,
+    stack_labels: bool,
+) -> Line<'static> {
+    let value_style =
+        if param.is_some() { Style::new().fg(Color::Cyan) } else { Style::new().fg(Color::White) };
+    let mut spans = Vec::with_capacity(1 + 32 * 2 + 5);
+
+    // Stack index.
+    spans.push(Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White)));
+
+    // Item hex bytes.
+    hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| value_style);
+
+    spans.push(Span::raw(" | "));
+    spans.push(Span::styled(stack_item.to_string(), value_style));
+
+    if stack_labels && let Some(param) = param {
+        spans.push(Span::raw(" | "));
+        spans.push(Span::raw(param.name));
+    }
+
+    spans.push(Span::raw("\n"));
+
+    Line::from(spans)
+}
+
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
@@ -699,8 +703,16 @@ fn hex_digits(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::debugger::DebuggerStats;
-    use alloy_primitives::{Address, address};
+    use crate::{debugger::DebuggerStats, op::OpcodeParam};
+    use alloy_primitives::{Address, U256, address};
+    use ratatui::{
+        style::{Color, Style},
+        text::Line,
+    };
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|span| span.content.as_ref()).collect()
+    }
 
     #[test]
     fn op_list_title_includes_gas_and_subcall_stats() {
@@ -732,6 +744,32 @@ mod tests {
 
         assert!(title.contains("address: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"));
         assert!(!title.contains('…'));
+    }
+
+    #[test]
+    fn stack_item_line_includes_decimal_preview() {
+        let line = super::stack_item_line(0, 2, &U256::from(42), None, false);
+        let text = line_text(&line);
+
+        assert!(text.starts_with("00| "));
+        assert!(text.ends_with("2a | 42\n"));
+    }
+
+    #[test]
+    fn stack_item_line_keeps_stack_labels_after_decimal_preview() {
+        let param = OpcodeParam { name: "offset", index: 0 };
+        let line = super::stack_item_line(0, 2, &U256::from(16), Some(&param), true);
+
+        assert!(line_text(&line).ends_with("10 | 16 | offset\n"));
+    }
+
+    #[test]
+    fn stack_item_line_highlights_decimal_preview_for_opcode_params() {
+        let param = OpcodeParam { name: "offset", index: 0 };
+        let line = super::stack_item_line(0, 2, &U256::from(16), Some(&param), false);
+        let decimal = line.spans.iter().find(|span| span.content.as_ref() == "16").unwrap();
+
+        assert_eq!(decimal.style, Style::new().fg(Color::Cyan));
     }
 
     #[test]
