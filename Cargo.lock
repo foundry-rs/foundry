@@ -5873,7 +5873,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?branch=mablr%2Fsign-authorization-keychain#df09436a230d9beea8f8101f3089af58e2a3fc25"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=521a152b306bc21605d55d436097fde44327c2b6#521a152b306bc21605d55d436097fde44327c2b6"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",

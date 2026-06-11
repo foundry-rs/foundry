@@ -2740,7 +2740,7 @@ async fn run_key_auth_sign(
 
     if let Some(browser) = browser.run::<TempoNetwork>().await? {
         let signer_address = browser.address();
-        ensure_root_sender(signer_address, wallet.from)?;
+        ensure_key_authorization_root_sender(signer_address, wallet.from)?;
         let signed = browser.sign_key_authorization(authorization).await?;
         return print_signed_key_authorization(
             &signed,
@@ -2763,7 +2763,7 @@ async fn run_key_auth_sign(
         )
     })?;
     let signer_address = signer.address();
-    ensure_root_sender(signer_address, wallet.from)?;
+    ensure_key_authorization_root_sender(signer_address, wallet.from)?;
     let signature = signer.sign_hash(&signature_hash).await?;
     let signed = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
     print_signed_key_authorization(&signed, signature_hash, signer_address, authorized_key_type)
@@ -3215,6 +3215,18 @@ fn ensure_root_sender(actual: Address, expected: Option<Address>) -> Result<()> 
     {
         eyre::bail!(
             "AccountKeychain transaction must be signed by root account {expected}; resolved signer is {actual}"
+        );
+    }
+    Ok(())
+}
+
+/// Ensures key authorization artifacts are signed by the expected root account.
+fn ensure_key_authorization_root_sender(actual: Address, expected: Option<Address>) -> Result<()> {
+    if let Some(expected) = expected
+        && actual != expected
+    {
+        eyre::bail!(
+            "key authorization must be signed by root account {expected}; resolved signer is {actual}"
         );
     }
     Ok(())
@@ -3938,6 +3950,19 @@ mod tests {
         assert!(
             err.to_string().contains("--expiry must be greater than zero"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_key_auth_root_sender_mismatch_message_is_artifact_specific() {
+        let expected = target_addr(0x11);
+        let actual = target_addr(0x22);
+        let err = ensure_key_authorization_root_sender(actual, Some(expected)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "key authorization must be signed by root account {expected}; resolved signer is {actual}"
+            )
         );
     }
 
