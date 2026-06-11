@@ -19,10 +19,11 @@ use std::{
 use crate::utils::http_provider;
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
+use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, aliases::U96, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
@@ -93,11 +94,131 @@ async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
     )
     .await;
 
-    let (api, _handle) =
+    let (api, handle) =
         spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
 
     let node_info = api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.hard_fork, "T3");
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_reset_to_fork_preserves_explicit_coinbase() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let custom_coinbase = address!("0x1111111111111111111111111111111111111111");
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_set_coinbase(custom_coinbase).await.unwrap();
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, custom_coinbase);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_with_default_genesis_uses_fee_manager_beneficiary() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_genesis(Some(Genesis::default())),
+    )
+    .await;
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_with_loaded_zero_beneficiary_state_uses_fee_manager_beneficiary() {
+    let (source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let mut state = source_api.serialized_state(false).await.unwrap();
+    state.block.as_mut().unwrap().beneficiary = Address::ZERO;
+
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_init_state(Some(state)),
+    )
+    .await;
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_runtime_load_state_uses_fee_manager_beneficiary() {
+    let (source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let mut state = source_api.serialized_state(false).await.unwrap();
+    state.block.as_mut().unwrap().beneficiary = Address::ZERO;
+
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+
+    api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
+
+    api.mine_one().await;
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
 }
 
 sol! {
