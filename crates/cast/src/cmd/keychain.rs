@@ -361,6 +361,12 @@ pub struct KeyAuthorizationArgs {
     /// Call scope restrictions as a JSON array.
     #[arg(long = "scopes", value_parser = parse_auth_scopes_json_wrapped, conflicts_with = "scope")]
     scopes_json: Option<AuthScopesJson>,
+
+    /// Optional TIP-1053 witness to include in the authorization signing hash.
+    ///
+    /// `0x000...000` is a valid present witness and is distinct from omitting the flag.
+    #[arg(long)]
+    witness: Option<B256>,
 }
 
 /// Higher-level access-key policy editing commands.
@@ -2828,6 +2834,10 @@ impl KeyAuthorizationArgs {
             authorization = authorization.with_allowed_calls(scopes);
         }
 
+        if let Some(witness) = self.witness {
+            authorization = authorization.with_witness(witness);
+        }
+
         Ok(authorization)
     }
 }
@@ -3841,6 +3851,8 @@ mod tests {
             "secp256k1",
             "--expiry",
             "1782647677",
+            "--witness",
+            "0x5353535353535353535353535353535353535353535353535353535353535353",
             "--limit",
             "0x20c0000000000000000000000000000000000000:10000000",
         ])
@@ -3849,12 +3861,21 @@ mod tests {
         match command {
             KeyAuthorizationSubcommand::Encode {
                 authorization:
-                    KeyAuthorizationArgs { chain_id, key_address, key_type, expiry, limits, .. },
+                    KeyAuthorizationArgs {
+                        chain_id,
+                        key_address,
+                        key_type,
+                        expiry,
+                        limits,
+                        witness,
+                        ..
+                    },
             } => {
                 assert_eq!(chain_id, 4217);
                 assert_eq!(key_address, Address::from_str(key).unwrap());
                 assert_eq!(key_type, AuthSignatureType::Secp256k1);
                 assert_eq!(expiry, Some(1_782_647_677));
+                assert_eq!(witness, Some(B256::repeat_byte(0x53)));
                 assert_eq!(limits.len(), 1);
                 assert_eq!(limits[0].token, Address::from_str(token).unwrap());
                 assert_eq!(limits[0].limit, U256::from(10_000_000));
@@ -3906,6 +3927,7 @@ mod tests {
             limits: vec![],
             scope: vec![],
             scopes_json: None,
+            witness: None,
         }
     }
 
@@ -3927,6 +3949,19 @@ mod tests {
         let entry = tempo::KeyEntry { key_authorization: Some(hex), ..Default::default() };
         let json = key_entry_to_json(&entry);
         assert_eq!(json["authorization_witness"], witness.to_string());
+    }
+
+    #[test]
+    fn test_key_auth_encode_preserves_zero_witness_presence() {
+        let absent = key_auth_args().into_authorization().unwrap();
+        let mut args = key_auth_args();
+        args.witness = Some(B256::ZERO);
+        let zero_witness = args.into_authorization().unwrap();
+
+        assert_eq!(absent.witness(), None);
+        assert_eq!(zero_witness.witness(), Some(B256::ZERO));
+        assert_ne!(absent.signature_hash(), zero_witness.signature_hash());
+        assert_ne!(encode_key_authorization(&absent), encode_key_authorization(&zero_witness));
     }
 
     #[test]
