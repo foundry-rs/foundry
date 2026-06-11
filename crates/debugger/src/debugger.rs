@@ -7,8 +7,17 @@ use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::debug::ContractSources;
 use std::path::Path;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DebuggerStats {
+    /// Sum of root-call gas used across every trace arena passed to the debugger.
+    pub session_trace_gas_used: u64,
+    /// Number of subcalls in the traces passed to the debugger.
+    pub session_subcalls: usize,
+}
+
 pub struct DebuggerContext {
     pub debug_arena: Vec<DebugNode>,
+    pub stats: Option<DebuggerStats>,
     pub identified_contracts: AddressHashMap<String>,
     /// Source map of contract sources
     pub contracts_sources: ContractSources,
@@ -36,6 +45,25 @@ impl Debugger {
         Self {
             context: DebuggerContext {
                 debug_arena,
+                stats: None,
+                identified_contracts,
+                contracts_sources,
+                breakpoints,
+            },
+        }
+    }
+
+    pub(crate) const fn new_with_stats(
+        debug_arena: Vec<DebugNode>,
+        stats: DebuggerStats,
+        identified_contracts: AddressHashMap<String>,
+        contracts_sources: ContractSources,
+        breakpoints: Breakpoints,
+    ) -> Self {
+        Self {
+            context: DebuggerContext {
+                debug_arena,
+                stats: Some(stats),
                 identified_contracts,
                 contracts_sources,
                 breakpoints,

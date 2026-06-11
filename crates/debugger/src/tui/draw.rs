@@ -1,7 +1,8 @@
 //! TUI draw implementation.
 
 use super::context::{StatusKind, TUIContext};
-use crate::op::OpcodeParam;
+use crate::{debugger::DebuggerStats, op::OpcodeParam};
+use alloy_primitives::Address;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::SourceData;
@@ -398,13 +399,15 @@ impl TUIContext<'_> {
             })
             .collect::<Vec<_>>();
 
-        let title = format!(
-            "Address: {} | PC: 0x{:x} ({}) | Gas used: {} | Gas refund: {}",
+        let step = self.current_step();
+        let call_gas_used = self.debug_call().gas_limit.saturating_sub(step.gas_remaining);
+        let title = op_list_title(
             self.address(),
-            self.current_step().pc,
-            self.current_step().pc,
-            self.debug_call().gas_limit - self.current_step().gas_remaining,
-            self.current_step().gas_refund_counter
+            step.pc,
+            step.gas_remaining,
+            call_gas_used,
+            step.gas_refund_counter,
+            self.debugger_context.stats,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -606,6 +609,36 @@ impl TUIContext<'_> {
     }
 }
 
+fn op_list_title(
+    address: &Address,
+    pc: usize,
+    gas_remaining: u64,
+    call_gas_used: u64,
+    gas_refund_counter: u64,
+    stats: Option<DebuggerStats>,
+) -> String {
+    let address = full_checksum_address(address);
+    let mut title = format!(
+        "address: {address} | pc: 0x{pc:x} ({pc}) | gasLeft: {gas_remaining} | \
+         callGasUsed: {call_gas_used} | gasRefund: {gas_refund_counter}"
+    );
+
+    if let Some(stats) = stats {
+        write!(
+            title,
+            " | sessionTraceGasUsed: {} | sessionSubcalls: {}",
+            stats.session_trace_gas_used, stats.session_subcalls
+        )
+        .unwrap();
+    }
+
+    title
+}
+
+fn full_checksum_address(address: &Address) -> String {
+    address.to_string()
+}
+
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
@@ -666,6 +699,41 @@ fn hex_digits(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::debugger::DebuggerStats;
+    use alloy_primitives::{Address, address};
+
+    #[test]
+    fn op_list_title_includes_gas_and_subcall_stats() {
+        let stats = DebuggerStats { session_trace_gas_used: 789_012, session_subcalls: 3 };
+        let address = Address::from([0x42; 20]);
+        let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, Some(stats));
+
+        assert!(title.contains("pc: 0x2a (42)"));
+        assert!(title.contains(&format!("address: {}", super::full_checksum_address(&address))));
+        assert!(title.contains("gasLeft: 123456"));
+        assert!(title.contains("sessionTraceGasUsed: 789012"));
+        assert!(title.contains("sessionSubcalls: 3"));
+        assert!(title.contains("callGasUsed: 42"));
+        assert!(title.contains("gasRefund: 7"));
+    }
+
+    #[test]
+    fn op_list_title_omits_aggregate_stats_when_unavailable() {
+        let title = super::op_list_title(&Address::from([0x42; 20]), 0x2a, 123_456, 42, 7, None);
+
+        assert!(!title.contains("sessionTraceGasUsed"));
+        assert!(!title.contains("sessionSubcalls"));
+    }
+
+    #[test]
+    fn op_list_title_uses_full_checksum_address() {
+        let address = address!("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+        let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, None);
+
+        assert!(title.contains("address: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"));
+        assert!(!title.contains('…'));
+    }
+
     #[test]
     fn decimal_digits() {
         assert_eq!(super::decimal_digits(0), 1);
