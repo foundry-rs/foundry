@@ -4,6 +4,7 @@ use crate::{
     hir_ext::{self, NameToPage, clean_block_doc_content},
     utils::Deployment,
 };
+use foundry_common::sh_warn;
 use solar::{
     ast::{
         CommentKind, ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError,
@@ -327,9 +328,25 @@ fn render_contract<'ast, 'gcx>(
             // Attempt inheritdoc resolution.
             let inherited = fn_name.as_deref().and_then(|fname| {
                 let base = inheritdoc_base(docs)?;
-                let param_types = hir_ext::parameter_type_strings(gcx, &f.header.parameters);
+                let param_types = hir_id
+                    .and_then(|cid| {
+                        let fid = gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
+                            hir::ItemId::Function(id) if gcx.hir.function(id).span == *span => {
+                                Some(id)
+                            }
+                            _ => None,
+                        });
+                        if fid.is_none() {
+                            let _ = sh_warn!(
+                                "forge doc: failed to find HIR function for `{}.{fname}` while resolving @inheritdoc",
+                                c.name
+                            );
+                        }
+                        fid
+                    })
+                    .and_then(|fid| hir_ext::function_param_types(gcx, fid));
                 hir_id.and_then(|cid| {
-                    hir_ext::resolve_inheritdoc(gcx, cid, fname, &base, Some(&param_types))
+                    hir_ext::resolve_inheritdoc(gcx, cid, fname, &base, param_types.as_deref())
                 })
             });
             render_function_section(

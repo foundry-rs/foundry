@@ -8,13 +8,12 @@
 
 use path_slash::PathBufExt;
 use solar::{
-    ast::{
-        CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind, ParameterList,
-    },
+    ast::{CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind},
     interface::source_map::FileName,
     sema::{
         Gcx,
         hir::{ContractId, FunctionId, ItemId, SourceId, VariableId},
+        ty::{TyAbiPrinter, TyAbiPrinterMode},
     },
 };
 use std::{
@@ -264,8 +263,8 @@ pub struct InheritedDoc {
 /// matching function and returns its natspec if found.
 ///
 /// When `param_types` is `Some`, the resolver prefers a function whose parameter
-/// type signature matches exactly; this disambiguates overloads. If no exact
-/// signature match is found, it falls back to the first name match.
+/// type signature matches exactly; this disambiguates overloads. Ambiguous
+/// overloads are never matched by name alone.
 pub fn resolve_inheritdoc(
     gcx: Gcx<'_>,
     contract_id: ContractId,
@@ -316,7 +315,8 @@ pub fn resolve_inheritdoc(
         if let Some(want) = param_types
             && name_matches.len() > 1
         {
-            // Try to find a signature-exact match with docs; fall through to name matches below.
+            // Try to find a signature-exact match with docs; fall through only for
+            // non-overloaded name matches below.
             for &fid in &name_matches {
                 if let Some(got) = function_param_types(gcx, fid)
                     && got.len() == want.len()
@@ -332,7 +332,7 @@ pub fn resolve_inheritdoc(
             }
         }
 
-        if name_matches.len() > 1 && param_types.is_some() {
+        if name_matches.len() > 1 {
             continue;
         }
 
@@ -434,50 +434,56 @@ fn extract_inherited_doc_var(gcx: Gcx<'_>, vid: VariableId) -> Option<InheritedD
     Some(collect_inherited_doc(docs))
 }
 
-/// Extract the parameter type strings (in source order) for a function.
+/// Extract the canonical ABI parameter type strings (in source order) for a function.
 ///
-/// Returns `None` if the function's AST item cannot be located.
-fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
+/// Non-ABI-printable internal parameter types, such as mappings, fall back to their
+/// source spelling so inherited docs can still resolve without panicking.
+pub(crate) fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
     let f = gcx.hir.function(fid);
-    let ast_source = gcx.sources.get(f.source)?;
-    let ast = ast_source.ast.as_ref()?;
-    let fn_span = f.span;
+    let source_types = gcx
+        .sources
+        .get(f.source)
+        .and_then(|source| source.ast.as_ref())
+        .and_then(|ast| {
+            ast.items.iter().find_map(|item| match &item.kind {
+                ItemKind::Function(func) if item.span == f.span => Some(&func.header.parameters),
+                ItemKind::Contract(c) => c.body.iter().find_map(|m| match &m.kind {
+                    ItemKind::Function(func) if m.span == f.span => Some(&func.header.parameters),
+                    _ => None,
+                }),
+                _ => None,
+            })
+        })
+        .map(|params| {
+            let sm = gcx.sess.source_map();
+            params
+                .vars
+                .iter()
+                .map(|v| {
+                    normalize_sol_type(sm.span_to_snippet(v.ty.span).unwrap_or_default().trim())
+                })
+                .collect::<Vec<_>>()
+        });
 
-    let params = ast.items.iter().find_map(|item| match &item.kind {
-        solar::ast::ItemKind::Function(func) if item.span == fn_span => {
-            Some(&func.header.parameters)
-        }
-        solar::ast::ItemKind::Contract(c) => c.body.iter().find_map(|m| match &m.kind {
-            solar::ast::ItemKind::Function(func) if m.span == fn_span => {
-                Some(&func.header.parameters)
-            }
-            _ => None,
-        }),
-        _ => None,
-    })?;
-
-    Some(parameter_type_strings(gcx, params))
-}
-
-/// Compute the parameter type strings of a [`ParameterList`] from the source map.
-///
-/// Types are normalized to their canonical ABI form so that `uint` and `uint256`
-/// (and `int` / `int256`) compare equal during overload matching.
-pub fn parameter_type_strings(gcx: Gcx<'_>, params: &ParameterList<'_>) -> Vec<String> {
-    let sm = gcx.sess.source_map();
-    params
-        .vars
+    f.parameters
         .iter()
-        .map(|v| {
-            let raw = sm.span_to_snippet(v.ty.span).unwrap_or_default();
-            let t = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-            normalize_sol_type(&t)
+        .enumerate()
+        .map(|(idx, &param)| {
+            let ty = gcx.type_of_item(param.into());
+            if ty.can_be_exported(gcx) {
+                let mut out = String::new();
+                TyAbiPrinter::new(gcx, &mut out, TyAbiPrinterMode::Signature)
+                    .print(ty)
+                    .expect("writing ABI signature type to a String cannot fail");
+                Some(out)
+            } else {
+                source_types.as_ref().and_then(|types| types.get(idx).cloned())
+            }
         })
         .collect()
 }
 
-/// Canonicalize Solidity type aliases so that e.g. `uint[]` and `uint256[]`
-/// compare equal during overload matching.
+/// Canonicalize Solidity type aliases for generated anchors and source fallbacks.
 ///
 /// Replaces every occurrence of the bare alias tokens `uint` / `int` (not
 /// followed by a digit) with their canonical ABI equivalents `uint256` /
