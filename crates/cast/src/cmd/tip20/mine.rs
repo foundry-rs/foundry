@@ -120,6 +120,7 @@ pub(super) async fn register(
             tx,
             &signer,
             access_key,
+            Some(chain),
             send_tx.cast_async,
             send_tx.confirmations,
             timeout,
@@ -127,8 +128,16 @@ pub(super) async fn register(
         .await?;
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
-            .await?;
+        cast_send(
+            provider,
+            tx,
+            Some(chain),
+            send_tx.cast_async,
+            send_tx.sync,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     }
 
     Ok(())

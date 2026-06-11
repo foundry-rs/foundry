@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, resolve_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_resolved_fee_token_selection},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
@@ -436,6 +436,7 @@ impl Erc20Subcommand {
                         tx,
                         signer,
                         access_key,
+                        Some(chain),
                         $send_tx.cast_async,
                         $send_tx.confirmations,
                         timeout,
@@ -450,9 +451,6 @@ impl Erc20Subcommand {
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
-                    if let Some(fee_token) = resolve_fee_token(Some(chain), tx.fee_token()) {
-                        tx.set_fee_token(fee_token);
-                    }
                     fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
                     if print_sponsor_hash {
                         let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
@@ -464,6 +462,7 @@ impl Erc20Subcommand {
                     if let Some(sponsor) = &tempo_sponsor {
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     }
+                    print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&$provider)
                         .print_tx_result(
@@ -497,6 +496,7 @@ impl Erc20Subcommand {
                     cast_send(
                         $provider,
                         tx,
+                        Some(chain),
                         $send_tx.cast_async,
                         $send_tx.sync,
                         $send_tx.confirmations,
