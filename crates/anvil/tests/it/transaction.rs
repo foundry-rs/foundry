@@ -251,6 +251,59 @@ async fn can_resend_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_reject_invalid_resend_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let missing_nonce_tx =
+        TransactionRequest::default().to(to).value(amount).from(from).gas_price(gas_price);
+    let missing_nonce_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (WithOtherFields::new(missing_nonce_tx), None::<U256>, None::<U64>))
+        .await;
+    assert!(missing_nonce_resend.unwrap_err().to_string().contains("missing transaction nonce"));
+
+    let tx = TransactionRequest::default()
+        .to(to)
+        .value(amount)
+        .from(from)
+        .nonce(nonce)
+        .gas_price(gas_price);
+
+    let not_in_pool_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (WithOtherFields::new(tx.clone()), None::<U256>, None::<U64>))
+        .await;
+    assert!(not_in_pool_resend.unwrap_err().to_string().contains("transaction not found"));
+
+    let mut tx = WithOtherFields::new(tx);
+    tx.set_gas_price(gas_price + 1);
+    let pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+
+    let underpriced_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (tx, Some(U256::from(gas_price)), None::<U64>))
+        .await;
+    assert!(
+        underpriced_resend.unwrap_err().to_string().contains("replacement transaction underpriced")
+    );
+
+    api.mine_one().await;
+    pending_tx.get_receipt().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_reject_too_high_gas_limits() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
