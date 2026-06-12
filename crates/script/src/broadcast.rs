@@ -183,7 +183,7 @@ where
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
         }
-        print_fee_token_selection(tx.fee_token())?;
+        print_fee_token_selection(provider, tx.fee_token()).await?;
 
         Ok(())
     }
@@ -1259,7 +1259,7 @@ impl BundledState<TempoEvmNetwork> {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
         }
-        print_fee_token_selection(batch_tx.fee_token())?;
+        print_fee_token_selection(provider.as_ref(), batch_tx.fee_token()).await?;
 
         // Sign and send.
         let tx_hash = match batch_signer {

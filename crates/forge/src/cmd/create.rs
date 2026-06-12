@@ -571,7 +571,7 @@ impl CreateArgs {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         }
-        print_resolved_fee_token_selection(Some(chain), deployer.tx.fee_token())?;
+        print_resolved_fee_token_selection(&provider, Some(chain), deployer.tx.fee_token()).await?;
 
         // Deploy the actual contract
         let (deployed_contract, receipt) = if let Some(browser) = browser_signer {

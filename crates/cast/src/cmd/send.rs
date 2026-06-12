@@ -352,7 +352,8 @@ impl SendTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             }
-            print_resolved_fee_token_selection(Some(chain), tx_request.fee_token())?;
+            print_resolved_fee_token_selection(&provider, Some(chain), tx_request.fee_token())
+                .await?;
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
@@ -484,11 +485,11 @@ pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     timeout: u64,
 ) -> Result<B256>
 where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
+    print_resolved_fee_token_selection(&provider, chain, tx.fee_token()).await?;
     let cast = CastTxSender::new(provider);
-    print_resolved_fee_token_selection(chain, tx.fee_token())?;
 
     if sync {
         // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
@@ -522,12 +523,12 @@ pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
     timeout: u64,
 ) -> Result<B256>
 where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
-    print_resolved_fee_token_selection(chain, tx.fee_token())?;
+    print_resolved_fee_token_selection(provider, chain, tx.fee_token()).await?;
     let raw_tx = tx
         .sign_with_access_key(
             provider,

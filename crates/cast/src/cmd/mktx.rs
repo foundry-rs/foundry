@@ -181,7 +181,7 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             }
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            print_resolved_fee_token_selection(&provider, Some(chain), tx.fee_token()).await?;
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             print_scalar(raw_tx)?;
@@ -196,7 +196,7 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             }
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            print_resolved_fee_token_selection(&provider, Some(chain), tx.fee_token()).await?;
             let signed_tx = provider.sign_transaction(tx).await?;
 
             print_scalar(signed_tx)?;
@@ -215,7 +215,7 @@ impl MakeTxArgs {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         }
-        print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+        print_resolved_fee_token_selection(&provider, Some(chain), tx.fee_token()).await?;
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;
 

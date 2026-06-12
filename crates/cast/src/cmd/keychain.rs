@@ -3189,7 +3189,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             }
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            print_resolved_fee_token_selection(&provider, Some(chain), tx.fee_token()).await?;
 
             before_submit()?;
             let tx_hash = browser.send_transaction_via_browser(tx).await?;

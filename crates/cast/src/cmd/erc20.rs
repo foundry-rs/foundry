@@ -462,7 +462,8 @@ impl Erc20Subcommand {
                     if let Some(sponsor) = &tempo_sponsor {
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     }
-                    print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+                    print_resolved_fee_token_selection(&$provider, Some(chain), tx.fee_token())
+                        .await?;
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&$provider)
                         .print_tx_result(

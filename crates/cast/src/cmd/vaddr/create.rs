@@ -189,7 +189,7 @@ async fn register(
         tempo::fill_access_key_transaction(&provider, &mut tx, access_key, chain).await?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send_with_access_key`, so report the selection here.
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            print_resolved_fee_token_selection(&provider, Some(chain), tx.fee_token()).await?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -226,7 +226,7 @@ async fn register(
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send`, so report the selection here.
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            print_resolved_fee_token_selection(&provider, Some(chain), tx.fee_token()).await?;
             let cast = CastTxSender::new(&provider);
             if send_tx.sync {
                 cast.send_sync(tx).await.map(|(tx_hash, _)| tx_hash)
