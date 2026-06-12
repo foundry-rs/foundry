@@ -5516,6 +5516,7 @@ dependencies = [
 name = "foundry-debugger"
 version = "1.7.2"
 dependencies = [
+ "alloy-dyn-abi",
  "alloy-primitives",
  "crossterm",
  "eyre",
