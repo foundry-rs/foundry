@@ -3264,7 +3264,7 @@ where
         for<'a> F:
             FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
     {
-        let block = {
+        let (block, blob_sidecars) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { block_hash, .. } = storage
                 .transactions
@@ -3272,7 +3272,20 @@ where
                 .cloned()
                 .ok_or(BlockchainError::TransactionNotFound)?;
 
-            storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
+            let block =
+                storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?;
+            let blob_sidecars: HashMap<_, _> = block
+                .body
+                .transactions
+                .iter()
+                .filter_map(|tx| {
+                    storage
+                        .blob_sidecars
+                        .get(&tx.hash())
+                        .map(|sidecar| (tx.hash(), Arc::clone(sidecar)))
+                })
+                .collect();
+            (block, blob_sidecars)
         };
 
         let index = block
@@ -3287,7 +3300,7 @@ where
         // blob transactions.
         let rehydrate = |tx: &MaybeImpersonatedTransaction<FoundryTxEnvelope>| {
             let tx = tx.clone();
-            match self.blockchain.storage.read().blob_sidecars.get(&tx.hash()) {
+            match blob_sidecars.get(&tx.hash()) {
                 Some(sidecar) => tx.with_blob_sidecar((**sidecar).clone()),
                 None => tx,
             }

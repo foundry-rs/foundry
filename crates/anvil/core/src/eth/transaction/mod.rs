@@ -57,18 +57,13 @@ impl MaybeImpersonatedTransaction<FoundryTxEnvelope> {
     /// Removes the blob sidecar from the wrapped transaction so it can be included in a block
     /// body in its canonical (non-pooled) form, returning the sidecar, if any.
     ///
-    /// Impersonated transactions are left untouched: their synthetic hash is derived from the
-    /// encoded transaction (see [`Self::hash`]), so stripping the sidecar would change the hash
-    /// users received at submission. Their sidecar is still returned so callers can index it.
+    /// For impersonated transactions, the synthetic hash is derived from the transaction hash
+    /// rather than the pooled sidecarful encoding (see [`Self::hash`]), so stripping the sidecar
+    /// does not change the hash users received at submission.
     pub fn strip_blob_sidecar(self) -> (Self, Option<BlobTransactionSidecarVariant>) {
         let Self { transaction, impersonated_sender } = self;
-        if impersonated_sender.is_some() {
-            let sidecar = transaction.sidecar().map(|tx| tx.sidecar.clone());
-            (Self { transaction, impersonated_sender }, sidecar)
-        } else {
-            let (transaction, sidecar) = transaction.strip_blob_sidecar();
-            (Self { transaction, impersonated_sender }, sidecar)
-        }
+        let (transaction, sidecar) = transaction.strip_blob_sidecar();
+        (Self { transaction, impersonated_sender }, sidecar)
     }
 
     /// Reattaches a blob sidecar to the wrapped transaction, returning the pooled (sidecarful)
@@ -80,7 +75,7 @@ impl MaybeImpersonatedTransaction<FoundryTxEnvelope> {
     }
 }
 
-impl<T: SignerRecoverable + TxHashRef + Encodable> MaybeImpersonatedTransaction<T> {
+impl<T: SignerRecoverable + TxHashRef> MaybeImpersonatedTransaction<T> {
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, RecoveryError> {
         if let Some(sender) = self.impersonated_sender {
@@ -92,11 +87,11 @@ impl<T: SignerRecoverable + TxHashRef + Encodable> MaybeImpersonatedTransaction<
     /// Returns the hash of the transaction.
     ///
     /// If the transaction is impersonated, returns a unique hash derived by appending the
-    /// impersonated sender address to the encoded transaction before hashing.
+    /// impersonated sender address to the transaction hash before hashing.
     pub fn hash(&self) -> B256 {
         if let Some(sender) = self.impersonated_sender {
-            let mut buffer = Vec::new();
-            self.transaction.encode(&mut buffer);
+            let mut buffer = Vec::with_capacity(52);
+            buffer.extend_from_slice(self.transaction.tx_hash().as_ref());
             buffer.extend_from_slice(sender.as_ref());
             return B256::from_slice(alloy_primitives::utils::keccak256(&buffer).as_slice());
         }
@@ -173,7 +168,7 @@ impl<T> PendingTransaction<T> {
     }
 }
 
-impl<T: SignerRecoverable + TxHashRef + Encodable> PendingTransaction<T> {
+impl<T: SignerRecoverable + TxHashRef> PendingTransaction<T> {
     pub fn new(transaction: T) -> Result<Self, RecoveryError> {
         let transaction = MaybeImpersonatedTransaction::new(transaction);
         let sender = transaction.recover()?;
@@ -218,4 +213,68 @@ pub struct TransactionInfo {
     pub out: Option<Bytes>,
     pub nonce: u64,
     pub gas_used: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{
+        BlobTransactionSidecar, SignableTransaction, TxEip4844,
+        transaction::eip4844::TxEip4844Variant,
+    };
+    use alloy_primitives::{Signature, U256};
+
+    fn sidecarful_4844_envelope() -> (FoundryTxEnvelope, BlobTransactionSidecarVariant) {
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            to: Address::ZERO,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            blob_versioned_hashes: vec![B256::ZERO],
+            max_fee_per_blob_gas: 1,
+            input: Bytes::default(),
+        };
+        let sidecar = BlobTransactionSidecarVariant::Eip4844(BlobTransactionSidecar::new(
+            vec![Default::default()],
+            vec![Default::default()],
+            vec![Default::default()],
+        ));
+        let signature = Signature::new(U256::from(1), U256::from(1), false);
+        let variant = TxEip4844Variant::TxEip4844WithSidecar(tx.with_sidecar(sidecar.clone()));
+        (FoundryTxEnvelope::Eip4844(variant.into_signed(signature)), sidecar)
+    }
+
+    #[test]
+    fn impersonated_blob_strip_preserves_hash() {
+        let (transaction, sidecar) = sidecarful_4844_envelope();
+        let transaction =
+            MaybeImpersonatedTransaction::impersonated(transaction, Address::with_last_byte(1));
+        let hash = transaction.hash();
+
+        assert!(transaction.as_ref().sidecar().is_some());
+
+        let (stripped, stripped_sidecar) = transaction.strip_blob_sidecar();
+
+        assert_eq!(stripped_sidecar, Some(sidecar));
+        assert!(stripped.as_ref().sidecar().is_none());
+        assert_eq!(stripped.hash(), hash);
+    }
+
+    #[test]
+    fn impersonated_hash_includes_sender() {
+        let (transaction, _) = sidecarful_4844_envelope();
+
+        let first = MaybeImpersonatedTransaction::impersonated(
+            transaction.clone(),
+            Address::with_last_byte(1),
+        );
+        let second =
+            MaybeImpersonatedTransaction::impersonated(transaction, Address::with_last_byte(2));
+
+        assert_ne!(first.hash(), second.hash());
+    }
 }
