@@ -86,7 +86,10 @@ impl SourceData {
                     let source_map = compiler.sess().source_map();
                     for item in source.ast.as_ref()?.items.iter() {
                         if let solar::ast::ItemKind::Contract(contract) = &item.kind {
-                            let contract_range = source_map.span_to_range(item.span).ok()?;
+                            let Some(contract_range) = source_map.span_to_range(item.span).ok()
+                            else {
+                                continue;
+                            };
                             contract_definitions
                                 .push((contract.name.to_string(), contract_range.clone()));
                             collect_contract_debug_scopes(

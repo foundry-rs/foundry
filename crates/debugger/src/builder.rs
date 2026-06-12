@@ -116,13 +116,12 @@ fn identify_internal_calls(
         return;
     }
 
-    let identifier = DebugTraceIdentifier::new(sources.clone());
     for arena in trace_arenas {
         for node in arena.nodes_mut() {
             let Some(contract_name) = identified_contracts.get(&node.trace.address) else {
                 continue;
             };
-            identifier.identify_node_steps(node, contract_name);
+            DebugTraceIdentifier::identify_node_steps_with_sources(node, sources, contract_name);
         }
     }
 }

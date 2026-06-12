@@ -22,12 +22,41 @@ pub(crate) struct StatusMessage {
     pub(crate) text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveInternalCallLocation {
+    pub(crate) start_node_idx: usize,
+    pub(crate) start_step: usize,
+    pub(crate) end_step: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveInternalCallCache {
+    pub(crate) current_node_idx: usize,
+    pub(crate) trace_node_idx: usize,
+    pub(crate) absolute_step: usize,
+    pub(crate) location: Option<ActiveInternalCallLocation>,
+}
+
+impl ActiveInternalCallCache {
+    pub(crate) const fn matches(
+        self,
+        current_node_idx: usize,
+        trace_node_idx: usize,
+        absolute_step: usize,
+    ) -> bool {
+        self.current_node_idx == current_node_idx
+            && self.trace_node_idx == trace_node_idx
+            && self.absolute_step == absolute_step
+    }
+}
+
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
 #[derive(Default)]
 pub(crate) struct DrawMemory {
     pub(crate) inner_call_index: usize,
     pub(crate) current_buf_startline: usize,
     pub(crate) current_stack_startline: usize,
+    pub(crate) active_internal_call: Option<ActiveInternalCallCache>,
 }
 
 pub(crate) struct TUIContext<'a> {

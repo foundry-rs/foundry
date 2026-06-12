@@ -26,7 +26,16 @@ impl DebugTraceIdentifier {
     ///
     /// Accepts the node itself and identified name of the contract which node corresponds to.
     pub fn identify_node_steps(&self, node: &mut CallTraceNode, contract_name: &str) {
-        DebugStepsWalker::new(node, &self.contracts_sources, contract_name).walk();
+        Self::identify_node_steps_with_sources(node, &self.contracts_sources, contract_name);
+    }
+
+    /// Identifies internal function invocations without taking ownership of source metadata.
+    pub fn identify_node_steps_with_sources(
+        node: &mut CallTraceNode,
+        sources: &ContractSources,
+        contract_name: &str,
+    ) {
+        DebugStepsWalker::new(node, sources, contract_name).walk();
     }
 }
 
@@ -152,9 +161,9 @@ impl<'a> DebugStepsWalker<'a> {
 
                 Some((
                     inputs.and_then(|t| {
-                        try_decode_args_from_step(&t, &self.node.trace.steps[start_idx + 1])
+                        decode_step_parameters(&t, &self.node.trace.steps[start_idx + 1])
                     }),
-                    outputs.and_then(|t| try_decode_args_from_step(&t, self.current_step())),
+                    outputs.and_then(|t| decode_step_parameters(&t, self.current_step())),
                 ))
             })
             .unwrap_or_default();
@@ -233,7 +242,7 @@ fn parse_types(source: &str) -> (Option<Parameters<'_>>, Option<Parameters<'_>>)
 }
 
 /// Given [Parameters] and [CallTraceStep], tries to decode parameters by using stack and memory.
-fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Option<Vec<String>> {
+pub fn decode_step_parameters(args: &Parameters<'_>, step: &CallTraceStep) -> Option<Vec<String>> {
     let params = &args.params;
 
     if params.is_empty() {
@@ -263,6 +272,7 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
                         // filter out `uint8` params which are marked as storage or memory as this
                         // is not possible in Solidity and means that type is user-defined
                         (DynSolType::Uint(8), Some(Storage::Memory | Storage::Storage)) => None,
+                        (_, Some(Storage::Storage)) => None,
                         (_, Some(Storage::Memory)) => decode_from_memory(
                             type_,
                             step.memory.as_ref()?.as_bytes(),
@@ -337,9 +347,30 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_from_memory, source_span};
-    use alloy_dyn_abi::DynSolType;
-    use alloy_primitives::U256;
+    use super::{decode_from_memory, decode_step_parameters, source_span};
+    use alloy_dyn_abi::{DynSolType, parser::Parameters};
+    use alloy_primitives::{Bytes, U256};
+    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+    use revm_inspectors::tracing::types::CallTraceStep;
+
+    fn trace_step(stack: Vec<U256>) -> CallTraceStep {
+        CallTraceStep {
+            pc: 0,
+            op: OpCode::STOP,
+            stack: Some(stack.into_boxed_slice()),
+            push_stack: None,
+            memory: None,
+            returndata: Bytes::new(),
+            gas_remaining: 0,
+            gas_refund_counter: 0,
+            gas_used: 0,
+            gas_cost: 0,
+            storage_change: None,
+            status: Some(InstructionResult::Stop),
+            immediate_bytes: None,
+            decoded: None,
+        }
+    }
 
     #[test]
     fn source_span_returns_none_for_invalid_ranges() {
@@ -359,5 +390,13 @@ mod tests {
         let ty = DynSolType::Array(Box::new(DynSolType::Uint(256)));
 
         assert_eq!(decode_from_memory(&ty, &memory, 0), None);
+    }
+
+    #[test]
+    fn decode_step_parameters_marks_storage_params_unknown() {
+        let params = Parameters::parse("(uint256[] storage values)").unwrap();
+        let step = trace_step(vec![U256::from(5)]);
+
+        assert_eq!(decode_step_parameters(&params, &step), Some(vec!["<unknown>".to_string()]));
     }
 }

@@ -1,16 +1,15 @@
 //! TUI draw implementation.
 
-use super::context::{StatusKind, TUIContext};
+use super::context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext};
 use crate::{debugger::DebuggerStats, op::OpcodeParam};
-use alloy_dyn_abi::{
-    DynSolType, DynSolValue, Specifier,
-    parser::{Parameters, Storage},
-};
+use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
-use foundry_evm_traces::debug::{DebugSourceScope, DebugVariable, SourceData};
+use foundry_evm_traces::debug::{
+    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters,
+};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -18,11 +17,11 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm_inspectors::tracing::types::{CallKind, CallTraceStep, DecodedTraceStep};
+use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
-    pub(crate) fn draw_layout(&self, f: &mut Frame<'_>) {
+    pub(crate) fn draw_layout(&mut self, f: &mut Frame<'_>) {
         // We need 100 columns to display a 32 byte word in the memory and stack panes.
         let area = f.area();
         let min_width = 100;
@@ -85,7 +84,7 @@ impl TUIContext<'_> {
     /// |                             |
     /// |-----------------------------|
     /// ```
-    fn vertical_layout(&self, f: &mut Frame<'_>) {
+    fn vertical_layout(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
         let footer_height = self.footer_height();
 
@@ -139,7 +138,7 @@ impl TUIContext<'_> {
     /// |                 |           |
     /// |-----------------|-----------|
     /// ```
-    fn horizontal_layout(&self, f: &mut Frame<'_>) {
+    fn horizontal_layout(&mut self, f: &mut Frame<'_>) {
         let area = f.area();
         let footer_height = self.footer_height();
 
@@ -462,7 +461,7 @@ impl TUIContext<'_> {
         f.render_widget(paragraph, area);
     }
 
-    fn draw_variables(&self, f: &mut Frame<'_>, area: Rect) {
+    fn draw_variables(&mut self, f: &mut Frame<'_>, area: Rect) {
         let variables = self.scope_variables();
         let known = variables.iter().filter(|variable| variable.value.is_some()).count();
         let title = if variables.is_empty() {
@@ -637,7 +636,7 @@ struct ActiveInternalCall<'a> {
     start_node_idx: usize,
     start_step: usize,
     end_step: usize,
-    decoded: &'a revm_inspectors::tracing::types::DecodedInternalCall,
+    decoded: &'a DecodedInternalCall,
 }
 
 impl ScopeVariableKind {
@@ -659,18 +658,21 @@ impl ScopeVariableKind {
 }
 
 impl TUIContext<'_> {
-    fn scope_variables(&self) -> Vec<ScopeVariable> {
-        let Ok((source_element, source)) = self.src_map() else {
-            return Vec::new();
-        };
-        let start = source_element.offset() as usize;
-        let end = start.saturating_add(source_element.length() as usize);
-        let Some(scope) = source.find_debug_scope(start, end) else {
-            return Vec::new();
+    fn scope_variables(&mut self) -> Vec<ScopeVariable> {
+        let (scope, start) = {
+            let Ok((source_element, source)) = self.src_map() else {
+                return Vec::new();
+            };
+            let start = source_element.offset() as usize;
+            let end = start.saturating_add(source_element.length() as usize);
+            let Some(scope) = source.find_debug_scope(start, end) else {
+                return Vec::new();
+            };
+            (scope.clone(), start)
         };
 
-        let parameter_values = self.decode_parameter_values(scope);
-        let return_values = self.decode_return_values(scope);
+        let parameter_values = self.decode_parameter_values(&scope);
+        let return_values = self.decode_return_values(&scope);
         let mut variables = Vec::new();
 
         variables.extend(scope.parameters.iter().enumerate().map(|(i, variable)| ScopeVariable {
@@ -696,20 +698,22 @@ impl TUIContext<'_> {
         variables
     }
 
-    fn decode_parameter_values(&self, scope: &DebugSourceScope) -> Option<Vec<String>> {
+    fn decode_parameter_values(&mut self, scope: &DebugSourceScope) -> Option<Vec<String>> {
+        let scope_signature = scope_function_signature(scope);
         self.decode_internal_parameter_values(scope)
             .or_else(|| decode_external_parameter_values(scope, &self.debug_call().calldata))
             .or_else(|| {
                 self.debug_call().decoded.as_ref().and_then(|decoded| {
                     let call_data = decoded.call_data.as_ref()?;
-                    call_data_signature_name(&call_data.signature)
-                        .is_some_and(|name| name == scope.function_name)
+                    scope_signature
+                        .as_deref()
+                        .is_some_and(|signature| signature == call_data.signature)
                         .then(|| call_data.args.clone())
                 })
             })
     }
 
-    fn decode_return_values(&self, scope: &DebugSourceScope) -> Option<Vec<String>> {
+    fn decode_return_values(&mut self, scope: &DebugSourceScope) -> Option<Vec<String>> {
         let current_step = self.absolute_current_step();
         self.active_internal_call().and_then(|active| {
             (current_step >= active.end_step
@@ -719,23 +723,55 @@ impl TUIContext<'_> {
         })
     }
 
-    fn decode_internal_parameter_values(&self, scope: &DebugSourceScope) -> Option<Vec<String>> {
+    fn decode_internal_parameter_values(
+        &mut self,
+        scope: &DebugSourceScope,
+    ) -> Option<Vec<String>> {
         let active = self.active_internal_call()?;
         if !decoded_internal_name_matches(&active.decoded.func_name, scope) {
             return None;
         }
 
-        active.decoded.args.clone().or_else(|| {
-            let step =
-                self.debug_arena().get(active.start_node_idx)?.steps.get(active.start_step)?;
-            decode_step_parameters(&scope.parameters_src, step)
-        })
+        if let Some(args) = active.decoded.args.clone() {
+            return Some(args);
+        }
+
+        let start_node_idx = active.start_node_idx;
+        let start_step = active.start_step;
+        let parameters = Parameters::parse(&scope.parameters_src).ok()?;
+        let step = self.debug_arena().get(start_node_idx)?.steps.get(start_step)?;
+        decode_step_parameters(&parameters, step)
     }
 
-    fn active_internal_call(&self) -> Option<ActiveInternalCall<'_>> {
+    fn active_internal_call(&mut self) -> Option<ActiveInternalCall<'_>> {
         let current_node_idx = self.draw_memory.inner_call_index;
         let trace_node_idx = self.debug_call().trace_node_idx;
         let current_step = self.absolute_current_step();
+        let location = if let Some(cache) = self.draw_memory.active_internal_call
+            && cache.matches(current_node_idx, trace_node_idx, current_step)
+        {
+            cache.location
+        } else {
+            let location =
+                self.find_active_internal_call(current_node_idx, trace_node_idx, current_step);
+            self.draw_memory.active_internal_call = Some(ActiveInternalCallCache {
+                current_node_idx,
+                trace_node_idx,
+                absolute_step: current_step,
+                location,
+            });
+            location
+        }?;
+
+        self.active_internal_call_at(location)
+    }
+
+    fn find_active_internal_call(
+        &self,
+        current_node_idx: usize,
+        trace_node_idx: usize,
+        current_step: usize,
+    ) -> Option<ActiveInternalCallLocation> {
         let mut active = None;
 
         for (node_idx, node) in
@@ -752,19 +788,35 @@ impl TUIContext<'_> {
                 }
 
                 let Some(decoded) = step.decoded.as_deref() else { continue };
-                let DecodedTraceStep::InternalCall(call, end_step) = decoded else { continue };
+                let DecodedTraceStep::InternalCall(_, end_step) = decoded else { continue };
                 if current_step <= *end_step {
-                    active = Some(ActiveInternalCall {
+                    active = Some(ActiveInternalCallLocation {
                         start_node_idx: node_idx,
                         start_step: step_idx,
                         end_step: *end_step,
-                        decoded: call,
                     });
                 }
             }
         }
 
         active
+    }
+
+    fn active_internal_call_at(
+        &self,
+        location: ActiveInternalCallLocation,
+    ) -> Option<ActiveInternalCall<'_>> {
+        let step =
+            self.debug_arena().get(location.start_node_idx)?.steps.get(location.start_step)?;
+        let DecodedTraceStep::InternalCall(decoded, end_step) = step.decoded.as_deref()? else {
+            return None;
+        };
+        (*end_step == location.end_step).then_some(ActiveInternalCall {
+            start_node_idx: location.start_node_idx,
+            start_step: location.start_step,
+            end_step: location.end_step,
+            decoded,
+        })
     }
 
     fn absolute_current_step(&self) -> usize {
@@ -796,10 +848,6 @@ fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) 
         .unwrap_or_else(|| format!("{fallback_prefix}{index}"))
 }
 
-fn call_data_signature_name(signature: &str) -> Option<&str> {
-    signature.split_once('(').map(|(name, _)| name).or(Some(signature))
-}
-
 fn decoded_internal_name_matches(decoded_name: &str, scope: &DebugSourceScope) -> bool {
     if let Some((contract_name, function_name)) = decoded_name.rsplit_once("::") {
         return contract_name == scope.contract_name && function_name == scope.function_name;
@@ -825,52 +873,22 @@ fn decode_external_parameter_values(
     decode_abi_sequence(&types, &calldata[4..])
 }
 
-fn decode_step_parameters(parameters_src: &str, step: &CallTraceStep) -> Option<Vec<String>> {
-    let parameters = Parameters::parse(parameters_src).ok()?;
-    if parameters.params.is_empty() {
-        return Some(Vec::new());
-    }
-
-    let types = parameters
-        .params
-        .iter()
-        .map(|param| param.resolve().ok().map(|ty| (ty, param.storage)))
-        .collect::<Option<Vec<_>>>()?;
-    let stack = step.stack.as_ref()?;
-    if stack.len() < types.len() {
-        return None;
-    }
-
-    let inputs = &stack[stack.len() - types.len()..];
-    Some(
-        inputs
-            .iter()
-            .zip(types.iter())
-            .map(|(input, (ty, storage))| {
-                match (ty, storage) {
-                    (DynSolType::Uint(8), Some(Storage::Memory | Storage::Storage)) => None,
-                    (_, Some(Storage::Memory)) => {
-                        let memory = step.memory.as_ref().map(|memory| memory.as_bytes());
-                        let location = input.try_into().ok();
-                        memory
-                            .zip(location)
-                            .and_then(|(memory, location)| decode_from_memory(ty, memory, location))
-                    }
-                    _ => ty.abi_decode(&input.to_be_bytes::<32>()).ok(),
-                }
-                .as_ref()
-                .map(format_token)
-                .unwrap_or_else(|| "<unknown>".to_string())
-            })
-            .collect(),
-    )
-}
-
 fn resolved_types(parameters: &Parameters<'_>) -> Option<Vec<DynSolType>> {
     parameters.params.iter().map(|param| param.resolve().ok()).collect()
 }
 
+fn scope_function_signature(scope: &DebugSourceScope) -> Option<String> {
+    let parameters = Parameters::parse(&scope.parameters_src).ok()?;
+    let types = resolved_types(&parameters)?;
+    Some(function_signature(&scope.function_name, &types))
+}
+
 fn function_selector(function_name: &str, types: &[DynSolType]) -> [u8; 4] {
+    let signature = function_signature(function_name, types);
+    keccak256(signature.as_bytes())[..4].try_into().unwrap()
+}
+
+fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
     let mut signature = String::new();
     signature.push_str(function_name);
     signature.push('(');
@@ -881,7 +899,7 @@ fn function_selector(function_name: &str, types: &[DynSolType]) -> [u8; 4] {
         signature.push_str(&ty.sol_type_name());
     }
     signature.push(')');
-    keccak256(signature.as_bytes())[..4].try_into().unwrap()
+    signature
 }
 
 fn decode_abi_sequence(types: &[DynSolType], data: &[u8]) -> Option<Vec<String>> {
@@ -892,55 +910,6 @@ fn decode_abi_sequence(types: &[DynSolType], data: &[u8]) -> Option<Vec<String>>
     let value = DynSolType::Tuple(types.to_vec()).abi_decode_sequence(data).ok()?;
     let values = value.as_fixed_seq()?;
     Some(values.iter().map(format_token).collect())
-}
-
-fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option<DynSolValue> {
-    let first_word = memory_range(memory, location, 32)?;
-
-    match ty {
-        DynSolType::String | DynSolType::Bytes => {
-            let length: usize = U256::from_be_slice(first_word).try_into().ok()?;
-            let data = memory_range(memory, location.checked_add(32)?, length)?;
-
-            match ty {
-                DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
-                DynSolType::String => {
-                    Some(DynSolValue::String(String::from_utf8_lossy(data).to_string()))
-                }
-                _ => unreachable!(),
-            }
-        }
-        DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
-            let (length, start) = match ty {
-                DynSolType::FixedArray(_, length) => (*length, location),
-                DynSolType::Array(_) => {
-                    (U256::from_be_slice(first_word).try_into().ok()?, location.checked_add(32)?)
-                }
-                _ => unreachable!(),
-            };
-            memory_range(memory, start, length.checked_mul(32)?)?;
-            let mut decoded = Vec::with_capacity(length);
-
-            for i in 0..length {
-                let offset = start.checked_add(i.checked_mul(32)?)?;
-                let location = match inner.as_ref() {
-                    DynSolType::String | DynSolType::Bytes | DynSolType::Array(_) => {
-                        U256::from_be_slice(memory_range(memory, offset, 32)?).try_into().ok()?
-                    }
-                    _ => offset,
-                };
-
-                decoded.push(decode_from_memory(inner, memory, location)?);
-            }
-
-            Some(DynSolValue::Array(decoded))
-        }
-        _ => ty.abi_decode(first_word).ok(),
-    }
-}
-
-fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
-    memory.get(start..start.checked_add(len)?)
 }
 
 fn op_list_title(
@@ -1069,7 +1038,7 @@ mod tests {
         debugger::{DebuggerContext, DebuggerStats},
         op::OpcodeParam,
     };
-    use alloy_dyn_abi::{DynSolType, parser::Parameters};
+    use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
@@ -1079,7 +1048,8 @@ mod tests {
     };
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
     use revm_inspectors::tracing::types::{
-        CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep,
+        CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
+        DecodedTraceStep,
     };
 
     fn line_text(line: &Line<'_>) -> String {
@@ -1185,9 +1155,33 @@ mod tests {
     }
 
     #[test]
+    fn scope_function_signature_includes_resolved_parameter_types() {
+        let scope = scope("foo", "(uint256 amount, bool ok)");
+
+        assert_eq!(super::scope_function_signature(&scope).as_deref(), Some("foo(uint256,bool)"));
+    }
+
+    #[test]
+    fn decode_parameter_values_rejects_decoded_call_data_for_wrong_overload() {
+        let mut node = debug_node(0, 0, vec![trace_step(Vec::new())]);
+        node.decoded = Some(Box::new(DecodedCallTrace {
+            call_data: Some(DecodedCallData {
+                signature: "foo(address)".to_string(),
+                args: vec!["0x000000000000000000000000000000000000002a".to_string()],
+            }),
+            ..Default::default()
+        }));
+        let mut context = context_with_arena(vec![node]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(tui.decode_parameter_values(&scope("foo", "(uint256 amount)")), None);
+    }
+
+    #[test]
     fn decode_step_parameters_reads_static_values_from_stack() {
         let step = trace_step(vec![U256::from(42), U256::from(1)]);
-        let values = super::decode_step_parameters("(uint256 amount, bool ok)", &step).unwrap();
+        let parameters = Parameters::parse("(uint256 amount, bool ok)").unwrap();
+        let values = super::decode_step_parameters(&parameters, &step).unwrap();
 
         assert_eq!(values, ["42", "true"]);
     }
@@ -1219,16 +1213,24 @@ mod tests {
     }
 
     #[test]
-    fn decode_from_memory_rejects_overflow_location() {
-        assert_eq!(super::decode_from_memory(&DynSolType::Bytes, &[0; 64], usize::MAX), None);
-    }
+    fn active_internal_call_caches_by_current_node_and_step() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![internal_call_step(2, vec!["1".to_string()]), trace_step(Vec::new())],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
 
-    #[test]
-    fn decode_from_memory_rejects_oversized_dynamic_array_length() {
-        let memory = abi_word(U256::from(1_000_000)).to_vec();
-        let ty = DynSolType::Array(Box::new(DynSolType::Uint(256)));
+        assert!(tui.active_internal_call().is_some());
+        let cache = tui.draw_memory.active_internal_call;
+        assert!(cache.and_then(|cache| cache.location).is_some());
 
-        assert_eq!(super::decode_from_memory(&ty, &memory, 0), None);
+        assert!(tui.active_internal_call().is_some());
+        assert_eq!(tui.draw_memory.active_internal_call, cache);
+
+        tui.current_step = 1;
+        assert!(tui.active_internal_call().is_some());
+        assert_ne!(tui.draw_memory.active_internal_call, cache);
     }
 
     #[test]
