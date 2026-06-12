@@ -106,15 +106,28 @@ where
     (!symbol.is_empty()).then_some(symbol)
 }
 
-/// Prints the selected Tempo fee token when one is set, resolving unknown symbols on-chain.
-pub async fn print_fee_token_selection<N, P>(provider: &P, fee_token: Option<Address>) -> Result<()>
+/// Prints the selected Tempo fee token when one is set.
+///
+/// Unknown symbols are resolved on-chain only when a provider is supplied, because some provider
+/// modes such as `--curl` must preserve the first RPC request for the user's intended action.
+pub async fn maybe_print_fee_token<N, P>(
+    provider: Option<&P>,
+    fee_token: Option<Address>,
+) -> Result<()>
 where
     N: Network,
     N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
     P: Provider<N>,
 {
     if let Some(fee_token) = fee_token {
-        match resolve_fee_token_symbol(provider, fee_token).await {
+        let symbol = if let Some(symbol) = known_fee_token_symbol(fee_token) {
+            Some(symbol.to_string())
+        } else if let Some(provider) = provider {
+            resolve_fee_token_symbol(provider, fee_token).await
+        } else {
+            None
+        };
+        match symbol {
             Some(symbol) => sh_status!("Paying gas in {} ({})", symbol, fee_token)?,
             None => sh_status!("Paying gas in {}", fee_token)?,
         }
@@ -124,8 +137,8 @@ where
 
 /// Prints the fee token selected for display, resolving the chain default and unknown symbols
 /// without mutating a transaction request.
-pub async fn print_resolved_fee_token_selection<N, P>(
-    provider: &P,
+pub async fn maybe_print_resolved_fee_token<N, P>(
+    provider: Option<&P>,
     chain: Option<Chain>,
     fee_token: Option<Address>,
 ) -> Result<()>
@@ -134,7 +147,7 @@ where
     N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
     P: Provider<N>,
 {
-    print_fee_token_selection(provider, resolve_fee_token(chain, fee_token)).await
+    maybe_print_fee_token(provider, resolve_fee_token(chain, fee_token)).await
 }
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.

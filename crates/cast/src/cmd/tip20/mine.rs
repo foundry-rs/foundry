@@ -124,6 +124,7 @@ pub(super) async fn register(
             send_tx.cast_async,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     } else {
@@ -136,6 +137,7 @@ pub(super) async fn register(
             send_tx.sync,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     }
