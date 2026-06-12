@@ -15,7 +15,7 @@ use crate::cmd::{
     estimate::EstimateArgs,
     find_block::FindBlockArgs,
     interface::InterfaceArgs,
-    keychain::{KeyAuthSubcommand, KeychainSubcommand},
+    keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
     logs::LogsArgs,
     mktx::MakeTxArgs,
     rpc::RpcArgs,
@@ -1265,10 +1265,10 @@ pub enum CastSubcommand {
     },
 
     /// Tempo key authorization RLP helpers.
-    #[command(name = "key-auth")]
-    KeyAuth {
+    #[command(name = "key-authorization", visible_alias = "key-auth")]
+    KeyAuthorization {
         #[command(subcommand)]
-        command: KeyAuthSubcommand,
+        command: KeyAuthorizationSubcommand,
     },
 
     /// Tempo wallet integration (login, etc.).
