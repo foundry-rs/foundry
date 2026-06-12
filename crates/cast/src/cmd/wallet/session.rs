@@ -6,7 +6,7 @@ use clap::{Args, Parser};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::{TEMPO_SESSION_ID_ENV, TransactionOpts},
-    utils::LoadConfig,
+    utils::{LoadConfig, parse_fee_token_address},
 };
 use foundry_common::{
     provider::ProviderBuilder,
@@ -35,8 +35,7 @@ use crate::{
             KeychainTxOutcome, resolve_keychain_root_signer, send_keychain_tx_with_root_signer,
         },
         tempo_policy_args::{
-            parse_period, parse_policy_token, parse_scope as parse_policy_scope,
-            parse_selector_bytes,
+            parse_period, parse_scope as parse_policy_scope, parse_selector_bytes,
         },
     },
     tx::SendTxOpts,
@@ -812,7 +811,7 @@ fn parse_spend_limit(s: &str) -> Result<SessionSpendLimit, String> {
         return Err(format!("invalid limit format: {s} (expected TOKEN:AMOUNT or TOKEN=AMOUNT)"));
     };
 
-    let token = parse_policy_token(token_str.trim())?;
+    let token = parse_fee_token_address(token_str.trim()).map_err(|e| e.to_string())?;
     let amount: U256 =
         amount_str.trim().parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
     Ok(SessionSpendLimit { token, amount })
@@ -857,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_spend_limit_accepts_path_usd_alias() {
+    fn parse_spend_limit_accepts_fee_token_symbol() {
         let limit = parse_spend_limit("PathUSD=0").unwrap();
         assert_eq!(limit.token, PATH_USD_ADDRESS);
         assert_eq!(limit.amount, U256::ZERO);
