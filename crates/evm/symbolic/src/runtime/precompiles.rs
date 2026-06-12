@@ -54,9 +54,7 @@ pub(crate) fn execute_precompile(
             u64::MAX,
         ),
         Some(9) => blake2::run(input, u64::MAX),
-        Some(10) => {
-            return Err(SymbolicError::Unsupported("KZG point-evaluation precompile not modeled"));
-        }
+        Some(10) => kzg_point_evaluation::run(input, u64::MAX),
         _ => return Err(SymbolicError::Unsupported("unsupported precompile")),
     };
 
@@ -162,7 +160,7 @@ pub(crate) fn execute_symbolic_precompile(
             }
             Ok(Some(symbolic_fixed_len_precompile_output("blake2f", input, input_len, 64)))
         }
-        Some(10) => Err(SymbolicError::Unsupported("KZG point-evaluation precompile not modeled")),
+        Some(10) => symbolic_kzg_point_evaluation_precompile(input, input_len),
         _ => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
             let input = concrete_bytes(
@@ -174,6 +172,51 @@ pub(crate) fn execute_symbolic_precompile(
             execute_precompile(address, &input)
         }
     }
+}
+
+/// Computes the `symbolic_kzg_point_evaluation_precompile` precompile helper result.
+pub(crate) fn symbolic_kzg_point_evaluation_precompile(
+    input: Vec<SymWord>,
+    input_len: SymWord,
+) -> Result<Option<SymReturnData>, SymbolicError> {
+    let input_len = input_len.into_usize("symbolic KZG point-evaluation input size")?;
+    if input_len != 192 {
+        return Ok(None);
+    }
+    if input_len > input.len() {
+        return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
+    }
+
+    let input = &input[..input_len];
+    if let Ok(input) = concrete_bytes(input, "symbolic KZG point-evaluation precompile input") {
+        return execute_precompile(precompile_address(10), &input);
+    }
+
+    if let Some(SymWord::Concrete(version)) = input.first()
+        && version.to::<u8>() != kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG
+    {
+        return Ok(None);
+    }
+
+    if let Some(commitment) = concrete_precompile_bytes_at(input, 96, 48) {
+        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        for (actual, expected) in input[..32].iter().zip(expected_hash) {
+            if let SymWord::Concrete(actual) = actual
+                && actual.to::<u8>() != expected
+            {
+                return Ok(None);
+            }
+        }
+    }
+
+    Err(SymbolicError::Unsupported(
+        "symbolic KZG point-evaluation precompile could not construct replayable witness",
+    ))
+}
+
+/// Returns concrete precompile bytes when the selected range has no symbolic byte.
+fn concrete_precompile_bytes_at(input: &[SymWord], offset: usize, len: usize) -> Option<Vec<u8>> {
+    input.get(offset..offset + len).and_then(|bytes| concrete_bytes(bytes, "").ok())
 }
 
 fn input_has_symbolic_bytes(input: &[SymWord], input_len: usize) -> bool {

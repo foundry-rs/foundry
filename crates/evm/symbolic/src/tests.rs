@@ -1630,8 +1630,8 @@ fn advanced_precompiles_accept_symbolic_payloads() {
 }
 
 #[test]
-/// Regression coverage for `validity_sensitive_symbolic_precompiles_fail_closed`.
-fn validity_sensitive_symbolic_precompiles_fail_closed() {
+/// Regression coverage for `validity_sensitive_symbolic_precompiles_report_incomplete`.
+fn validity_sensitive_symbolic_precompiles_report_incomplete() {
     let bn_input = vec![SymWord::Expr(Expr::Var("point".to_string())); 128];
     let err = execute_symbolic_precompile(
         precompile_address(6),
