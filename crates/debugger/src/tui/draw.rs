@@ -17,7 +17,9 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
+use revm_inspectors::tracing::types::{
+    CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep,
+};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -633,8 +635,8 @@ enum ScopeVariableKind {
 }
 
 struct ActiveInternalCall<'a> {
-    start_node_idx: usize,
-    start_step: usize,
+    trace_node_idx: usize,
+    entry_step: usize,
     end_step: usize,
     decoded: &'a DecodedInternalCall,
 }
@@ -727,19 +729,21 @@ impl TUIContext<'_> {
         &mut self,
         scope: &DebugSourceScope,
     ) -> Option<Vec<String>> {
-        let active = self.active_internal_call()?;
-        if !decoded_internal_name_matches(&active.decoded.func_name, scope) {
-            return None;
-        }
+        let (args, trace_node_idx, entry_step) = {
+            let active = self.active_internal_call()?;
+            if !decoded_internal_name_matches(&active.decoded.func_name, scope) {
+                return None;
+            }
 
-        if let Some(args) = active.decoded.args.clone() {
+            (active.decoded.args.clone(), active.trace_node_idx, active.entry_step)
+        };
+
+        if let Some(args) = args {
             return Some(args);
         }
 
-        let start_node_idx = active.start_node_idx;
-        let start_step = active.start_step;
         let parameters = Parameters::parse(&scope.parameters_src).ok()?;
-        let step = self.debug_arena().get(start_node_idx)?.steps.get(start_step)?;
+        let step = self.step_by_absolute_index(trace_node_idx, entry_step)?;
         decode_step_parameters(&parameters, step)
     }
 
@@ -782,8 +786,8 @@ impl TUIContext<'_> {
             }
 
             for (step_idx, step) in node.steps.iter().enumerate() {
-                let start_step = node.step_offset.saturating_add(step_idx);
-                if start_step > current_step {
+                let marker_step = node.step_offset.saturating_add(step_idx);
+                if marker_step > current_step {
                     break;
                 }
 
@@ -791,8 +795,10 @@ impl TUIContext<'_> {
                 let DecodedTraceStep::InternalCall(_, end_step) = decoded else { continue };
                 if current_step <= *end_step {
                     active = Some(ActiveInternalCallLocation {
-                        start_node_idx: node_idx,
-                        start_step: step_idx,
+                        trace_node_idx,
+                        marker_node_idx: node_idx,
+                        marker_step_idx: step_idx,
+                        entry_step: marker_step.saturating_add(1),
                         end_step: *end_step,
                     });
                 }
@@ -806,17 +812,31 @@ impl TUIContext<'_> {
         &self,
         location: ActiveInternalCallLocation,
     ) -> Option<ActiveInternalCall<'_>> {
-        let step =
-            self.debug_arena().get(location.start_node_idx)?.steps.get(location.start_step)?;
+        let step = self
+            .debug_arena()
+            .get(location.marker_node_idx)?
+            .steps
+            .get(location.marker_step_idx)?;
         let DecodedTraceStep::InternalCall(decoded, end_step) = step.decoded.as_deref()? else {
             return None;
         };
         (*end_step == location.end_step).then_some(ActiveInternalCall {
-            start_node_idx: location.start_node_idx,
-            start_step: location.start_step,
+            trace_node_idx: location.trace_node_idx,
+            entry_step: location.entry_step,
             end_step: location.end_step,
             decoded,
         })
+    }
+
+    fn step_by_absolute_index(
+        &self,
+        trace_node_idx: usize,
+        absolute_step: usize,
+    ) -> Option<&CallTraceStep> {
+        self.debug_arena()
+            .iter()
+            .filter(|node| node.trace_node_idx == trace_node_idx)
+            .find_map(|node| node.steps.get(absolute_step.checked_sub(node.step_offset)?))
     }
 
     fn absolute_current_step(&self) -> usize {
@@ -1102,6 +1122,19 @@ mod tests {
         step
     }
 
+    fn internal_call_step_without_args(end_step: usize) -> CallTraceStep {
+        let mut step = trace_step(Vec::new());
+        step.decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+            DecodedInternalCall {
+                func_name: "DebugMe::foo".to_string(),
+                args: None,
+                return_data: None,
+            },
+            end_step,
+        )));
+        step
+    }
+
     fn debug_node(
         trace_node_idx: usize,
         step_offset: usize,
@@ -1184,6 +1217,22 @@ mod tests {
         let values = super::decode_step_parameters(&parameters, &step).unwrap();
 
         assert_eq!(values, ["42", "true"]);
+    }
+
+    #[test]
+    fn decode_internal_parameter_values_uses_absolute_entry_step() {
+        let mut context = context_with_arena(vec![
+            debug_node(0, 0, vec![internal_call_step_without_args(2)]),
+            debug_node(1, 0, vec![trace_step(Vec::new())]),
+            debug_node(0, 1, vec![trace_step(vec![U256::from(42)])]),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.draw_memory.inner_call_index = 2;
+
+        assert_eq!(
+            tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")),
+            Some(vec!["42".to_string()])
+        );
     }
 
     #[test]

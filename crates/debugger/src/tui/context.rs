@@ -24,8 +24,10 @@ pub(crate) struct StatusMessage {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveInternalCallLocation {
-    pub(crate) start_node_idx: usize,
-    pub(crate) start_step: usize,
+    pub(crate) trace_node_idx: usize,
+    pub(crate) marker_node_idx: usize,
+    pub(crate) marker_step_idx: usize,
+    pub(crate) entry_step: usize,
     pub(crate) end_step: usize,
 }
 
