@@ -88,7 +88,7 @@ tokio-tungstenite.workspace = true
 futures.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile.workspace = true
 
 [build-dependencies]
