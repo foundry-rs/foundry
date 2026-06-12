@@ -314,7 +314,8 @@ pub struct ExecutedPoolTransactions<T> {
     /// Per-transaction execution info.
     pub tx_info: Vec<TransactionInfo>,
     /// The included transactions (in order), in their canonical block-body form, i.e. EIP-4844
-    /// transactions without their blob sidecar.
+    /// transactions without their blob sidecar (except impersonated ones, whose synthetic hash
+    /// depends on the encoded transaction).
     pub txs: Vec<MaybeImpersonatedTransaction<T>>,
     /// Blob sidecars stripped from included EIP-4844 transactions, keyed by transaction hash.
     pub blob_sidecars: Vec<(TxHash, BlobTransactionSidecarVariant)>,
@@ -489,6 +490,9 @@ where
                 // Strip the blob sidecar before the transaction enters the block body: the
                 // transaction trie commits to the canonical EIP-2718 encoding, not the pooled
                 // sidecarful one. The sidecar is kept so it can be served via `anvil_getBlobs*`.
+                // Impersonated transactions are deliberately not stripped (see
+                // `MaybeImpersonatedTransaction::strip_blob_sidecar`), but their sidecar is
+                // still mirrored into the store.
                 let (transaction, sidecar) = pending.transaction.clone().strip_blob_sidecar();
                 if let Some(sidecar) = sidecar {
                     blob_sidecars.push((transaction.hash(), sidecar));

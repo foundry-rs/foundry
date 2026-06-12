@@ -3295,9 +3295,10 @@ where
             .position(|tx| tx.hash() == hash)
             .expect("transaction not found in block");
 
-        // Block bodies store blob transactions in their canonical form; reattach the stored
-        // sidecars for replay, since pool transaction validation expects pooled (sidecarful)
-        // blob transactions.
+        // Block bodies store blob transactions in their canonical form (impersonated ones
+        // excepted, which never lose their sidecar); reattach the stored sidecars for replay,
+        // since pool transaction validation expects pooled (sidecarful) blob transactions.
+        // Reattachment is a no-op for transactions that already carry a sidecar.
         let rehydrate = |tx: &MaybeImpersonatedTransaction<FoundryTxEnvelope>| {
             let tx = tx.clone();
             match blob_sidecars.get(&tx.hash()) {

@@ -300,7 +300,10 @@ pub struct BlockchainStorage<N: Network> {
     /// Block bodies store blob transactions in their canonical form, without the sidecar, so
     /// that the transaction trie commits to the canonical EIP-2718 encoding. The sidecars are
     /// kept here so they can be served via the `anvil_getBlobs*` endpoints and reattached when
-    /// replaying block transactions.
+    /// replaying block transactions. Exception: impersonated blob transactions keep their
+    /// sidecar in the block body (their synthetic hash depends on the encoded transaction, see
+    /// `MaybeImpersonatedTransaction::strip_blob_sidecar`); their sidecar is mirrored here so
+    /// lookups have a single source.
     pub blob_sidecars: B256HashMap<Arc<BlobTransactionSidecarVariant>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
@@ -454,8 +457,9 @@ impl<N: Network> BlockchainStorage<N> {
     /// Deserialize and add all blocks data to the backend storage
     ///
     /// Blob sidecars carried inside the serialized block bodies are moved into the sidecar
-    /// store, leaving the block-body transactions in their canonical form. The headers are kept
-    /// as-is: blocks mined before the canonical encoding fix keep their historical
+    /// store, leaving the block-body transactions in their canonical form (impersonated blob
+    /// transactions stay sidecarful, with the sidecar mirrored into the store). The headers are
+    /// kept as-is: blocks mined before the canonical encoding fix keep their historical
     /// `transactions_root` and block hash.
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
         for serializable_block in &serializable_blocks {
