@@ -1,6 +1,7 @@
 //! Transport that outputs equivalent curl commands instead of making RPC requests.
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
+use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{TransportError, TransportFut};
 use serde_json::Value;
 use tower::Service;
@@ -9,6 +10,15 @@ use url::Url;
 /// Escapes a string for use in a single-quoted shell argument.
 fn shell_escape(s: &str) -> String {
     s.replace('\'', "'\"'\"'")
+}
+
+/// Build a JWT using a secret
+fn build_jwt(jwt_secret: &str) -> eyre::Result<String> {
+    // Decode jwt from hex, then generate claims (iat with current timestamp)
+    let secret = JwtSecret::from_hex(jwt_secret)?;
+    let claims = Claims::default();
+    let token = secret.encode(&claims)?;
+    Ok(token)
 }
 
 /// Generates a curl command for an RPC request.
@@ -20,7 +30,7 @@ pub fn generate_curl_command(
     method: &str,
     params: Value,
     headers: Option<&[String]>,
-    jwt: Option<&str>,
+    jwt_secret: Option<&str>,
 ) -> String {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
@@ -34,8 +44,10 @@ pub fn generate_curl_command(
     let mut cmd = String::from("curl -X POST");
     cmd.push_str(" -H 'Content-Type: application/json'");
 
-    if let Some(jwt) = jwt {
-        cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt)));
+    if let Some(jwt_secret) = jwt_secret {
+        if let Ok(jwt) = build_jwt(jwt_secret) {
+            cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt.as_str())));
+        }
     }
 
     if let Some(hdrs) = headers {
@@ -76,7 +88,7 @@ impl CurlTransport {
         self
     }
 
-    /// Set the JWT for the transport.
+    /// Set the JWT Secret for the transport.
     pub fn with_jwt(mut self, jwt: Option<String>) -> Self {
         self.jwt = jwt;
         self
@@ -90,8 +102,13 @@ impl CurlTransport {
         let mut cmd = String::from("curl -X POST");
         cmd.push_str(" -H 'Content-Type: application/json'");
 
-        if let Some(jwt) = &self.jwt {
-            cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt)));
+        if let Some(jwt_secret) = &self.jwt {
+            if let Ok(jwt) = build_jwt(jwt_secret) {
+                cmd.push_str(&format!(
+                    " -H 'Authorization: Bearer {}'",
+                    shell_escape(jwt.as_str())
+                ));
+            }
         }
 
         for h in &self.headers {
