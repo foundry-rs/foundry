@@ -3,8 +3,12 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_consensus::Transaction;
-use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
+use alloy_network::{
+    AnyRpcTransaction, EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse,
+};
+use alloy_primitives::{
+    Address, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
+};
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
@@ -193,6 +197,110 @@ async fn can_replace_transaction() {
         BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
         block.transactions
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_resend_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let tx = TransactionRequest::default()
+        .to(to)
+        .value(amount)
+        .from(from)
+        .nonce(nonce)
+        .gas_price(gas_price);
+
+    let tx = WithOtherFields::new(tx);
+    let original_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+
+    let replacement_gas_price = gas_price + 1;
+    let replacement_gas_limit = 22_000;
+    let replacement_hash: TxHash = provider
+        .client()
+        .request(
+            "eth_resend",
+            (tx, Some(U256::from(replacement_gas_price)), Some(U64::from(replacement_gas_limit))),
+        )
+        .await
+        .unwrap();
+
+    assert_ne!(*original_pending_tx.tx_hash(), replacement_hash);
+
+    api.mine_one().await;
+
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
+    assert_eq!(BlockTransactions::Hashes(vec![replacement_hash]), block.transactions);
+
+    let replacement_tx: AnyRpcTransaction =
+        provider.get_transaction_by_hash(replacement_hash).await.unwrap().unwrap();
+    assert_eq!(replacement_tx.inner.tx_hash(), replacement_hash);
+    assert_eq!(replacement_tx.inner.gas_limit(), replacement_gas_limit);
+    assert_eq!(Transaction::max_fee_per_gas(&replacement_tx.inner), replacement_gas_price);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reject_invalid_resend_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let missing_nonce_tx =
+        TransactionRequest::default().to(to).value(amount).from(from).gas_price(gas_price);
+    let missing_nonce_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (WithOtherFields::new(missing_nonce_tx), None::<U256>, None::<U64>))
+        .await;
+    assert!(missing_nonce_resend.unwrap_err().to_string().contains("missing transaction nonce"));
+
+    let tx = TransactionRequest::default()
+        .to(to)
+        .value(amount)
+        .from(from)
+        .nonce(nonce)
+        .gas_price(gas_price);
+
+    let not_in_pool_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (WithOtherFields::new(tx.clone()), None::<U256>, None::<U64>))
+        .await;
+    assert!(not_in_pool_resend.unwrap_err().to_string().contains("transaction not found"));
+
+    let mut tx = WithOtherFields::new(tx);
+    tx.set_gas_price(gas_price + 1);
+    let pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+
+    let underpriced_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (tx, Some(U256::from(gas_price)), None::<U64>))
+        .await;
+    assert!(
+        underpriced_resend.unwrap_err().to_string().contains("replacement transaction underpriced")
+    );
+
+    api.mine_one().await;
+    pending_tx.get_receipt().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

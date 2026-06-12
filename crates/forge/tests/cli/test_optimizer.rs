@@ -1772,3 +1772,83 @@ contract TargetTest is Test {
 
     cmd.args(["build"]).assert_success();
 });
+
+// Test that `type(Contract).creationCode` keeps native pure semantics when dynamic linking is
+// enabled.
+forgetest_init!(preprocess_creation_code_in_pure_function, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {
+    uint256 public immutable value;
+    constructor(uint256 _value) { value = _value; }
+}
+        "#,
+    );
+
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Target} from "../src/Target.sol";
+
+contract TargetTest is Test {
+    function computeAddress(address factory, uint256 salt, uint256 value) internal pure returns (address) {
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                bytes1(0xff),
+                factory,
+                salt,
+                keccak256(abi.encodePacked(type(Target).creationCode, abi.encode(value)))
+            )
+        );
+        return address(uint160(uint256(hash)));
+    }
+
+    function testComputeAddress() public pure {
+        computeAddress(address(0xBEEF), 1, 100);
+    }
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
+});
+
+// Test that `type(Contract).creationCode` keeps native pure semantics when it is used in a
+// modifier body that is applied to a pure function.
+forgetest_init!(preprocess_creation_code_in_modifier_used_by_pure_function, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target {}
+        "#,
+    );
+
+    prj.add_test(
+        "ModifierCreationCode.t.sol",
+        r#"
+import {Target} from "../src/Target.sol";
+
+contract ModifierCreationCodeTest {
+    modifier usesCreationCode() {
+        bytes memory code = type(Target).creationCode;
+        code;
+        _;
+    }
+
+    function testModifierCreationCode() public pure usesCreationCode {}
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
+});

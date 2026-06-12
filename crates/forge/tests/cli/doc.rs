@@ -10,11 +10,6 @@ fn can_generate_solmate_docs() {
     let (prj, _) =
         setup_forge_remote(RemoteProject::new("transmissions11/solmate").set_build(false));
     prj.forge_command().args(["doc"]).assert_success();
-    // At least one MDX page was generated.
-    assert!(
-        std::fs::read_dir(prj.root().join("docs/src/pages/src")).is_ok(),
-        "docs/src/pages/src directory should exist"
-    );
 }
 
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments
@@ -121,13 +116,13 @@ contract Derived is IBase {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.Derived.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
-
-    assert!(
-        content.contains("[IBase](/src/interface.IBase)"),
-        "Hyperlink should be a root-relative vocs link, found: {:?}",
-        content.lines().find(|line| line.contains("[IBase]")).unwrap_or("not found")
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Derived.mdx"), None),
+        str![[r#"
+...
+Inherits: [IBase](/src/interface.IBase)
+...
+"#]],
     );
 });
 
@@ -177,22 +172,42 @@ contract CounterConstants {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.CounterConstants.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.CounterConstants.mdx"), None),
+        str![[r#"
+---
+title: "CounterConstants"
+---
 
-    assert!(content.contains("## Constants"), "Should have Constants section");
-    assert!(!content.contains("## State Variables"), "Should not have State Variables section");
+# CounterConstants
 
-    let constants_pos = content.find("## Constants").unwrap();
-    let functions_pos = content.find("## Functions").unwrap();
+## Constants
 
-    assert!(content.contains("### FOO"), "Should have FOO constant");
-    let foo_pos = content.find("### FOO").unwrap();
-    assert!(foo_pos > constants_pos && foo_pos < functions_pos, "FOO should be inside Constants");
+### FOO
 
-    assert!(content.contains("### BAR"), "Should have BAR immutable");
-    let bar_pos = content.find("### BAR").unwrap();
-    assert!(bar_pos > constants_pos && bar_pos < functions_pos, "BAR should be inside Constants");
+```solidity
+uint256 public constant FOO = 1;
+```
+
+### BAR
+
+```solidity
+uint256 public immutable BAR;
+```
+
+## Functions
+
+<a id="constructor"></a>
+
+### constructor
+
+```solidity
+constructor();
+```
+
+
+"#]],
+    );
 });
 
 // Test that state variables are documented under "State Variables" section when only state
@@ -217,20 +232,38 @@ contract CounterStateVariables {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.CounterStateVariables.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(
+            &prj.root().join("docs/src/pages/src/contract.CounterStateVariables.mdx"),
+            None,
+        ),
+        str![[r#"
+---
+title: "CounterStateVariables"
+---
 
-    assert!(!content.contains("## Constants"), "Should not have Constants section");
-    assert!(content.contains("## State Variables"), "Should have State Variables section");
+# CounterStateVariables
 
-    let state_vars_pos = content.find("## State Variables").unwrap();
-    let functions_pos = content.find("## Functions").unwrap();
+## State Variables
 
-    assert!(content.contains("### baz"), "Should have baz state variable");
-    let baz_pos = content.find("### baz").unwrap();
-    assert!(
-        baz_pos > state_vars_pos && baz_pos < functions_pos,
-        "baz should be inside State Variables"
+### baz
+
+```solidity
+uint256 public baz;
+```
+
+## Functions
+
+<a id="increment"></a>
+
+### increment
+
+```solidity
+function increment() public;
+```
+
+
+"#]],
     );
 });
 
@@ -264,40 +297,60 @@ contract CounterMixedVariables {
 
         cmd.args(["doc"]).assert_success();
 
-        let doc_path = prj.root().join("docs/src/pages/src/contract.CounterMixedVariables.mdx");
-        let content = std::fs::read_to_string(&doc_path).unwrap();
+        assert_data_eq!(
+            Data::read_from(
+                &prj.root().join("docs/src/pages/src/contract.CounterMixedVariables.mdx"),
+                None,
+            ),
+            str![[r#"
+---
+title: "CounterMixedVariables"
+---
 
-        assert!(content.contains("## Constants"), "Should have Constants section");
-        assert!(content.contains("## State Variables"), "Should have State Variables section");
+# CounterMixedVariables
 
-        let constants_pos = content.find("## Constants").unwrap();
-        let state_vars_pos = content.find("## State Variables").unwrap();
-        let functions_pos = content.find("## Functions").unwrap();
+## Constants
 
-        assert!(
-            constants_pos < state_vars_pos && state_vars_pos < functions_pos,
-            "Constants < State Variables < Functions"
-        );
+### FOO
 
-        assert!(content.contains("### FOO"), "Should have FOO constant");
-        let foo_pos = content.find("### FOO").unwrap();
-        assert!(
-            foo_pos > constants_pos && foo_pos < state_vars_pos,
-            "FOO should be inside Constants"
-        );
+```solidity
+uint256 public constant FOO = 1;
+```
 
-        assert!(content.contains("### BAR"), "Should have BAR immutable");
-        let bar_pos = content.find("### BAR").unwrap();
-        assert!(
-            bar_pos > constants_pos && bar_pos < state_vars_pos,
-            "BAR should be inside Constants"
-        );
+### BAR
 
-        assert!(content.contains("### baz"), "Should have baz state variable");
-        let baz_pos = content.find("### baz").unwrap();
-        assert!(
-            baz_pos > state_vars_pos && baz_pos < functions_pos,
-            "baz should be inside State Variables"
+```solidity
+uint256 public immutable BAR;
+```
+
+## State Variables
+
+### baz
+
+```solidity
+uint256 public baz;
+```
+
+## Functions
+
+<a id="constructor"></a>
+
+### constructor
+
+```solidity
+constructor();
+```
+
+<a id="increment"></a>
+
+### increment
+
+```solidity
+function increment() public;
+```
+
+
+"#]],
         );
     }
 );
@@ -337,31 +390,31 @@ contract Safe is IUnsafe {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.Safe.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Safe.mdx"), None),
+        str![[r#"
+...
+### transfer
 
-    // Inherited notice: bare `<` must be escaped (MDX only requires `<`, not `>`).
-    assert!(
-        content.contains("&lt;amount>"),
-        "inherited `<amount>` should have `<` escaped to `&lt;`, found:\n{content}"
-    );
-    assert!(
-        !content.contains("Transfer <amount>"),
-        "raw `<` from inherited notice must not appear unescaped, found:\n{content}"
-    );
-    // Unresolved {magic} in inherited notice must become inline code.
-    assert!(
-        content.contains("`magic`"),
-        "unresolved {{magic}} should become inline code, found:\n{content}"
-    );
-    // Unnamed return → &lt;none&gt;.
-    assert!(
-        content.contains("&lt;none&gt;"),
-        "unnamed return should render as `&lt;none&gt;`, found:\n{content}"
-    );
-    assert!(
-        content.contains("| &lt;none&gt; | `uint256` | new balance |"),
-        "unnamed return description should be preserved positionally, found:\n{content}"
+Transfer &lt;amount> tokens using `magic` spell
+
+```solidity
+function transfer(uint256 amount) external returns (uint256);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| amount | `uint256` | The value ` in wei ` |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `uint256` | new balance |
+...
+"#]],
     );
 });
 
@@ -396,29 +449,23 @@ contract Vault {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.Vault.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
-
-    // The label `Token <contract>` must have `<` escaped; it must NOT appear raw.
-    assert!(
-        !content.contains("Token <contract>"),
-        "raw `<` in link label must be escaped, found:\n{content}"
-    );
-    assert!(
-        content.contains("Token &lt;contract>"),
-        "link label `<` should be escaped to `&lt;`, found:\n{content}"
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Vault.mdx"), None),
+        str![[r#"
+...
+See [Token &lt;contract>](/src/contract.Token) for details
+...
+"#]],
     );
 });
 
 // Test that the removed `--serve` flag prints a helpful migration message instead of a raw
 // clap parse error.
 forgetest_init!(serve_flag_prints_migration_message, |prj, cmd| {
-    let output = cmd.args(["doc", "--serve"]).assert_failure();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
-    assert!(
-        stderr.contains("npm run dev") || stderr.contains("--serve has been removed"),
-        "expected migration message in stderr, got:\n{stderr}"
-    );
+    cmd.args(["doc", "--serve"]).assert_failure().stderr_eq(str![[r#"
+Error: `--serve` has been removed. Generate the docs with `forge doc`, then run `npm run dev` from the generated docs directory.
+
+"#]]);
 });
 
 // Test that MDX-unsafe characters in NatSpec are properly escaped in the generated output.
@@ -441,25 +488,32 @@ contract Escaping {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.Escaping.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Escaping.mdx"), None),
+        str![[r#"
+...
+Contains a bare &lt; angle bracket and a bare &#123; brace.
 
-    assert!(
-        content.contains("&lt;"),
-        "bare `<` should be escaped to `&lt;` in MDX output, found:\n{content}"
-    );
-    assert!(!content.contains(" < "), "bare `<` should not appear unescaped, found:\n{content}");
-    assert!(
-        content.contains("&#123;"),
-        "bare `{{` should be escaped to `&#123;` in MDX output, found:\n{content}"
-    );
-    assert!(
-        content.contains("`UnresolvableRef`"),
-        "unresolved {{Ident}} should become inline code, found:\n{content}"
-    );
-    assert!(
-        !content.contains("{UnresolvableRef}"),
-        "unresolved {{Ident}} must not appear raw in MDX output, found:\n{content}"
+<i>
+
+Reference to `UnresolvableRef` should become inline code.
+...
+### transfer
+
+Transfer tokens to recipient &lt; address
+
+```solidity
+function transfer(uint256 amount) external;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| amount | `uint256` | The amount ` in wei ` |
+
+
+"#]],
     );
 });
 
@@ -484,24 +538,23 @@ interface IMultiline {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/interface.IMultiline.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/interface.IMultiline.mdx"), None),
+        str![[r#"
+...
+**Parameters**
 
-    assert!(
-        content.contains("The first line of the description."),
-        "param first line should appear, found:\n{content}"
-    );
-    assert!(
-        content.contains("Second line of the param description."),
-        "param second line should appear, found:\n{content}"
-    );
-    assert!(
-        content.contains("The first line of return."),
-        "return first line should appear, found:\n{content}"
-    );
-    assert!(
-        content.contains("Second line of return description."),
-        "return second line should appear, found:\n{content}"
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| value | `uint256` | The first line of the description.<br/>Second line of the param description. |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| result | `uint256` | The first line of return.<br/>Second line of return description. |
+...
+"#]],
     );
 });
 
@@ -840,12 +893,25 @@ contract Derived is Base {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.Derived.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Derived.mdx"), None),
+        str![[r#"
+...
+### action
 
-    assert!(
-        content.contains("Perform the action"),
-        "@inheritdoc Base should resolve through Base's chain to IBase, found:\n{content}"
+Perform the action
+
+```solidity
+function action(uint256 value) external override;
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| value | `uint256` | The input value |
+...
+"#]],
     );
 });
 
@@ -899,10 +965,10 @@ library ECDSA {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/library.ECDSA.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
-
-    let expected = r#"---
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/library.ECDSA.mdx"), None),
+        str![[r#"
+---
 title: "ECDSA"
 description: "Library for verifying ECDSA signatures."
 ---
@@ -993,9 +1059,9 @@ function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure r
 | ---- | ---- | ----------- |
 | signer | `address` |  |
 
-"#;
 
-    similar_asserts::assert_eq!(content, expected);
+"#]],
+    );
 });
 
 // Test that @inheritdoc on a public state variable resolves docs from the interface getter
@@ -1033,16 +1099,25 @@ contract ERC20 is IERC20 {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/contract.ERC20.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.ERC20.mdx"), None),
+        str![[r#"
+...
+### totalSupply
 
-    assert!(
-        content.contains("Returns the total token supply"),
-        "@inheritdoc on state variable should inherit notice from interface getter, found:\n{content}"
-    );
-    assert!(
-        content.contains("The total supply"),
-        "@inheritdoc on state variable should inherit return docs from interface getter, found:\n{content}"
+Returns the total token supply.
+
+```solidity
+uint256 public totalSupply;
+```
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| &lt;none&gt; | `uint256` |  The total supply. |
+...
+"#]],
     );
 });
 
@@ -1086,15 +1161,18 @@ contract Consumer is Token {}
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/pages/src/a/contract.Consumer.mdx");
-    let content = std::fs::read_to_string(&doc_path).unwrap();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/a/contract.Consumer.mdx"), None),
+        str![[r#"
+---
+title: "Consumer"
+---
 
-    assert!(
-        content.contains("**Inherits:** [Token](/src/b/contract.Token)"),
-        "inheritance link must resolve via exact base id to `b/Token`, found:\n{content}"
-    );
-    assert!(
-        !content.contains("[Token](/src/a/contract.Token)"),
-        "inheritance link must not fall back to the same-directory namesake `a/Token`, found:\n{content}"
+# Consumer
+
+**Inherits:** [Token](/src/b/contract.Token)
+
+
+"#]],
     );
 });

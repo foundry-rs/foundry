@@ -213,6 +213,35 @@ casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
 });
 
+// TODO: remove this check once browser supports T5 KeyAuthorization fields
+casttest!(key_authorization_sign_rejects_browser_witness_before_browser_run, |_prj, cmd| {
+    let stderr = cmd
+        .args([
+            "key-authorization",
+            "sign",
+            accounts::ADDR2,
+            "--chain-id",
+            "31337",
+            "--witness",
+            "0x5353535353535353535353535353535353535353535353535353535353535353",
+            "--browser",
+            "--browser-disable-open",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr
+            .contains("browser key authorization signing does not support T5 fields yet: witness"),
+        "unexpected stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Waiting for browser wallet connection"),
+        "browser flow should not start before rejecting --browser --witness:\n{stderr}"
+    );
+});
+
 casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
     let output = cmd
         .args([

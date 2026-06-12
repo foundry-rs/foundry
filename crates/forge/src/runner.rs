@@ -7,8 +7,9 @@ use crate::{
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
-        InvariantFailure, InvariantPredicateResult, SuiteResult, TestResult, TestSetup, TestStatus,
-        invariant_campaign_display_name,
+        InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicCallTrace,
+        SymbolicCounterexample, SymbolicReplayMetadata, SymbolicResult, TestResult, TestSetup,
+        TestStatus, invariant_campaign_display_name,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -40,7 +41,9 @@ use foundry_evm::{
     traces::{TraceKind, TraceMode, load_contracts},
 };
 use foundry_evm_networks::NetworkVariant;
-use foundry_evm_symbolic::{SymbolicExecutor, SymbolicRunInput, SymbolicRunResult};
+use foundry_evm_symbolic::{
+    SymbolicExecutor, SymbolicRunInput, SymbolicRunResult, SymbolicStopReason,
+};
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::prelude::*;
@@ -1009,17 +1012,34 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         match result {
             SymbolicRunResult::Safe(stats) => {
-                self.result.symbolic_result(true, None, None, stats);
+                self.result.symbolic_result(
+                    TestStatus::Success,
+                    None,
+                    None,
+                    SymbolicResult::pass(&self.config.symbolic, stats),
+                );
             }
             SymbolicRunResult::Incomplete { kind, reason, stats } => {
+                let display_reason = format!("incomplete symbolic execution ({kind:?}): {reason}");
                 self.result.symbolic_result(
-                    false,
-                    Some(format!("incomplete symbolic execution ({kind:?}): {reason}")),
+                    TestStatus::Failure,
+                    Some(display_reason),
                     None,
-                    stats,
+                    SymbolicResult::incomplete(
+                        &self.config.symbolic,
+                        kind,
+                        reason,
+                        stats,
+                        SymbolicReplayMetadata::not_required(),
+                        SymbolicCallTrace::none(),
+                        None,
+                    ),
                 );
             }
             SymbolicRunResult::Counterexample { args, calldata, stats } => {
+                let symbolic_counterexample = SymbolicCounterexample::from(
+                    &BaseCounterExample::from_fuzz_call(calldata.clone(), args.clone(), None),
+                );
                 let (mut raw_call_result, reason) = match self.executor.call(
                     self.sender,
                     self.address,
@@ -1031,13 +1051,41 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Ok(res) => (res.raw, None),
                     Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
                     Err(EvmError::Skip(reason)) => {
-                        self.result.single_skip(reason);
+                        let replay_reason = format!("vm.skip during concrete replay: {reason}");
+                        self.result.symbolic_result(
+                            TestStatus::Skipped,
+                            reason.0,
+                            None,
+                            SymbolicResult::incomplete(
+                                &self.config.symbolic,
+                                SymbolicStopReason::Error,
+                                "concrete replay skipped the symbolic counterexample",
+                                stats,
+                                SymbolicReplayMetadata::skipped(replay_reason),
+                                SymbolicCallTrace::none(),
+                                Some(symbolic_counterexample),
+                            ),
+                        );
                         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
                         self.result.symbolic_diagnostics = symbolic_diagnostics;
                         return self.result;
                     }
                     Err(err) => {
-                        self.result.symbolic_result(false, Some(err.to_string()), None, stats);
+                        let reason = err.to_string();
+                        self.result.symbolic_result(
+                            TestStatus::Failure,
+                            Some(reason.clone()),
+                            None,
+                            SymbolicResult::incomplete(
+                                &self.config.symbolic,
+                                SymbolicStopReason::Error,
+                                reason.clone(),
+                                stats,
+                                SymbolicReplayMetadata::error(reason),
+                                SymbolicCallTrace::none(),
+                                Some(symbolic_counterexample),
+                            ),
+                        );
                         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
                         self.result.symbolic_diagnostics = symbolic_diagnostics;
                         return self.result;
@@ -1049,22 +1097,45 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &mut raw_call_result,
                     false,
                 );
-                let counterexample = CounterExample::Single(BaseCounterExample::from_fuzz_call(
+                let call_trace =
+                    SymbolicCallTrace::test_result_traces(raw_call_result.traces.is_some());
+                let base_counterexample = BaseCounterExample::from_fuzz_call(
                     calldata,
                     args,
                     raw_call_result.traces.clone(),
-                ));
-                self.result.extend(raw_call_result);
-                self.result.symbolic_result(
-                    false,
-                    if success {
-                        Some("symbolic counterexample did not replay".to_string())
-                    } else {
-                        reason
-                    },
-                    Some(counterexample),
-                    stats,
                 );
+                self.result.extend(raw_call_result);
+                if success {
+                    let reason = "symbolic counterexample did not replay".to_string();
+                    let counterexample = CounterExample::Single(base_counterexample);
+                    self.result.symbolic_result(
+                        TestStatus::Failure,
+                        Some(reason.clone()),
+                        Some(counterexample),
+                        SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            SymbolicStopReason::Error,
+                            reason.clone(),
+                            stats,
+                            SymbolicReplayMetadata::mismatch(reason),
+                            call_trace,
+                            Some(symbolic_counterexample),
+                        ),
+                    );
+                } else {
+                    let counterexample = CounterExample::Single(base_counterexample);
+                    self.result.symbolic_result(
+                        TestStatus::Failure,
+                        reason,
+                        Some(counterexample),
+                        SymbolicResult::fail_counterexample(
+                            &self.config.symbolic,
+                            stats,
+                            call_trace,
+                            symbolic_counterexample,
+                        ),
+                    );
+                }
             }
         }
 
