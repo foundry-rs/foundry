@@ -78,6 +78,14 @@ Forge reports symbolic test outcomes as:
   search or validate a counterexample for this run. Treat this outcome as "not
   established".
 
+When `--json` is enabled, each symbolic test result includes a stable
+`symbolic` object in addition to the legacy test fields. The schema lives at
+`crates/evm/symbolic/assets/symbolic-result.schema.json` and records the
+normalized status (`pass`, `fail_counterexample`, or `incomplete`), incomplete
+reason kind, effective bounds, solver identity and counters, explicit
+assumptions, call-trace location metadata, replay status, and counterexample
+payload when one exists.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
@@ -91,6 +99,10 @@ dynamic calldata length settings, and `symbolic.invariant_depth`.
 `Incomplete` can occur when exploration reaches a configured bound, the solver
 times out or returns `unknown`, a test uses unsupported EVM or cheatcode
 semantics, a backend error occurs, or a solver model does not replay concretely.
+When a solver candidate does not replay, it can still be shown as a diagnostic
+legacy top-level `counterexample`; treat it as confirmed only when
+`symbolic.status` is `fail_counterexample` and `symbolic.replay.status` is
+`confirmed`.
 
 Current modeling notes:
 
