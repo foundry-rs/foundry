@@ -3,11 +3,7 @@
 use crate::Config;
 use alloy_primitives::U256;
 use figment::value::Value;
-use foundry_compilers::artifacts::{
-    EvmVersion,
-    remappings::{Remapping, RemappingError},
-};
-use revm::primitives::hardfork::SpecId;
+use foundry_compilers::artifacts::remappings::{Remapping, RemappingError};
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
     io,
@@ -122,6 +118,69 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
     Ok(value)
 }
 
+/// Splits a shell-like argument string into argv parts without invoking a shell.
+///
+/// This supports whitespace separation, single and double quotes, and backslash escaping. It is
+/// intentionally smaller than a shell parser: expansions, redirection, pipelines, and command
+/// separators are treated as plain argument text by callers.
+///
+/// Returns `Err(quote_char)` when the input contains an unterminated quote.
+pub fn split_quoted_args(args: &str) -> Result<Vec<String>, char> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_started = false;
+
+    for ch in args.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            token_started = true;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            token_started = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            token_started = true;
+            continue;
+        }
+        if matches!(ch, '"' | '\'') {
+            quote = Some(ch);
+            token_started = true;
+        } else if ch.is_whitespace() {
+            if token_started {
+                parts.push(std::mem::take(&mut current));
+                token_started = false;
+            }
+        } else {
+            current.push(ch);
+            token_started = true;
+        }
+    }
+
+    if let Some(quote_ch) = quote {
+        return Err(quote_ch);
+    }
+    if escaped {
+        current.push('\\');
+        token_started = true;
+    }
+    if token_started {
+        parts.push(current);
+    }
+
+    Ok(parts)
+}
+
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
 ///
 /// This will also resolve symlinks
@@ -213,7 +272,22 @@ where
     deserialize_u64_or_max(deserializer)?.try_into().map_err(D::Error::custom)
 }
 
-/// Deserialize into `U256` from either a `u64` or a `U256` hex string.
+/// Serialize a `usize` as `"max"` if it equals `usize::MAX`, as a string if it exceeds
+/// `i64::MAX` (TOML integer limit), or as a plain number otherwise.
+pub(crate) fn serialize_usize_or_max<S>(value: &usize, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if *value == usize::MAX {
+        serializer.serialize_str("max")
+    } else if *value > i64::MAX as usize {
+        serializer.serialize_str(&value.to_string())
+    } else {
+        serializer.serialize_u64(*value as u64)
+    }
+}
+
+/// Deserialize into `U256` from either a `u64`, a `U256` hex string, or a decimal string.
 pub fn deserialize_u64_to_u256<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
     D: Deserializer<'de>,
@@ -223,11 +297,16 @@ where
     enum NumericValue {
         U256(U256),
         U64(u64),
+        String(String),
     }
 
     match NumericValue::deserialize(deserializer)? {
         NumericValue::U64(n) => Ok(U256::from(n)),
         NumericValue::U256(n) => Ok(n),
+        NumericValue::String(s) => {
+            // Handle decimal strings (e.g., "18446744073709551615")
+            U256::from_str(&s).map_err(D::Error::custom)
+        }
     }
 }
 
@@ -279,25 +358,5 @@ impl FromStr for Numeric {
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
         }
-    }
-}
-
-/// Returns the [SpecId] derived from [EvmVersion]
-pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
-    match evm_version {
-        EvmVersion::Homestead => SpecId::HOMESTEAD,
-        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
-        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-        EvmVersion::Byzantium => SpecId::BYZANTIUM,
-        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
-        EvmVersion::Petersburg => SpecId::PETERSBURG,
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
-        EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::PRAGUE,
-        EvmVersion::Osaka => SpecId::OSAKA,
     }
 }

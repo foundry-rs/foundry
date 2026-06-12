@@ -1,19 +1,17 @@
 use alloy_json_abi::JsonAbi;
 use eyre::{Result, WrapErr};
-use foundry_common::{TestFunctionExt, fs, selectors::SelectorKind, shell};
+use foundry_common::{TestFunctionExt, fs, fs::json_files, selectors::SelectorKind, shell};
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
-    artifacts::{CompactBytecode, Settings},
-    cache::{CacheEntry, CompilerCache},
-    utils::read_json_file,
+    Artifact, ArtifactId, ProjectCompileOutput, artifacts::CompactBytecode, utils::read_json_file,
 };
 use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
 use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
         CallTraceDecoder, TraceKind, Traces, decode_trace_arena, identifier::SignaturesCache,
-        render_trace_arena_inner,
+        prune_trace_depth, render_trace_arena_inner,
     },
 };
 use std::{
@@ -22,10 +20,10 @@ use std::{
 };
 use yansi::Paint;
 
-/// Given a `Project`'s output, removes the matching ABI, Bytecode and
-/// Runtime Bytecode of the given contract.
+/// Given a `Project`'s output, finds the contract by path and name and returns its
+/// ABI, creation bytecode, and `ArtifactId`.
 #[track_caller]
-pub fn remove_contract(
+pub fn find_contract_artifacts(
     output: ProjectCompileOutput,
     path: &Path,
     name: &str,
@@ -63,47 +61,6 @@ pub fn remove_contract(
         .into_owned();
 
     Ok((abi, bin, id))
-}
-
-/// Helper function for finding a contract by ContractName
-// TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
-// contract name?
-pub fn get_cached_entry_by_name(
-    cache: &CompilerCache<Settings>,
-    name: &str,
-) -> Result<(PathBuf, CacheEntry)> {
-    let mut cached_entry = None;
-    let mut alternatives = Vec::new();
-
-    for (abs_path, entry) in &cache.files {
-        for artifact_name in entry.artifacts.keys() {
-            if artifact_name == name {
-                if cached_entry.is_some() {
-                    eyre::bail!(
-                        "contract with duplicate name `{}`. please pass the path instead",
-                        name
-                    )
-                }
-                cached_entry = Some((abs_path.to_owned(), entry.to_owned()));
-            } else {
-                alternatives.push(artifact_name);
-            }
-        }
-    }
-
-    if let Some(entry) = cached_entry {
-        return Ok(entry);
-    }
-
-    let mut err = format!("could not find artifact: `{name}`");
-    if let Some(suggestion) = super::did_you_mean(name, &alternatives).pop() {
-        err = format!(
-            r#"{err}
-
-        Did you mean `{suggestion}`?"#
-        );
-    }
-    eyre::bail!(err)
 }
 
 /// Returns error if constructor has arguments.
@@ -155,8 +112,10 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
-    if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum()
+    let chain = Chain::from(chain_id);
+    if let Some(chain) = chain.named() {
+        return chain.is_tempo()
+            || chain.is_arbitrum()
             || chain.is_elastic()
             || matches!(
                 chain,
@@ -164,17 +123,23 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::AcalaMandalaTestnet
                     | NamedChain::AcalaTestnet
                     | NamedChain::Etherlink
-                    | NamedChain::EtherlinkTestnet
+                    | NamedChain::EtherlinkShadownet
                     | NamedChain::Karura
                     | NamedChain::KaruraTestnet
+                    | NamedChain::Kusama
                     | NamedChain::Mantle
                     | NamedChain::MantleSepolia
+                    | NamedChain::MegaEth
+                    | NamedChain::MegaEthTestnet
+                    | NamedChain::Metis
+                    | NamedChain::Monad
                     | NamedChain::MonadTestnet
                     | NamedChain::Moonbase
                     | NamedChain::Moonbeam
                     | NamedChain::MoonbeamDev
                     | NamedChain::Moonriver
-                    | NamedChain::Metis
+                    | NamedChain::Polkadot
+                    | NamedChain::PolkadotTestnet
             );
     }
     false
@@ -231,6 +196,10 @@ pub trait LoadConfig {
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
 
+        if config.networks != Default::default() {
+            evm_opts.networks = config.networks;
+        }
+
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
             trace!(target: "forge::config", ?fork_url, "Update EvmOpts fork url");
@@ -282,22 +251,25 @@ pub struct TraceResult {
 
 impl TraceResult {
     /// Create a new [`TraceResult`] from a [`RawCallResult`].
-    pub fn from_raw(raw: RawCallResult, trace_kind: TraceKind) -> Self {
+    pub fn from_raw<FEN: FoundryEvmNetwork>(
+        raw: RawCallResult<FEN>,
+        trace_kind: TraceKind,
+    ) -> Self {
         let RawCallResult { gas_used, traces, reverted, .. } = raw;
         Self { success: !reverted, traces: traces.map(|arena| vec![(trace_kind, arena)]), gas_used }
     }
 }
 
-impl From<DeployResult> for TraceResult {
-    fn from(result: DeployResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for TraceResult {
+    fn from(result: DeployResult<FEN>) -> Self {
         Self::from_raw(result.raw, TraceKind::Deployment)
     }
 }
 
-impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
-    type Error = EvmError;
+impl<FEN: FoundryEvmNetwork> TryFrom<Result<DeployResult<FEN>, EvmError<FEN>>> for TraceResult {
+    type Error = EvmError<FEN>;
 
-    fn try_from(value: Result<DeployResult, EvmError>) -> Result<Self, Self::Error> {
+    fn try_from(value: Result<DeployResult<FEN>, EvmError<FEN>>) -> Result<Self, Self::Error> {
         match value {
             Ok(result) => Ok(Self::from(result)),
             Err(EvmError::Execution(err)) => Ok(Self::from_raw(err.raw, TraceKind::Deployment)),
@@ -306,20 +278,9 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
-impl From<RawCallResult> for TraceResult {
-    fn from(result: RawCallResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<RawCallResult<FEN>> for TraceResult {
+    fn from(result: RawCallResult<FEN>) -> Self {
         Self::from_raw(result, TraceKind::Execution)
-    }
-}
-
-impl TryFrom<Result<RawCallResult>> for TraceResult {
-    type Error = EvmError;
-
-    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
-        match value {
-            Ok(result) => Ok(Self::from(result)),
-            Err(err) => Err(EvmError::from(err)),
-        }
     }
 }
 
@@ -328,6 +289,7 @@ pub async fn print_traces(
     decoder: &CallTraceDecoder,
     verbose: bool,
     state_changes: bool,
+    trace_depth: Option<usize>,
 ) -> Result<()> {
     let traces = result.traces.as_mut().expect("No traces found");
 
@@ -337,6 +299,11 @@ pub async fn print_traces(
 
     for (_, arena) in traces {
         decode_trace_arena(arena, decoder).await;
+
+        if let Some(trace_depth) = trace_depth {
+            prune_trace_depth(arena, trace_depth);
+        }
+
         sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
@@ -377,4 +344,73 @@ pub fn cache_local_signatures(output: &ProjectCompileOutput) -> Result<()> {
     }
     signatures.save(&path);
     Ok(())
+}
+
+/// Traverses all files at `folder_path`, parses any JSON ABI files found,
+/// and caches their function/event/error signatures to the local signatures cache.
+pub fn cache_signatures_from_abis(folder_path: impl AsRef<Path>) -> Result<()> {
+    let Some(cache_dir) = Config::foundry_cache_dir() else {
+        eyre::bail!("Failed to get `cache_dir` to generate local signatures.");
+    };
+    let path = cache_dir.join("signatures");
+    let mut signatures = SignaturesCache::load(&path);
+
+    json_files(folder_path.as_ref())
+        .filter_map(|path| std::fs::read_to_string(&path).ok())
+        .filter_map(|content| serde_json::from_str::<JsonAbi>(&content).ok())
+        .for_each(|json_abi| signatures.extend_from_abi(&json_abi));
+
+    signatures.save(&path);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_cache_signatures_from_abis() {
+        let temp_dir = tempdir().unwrap();
+        let abi_json = r#"[
+              {
+                  "type": "function",
+                  "name": "myCustomFunction",
+                  "inputs": [{"name": "amount", "type": "uint256"}],
+                  "outputs": [],
+                  "stateMutability": "nonpayable"
+              },
+              {
+                  "type": "event",
+                  "name": "MyCustomEvent",
+                  "inputs": [{"name": "value", "type": "uint256", "indexed": false}],
+                  "anonymous": false
+              },
+              {
+                  "type": "error",
+                  "name": "MyCustomError",
+                  "inputs": [{"name": "code", "type": "uint256"}]
+              }
+          ]"#;
+
+        let abi_path = temp_dir.path().join("test.json");
+        fs::write(&abi_path, abi_json).unwrap();
+
+        cache_signatures_from_abis(temp_dir.path()).unwrap();
+
+        let cache_dir = Config::foundry_cache_dir().unwrap();
+        let cache_path = cache_dir.join("signatures");
+        let cache = SignaturesCache::load(&cache_path);
+
+        let func_selector: alloy_primitives::Selector = "0x2e2dbaf7".parse().unwrap();
+        assert!(cache.contains_key(&SelectorKind::Function(func_selector)));
+
+        let event_selector: alloy_primitives::B256 =
+            "0x8cc20c47f3a2463817352f75dec0dbf43a7a771b5f6817a92bd5724c1f4aa745".parse().unwrap();
+        assert!(cache.contains_key(&SelectorKind::Event(event_selector)));
+
+        let error_selector: alloy_primitives::Selector = "0xd35f45de".parse().unwrap();
+        assert!(cache.contains_key(&SelectorKind::Error(error_selector)));
+    }
 }

@@ -67,9 +67,94 @@ Traces:
     ├─ [..] ReturnsNothing::func() [staticcall]
     │   └─ ← [Stop]
     ├─ [..] ReturnsString::func() [staticcall]
-    │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006737472696e670000000000000000000000000000000000000000000000000000
+    │   └─ ← [Return] "string"
     ├─ [..] ReturnsUint::func() [staticcall]
-    │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    │   └─ ← [Return] 1
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+forgetest_init!(trace_struct_outputs_use_called_contract_abi, |prj, cmd| {
+    prj.add_test(
+        "TraceStructOutputs.t.sol",
+        r#"
+pragma solidity ^0.8.18;
+
+import "forge-std/Test.sol";
+
+contract AAAMuchWow {
+    struct MuchWowStruct {
+        uint256 c;
+        uint256 d;
+    }
+
+    mapping(uint256 => MuchWowStruct) internal items;
+
+    constructor() {
+        items[2] = MuchWowStruct({ c: 3, d: 4 });
+    }
+
+    function item(uint256 id) public view returns (MuchWowStruct memory) {
+        return items[id];
+    }
+}
+
+contract ZWow {
+    struct WowStruct {
+        uint256 a;
+        uint256 b;
+    }
+
+    mapping(uint256 => WowStruct) internal items;
+
+    constructor() {
+        items[1] = WowStruct({ a: 1, b: 2 });
+    }
+
+    function item(uint256 id) public view returns (WowStruct memory) {
+        return items[id];
+    }
+}
+
+contract TraceStructOutputsTest is Test {
+    AAAMuchWow muchWow;
+    ZWow wow;
+
+    function setUp() public {
+        muchWow = new AAAMuchWow();
+        wow = new ZWow();
+    }
+
+    function testStructTracesUseContractAbi() public view {
+        ZWow.WowStruct memory wowItem = wow.item(1);
+        AAAMuchWow.MuchWowStruct memory muchWowItem = muchWow.item(2);
+
+        assertEq(wowItem.a, 1);
+        assertEq(wowItem.b, 2);
+        assertEq(muchWowItem.c, 3);
+        assertEq(muchWowItem.d, 4);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "testStructTracesUseContractAbi", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TraceStructOutputs.t.sol:TraceStructOutputsTest
+[PASS] testStructTracesUseContractAbi() ([GAS])
+Traces:
+  [..] TraceStructOutputsTest::testStructTracesUseContractAbi()
+    ├─ [..] ZWow::item(1) [staticcall]
+    │   └─ ← [Return] WowStruct({ a: 1, b: 2 })
+    ├─ [..] AAAMuchWow::item(2) [staticcall]
+    │   └─ ← [Return] MuchWowStruct({ c: 3, d: 4 })
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -378,6 +463,187 @@ Traces:
     │   │   │   │   └─ ← [Return] 3
     │   │   │   ├─ emit ChildDepth(childDepth: 3)
     │   │   │   ├─ emit Depth(depth: 2)
+    │   │   │   └─ ← [Return] 2
+    │   │   ├─ emit ChildDepth(childDepth: 2)
+    │   │   ├─ emit Depth(depth: 1)
+    │   │   └─ ← [Return] 1
+    │   ├─ emit ChildDepth(childDepth: 1)
+    │   ├─ emit Depth(depth: 0)
+    │   └─ ← [Return] 0
+    └─ ← [Stop]
+
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(trace_test_detph, |prj, cmd| {
+    prj.add_test(
+        "Trace.t.sol",
+        r#"
+pragma solidity ^0.8.18;
+
+import "forge-std/Test.sol";
+
+contract RecursiveCall {
+    TraceTest factory;
+
+    event Depth(uint256 depth);
+    event ChildDepth(uint256 childDepth);
+    event CreatedChild(uint256 childDepth);
+
+    constructor(address _factory) {
+        factory = TraceTest(_factory);
+    }
+
+    function recurseCall(uint256 neededDepth, uint256 depth) public returns (uint256) {
+        if (depth == neededDepth) {
+            this.negativeNum();
+            return neededDepth;
+        }
+
+        uint256 childDepth = this.recurseCall(neededDepth, depth + 1);
+        emit ChildDepth(childDepth);
+
+        this.someCall();
+        emit Depth(depth);
+
+        return depth;
+    }
+
+    function recurseCreate(uint256 neededDepth, uint256 depth) public returns (uint256) {
+        if (depth == neededDepth) {
+            return neededDepth;
+        }
+
+        RecursiveCall child = factory.create();
+        emit CreatedChild(depth + 1);
+
+        uint256 childDepth = child.recurseCreate(neededDepth, depth + 1);
+        emit ChildDepth(childDepth);
+        emit Depth(depth);
+
+        return depth;
+    }
+
+    function someCall() public pure {}
+
+    function negativeNum() public pure returns (int256) {
+        return -1000000000;
+    }
+}
+
+contract TraceTest is Test {
+    uint256 nodeId = 0;
+    RecursiveCall first;
+
+    function setUp() public {
+        first = this.create();
+    }
+
+    function create() public returns (RecursiveCall) {
+        RecursiveCall node = new RecursiveCall(address(this));
+        vm.label(address(node), string(abi.encodePacked("Node ", uintToString(nodeId++))));
+
+        return node;
+    }
+
+    function testRecurseCall() public {
+        first.recurseCall(8, 0);
+    }
+
+    function testRecurseCreate() public {
+        first.recurseCreate(8, 0);
+    }
+}
+
+function uintToString(uint256 value) pure returns (string memory) {
+    // Taken from OpenZeppelin
+    if (value == 0) {
+        return "0";
+    }
+    uint256 temp = value;
+    uint256 digits;
+    while (temp != 0) {
+        digits++;
+        temp /= 10;
+    }
+    bytes memory buffer = new bytes(digits);
+    while (value != 0) {
+        digits -= 1;
+        buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+        value /= 10;
+    }
+    return string(buffer);
+}
+"#,
+    );
+
+    cmd.args(["test", "-vvvvv", "--trace-depth", "3"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Trace.t.sol:TraceTest
+[PASS] testRecurseCall() ([GAS])
+Traces:
+  [..] TraceTest::setUp()
+    ├─ [..] TraceTest::create()
+    │   ├─ [..] → new Node 0@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   │   └─ ← [Return] 1911 bytes of code
+    │   ├─ [0] VM::label(Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f], "Node 0")
+    │   │   └─ ← [Return]
+    │   └─ ← [Return] Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
+    └─ ← [Stop]
+
+  [..] TraceTest::testRecurseCall()
+    ├─ [..] Node 0::recurseCall(8, 0)
+    │   ├─ [..] Node 0::recurseCall(8, 1)
+    │   │   ├─ [..] Node 0::recurseCall(8, 2)
+    │   │   │   └─ ← [Return] 2
+    │   │   ├─ emit ChildDepth(childDepth: 2)
+    │   │   ├─ [..] Node 0::someCall() [staticcall]
+    │   │   │   └─ ← [Stop]
+    │   │   ├─ emit Depth(depth: 1)
+    │   │   └─ ← [Return] 1
+    │   ├─ emit ChildDepth(childDepth: 1)
+    │   ├─ [..] Node 0::someCall() [staticcall]
+    │   │   └─ ← [Stop]
+    │   ├─ emit Depth(depth: 0)
+    │   └─ ← [Return] 0
+    └─ ← [Stop]
+
+[PASS] testRecurseCreate() ([GAS])
+Traces:
+  [..] TraceTest::setUp()
+    ├─ [..] TraceTest::create()
+    │   ├─ [..] → new Node 0@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   │   └─ ← [Return] 1911 bytes of code
+    │   ├─ [0] VM::label(Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f], "Node 0")
+    │   │   └─ ← [Return]
+    │   └─ ← [Return] Node 0: [0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f]
+    └─ ← [Stop]
+
+  [..] TraceTest::testRecurseCreate()
+    ├─ [..] Node 0::recurseCreate(8, 0)
+    │   ├─ [..] TraceTest::create()
+    │   │   ├─ [405132] → new Node 1@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   │   │   ├─  storage changes:
+    │   │   │   │   @ 0: 0 → 0x0000000000000000000000007fa9385be102ac3eac297483dd6233d62b3e1496
+    │   │   │   └─ ← [Return] 1911 bytes of code
+    │   │   ├─ [0] VM::label(Node 1: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], "Node 1")
+    │   │   │   └─ ← [Return]
+    │   │   ├─  storage changes:
+    │   │   │   @ 32: 1 → 2
+    │   │   └─ ← [Return] Node 1: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
+    │   ├─ emit CreatedChild(childDepth: 1)
+    │   ├─ [..] Node 1::recurseCreate(8, 1)
+    │   │   ├─ [..] TraceTest::create()
+    │   │   │   ├─  storage changes:
+    │   │   │   │   @ 32: 2 → 3
+    │   │   │   └─ ← [Return] Node 2: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
+    │   │   ├─ emit CreatedChild(childDepth: 2)
+    │   │   ├─ [..] Node 2::recurseCreate(8, 2)
     │   │   │   └─ ← [Return] 2
     │   │   ├─ emit ChildDepth(childDepth: 2)
     │   │   ├─ emit Depth(depth: 1)

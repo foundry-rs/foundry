@@ -1,6 +1,6 @@
 //! Debugger builder.
 
-use crate::{DebugNode, Debugger, node::flatten_call_trace};
+use crate::{DebugNode, Debugger, debugger::DebuggerStats, node::flatten_call_trace};
 use alloy_primitives::{Address, map::AddressHashMap};
 use foundry_common::get_contract_name;
 use foundry_evm_core::Breakpoints;
@@ -12,6 +12,8 @@ use foundry_evm_traces::{CallTraceArena, CallTraceDecoder, Traces, debug::Contra
 pub struct DebuggerBuilder {
     /// Debug traces returned from the EVM execution.
     debug_arena: Vec<DebugNode>,
+    /// Aggregate stats for the traces passed to the debugger.
+    stats: DebuggerStats,
     /// Identified contracts.
     identified_contracts: AddressHashMap<String>,
     /// Map of source files.
@@ -39,6 +41,12 @@ impl DebuggerBuilder {
     /// Extends the debug arena.
     #[inline]
     pub fn trace_arena(mut self, arena: CallTraceArena) -> Self {
+        if let Some(root) = arena.nodes().first() {
+            self.stats.session_trace_gas_used =
+                self.stats.session_trace_gas_used.saturating_add(root.trace.gas_used);
+        }
+        self.stats.session_subcalls =
+            self.stats.session_subcalls.saturating_add(arena.nodes().len().saturating_sub(1));
         flatten_call_trace(arena, &mut self.debug_arena);
         self
     }
@@ -86,7 +94,83 @@ impl DebuggerBuilder {
     /// Builds the debugger.
     #[inline]
     pub fn build(self) -> Debugger {
-        let Self { debug_arena, identified_contracts, sources, breakpoints } = self;
-        Debugger::new(debug_arena, identified_contracts, sources, breakpoints)
+        let Self { debug_arena, stats, identified_contracts, sources, breakpoints } = self;
+        Debugger::new_with_stats(debug_arena, stats, identified_contracts, sources, breakpoints)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Bytes;
+    use foundry_evm_traces::{CallKind, CallTrace, CallTraceNode};
+    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+    use revm_inspectors::tracing::types::{CallTraceStep, TraceMemberOrder};
+
+    fn step() -> CallTraceStep {
+        CallTraceStep {
+            pc: 0,
+            op: OpCode::STOP,
+            stack: None,
+            push_stack: None,
+            memory: None,
+            returndata: Bytes::new(),
+            gas_remaining: 0,
+            gas_refund_counter: 0,
+            gas_used: 0,
+            gas_cost: 0,
+            storage_change: None,
+            status: Some(InstructionResult::Stop),
+            immediate_bytes: None,
+            decoded: None,
+        }
+    }
+
+    fn trace_arena(gas_used: u64, subcalls: usize) -> CallTraceArena {
+        let mut arena = CallTraceArena::default();
+
+        {
+            let root = &mut arena.nodes_mut()[0];
+            root.trace.steps.push(step());
+            root.trace.gas_limit = 1;
+            root.trace.gas_used = gas_used;
+            root.ordering.push(TraceMemberOrder::Step(0));
+
+            for idx in 1..=subcalls {
+                root.ordering.push(TraceMemberOrder::Call(idx - 1));
+                root.children.push(idx);
+            }
+        }
+
+        for idx in 1..=subcalls {
+            arena.nodes_mut().push(CallTraceNode {
+                parent: Some(0),
+                idx,
+                trace: CallTrace { depth: 1, kind: CallKind::Call, ..Default::default() },
+                ..Default::default()
+            });
+        }
+
+        arena
+    }
+
+    #[test]
+    fn trace_arena_accumulates_stats() {
+        let builder = DebuggerBuilder::new().trace_arena(trace_arena(100, 1));
+
+        assert_eq!(builder.stats.session_subcalls, 1);
+        assert_eq!(builder.stats.session_trace_gas_used, 100);
+        assert_eq!(builder.debug_arena.len(), 1);
+    }
+
+    #[test]
+    fn trace_arena_accumulates_session_stats_across_multiple_arenas() {
+        let builder = DebuggerBuilder::new()
+            .trace_arena(trace_arena(100, 1))
+            .trace_arena(trace_arena(200, 2));
+
+        assert_eq!(builder.stats.session_subcalls, 3);
+        assert_eq!(builder.stats.session_trace_gas_used, 300);
+        assert_eq!(builder.debug_arena.len(), 2);
     }
 }

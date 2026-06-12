@@ -1,51 +1,60 @@
 use crate::{
-    AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor,
-    document::DocumentContent, helpers::merge_toml_table, solang_ext::Visitable,
+    hir_ext, render,
+    utils::{Deployment, git_source_url, read_deployments},
+    vocs,
 };
-use alloy_primitives::map::HashMap;
-use eyre::{Context, Result};
+use eyre::Result;
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
-use foundry_config::{DocConfig, FormatterConfig, filter::expand_globs};
-use itertools::Itertools;
-use mdbook::MDBook;
+use foundry_config::{DocConfig, filter::expand_globs};
 use rayon::prelude::*;
+use solar::{config::CompilerStage, sema::Compiler};
 use std::{
-    cmp::Ordering,
+    collections::{HashMap, HashSet},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, PathBuf},
+    time::{Duration, Instant},
 };
-use toml::value;
 
-/// Build Solidity documentation for a project from natspec comments.
-/// The builder parses the source files using [Parser],
-/// then formats and writes the elements as the output.
+/// Summary stats produced by [`DocBuilder::build`], surfaced to the user as
+/// progress feedback by `forge doc`.
+#[derive(Debug, Default, Clone)]
+pub struct BuildStats {
+    /// Number of Solidity sources considered for rendering.
+    pub sources: usize,
+    /// Number of MDX pages written to disk.
+    pub pages: usize,
+    /// Total time spent generating MDX pages and pruning stale ones.
+    pub render_elapsed: Duration,
+    /// Total time spent writing the vocs site scaffold.
+    pub site_elapsed: Duration,
+}
+
+/// Build Solidity documentation for a project from natspec comments using [`solar`].
 #[derive(Debug)]
 pub struct DocBuilder {
-    /// The project root
-    root: PathBuf,
+    /// Project root.
+    pub root: PathBuf,
     /// Path to Solidity source files.
-    sources: PathBuf,
+    pub sources: PathBuf,
     /// Paths to external libraries.
-    libraries: Vec<PathBuf>,
-    /// Flag whether to build mdbook.
-    should_build: bool,
+    pub libraries: Vec<PathBuf>,
+    /// Whether to also document files coming from external libraries.
+    pub include_libraries: bool,
+    /// Optional commit hash (HEAD) used when building Git Source links.
+    pub commit: Option<String>,
+    /// Optional current branch name; used as the `<branch>` segment of vocs
+    /// editLink URLs (which require an actual branch, not a commit/`HEAD`).
+    pub branch: Option<String>,
+    /// Optional path to the deployments directory (relative to `root`).
+    /// `Some(None)` enables the preprocessor with the default `deployments`
+    /// path; `Some(Some(p))` overrides; `None` disables it entirely.
+    pub deployments: Option<Option<PathBuf>>,
     /// Documentation configuration.
-    config: DocConfig,
-    /// The array of preprocessors to apply.
-    preprocessors: Vec<Box<dyn Preprocessor>>,
-    /// The formatter config.
-    fmt: FormatterConfig,
-    /// Whether to include libraries to the output.
-    include_libraries: bool,
+    pub config: DocConfig,
 }
 
 impl DocBuilder {
-    pub(crate) const SRC: &'static str = "src";
-    const SOL_EXT: &'static str = "sol";
-    const README: &'static str = "README.md";
-    const SUMMARY: &'static str = "SUMMARY.md";
-
-    /// Create new instance of builder.
+    /// Create a new builder.
     pub fn new(
         root: PathBuf,
         sources: PathBuf,
@@ -57,434 +66,281 @@ impl DocBuilder {
             sources,
             libraries,
             include_libraries,
-            should_build: false,
+            commit: None,
+            branch: None,
+            deployments: None,
             config: DocConfig::default(),
-            preprocessors: Default::default(),
-            fmt: Default::default(),
         }
     }
 
-    /// Set `should_build` flag on the builder
-    pub fn with_should_build(mut self, should_build: bool) -> Self {
-        self.should_build = should_build;
-        self
+    /// Resolve the absolute output directory.
+    fn out_dir(&self) -> PathBuf {
+        if self.config.out.is_absolute() {
+            self.config.out.clone()
+        } else {
+            self.root.join(&self.config.out)
+        }
     }
 
-    /// Set config on the builder.
-    pub fn with_config(mut self, config: DocConfig) -> Self {
-        self.config = config;
-        self
-    }
+    /// Run the documentation pipeline.
+    pub fn build(self, compiler: &mut Compiler) -> Result<BuildStats> {
+        let out = self.out_dir();
+        let pages_dir = out.join("src").join("pages");
+        let render_started = Instant::now();
 
-    /// Set formatter config on the builder.
-    pub fn with_fmt(mut self, fmt: FormatterConfig) -> Self {
-        self.fmt = fmt;
-        self
-    }
-
-    /// Set preprocessors on the builder.
-    pub fn with_preprocessor<P: Preprocessor + 'static>(mut self, preprocessor: P) -> Self {
-        self.preprocessors.push(Box::new(preprocessor) as Box<dyn Preprocessor>);
-        self
-    }
-
-    /// Get the output directory
-    pub fn out_dir(&self) -> Result<PathBuf> {
-        Ok(self.root.join(&self.config.out).canonicalize()?)
-    }
-
-    /// Parse the sources and build the documentation.
-    pub fn build(self, compiler: &mut solar::sema::Compiler) -> eyre::Result<()> {
-        fs::create_dir_all(self.root.join(&self.config.out))
-            .wrap_err("failed to create output directory")?;
-
-        // Expand ignore globs
-        let ignored = expand_globs(&self.root, self.config.ignore.iter())?;
-
-        // Collect and parse source files
-        let sources = source_files_iter(&self.sources, SOLC_EXTENSIONS)
-            .filter(|file| !ignored.contains(file))
-            .collect::<Vec<_>>();
-
-        if sources.is_empty() {
-            sh_println!("No sources detected at {}", self.sources.display())?;
-            return Ok(());
-        }
-
-        let library_sources = self
-            .libraries
-            .iter()
-            .flat_map(|lib| source_files_iter(lib, SOLC_EXTENSIONS))
-            .collect::<Vec<_>>();
-
-        let combined_sources = sources
-            .iter()
-            .map(|path| (path, false))
-            .chain(library_sources.iter().map(|path| (path, true)))
-            .collect::<Vec<_>>();
-
-        let out_dir = self.out_dir()?;
-        let out_target_dir = out_dir.clone();
-        let documents = compiler.enter_mut(|compiler| -> eyre::Result<Vec<Vec<Document>>> {
-            let gcx = compiler.gcx();
-            let documents = combined_sources
-                .par_iter()
-                .enumerate()
-                .map(|(i, (path, from_library))| {
-                    let path = *path;
-                    let from_library = *from_library;
-                    let mut files = vec![];
-
-                    // Read and parse source file
-                    if let Some((_, ast)) = gcx.get_ast_source(path)
-                        && let Some(source) =
-                            forge_fmt::format_ast(gcx, ast, self.fmt.clone().into())
-                    {
-                        let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
-                            Ok(res) => res,
-                            Err(err) => {
-                                if from_library {
-                                    // Ignore failures for library files
-                                    return Ok(files);
-                                } else {
-                                    return Err(eyre::eyre!(
-                                        "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                                        path.display(),
-                                        err
-                                    ));
-                                }
-                            }
-                        };
-
-                        // Visit the parse tree
-                        let mut doc = Parser::new(comments, source, self.fmt.tab_width);
-                        source_unit
-                            .visit(&mut doc)
-                            .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;
-
-                        // Split the parsed items on top-level constants and rest.
-                        let (items, consts): (Vec<ParseItem>, Vec<ParseItem>) = doc
-                            .items()
-                            .into_iter()
-                            .partition(|item| !matches!(item.source, ParseSource::Variable(_)));
-
-                        // Attempt to group overloaded top-level functions
-                        let mut remaining = Vec::with_capacity(items.len());
-                        let mut funcs: HashMap<String, Vec<ParseItem>> = HashMap::default();
-                        for item in items {
-                            if matches!(item.source, ParseSource::Function(_)) {
-                                funcs.entry(item.source.ident()).or_default().push(item);
-                            } else {
-                                // Put the item back
-                                remaining.push(item);
-                            }
-                        }
-                        let (items, overloaded): (
-                            HashMap<String, Vec<ParseItem>>,
-                            HashMap<String, Vec<ParseItem>>,
-                        ) = funcs.into_iter().partition(|(_, v)| v.len() == 1);
-                        remaining.extend(items.into_iter().flat_map(|(_, v)| v));
-
-                        // Each regular item will be written into its own file.
-                        files = remaining
-                            .into_iter()
-                            .map(|item| {
-                                let relative_path =
-                                    path.strip_prefix(&self.root)?.join(item.filename());
-
-                                let target_path = out_dir.join(Self::SRC).join(relative_path);
-                                let ident = item.source.ident();
-                                Ok(Document::new(
-                                    path.clone(),
-                                    target_path,
-                                    from_library,
-                                    out_target_dir.clone(),
-                                )
-                                .with_content(DocumentContent::Single(item), ident))
-                            })
-                            .collect::<eyre::Result<Vec<_>>>()?;
-
-                        // If top-level constants exist, they will be written to the same file.
-                        if !consts.is_empty() {
-                            let filestem = path.file_stem().and_then(|stem| stem.to_str());
-
-                            let filename = {
-                                let mut name = "constants".to_owned();
-                                if let Some(stem) = filestem {
-                                    name.push_str(&format!(".{stem}"));
-                                }
-                                name.push_str(".md");
-                                name
-                            };
-                            let relative_path = path.strip_prefix(&self.root)?.join(filename);
-                            let target_path = out_dir.join(Self::SRC).join(relative_path);
-
-                            let identity = match filestem {
-                                Some(stem) if stem.to_lowercase().contains("constants") => {
-                                    stem.to_owned()
-                                }
-                                Some(stem) => format!("{stem} constants"),
-                                None => "constants".to_owned(),
-                            };
-
-                            files.push(
-                                Document::new(
-                                    path.clone(),
-                                    target_path,
-                                    from_library,
-                                    out_target_dir.clone(),
-                                )
-                                .with_content(DocumentContent::Constants(consts), identity),
-                            )
-                        }
-
-                        // If overloaded functions exist, they will be written to the same file
-                        if !overloaded.is_empty() {
-                            for (ident, funcs) in overloaded {
-                                let filename =
-                                    funcs.first().expect("no overloaded functions").filename();
-                                let relative_path = path.strip_prefix(&self.root)?.join(filename);
-
-                                let target_path = out_dir.join(Self::SRC).join(relative_path);
-                                files.push(
-                                    Document::new(
-                                        path.clone(),
-                                        target_path,
-                                        from_library,
-                                        out_target_dir.clone(),
-                                    )
-                                    .with_content(
-                                        DocumentContent::OverloadedFunctions(funcs),
-                                        ident,
-                                    ),
-                                );
-                            }
-                        }
-                    };
-
-                    Ok(files)
-                })
-                .collect::<eyre::Result<Vec<_>>>()?;
-
-            Ok(documents)
-        })?;
-
-        // Flatten results and apply preprocessors to files
-        let documents = self
-            .preprocessors
-            .iter()
-            .try_fold(documents.into_iter().flatten().collect_vec(), |docs, p| {
-                p.preprocess(docs)
-            })?;
-
-        // Sort the results and filter libraries.
-        let documents = documents
-            .into_iter()
-            .sorted_by(|doc1, doc2| {
-                doc1.item_path.display().to_string().cmp(&doc2.item_path.display().to_string())
-            })
-            .filter(|d| !d.from_library || self.include_libraries)
-            .collect_vec();
-
-        // Write mdbook related files
-        self.write_mdbook(documents)?;
-
-        // Build the book if requested
-        if self.should_build {
-            MDBook::load(self.out_dir().wrap_err("failed to construct output directory")?)
-                .and_then(|book| book.build())
-                .map_err(|err| eyre::eyre!("failed to build book: {err:?}"))?;
-        }
-
-        Ok(())
-    }
-
-    fn write_mdbook(&self, documents: Vec<Document>) -> eyre::Result<()> {
-        let out_dir = self.out_dir().wrap_err("failed to construct output directory")?;
-        let out_dir_src = out_dir.join(Self::SRC);
-        fs::create_dir_all(&out_dir_src)?;
-
-        // Write readme content if any
-        let homepage_content = {
-            // Default to the homepage README if it's available.
-            // If not, use the src README as a fallback.
-            let homepage_or_src_readme = self
-                .config
-                .homepage
-                .as_ref()
-                .map(|homepage| self.root.join(homepage))
-                .unwrap_or_else(|| self.sources.join(Self::README));
-            // Grab the root readme.
-            let root_readme = self.root.join(Self::README);
-
-            // Check to see if there is a 'homepage' option specified in config.
-            // If not, fall back to src and root readme files, in that order.
-            if homepage_or_src_readme.exists() {
-                fs::read_to_string(homepage_or_src_readme)?
-            } else if root_readme.exists() {
-                fs::read_to_string(root_readme)?
-            } else {
-                String::new()
-            }
-        };
-
-        let readme_path = out_dir_src.join(Self::README);
-        fs::write(readme_path, homepage_content)?;
-
-        // Write summary and section readmes
-        let mut summary = BufWriter::default();
-        summary.write_title("Summary")?;
-        summary.write_link_list_item("Home", Self::README, 0)?;
-        self.write_summary_section(&mut summary, &documents.iter().collect::<Vec<_>>(), None, 0)?;
-        fs::write(out_dir_src.join(Self::SUMMARY), summary.finish())?;
-
-        // Write solidity syntax highlighting
-        fs::write(out_dir.join("solidity.min.js"), include_str!("../static/solidity.min.js"))?;
-
-        // Write css files
-        fs::write(out_dir.join("book.css"), include_str!("../static/book.css"))?;
-
-        // Write book config
-        fs::write(out_dir.join("book.toml"), self.book_config()?)?;
-
-        // Write .gitignore
-        let gitignore = "book/";
-        fs::write(out_dir.join(".gitignore"), gitignore)?;
-
-        // Write doc files
-        for document in documents {
-            fs::create_dir_all(
-                document
-                    .target_path
-                    .parent()
-                    .ok_or_else(|| eyre::format_err!("empty target path; noop"))?,
-            )?;
-            fs::write(&document.target_path, document.as_doc()?)?;
-        }
-
-        Ok(())
-    }
-
-    fn book_config(&self) -> eyre::Result<String> {
-        // Read the default book first
-        let mut book: value::Table = toml::from_str(include_str!("../static/book.toml"))?;
-        book["book"]
-            .as_table_mut()
-            .unwrap()
-            .insert(String::from("title"), self.config.title.clone().into());
-        if let Some(ref repo) = self.config.repository {
-            // Create the full repository URL.
-            let git_repo_url = if let Some(path) = &self.config.path {
-                // If path is specified, append it to the repository URL.
-                format!("{}/{}", repo.trim_end_matches('/'), path.trim_start_matches('/'))
-            } else {
-                // If no path specified, use repository URL as-is.
-                repo.clone()
-            };
-
-            book["output"].as_table_mut().unwrap()["html"]
-                .as_table_mut()
-                .unwrap()
-                .insert(String::from("git-repository-url"), git_repo_url.into());
-        }
-
-        // Attempt to find the user provided book path
-        let book_path = {
-            if self.config.book.is_file() {
-                Some(self.config.book.clone())
-            } else {
-                let book_path = self.config.book.join("book.toml");
-                if book_path.is_file() { Some(book_path) } else { None }
-            }
-        };
-
-        // Merge two book configs
-        if let Some(book_path) = book_path {
-            merge_toml_table(&mut book, toml::from_str(&fs::read_to_string(book_path)?)?);
-        }
-
-        Ok(toml::to_string_pretty(&book)?)
-    }
-
-    fn write_summary_section(
-        &self,
-        summary: &mut BufWriter,
-        files: &[&Document],
-        base_path: Option<&Path>,
-        depth: usize,
-    ) -> eyre::Result<()> {
-        if files.is_empty() {
-            return Ok(());
-        }
-
-        if let Some(path) = base_path {
-            let title = path.iter().next_back().unwrap().to_string_lossy();
-            if depth == 1 {
-                summary.write_title(&title)?;
-            } else {
-                let summary_path = path.join(Self::README);
-                summary.write_link_list_item(
-                    &format!("❱ {title}"),
-                    &summary_path.display().to_string(),
-                    depth - 1,
-                )?;
-            }
-        }
-
-        // Group entries by path depth
-        let mut grouped = HashMap::new();
-        for file in files {
-            let path = file.item_path.strip_prefix(&self.root)?;
-            let key = path.iter().take(depth + 1).collect::<PathBuf>();
-            grouped.entry(key).or_insert_with(Vec::new).push(*file);
-        }
-        // Sort entries by path depth
-        let grouped = grouped.into_iter().sorted_by(|(lhs, _), (rhs, _)| {
-            let lhs_at_end = lhs.extension().map(|ext| ext == Self::SOL_EXT).unwrap_or_default();
-            let rhs_at_end = rhs.extension().map(|ext| ext == Self::SOL_EXT).unwrap_or_default();
-            if lhs_at_end == rhs_at_end {
-                lhs.cmp(rhs)
-            } else if lhs_at_end {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
+        let ignored = expand_globs(&self.root, self.config.ignore.iter()).unwrap_or_else(|e| {
+            warn!("doc.ignore: failed to expand globs: {e}");
+            Default::default()
         });
 
-        let out_dir = self.out_dir().wrap_err("failed to construct output directory")?;
-        let mut readme = BufWriter::new("\n\n# Contents\n");
-        for (path, files) in grouped {
-            if path.extension().map(|ext| ext == Self::SOL_EXT).unwrap_or_default() {
-                for file in files {
-                    let ident = &file.identity;
+        let mut sources: Vec<(PathBuf, bool)> = source_files_iter(&self.sources, SOLC_EXTENSIONS)
+            .filter(|p| !ignored.contains(p) && !ignored.contains(&self.root.join(p)))
+            .map(|p| (p, false))
+            .collect();
 
-                    let summary_path = &file.target_path.strip_prefix(out_dir.join(Self::SRC))?;
-                    summary.write_link_list_item(
-                        ident,
-                        &summary_path.display().to_string(),
-                        depth,
-                    )?;
-
-                    let readme_path = base_path
-                        .map(|path| summary_path.strip_prefix(path))
-                        .transpose()?
-                        .unwrap_or(summary_path);
-                    readme.write_link_list_item(ident, &readme_path.display().to_string(), 0)?;
-                }
-            } else {
-                let name = path.iter().next_back().unwrap().to_string_lossy();
-                let readme_path = Path::new("/").join(&path).display().to_string();
-                readme.write_link_list_item(&name, &readme_path, 0)?;
-                self.write_summary_section(summary, &files, Some(&path), depth + 1)?;
+        if self.include_libraries {
+            for lib_dir in &self.libraries {
+                let lib_sources = source_files_iter(lib_dir, SOLC_EXTENSIONS)
+                    .filter(|p| !ignored.contains(p) && !ignored.contains(&self.root.join(p)))
+                    .map(|p| (p, true));
+                sources.extend(lib_sources);
             }
         }
-        if !readme.is_empty()
-            && let Some(path) = base_path
-        {
-            let path = out_dir.join(Self::SRC).join(path);
-            fs::create_dir_all(&path)?;
-            fs::write(path.join(Self::README), readme.finish())?;
-        }
-        Ok(())
+
+        sources.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let sources_count = sources.len();
+
+        let repo = self.config.repository.clone();
+        let commit = self.commit.clone();
+        let deployments_cfg = self.deployments.clone();
+        let root = self.root.clone();
+
+        let all_pages = compiler.enter_mut(|compiler| -> eyre::Result<Vec<PathBuf>> {
+            if compiler.gcx().stage() < Some(CompilerStage::Lowering)
+                && compiler.lower_asts().is_err()
+            {
+                // Diagnostics are already emitted via the solar session.
+                eyre::bail!("forge doc: HIR lowering failed; see diagnostics above");
+            }
+
+            let gcx = compiler.gcx();
+
+            // Restrict cross-reference resolution to files we'll actually emit pages for.
+            let allowed_sources: HashSet<PathBuf> = sources
+                .iter()
+                .map(|(p, _)| if p.is_absolute() { p.clone() } else { root.join(p) })
+                .collect();
+
+            let name_to_page = hir_ext::build_name_to_page(gcx, &root, &allowed_sources);
+
+            // Render each source in parallel.
+            // Each entry is `(rendered_pages, panicked_user_source)`. A panicked
+            // non-library source is recorded so we can fail the build at the end.
+            type RenderResult = (Option<Vec<(PathBuf, String)>>, Option<PathBuf>);
+            let results: Vec<RenderResult> = sources
+                .par_iter()
+                .map(|(path, from_library)| -> RenderResult {
+                    let abs_path = if path.is_absolute() { path.clone() } else { root.join(path) };
+
+                    let Some((_, ast_source)) = gcx.get_ast_source(&abs_path) else {
+                        if !from_library {
+                            warn!("AST source not found for {}", abs_path.display());
+                        }
+                        return (None, None);
+                    };
+                    let Some(ast) = &ast_source.ast else {
+                        if !from_library {
+                            warn!("AST missing for {}", abs_path.display());
+                        }
+                        return (None, None);
+                    };
+
+                    // For sources outside the project root (e.g. library deps that live under a
+                    // different prefix), synthesise a safe relative path so that
+                    // `pages_dir.join(rel_out_path)` can never escape the docs tree.
+                    let rel_path = if let Ok(p) = abs_path.strip_prefix(&root) {
+                        p.to_path_buf()
+                    } else {
+                        let comps: Vec<_> = abs_path.components().collect();
+                        let start = comps.len().saturating_sub(3);
+                        let tail: PathBuf = comps[start..].iter().collect();
+                        PathBuf::from("lib").join(tail)
+                    };
+
+                    // Git source link (skipped on library files).
+                    let git_url = if *from_library {
+                        None
+                    } else {
+                        repo.as_deref().and_then(|r| {
+                            git_source_url(r, commit.as_deref().unwrap_or("HEAD"), &root, &abs_path)
+                        })
+                    };
+
+                    // Deployments for this source's contracts.
+                    let deployments_map: HashMap<String, Vec<Deployment>> = match &deployments_cfg {
+                        Some(dir_opt) => {
+                            let entries = read_deployments(&root, dir_opt.as_deref(), &rel_path);
+                            // All deployments belong to the contract sharing the
+                            // file stem (legacy behaviour).
+                            if entries.is_empty() {
+                                HashMap::new()
+                            } else if let Some(stem) = rel_path.file_stem().and_then(|s| s.to_str())
+                            {
+                                let mut m = HashMap::new();
+                                m.insert(stem.to_string(), entries);
+                                m
+                            } else {
+                                HashMap::new()
+                            }
+                        }
+                        None => HashMap::new(),
+                    };
+
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        render::source(
+                            ast,
+                            &ast_source.file,
+                            gcx.sess.source_map(),
+                            &rel_path,
+                            &abs_path,
+                            &root,
+                            gcx,
+                            &name_to_page,
+                            git_url.as_deref(),
+                            &deployments_map,
+                        )
+                    }));
+                    match result {
+                        Ok(pages) => (Some(pages), None),
+                        Err(_) => {
+                            // Ignore failures from library files; surface user errors.
+                            if *from_library {
+                                debug!("rendering failed for library file {}", abs_path.display());
+                                (None, None)
+                            } else {
+                                error!("rendering panicked for {}", abs_path.display());
+                                (None, Some(abs_path))
+                            }
+                        }
+                    }
+                })
+                .collect();
+
+            // Split rendered pages from panicked user sources.
+            let mut failed: Vec<PathBuf> = Vec::new();
+            let mut all_rel: Vec<PathBuf> = Vec::new();
+            for (pages, panicked) in results {
+                if let Some(p) = panicked {
+                    failed.push(p);
+                }
+                if let Some(page_list) = pages {
+                    for (rel_out_path, content) in page_list {
+                        // Reject any output path that would escape the docs tree.
+                        if rel_out_path.is_absolute()
+                            || rel_out_path.components().any(|c| {
+                                matches!(
+                                    c,
+                                    Component::ParentDir
+                                        | Component::RootDir
+                                        | Component::Prefix(_)
+                                )
+                            })
+                        {
+                            warn!("skipping unsafe output path: {}", rel_out_path.display());
+                            continue;
+                        }
+                        let abs_out = pages_dir.join(&rel_out_path);
+                        if let Some(parent) = abs_out.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(&abs_out, content)?;
+                        info!("wrote {}", abs_out.display());
+                        all_rel.push(rel_out_path);
+                    }
+                }
+            }
+            all_rel.sort();
+
+            // Fail the build if any non-library source panicked during render.
+            if !failed.is_empty() {
+                let list = failed
+                    .iter()
+                    .map(|p| format!("  - {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                eyre::bail!(
+                    "forge doc: rendering panicked for {} source file(s):\n{list}",
+                    failed.len()
+                );
+            }
+
+            // Prune stale `.mdx` pages using a manifest of previously generated
+            // files. This covers every generated subtree (including library pages
+            // outside `src/`), while never touching user-authored pages that were
+            // never listed in the manifest.
+            let manifest_path = pages_dir.join(".forge-doc-manifest");
+            let prev_generated: HashSet<PathBuf> = if manifest_path.exists() {
+                fs::read_to_string(&manifest_path)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            } else {
+                // No manifest: do not prune. The manifest is the ownership boundary for
+                // generated pages; without it, user-authored pages are indistinguishable.
+                HashSet::new()
+            };
+            let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
+            for stale in prev_generated.difference(&new_generated) {
+                let safe = !stale.is_absolute()
+                    && !stale.components().any(|c| {
+                        matches!(
+                            c,
+                            Component::ParentDir | Component::Prefix(_) | Component::RootDir
+                        )
+                    });
+                if !safe {
+                    warn!("forge doc: ignoring unsafe manifest entry '{}'", stale.display());
+                    continue;
+                }
+                let stale_abs = pages_dir.join(stale);
+                if stale_abs.is_file() {
+                    debug!("pruning stale page {}", stale_abs.display());
+                    let _ = fs::remove_file(&stale_abs);
+                }
+            }
+            // Write new manifest.
+            {
+                let mut manifest_lines: Vec<String> =
+                    all_rel.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+                manifest_lines.sort();
+                fs::write(&manifest_path, manifest_lines.join("\n") + "\n")?;
+            }
+
+            Ok(all_rel)
+        })?;
+        let render_elapsed = render_started.elapsed();
+
+        // Generate vocs site scaffolding.
+        let site_started = Instant::now();
+        vocs::write_site_files(
+            &out,
+            &self.config,
+            &all_pages,
+            &self.root,
+            &self.sources,
+            self.branch.as_deref(),
+            self.commit.as_deref(),
+        )?;
+        info!("wrote vocs site files to {}", out.display());
+        let site_elapsed = site_started.elapsed();
+
+        Ok(BuildStats {
+            sources: sources_count,
+            pages: all_pages.len(),
+            render_elapsed,
+            site_elapsed,
+        })
     }
 }

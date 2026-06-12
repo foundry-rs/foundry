@@ -2,13 +2,35 @@
 
 use alloy_consensus::EMPTY_ROOT_HASH;
 use alloy_eips::BlockNumberOrTag;
-use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, U256, bytes, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::SolCall;
 use anvil::{NodeConfig, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_handle_releases_http_listener() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let addr = *handle.socket_address();
+
+    drop(handle);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(listener) => {
+                    drop(listener);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await
+    .expect("HTTP listener should shut down after NodeHandle is dropped");
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {

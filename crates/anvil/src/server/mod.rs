@@ -1,16 +1,17 @@
-//! Contains the code to launch an Ethereum RPC server.
+//! This module provides the infrastructure to launch an Ethereum JSON-RPC server
+//! (via HTTP, WebSocket, and IPC) and Beacon Node REST API.
 
 use crate::{EthApi, IpcTask};
 use anvil_server::{ServerConfig, ipc::IpcEndpoint};
-use axum::{Router, routing::get};
+use axum::Router;
+use foundry_primitives::FoundryNetwork;
 use futures::StreamExt;
-use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
+use rpc_handlers::{HttpEthRpcHandler, PubSubEthRpcHandler};
 use std::{io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
-mod beacon_handler;
-pub mod error;
-mod handler;
+mod beacon;
+mod rpc_handlers;
 
 /// Configures a server that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
 ///
@@ -18,7 +19,7 @@ mod handler;
 /// future that runs it.
 pub async fn serve(
     addr: SocketAddr,
-    api: EthApi,
+    api: EthApi<FoundryNetwork>,
     config: ServerConfig,
 ) -> io::Result<impl Future<Output = io::Result<()>>> {
     let tcp_listener = TcpListener::bind(addr).await?;
@@ -28,7 +29,7 @@ pub async fn serve(
 /// Configures a server that handles [`EthApi`] related JSON-RPC calls via HTTP and WS.
 pub async fn serve_on(
     tcp_listener: TcpListener,
-    api: EthApi,
+    api: EthApi<FoundryNetwork>,
     config: ServerConfig,
 ) -> io::Result<()> {
     axum::serve(tcp_listener, router(api, config).into_make_service()).await
@@ -36,7 +37,7 @@ pub async fn serve_on(
 
 /// Configures an [`axum::Router`] that handles [`EthApi`] related JSON-RPC calls via HTTP and WS,
 /// and Beacon REST API calls.
-pub fn router(api: EthApi, config: ServerConfig) -> Router {
+pub fn router(api: EthApi<FoundryNetwork>, config: ServerConfig) -> Router {
     let http = HttpEthRpcHandler::new(api.clone());
     let ws = PubSubEthRpcHandler::new(api.clone());
 
@@ -44,22 +45,10 @@ pub fn router(api: EthApi, config: ServerConfig) -> Router {
     let rpc_router = anvil_server::http_ws_router(config, http, ws);
 
     // Beacon REST API router
-    let beacon_router = beacon_router(api);
+    let beacon_router = beacon::router(api);
 
     // Merge the routers
     rpc_router.merge(beacon_router)
-}
-
-/// Configures an [`axum::Router`] that handles Beacon REST API calls.
-fn beacon_router(api: EthApi) -> Router {
-    Router::new()
-        .route(
-            "/eth/v1/beacon/blob_sidecars/{block_id}",
-            get(beacon_handler::handle_get_blob_sidecars),
-        )
-        .route("/eth/v1/beacon/blobs/{block_id}", get(beacon_handler::handle_get_blobs))
-        .route("/eth/v1/beacon/genesis", get(beacon_handler::handle_get_genesis))
-        .with_state(api)
 }
 
 /// Launches an ipc server at the given path in a new task
@@ -68,12 +57,12 @@ fn beacon_router(api: EthApi) -> Router {
 ///
 /// Panics if setting up the IPC connection was unsuccessful.
 #[track_caller]
-pub fn spawn_ipc(api: EthApi, path: String) -> IpcTask {
+pub fn spawn_ipc(api: EthApi<FoundryNetwork>, path: String) -> IpcTask {
     try_spawn_ipc(api, path).expect("failed to establish ipc connection")
 }
 
 /// Launches an ipc server at the given path in a new task.
-pub fn try_spawn_ipc(api: EthApi, path: String) -> io::Result<IpcTask> {
+pub fn try_spawn_ipc(api: EthApi<FoundryNetwork>, path: String) -> io::Result<IpcTask> {
     let handler = PubSubEthRpcHandler::new(api);
     let ipc = IpcEndpoint::new(handler, path);
     let incoming = ipc.incoming()?;

@@ -7,7 +7,10 @@ use alloy_primitives::{Address, B256, hex::FromHex};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
+use foundry_cli::{
+    opts::RpcOpts,
+    utils::{self, LoadConfig},
+};
 use itertools::Itertools;
 use std::{io, str::FromStr};
 
@@ -45,16 +48,32 @@ pub struct LogsArgs {
     #[arg(long)]
     subscribe: bool,
 
+    /// Split the query into chunks of this many blocks to work around provider range/result
+    /// limits.
+    ///
+    /// When omitted, the range is queried in a single request. Pass a value (e.g. `10000`) to
+    /// fetch the logs in `query-size`-block chunks instead.
+    #[arg(long, value_name = "BLOCKS")]
+    query_size: Option<u64>,
+
     #[command(flatten)]
-    eth: EthereumOpts,
+    rpc: RpcOpts,
 }
 
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, subscribe, eth } =
-            self;
+        let Self {
+            from_block,
+            to_block,
+            address,
+            sig_or_topic,
+            topics_or_args,
+            subscribe,
+            query_size,
+            rpc,
+        } = self;
 
-        let config = eth.load_config()?;
+        let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         let cast = Cast::new(&provider);
@@ -77,11 +96,16 @@ impl LogsArgs {
         let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
-            let logs = cast.filter_logs(filter).await?;
+            let logs = match query_size {
+                Some(chunk_size) => cast.filter_logs_chunked(filter, chunk_size).await?,
+                None => cast.filter_logs(filter).await?,
+            };
             sh_println!("{logs}")?;
             return Ok(());
         }
 
+        // JSON envelope intentionally unsupported for streaming: --subscribe emits NDJSON events
+        // continuously; a terminal JsonEnvelope is pointless.
         // FIXME: this is a hotfix for <https://github.com/foundry-rs/foundry/issues/7682>
         //  currently the alloy `eth_subscribe` impl does not work with all transports, so we use
         // the builtin transport here for now

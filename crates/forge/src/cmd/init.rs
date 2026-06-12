@@ -5,6 +5,7 @@ use foundry_cli::utils::Git;
 use foundry_common::fs;
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::Config;
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use std::path::{Path, PathBuf};
 use yansi::Paint;
 
@@ -41,6 +42,10 @@ pub struct InitArgs {
     #[arg(long, conflicts_with = "template")]
     pub vyper: bool,
 
+    /// Initialize a project template for the specified network in Foundry.
+    #[arg(long, short, num_args = 1, value_name = "NETWORK", conflicts_with_all = &["vyper", "template"])]
+    pub network: Option<NetworkVariant>,
+
     /// Use the parent git repository instead of initializing a new one.
     /// Only valid if the target is in a git repository.
     #[arg(long, conflicts_with = "template")]
@@ -49,6 +54,13 @@ pub struct InitArgs {
     /// Do not create example contracts (Counter.sol, Counter.t.sol, Counter.s.sol).
     #[arg(long, conflicts_with = "template")]
     pub empty: bool,
+
+    /// Do not create an initial commit.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge init` no longer commits by
+    /// default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
 
     #[command(flatten)]
     pub install: DependencyInstallOpts,
@@ -66,9 +78,13 @@ impl InitArgs {
             vscode,
             use_parent_git,
             vyper,
+            network,
             empty,
+            no_commit: _,
         } = self;
         let DependencyInstallOpts { shallow, no_git, commit } = install;
+
+        let tempo = matches!(network, Some(NetworkVariant::Tempo));
 
         // create the root dir if it does not exist
         if !root.exists() {
@@ -88,7 +104,7 @@ impl InitArgs {
             } else {
                 "https://github.com/".to_string() + &template
             };
-            sh_println!("Initializing {} from {}...", root.display(), template)?;
+            sh_status!("Initializing {} from {}...", root.display(), template)?;
             // initialize the git repository
             git.init()?;
 
@@ -130,7 +146,7 @@ impl InitArgs {
                 git.ensure_clean()?;
             }
 
-            sh_println!("Initializing {}...", root.display())?;
+            sh_status!("Initializing {}...", root.display())?;
 
             // make the dirs
             let src = root.join("src");
@@ -170,6 +186,24 @@ impl InitArgs {
                         contract_path,
                         include_str!("../../assets/vyper/CounterTemplate.s.sol"),
                     )?;
+                } else if tempo {
+                    // write the contract file
+                    let contract_path = src.join("Mail.sol");
+                    fs::write(contract_path, include_str!("../../assets/tempo/MailTemplate.sol"))?;
+
+                    // write the tests
+                    let contract_path = test.join("Mail.t.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/tempo/MailTemplate.t.sol"),
+                    )?;
+
+                    // write the script
+                    let contract_path = script.join("Mail.s.sol");
+                    fs::write(
+                        contract_path,
+                        include_str!("../../assets/tempo/MailTemplate.s.sol"),
+                    )?;
                 } else {
                     // write the contract file
                     let contract_path = src.join("Counter.sol");
@@ -194,13 +228,20 @@ impl InitArgs {
                 }
             }
 
-            // Write the default README file
+            // Write the README file
             let readme_path = root.join("README.md");
-            fs::write(readme_path, include_str!("../../assets/README.md"))?;
+            if tempo {
+                fs::write(readme_path, include_str!("../../assets/tempo/README.md"))?;
+            } else {
+                fs::write(readme_path, include_str!("../../assets/README.md"))?;
+            }
 
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
             let mut config = Config::load_with_root(&root)?;
+            if tempo {
+                config.networks = NetworkConfigs::with_tempo();
+            }
             if !dest.exists() {
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
             }
@@ -208,7 +249,7 @@ impl InitArgs {
 
             // set up the repo
             if !no_git {
-                init_git_repo(git, commit, use_parent_git, vyper)?;
+                init_git_repo(git, commit, use_parent_git, vyper, tempo)?;
             }
 
             // install forge-std
@@ -220,6 +261,17 @@ impl InitArgs {
                     let dep = "https://github.com/foundry-rs/forge-std".parse()?;
                     self.install.install(&mut config, vec![dep]).await?;
                 }
+
+                // install tempo-std
+                if tempo {
+                    if root.join("lib/tempo-std").exists() {
+                        sh_warn!("\"lib/tempo-std\" already exists, skipping install...")?;
+                        self.install.install(&mut config, vec![]).await?;
+                    } else {
+                        let dep = "https://github.com/tempoxyz/tempo-std".parse()?;
+                        self.install.install(&mut config, vec![dep]).await?;
+                    }
+                }
             }
 
             // init vscode settings
@@ -228,7 +280,7 @@ impl InitArgs {
             }
         }
 
-        sh_println!("{}", "    Initialized forge project".green())?;
+        sh_status!("{}", "    Initialized forge project".green())?;
         Ok(())
     }
 }
@@ -239,7 +291,13 @@ impl InitArgs {
 /// Creates `.gitignore` and `.github/workflows/test.yml`, if they don't exist already.
 ///
 /// Commits everything in `root` if `commit` is true.
-fn init_git_repo(git: Git<'_>, commit: bool, use_parent_git: bool, vyper: bool) -> Result<()> {
+fn init_git_repo(
+    git: Git<'_>,
+    commit: bool,
+    use_parent_git: bool,
+    vyper: bool,
+    tempo: bool,
+) -> Result<()> {
     // `git init`
     if !git.is_in_repo()? || (!use_parent_git && !git.is_repo_root()?) {
         git.init()?;
@@ -258,6 +316,8 @@ fn init_git_repo(git: Git<'_>, commit: bool, use_parent_git: bool, vyper: bool) 
 
         if vyper {
             fs::write(workflow, include_str!("../../assets/vyper/workflowTemplate.yml"))?;
+        } else if tempo {
+            fs::write(workflow, include_str!("../../assets/tempo/workflowTemplate.yml"))?;
         } else {
             fs::write(workflow, include_str!("../../assets/solidity/workflowTemplate.yml"))?;
         }

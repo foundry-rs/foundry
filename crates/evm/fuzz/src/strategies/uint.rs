@@ -23,7 +23,7 @@ impl UintValueTree {
     /// # Arguments
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
-    fn new(start: U256, fixed: bool) -> Self {
+    const fn new(start: U256, fixed: bool) -> Self {
         Self { lo: U256::ZERO, curr: start, hi: start, fixed }
     }
 
@@ -158,10 +158,9 @@ impl UintStrategy {
 
         // init U256 from 2 randoms
         let mut inner: [u64; 4] = [0; 4];
-        let mask64 = (1 << 65) - 1;
-        inner[0] = (lower & mask64) as u64;
+        inner[0] = lower as u64;
         inner[1] = (lower >> 64) as u64;
-        inner[2] = (higher & mask64) as u64;
+        inner[2] = higher as u64;
         inner[3] = (higher >> 64) as u64;
         let start: U256 = U256::from_limbs(inner);
 

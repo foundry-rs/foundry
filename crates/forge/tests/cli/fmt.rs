@@ -3,7 +3,7 @@
 use foundry_test_utils::{forgetest, forgetest_init};
 
 const UNFORMATTED: &str = r#"// SPDX-License-Identifier: MIT
-pragma         solidity  =0.8.30    ;
+pragma         solidity  =0.8.33    ;
 
 contract  Test  {
     uint256    public    value ;
@@ -13,7 +13,7 @@ contract  Test  {
 }"#;
 
 const FORMATTED: &str = r#"// SPDX-License-Identifier: MIT
-pragma solidity =0.8.30;
+pragma solidity =0.8.33;
 
 contract Test {
     uint256 public value;
@@ -40,7 +40,7 @@ forgetest_init!(fmt_exclude_libs_in_recursion, |prj, cmd| {
 forgetest_init!(fmt_file, |prj, cmd| {
     prj.add_raw_source("FmtTest.sol", UNFORMATTED);
     cmd.arg("fmt").arg("src/FmtTest.sol");
-    cmd.assert_success().stdout_eq(str![[r#"
+    cmd.assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
 Formatted [..]/src/FmtTest.sol
 
 "#]]);
@@ -88,8 +88,8 @@ forgetest!(fmt_check_mode_stdin, |_prj, cmd| {
     cmd.assert_failure().stderr_eq("").stdout_eq(str![[r#"
 Diff in stdin:
 1   1    | // SPDX-License-Identifier: MIT
-2        |-pragma         solidity  =0.8.30    ;
-    2    |+pragma solidity =0.8.30;
+2        |-pragma         solidity  =0.8.33    ;
+    2    |+pragma solidity =0.8.33;
 ...
 4        |-contract  Test  {
 5        |-    uint256    public    value ;

@@ -1,36 +1,14 @@
-//! The module for generating Solidity documentation.
-//!
-//! See [`DocBuilder`].
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-
-#[macro_use]
-extern crate foundry_common;
 
 #[macro_use]
 extern crate tracing;
 
 mod builder;
-pub use builder::DocBuilder;
+mod hir_ext;
+mod render;
+mod utils;
+mod vocs;
 
-mod document;
-pub use document::Document;
-
-mod helpers;
-
-mod parser;
-pub use parser::{
-    Comment, CommentTag, Comments, CommentsRef, ParseItem, ParseSource, Parser, error,
-};
-
-mod preprocessor;
-pub use preprocessor::*;
-
-mod writer;
-pub use writer::{AsDoc, AsDocResult, BufWriter, Markdown};
-
-pub use mdbook;
-
-// old formatter dependencies
-pub mod solang_ext;
+pub use builder::{BuildStats, DocBuilder};

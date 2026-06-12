@@ -3,12 +3,34 @@
 [profile.default]
 retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
 slow-timeout = { period = "30s", terminate-after = 3 }
+# Exclude flaky tests from regular CI runs - they run in nightly test-flaky workflow
+default-filter = "not test(/flaky_/)"
 
 [[profile.default.overrides]]
 filter = "test(/ext_integration/)"
+slow-timeout = { period = "5m", terminate-after = 4 }
+
+# `cast vaddr` end-to-end tests mine a 4-byte TIP-1022 PoW salt (CPU-bound,
+# minutes in debug mode) before exercising register/resolve/forward/watch
+# against an in-process Anvil Tempo node.
+[[profile.default.overrides]]
+filter = "test(/vaddr_e2e::/)"
+slow-timeout = { period = "5m", terminate-after = 4 }
+
+# Integration-style CLI tests can exceed the default 90s timeout on slower
+# Windows, macOS, and ARM runners while shelling out to forge/solc/git.
+[[profile.default.overrides]]
+filter = "test(/(^|::)bind_event_module_name_shadowing$/) | test(/(^|::)bind_event_module_prefix_does_not_shadow_aliases$/) | test(/(^|::)can_bind_e2e$/) | test(/(^|::)test_clone_/) | test(/(^|::)can_deploy_and_simulate_25_txes_concurrently$/) | test(/(^|::)chisel_can_run_with_live_logs_flag$/) | test(/(^|::)session_wrapper_uses_project_config_for_cast_session$/)"
 slow-timeout = { period = "5m", terminate-after = 4 }
 
 # Do not re-run so that `cargo cheats` is ran locally.
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0
+
+# Profile for running flaky tests (used by nightly CI and for local debugging)
+# Run with: cargo nextest run --profile flaky
+[profile.flaky]
+default-filter = "test(/flaky_/)"
+retries = { backoff = "exponential", count = 5, delay = "10s", jitter = true }
+slow-timeout = { period = "60s", terminate-after = 3 }

@@ -1,7 +1,8 @@
 //! TUI draw implementation.
 
-use super::context::TUIContext;
-use crate::op::OpcodeParam;
+use super::context::{StatusKind, TUIContext};
+use crate::{debugger::DebuggerStats, op::OpcodeParam};
+use alloy_primitives::{Address, U256};
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::SourceData;
@@ -13,15 +14,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use revm_inspectors::tracing::types::CallKind;
-use std::{collections::VecDeque, fmt::Write, io};
+use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
-    /// Draws the TUI layout and subcomponents to the given terminal.
-    pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
-        terminal.draw(|f| self.draw_layout(f)).map(drop)
-    }
-
-    fn draw_layout(&self, f: &mut Frame<'_>) {
+    pub(crate) fn draw_layout(&self, f: &mut Frame<'_>) {
         // We need 100 columns to display a 32 byte word in the memory and stack panes.
         let area = f.area();
         let min_width = 100;
@@ -84,7 +80,7 @@ impl TUIContext<'_> {
     /// ```
     fn vertical_layout(&self, f: &mut Frame<'_>) {
         let area = f.area();
-        let h_height = if self.show_shortcuts { 4 } else { 0 };
+        let footer_height = self.footer_height();
 
         // NOTE: `Layout::split` always returns a slice of the same length as the number of
         // constraints, so the `else` branch is unreachable.
@@ -92,7 +88,7 @@ impl TUIContext<'_> {
         // Split off footer.
         let [app, footer] = Layout::new(
             Direction::Vertical,
-            [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)],
+            [Constraint::Min(0), Constraint::Length(footer_height)],
         )
         .split(area)[..] else {
             unreachable!()
@@ -112,7 +108,7 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        if self.show_shortcuts {
+        if footer_height > 0 {
             self.draw_footer(f, footer);
         }
         self.draw_src(f, src_pane);
@@ -134,12 +130,12 @@ impl TUIContext<'_> {
     /// ```
     fn horizontal_layout(&self, f: &mut Frame<'_>) {
         let area = f.area();
-        let h_height = if self.show_shortcuts { 4 } else { 0 };
+        let footer_height = self.footer_height();
 
         // Split off footer.
         let [app, footer] = Layout::new(
             Direction::Vertical,
-            [Constraint::Ratio(100 - h_height, 100), Constraint::Ratio(h_height, 100)],
+            [Constraint::Min(0), Constraint::Length(footer_height)],
         )
         .split(area)[..] else {
             unreachable!()
@@ -169,7 +165,7 @@ impl TUIContext<'_> {
             unreachable!()
         };
 
-        if self.show_shortcuts {
+        if footer_height > 0 {
             self.draw_footer(f, footer);
         }
         self.draw_src(f, src_pane);
@@ -178,12 +174,44 @@ impl TUIContext<'_> {
         self.draw_buffer(f, memory_pane);
     }
 
+    fn footer_height(&self) -> u16 {
+        let status_or_input = u16::from(self.pc_input.is_some() || self.status.is_some());
+        let shortcuts = if self.show_shortcuts { 2 } else { 0 };
+        status_or_input + shortcuts
+    }
+
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
-        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [b]: cycle memory/calldata/returndata buffers";
+        let mut lines = Vec::with_capacity(self.footer_height() as usize);
+
+        if let Some(input) = &self.pc_input {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Goto PC: ",
+                    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(input.as_str()),
+                Span::styled("█", Style::new().fg(Color::Cyan)),
+                Span::styled(
+                    "  Enter: jump | Esc: cancel | hex: 0x2a/2a | decimal: d:42",
+                    Style::new().add_modifier(Modifier::DIM),
+                ),
+            ]));
+        } else if let Some(status) = &self.status {
+            let style = match status.kind {
+                StatusKind::Info => Style::new().fg(Color::Green),
+                StatusKind::Error => Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            };
+            lines.push(Line::from(Span::styled(status.text.as_str(), style)));
+        }
+
+        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [b]: cycle memory/calldata/returndata buffers";
         let l2 = "[t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
-        let lines =
-            vec![Line::from(Span::styled(l1, dimmed)), Line::from(Span::styled(l2, dimmed))];
+        if self.show_shortcuts {
+            lines.push(Line::from(Span::styled(l1, dimmed)));
+            lines.push(Line::from(Span::styled(l2, dimmed)));
+        }
+
         let paragraph =
             Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
@@ -290,11 +318,11 @@ impl TUIContext<'_> {
                 lines.push(u_num, line, u_text);
             }
 
-            let first = if !last_has_nl {
+            let first = if last_has_nl {
+                0
+            } else {
                 lines.push_raw(h_num, &[Span::raw(last), Span::styled(actual[0], h_text)]);
                 1
-            } else {
-                0
             };
 
             // Skip the first line if it has already been handled above.
@@ -371,11 +399,15 @@ impl TUIContext<'_> {
             })
             .collect::<Vec<_>>();
 
-        let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {}",
+        let step = self.current_step();
+        let call_gas_used = self.debug_call().gas_limit.saturating_sub(step.gas_remaining);
+        let title = op_list_title(
             self.address(),
-            self.current_step().pc,
-            self.current_step().gas_used,
+            step.pc,
+            step.gas_remaining,
+            call_gas_used,
+            step.gas_refund_counter,
+            self.debugger_context.stats,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -405,33 +437,7 @@ impl TUIContext<'_> {
                     .skip(self.draw_memory.current_stack_startline)
                     .map(|(i, stack_item)| {
                         let param = params.iter().find(|param| param.index == i);
-                        let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
-
-                        // Stack index.
-                        spans.push(Span::styled(
-                            format!("{i:0min_len$}| "),
-                            Style::new().fg(Color::White),
-                        ));
-
-                        // Item hex bytes.
-                        hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| {
-                            if param.is_some() {
-                                Style::new().fg(Color::Cyan)
-                            } else {
-                                Style::new().fg(Color::White)
-                            }
-                        });
-
-                        if self.stack_labels
-                            && let Some(param) = param
-                        {
-                            spans.push(Span::raw("| "));
-                            spans.push(Span::raw(param.name));
-                        }
-
-                        spans.push(Span::raw("\n"));
-
-                        Line::from(spans)
+                        stack_item_line(i, min_len, stack_item, param, self.stack_labels)
                     })
                     .collect()
             })
@@ -577,6 +583,66 @@ impl TUIContext<'_> {
     }
 }
 
+fn op_list_title(
+    address: &Address,
+    pc: usize,
+    gas_remaining: u64,
+    call_gas_used: u64,
+    gas_refund_counter: u64,
+    stats: Option<DebuggerStats>,
+) -> String {
+    let address = full_checksum_address(address);
+    let mut title = format!(
+        "address: {address} | pc: 0x{pc:x} ({pc}) | gasLeft: {gas_remaining} | \
+         callGasUsed: {call_gas_used} | gasRefund: {gas_refund_counter}"
+    );
+
+    if let Some(stats) = stats {
+        write!(
+            title,
+            " | sessionTraceGasUsed: {} | sessionSubcalls: {}",
+            stats.session_trace_gas_used, stats.session_subcalls
+        )
+        .unwrap();
+    }
+
+    title
+}
+
+fn full_checksum_address(address: &Address) -> String {
+    address.to_string()
+}
+
+fn stack_item_line(
+    i: usize,
+    min_len: usize,
+    stack_item: &U256,
+    param: Option<&OpcodeParam>,
+    stack_labels: bool,
+) -> Line<'static> {
+    let value_style =
+        if param.is_some() { Style::new().fg(Color::Cyan) } else { Style::new().fg(Color::White) };
+    let mut spans = Vec::with_capacity(1 + 32 * 2 + 5);
+
+    // Stack index.
+    spans.push(Span::styled(format!("{i:0min_len$}| "), Style::new().fg(Color::White)));
+
+    // Item hex bytes.
+    hex_bytes_spans(&stack_item.to_be_bytes::<32>(), &mut spans, |_, _| value_style);
+
+    spans.push(Span::raw(" | "));
+    spans.push(Span::styled(stack_item.to_string(), value_style));
+
+    if stack_labels && let Some(param) = param {
+        spans.push(Span::raw(" | "));
+        spans.push(Span::raw(param.name));
+    }
+
+    spans.push(Span::raw("\n"));
+
+    Line::from(spans)
+}
+
 /// Wrapper around a list of [`Line`]s that prepends the line number on each new line.
 struct SourceLines<'a> {
     lines: Vec<Line<'a>>,
@@ -637,6 +703,75 @@ fn hex_digits(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::{debugger::DebuggerStats, op::OpcodeParam};
+    use alloy_primitives::{Address, U256, address};
+    use ratatui::{
+        style::{Color, Style},
+        text::Line,
+    };
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|span| span.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn op_list_title_includes_gas_and_subcall_stats() {
+        let stats = DebuggerStats { session_trace_gas_used: 789_012, session_subcalls: 3 };
+        let address = Address::from([0x42; 20]);
+        let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, Some(stats));
+
+        assert!(title.contains("pc: 0x2a (42)"));
+        assert!(title.contains(&format!("address: {}", super::full_checksum_address(&address))));
+        assert!(title.contains("gasLeft: 123456"));
+        assert!(title.contains("sessionTraceGasUsed: 789012"));
+        assert!(title.contains("sessionSubcalls: 3"));
+        assert!(title.contains("callGasUsed: 42"));
+        assert!(title.contains("gasRefund: 7"));
+    }
+
+    #[test]
+    fn op_list_title_omits_aggregate_stats_when_unavailable() {
+        let title = super::op_list_title(&Address::from([0x42; 20]), 0x2a, 123_456, 42, 7, None);
+
+        assert!(!title.contains("sessionTraceGasUsed"));
+        assert!(!title.contains("sessionSubcalls"));
+    }
+
+    #[test]
+    fn op_list_title_uses_full_checksum_address() {
+        let address = address!("0xd8da6bf26964af9d7eed9e03e53415d37aa96045");
+        let title = super::op_list_title(&address, 0x2a, 123_456, 42, 7, None);
+
+        assert!(title.contains("address: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"));
+        assert!(!title.contains('…'));
+    }
+
+    #[test]
+    fn stack_item_line_includes_decimal_preview() {
+        let line = super::stack_item_line(0, 2, &U256::from(42), None, false);
+        let text = line_text(&line);
+
+        assert!(text.starts_with("00| "));
+        assert!(text.ends_with("2a | 42\n"));
+    }
+
+    #[test]
+    fn stack_item_line_keeps_stack_labels_after_decimal_preview() {
+        let param = OpcodeParam { name: "offset", index: 0 };
+        let line = super::stack_item_line(0, 2, &U256::from(16), Some(&param), true);
+
+        assert!(line_text(&line).ends_with("10 | 16 | offset\n"));
+    }
+
+    #[test]
+    fn stack_item_line_highlights_decimal_preview_for_opcode_params() {
+        let param = OpcodeParam { name: "offset", index: 0 };
+        let line = super::stack_item_line(0, 2, &U256::from(16), Some(&param), false);
+        let decimal = line.spans.iter().find(|span| span.content.as_ref() == "16").unwrap();
+
+        assert_eq!(decimal.style, Style::new().fg(Color::Cyan));
+    }
+
     #[test]
     fn decimal_digits() {
         assert_eq!(super::decimal_digits(0), 1);

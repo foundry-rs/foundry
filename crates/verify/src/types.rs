@@ -25,15 +25,6 @@ impl FromStr for VerificationType {
     }
 }
 
-impl From<VerificationType> for String {
-    fn from(v: VerificationType) -> Self {
-        match v {
-            VerificationType::Full => "full".to_string(),
-            VerificationType::Partial => "partial".to_string(),
-        }
-    }
-}
-
 impl fmt::Display for VerificationType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

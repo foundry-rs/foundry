@@ -215,7 +215,7 @@ impl Printer {
     {
         for i in self.buf.index_range().rev() {
             let token = &self.buf[i].token;
-            if let Token::End = token {
+            if matches!(token, Token::End) {
                 // It's safe to skip the end of a box.
                 continue;
             }

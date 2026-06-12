@@ -383,25 +383,14 @@ impl ContractsByArtifact {
         &self,
         id: &str,
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let contracts = self
-            .iter()
-            .filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id)
-            .collect::<Vec<_>>();
-
-        if contracts.len() > 1 {
+        let mut iter =
+            self.iter().filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id);
+        let first = iter.next();
+        if first.is_some() && iter.next().is_some() {
             eyre::bail!("{id} has more than one implementation.");
         }
 
-        Ok(contracts.first().copied())
-    }
-
-    /// Finds abi for contract which has the same contract name or identifier as `id`.
-    pub fn find_abi_by_name_or_identifier(&self, id: &str) -> Option<JsonAbi> {
-        self.iter()
-            .find(|(artifact, _)| {
-                artifact.name.split(".").next().unwrap() == id || artifact.identifier() == id
-            })
-            .map(|(_, contract)| contract.abi.clone())
+        Ok(first)
     }
 
     /// Finds abi by name or source path
@@ -420,7 +409,7 @@ impl ContractsByArtifact {
         let mut funcs = BTreeMap::new();
         let mut events = BTreeMap::new();
         let mut errors_abi = JsonAbi::new();
-        for (_name, contract) in self.iter() {
+        for contract in self.values() {
             for func in contract.abi.functions() {
                 funcs.insert(func.selector(), func.clone());
             }
@@ -493,7 +482,7 @@ pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
 /// # Safety
 ///
 /// `a` must be at least as long as `b`.
-unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
+const unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
     // This could've been written as `std::iter::zip(a, b).filter(|(x, y)| x != y).count()`,
     // however this function is very hot, and has been written to be as primitive as
     // possible for lower optimization levels.
@@ -625,7 +614,7 @@ pub fn find_matching_contract_artifact(
         // If all artifact_ids in `possible_targets` have the same name (without ".", indicates
         // additional compiler profiles), it means that there are multiple contracts in the
         // same file.
-        if !target_id.name.contains(".")
+        if !target_id.name.contains('.')
             && possible_targets.iter().any(|(id, _)| id.name != target_id.name)
         {
             eyre::bail!(
@@ -637,7 +626,7 @@ pub fn find_matching_contract_artifact(
         // same but `id.path` is different.
         let artifact = possible_targets
             .iter()
-            .find_map(|(id, artifact)| if id.profile == "default" { Some(*artifact) } else { None })
+            .find_map(|(id, artifact)| (id.profile == "default").then_some(*artifact))
             .unwrap_or(target_artifact);
 
         Ok(artifact.clone())

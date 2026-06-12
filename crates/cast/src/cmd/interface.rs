@@ -1,4 +1,4 @@
-use alloy_json_abi::{ContractObject, JsonAbi};
+use alloy_json_abi::{ContractObject, JsonAbi, ToSolConfig};
 use alloy_primitives::Address;
 use clap::Parser;
 use eyre::{Context, Result};
@@ -50,13 +50,19 @@ pub struct InterfaceArgs {
     )]
     output: Option<PathBuf>,
 
+    /// If set, generate all types in a single interface, inlining any inherited or library types.
+    ///
+    /// This can fail if there are structs with the same name in different interfaces.
+    #[arg(long)]
+    flatten: bool,
+
     #[command(flatten)]
     etherscan: EtherscanOpts,
 }
 
 impl InterfaceArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, name, pragma, output: output_location, etherscan } = self;
+        let Self { contract, name, pragma, output: output_location, flatten, etherscan } = self;
 
         // Determine if the target contract is an ABI file, a local contract or an Ethereum address.
         let abis = if Path::new(&contract).is_file()
@@ -73,30 +79,45 @@ impl InterfaceArgs {
             }
         };
 
-        // Retrieve interfaces from the array of ABIs.
-        let interfaces = get_interfaces(abis)?;
+        // Build config for to_sol conversion.
+        let config = flatten.then(|| ToSolConfig::new().one_contract(true));
 
-        // Print result or write to file.
-        let res = if shell::is_json() {
-            // Format as JSON.
-            interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
-        } else {
-            // Format as Solidity.
-            format!(
-                "// SPDX-License-Identifier: UNLICENSED\n\
-                 pragma solidity {pragma};\n\n\
-                 {}",
-                interfaces.iter().map(|iface| &iface.source).format("\n")
-            )
-        };
+        // Retrieve interfaces from the array of ABIs.
+        let interfaces = get_interfaces(abis, config)?;
 
         if let Some(loc) = output_location {
+            let res = if shell::is_json() {
+                let abis = interfaces
+                    .iter()
+                    .map(|iface| serde_json::from_str::<Value>(&iface.json_abi))
+                    .collect::<Result<Vec<_>, _>>()?;
+                serde_json::to_string_pretty(&abis)?
+            } else {
+                format!(
+                    "// SPDX-License-Identifier: UNLICENSED\n\
+                     pragma solidity {pragma};\n\n\
+                     {}",
+                    interfaces.iter().map(|iface| &iface.source).format("\n")
+                )
+            };
             if let Some(parent) = loc.parent() {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&loc, res)?;
-            sh_println!("Saved interface at {}", loc.display())?;
+            sh_status!("Saved interface at {}", loc.display())?;
+        } else if shell::is_json() {
+            let abis = interfaces
+                .iter()
+                .map(|iface| serde_json::from_str::<serde_json::Value>(&iface.json_abi))
+                .collect::<Result<Vec<_>, _>>()?;
+            foundry_cli::json::print_json_object(abis)?;
         } else {
+            let res = format!(
+                "// SPDX-License-Identifier: UNLICENSED\n\
+                 pragma solidity {pragma};\n\n\
+                 {}",
+                interfaces.iter().map(|iface| &iface.source).format("\n")
+            );
             sh_print!("{res}")?;
         }
 
@@ -142,11 +163,14 @@ fn load_abi_from_artifact(path_or_contract: &str) -> Result<Vec<(JsonAbi, String
 
 /// Converts a vector of tuples containing the ABI and contract name into a vector of
 /// `InterfaceSource` objects.
-fn get_interfaces(abis: Vec<(JsonAbi, String)>) -> Result<Vec<InterfaceSource>> {
+fn get_interfaces(
+    abis: Vec<(JsonAbi, String)>,
+    config: Option<ToSolConfig>,
+) -> Result<Vec<InterfaceSource>> {
     abis.into_iter()
         .map(|(contract_abi, name)| {
             let source = match forge_fmt::format(
-                &contract_abi.to_sol(&name, None),
+                &contract_abi.to_sol(&name, config.clone()),
                 FormatterConfig::default(),
             )
             .into_result()
@@ -154,7 +178,7 @@ fn get_interfaces(abis: Vec<(JsonAbi, String)>) -> Result<Vec<InterfaceSource>> 
                 Ok(generated_source) => generated_source,
                 Err(e) => {
                     sh_warn!("Failed to format interface for {name}: {e}")?;
-                    contract_abi.to_sol(&name, None)
+                    contract_abi.to_sol(&name, config.clone())
                 }
             };
 

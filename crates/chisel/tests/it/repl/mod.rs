@@ -19,14 +19,14 @@ macro_rules! repl_test {
     };
 }
 
-repl_test!(test_repl_help, |repl| {
+repl_test!(repl_help, |repl| {
     repl.sendln_raw("!h");
     repl.expect("Chisel help");
     repl.expect_prompt();
 });
 
 // Test abi encode/decode.
-repl_test!(test_abi_encode_decode, |repl| {
+repl_test!(abi_encode_decode, |repl| {
     repl.sendln("bytes memory encoded = abi.encode(42, \"hello\")");
     repl.sendln("(uint num, string memory str) = abi.decode(encoded, (uint, string))");
     repl.sendln("num");
@@ -36,15 +36,23 @@ repl_test!(test_abi_encode_decode, |repl| {
 });
 
 // Test 0x prefixed strings.
-repl_test!(test_hex_string_interpretation, |repl| {
+repl_test!(hex_string_interpretation, |repl| {
     repl.sendln("string memory s = \"0x1234\"");
     repl.sendln("s");
     // Should be treated as string, not hex literal.
     repl.expect("0x1234");
 });
 
+// Hex literals in the generated inspector `abi.encode(...)` call are ABI-encoded as dynamic bytes.
+repl_test!(hex_literal_inspection_type, |repl| {
+    repl.sendln("hex\"6869\"");
+    repl.expect("Type: dynamic bytes");
+    repl.sendln("(hex\"6869\")");
+    repl.expect("Type: dynamic bytes");
+});
+
 // Test cheatcodes availability.
-repl_test!(test_cheatcodes_available, "", init = true, |repl| {
+repl_test!(cheatcodes_available, "", init = true, |repl| {
     repl.sendln("address alice = address(0x1)");
 
     repl.sendln("alice.balance");
@@ -60,12 +68,12 @@ repl_test!(test_cheatcodes_available, "", init = true, |repl| {
 });
 
 // Test empty inputs.
-repl_test!(test_empty_input, |repl| {
+repl_test!(empty_input, |repl| {
     repl.sendln("   \n \n\n    \t \t \n \n\t\t\t\t \n \n");
 });
 
 // Issue #4130: Test type(intN).min correctness.
-repl_test!(test_int_min_values, |repl| {
+repl_test!(int_min_values, |repl| {
     repl.sendln("type(int8).min");
     repl.expect("-128");
     repl.sendln("type(int256).min");
@@ -74,7 +82,7 @@ repl_test!(test_int_min_values, |repl| {
 
 // Issue #4393: Test edit command with traces.
 // TODO: test `!edit`
-// repl_test!(test_edit_with_traces, |repl| {
+// repl_test!(edit_with_traces, |repl| {
 //     repl.sendln("!traces");
 //     repl.sendln("uint x = 42");
 //     repl.sendln("!edit");
@@ -83,7 +91,7 @@ repl_test!(test_int_min_values, |repl| {
 // });
 
 // Test tuple support.
-repl_test!(test_tuples, |repl| {
+repl_test!(tuples, |repl| {
     repl.sendln("(uint a, uint b) = (1, 2)");
     repl.sendln("a");
     repl.expect("Decimal: 1");
@@ -92,7 +100,7 @@ repl_test!(test_tuples, |repl| {
 });
 
 // Issue #4467: Test import.
-repl_test!(test_import, "", init = true, |repl| {
+repl_test!(import, "", init = true, |repl| {
     repl.sendln("import {Counter} from \"src/Counter.sol\"");
     repl.sendln("Counter c = new Counter()");
     // TODO: pre-existing inspection failure.
@@ -106,7 +114,7 @@ repl_test!(test_import, "", init = true, |repl| {
 });
 
 // Issue #4617: Test code after assembly return.
-repl_test!(test_assembly_return, |repl| {
+repl_test!(assembly_return, |repl| {
     repl.sendln("uint x = 1;");
     repl.sendln("assembly { mstore(0x0, 0x1337) return(0x0, 0x20) }");
     repl.sendln("x = 2;");
@@ -116,25 +124,49 @@ repl_test!(test_assembly_return, |repl| {
 });
 
 // Issue #4652: Test commands with trailing whitespace.
-repl_test!(test_trailing_whitespace, |repl| {
+repl_test!(trailing_whitespace, |repl| {
     repl.sendln("uint x = 42   ");
     repl.sendln("x");
     repl.expect("Decimal: 42");
 });
 
 // Issue #4652: Test that solc flags are respected.
-repl_test!(test_solc_flags, "--use 0.8.23", |repl| {
+repl_test!(solc_flags, "--use 0.8.23", |repl| {
     repl.sendln("pragma solidity 0.8.24;");
-    repl.expect("invalid solc version");
+    repl.expect("invalid compiler version");
 });
 
 // Issue #4915: `chisel eval`
-repl_test!(test_eval_subcommand, "eval type(uint8).max", |repl| {
+repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+repl_test!(
+    eval_tempo_network_uses_tempo_executor,
+    "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
+repl_test!(
+    eval_tempo_chain_id_uses_tempo_executor,
+    "--chain 4217 eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
+repl_test!(
+    eval_tempo_named_chain_uses_tempo_executor,
+    "--chain tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
 // Issue #4938: Test memory/stack dumps with assembly.
-repl_test!(test_assembly_memory_dump, |repl| {
+repl_test!(assembly_memory_dump, |repl| {
     let input = r#"
 uint256 value = 12345;
 string memory str;
@@ -153,35 +185,55 @@ assembly {
     repl.expect("[0x00:0x20]");
 });
 
+// Assembly as the final statement with a return — exercises the path where both
+// `first_yul_return_span` and `trailing_assembly_last_stmt_span` resolve to the same `return(...)`
+// span (no subsequent Solidity statement after the assembly block).
+repl_test!(assembly_return_final, |repl| {
+    repl.sendln("uint x = 0xbeef;");
+    repl.sendln("assembly { mstore(0x0, sload(0)) return(0x0, 0x20) }");
+    repl.sendln("!md");
+    repl.expect("[0x00:0x20]");
+});
+
+// Assembly block without a `return(...)` call as an intermediate statement, exercises
+// `first_yul_return_span` returning `None` while a subsequent Solidity statement is still evaluated
+// correctly.
+repl_test!(assembly_no_return_intermediate, |repl| {
+    repl.sendln("uint x = 1;");
+    repl.sendln("assembly { x := add(x, 1) }");
+    repl.sendln("x");
+    repl.expect("Decimal: 2");
+});
+
 // Issue #5051, #8978: Test EVM version normalization.
-repl_test!(test_evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
+repl_test!(flaky_evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
     repl.sendln("uint x;\nx");
     repl.expect("Decimal: 0");
 });
 
 // Issue #5481: Test function return values are displayed.
-repl_test!(test_function_return_display, |repl| {
+repl_test!(function_return_display, |repl| {
     repl.sendln("function add(uint a, uint b) public pure returns (uint) { return a + b; }");
     repl.sendln("add(2, 3)");
     repl.expect("Decimal: 5");
 });
 
 // Issue #5737: Test bytesN return types.
-repl_test!(test_bytes_length_type, |repl| {
+repl_test!(bytes_length_type, |repl| {
     repl.sendln("bytes10 b = bytes10(0)");
     repl.sendln("b.length");
     repl.expect("Decimal: 10");
 });
 
 // Issue #5737: Test bytesN indexing return type.
-repl_test!(test_bytes_index_type, |repl| {
+repl_test!(bytes_index_type, |repl| {
     repl.sendln("bytes32 b = bytes32(uint256(0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20))");
     repl.sendln("b[3]");
     repl.expect("Data: 0x0400000000000000000000000000000000000000000000000000000000000000");
 });
 
 // Issue #6618: Test fetching interface with structs.
-repl_test!(test_fetch_interface_with_structs, |repl| {
+repl_test!(fetch_interface_with_structs, |repl| {
     repl.sendln_raw("!fe 0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789 IEntryPoint");
     repl.expect(
         "Added 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789's interface to source as `IEntryPoint`",
@@ -192,7 +244,7 @@ repl_test!(test_fetch_interface_with_structs, |repl| {
 });
 
 // Issue #7035: Test that hex strings aren't checksummed as addresses.
-repl_test!(test_hex_string_no_checksum, |repl| {
+repl_test!(hex_string_no_checksum, |repl| {
     repl.sendln("function test(string memory s) public pure returns (string memory) { return s; }");
     repl.sendln("test(\"0xe5f3af50fe5d0bf402a3c6f55ccc47d4307922d4\")");
     // Should return the exact string, not checksummed.
@@ -200,7 +252,7 @@ repl_test!(test_hex_string_no_checksum, |repl| {
 });
 
 // Issue #7050: Test enum min/max operations.
-repl_test!(test_enum_min_max, |repl| {
+repl_test!(enum_min_max, |repl| {
     repl.sendln("enum Color { Red, Green, Blue }");
     repl.sendln("type(Color).min");
     repl.expect("Decimal: 0");
@@ -209,7 +261,7 @@ repl_test!(test_enum_min_max, |repl| {
 });
 
 // Issue #9377: Test correct hex formatting for uint256.
-repl_test!(test_uint256_hex_formatting, |repl| {
+repl_test!(uint256_hex_formatting, |repl| {
     repl.sendln("uint256 x = 42");
     // Full word hex should be 64 chars (256 bits).
     repl.sendln("x");
@@ -217,15 +269,15 @@ repl_test!(test_uint256_hex_formatting, |repl| {
 });
 
 // Issue #9377: Test that full words are printed correctly.
-repl_test!(test_full_word_hex_formatting, |repl| {
-    repl.sendln(r#"keccak256(abi.encode(uint256(keccak256("AgoraStableSwapStorage.OracleStorage")) - 1)) & ~bytes32(uint256(0xff))"#);
+repl_test!(full_word_hex_formatting, |repl| {
+    repl.sendln(r#"uint256(keccak256(abi.encode(uint256(keccak256("AgoraStableSwapStorage.OracleStorage")) - 1))) & ~uint256(0xff)"#);
     repl.expect(
         "Hex (full word): 0x0a6b316b47a0cd26c1b582ae3dcffbd175283c221c3cb3d1c614e3e47f62a700",
     );
 });
 
 // Test that uint is printed properly with any size.
-repl_test!(test_uint_formatting, |repl| {
+repl_test!(uint_formatting, |repl| {
     for size in (8..=256).step_by(8) {
         repl.sendln(&format!("type(uint{size}).max"));
         repl.expect(&format!("Hex: 0x{}", "f".repeat(size / 4)));
@@ -236,7 +288,7 @@ repl_test!(test_uint_formatting, |repl| {
 });
 
 // Test that int is printed properly with any size.
-repl_test!(test_int_formatting, |repl| {
+repl_test!(int_formatting, |repl| {
     for size in (8..=256).step_by(8) {
         let size_minus_1: usize = size / 4 - 1;
         repl.sendln(&format!("type(int{size}).max"));
@@ -251,4 +303,26 @@ repl_test!(test_int_formatting, |repl| {
         repl.sendln(&format!("int{size}(-2)"));
         repl.expect(&format!("Hex: 0x{}e", "f".repeat(size_minus_1)));
     }
+});
+
+repl_test!(uninitialized_variables, |repl| {
+    repl.sendln("uint256 x;");
+    repl.sendln("address y;");
+    repl.sendln("assembly { y := not(x) }");
+
+    repl.sendln("x");
+    repl.expect("Hex: 0x0");
+
+    repl.sendln("y");
+    repl.expect("Data: 0xFFfFfFffFFfffFFfFFfFFFFFffFFFffffFfFFFfF");
+});
+
+repl_test!(chisel_can_run_with_live_logs_flag, "--live-logs", init = true, |repl| {
+    repl.sendln("import {console} from 'forge-std/Script.sol';");
+    repl.sendln("console.log('Hello, World!');");
+    repl.expect("Hello, World!");
+
+    repl.sendln("console.log('Goodbye, World!');");
+    repl.expect("Hello, World!"); // old log is also printed
+    repl.expect("Goodbye, World!");
 });

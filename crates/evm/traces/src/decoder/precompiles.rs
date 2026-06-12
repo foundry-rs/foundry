@@ -1,10 +1,16 @@
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
-use foundry_evm_core::precompiles::{
-    BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
-    RIPEMD_160, SHA_256,
+use foundry_config::{Chain, NamedChain};
+use foundry_evm_core::{
+    precompiles::{
+        BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
+        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
+        EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
+    },
+    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, active_tempo_precompile_addresses},
 };
+use foundry_evm_hardforks::TempoHardfork;
 use itertools::Itertools;
 use revm_inspectors::tracing::types::DecodedCallTrace;
 
@@ -33,12 +39,29 @@ interface Precompiles {
     /* 0x08 */ function ecpairing(EcPairingInput[] input) returns (bool success);
     /* 0x09 */ function blake2f(uint32 rounds, uint64[8] h, uint64[16] m, uint64[2] t, bool f) returns (uint64[8] h);
     /* 0x0a */ function pointEvaluation(bytes32 versionedHash, bytes32 z, bytes32 y, bytes1[48] commitment, bytes1[48] proof) returns (bytes value);
+
+    // Prague BLS12-381 precompiles (EIP-2537)
+    /* 0x0b */ function bls12G1Add(bytes p1, bytes p2) returns (bytes result);
+    /* 0x0c */ function bls12G1Msm(bytes[] scalarsAndPoints) returns (bytes result);
+    /* 0x0d */ function bls12G2Add(bytes p1, bytes p2) returns (bytes result);
+    /* 0x0e */ function bls12G2Msm(bytes[] scalarsAndPoints) returns (bytes result);
+    /* 0x0f */ function bls12PairingCheck(bytes[] pairs) returns (bool success);
+    /* 0x10 */ function bls12MapFpToG1(bytes fp) returns (bytes result);
+    /* 0x11 */ function bls12MapFp2ToG2(bytes fp2) returns (bytes result);
+
+    // Osaka precompiles (EIP-7212)
+    /* 0x100 */ function p256Verify(bytes32 hash, uint256 r, uint256 s, uint256 qx, uint256 qy) returns (bool success);
 }
 }
 use Precompiles::*;
 
-pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
-    address[..19].iter().all(|&x| x == 0)
+pub(super) fn is_known_precompile(
+    address: Address,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+) -> bool {
+    // Standard EVM precompiles (all chains).
+    let is_standard = address[..19].iter().all(|&x| x == 0)
         && matches!(
             address,
             EC_RECOVER
@@ -51,12 +74,45 @@ pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
                 | EC_PAIRING
                 | BLAKE_2F
                 | POINT_EVALUATION
-        )
+                | BLS12_G1ADD
+                | BLS12_G1MSM
+                | BLS12_G2ADD
+                | BLS12_G2MSM
+                | BLS12_PAIRING_CHECK
+                | BLS12_MAP_FP_TO_G1
+                | BLS12_MAP_FP2_TO_G2
+                | P256_VERIFY
+        );
+    if is_standard {
+        return true;
+    }
+    // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
+    let is_tempo_precompile = match tempo_hardfork {
+        Some(hardfork) => active_tempo_precompile_addresses(hardfork).any(|addr| addr == address),
+        None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
+    };
+    if chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
+        && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address))
+    {
+        return true;
+    }
+    // Celo transfer precompile (only on Celo chains).
+    if chain_id.is_some_and(|id| {
+        matches!(Chain::from_id(id).named(), Some(NamedChain::Celo | NamedChain::CeloSepolia))
+    }) && address == CELO_TRANSFER
+    {
+        return true;
+    }
+    false
 }
 
 /// Tries to decode a precompile call. Returns `Some` if successful.
-pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTrace> {
-    if !is_known_precompile(trace.address, _chain_id) {
+pub(super) fn decode(
+    trace: &CallTrace,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+) -> Option<DecodedCallTrace> {
+    if !is_known_precompile(trace.address, chain_id, tempo_hardfork) {
         return None;
     }
 
@@ -115,6 +171,14 @@ const PRECOMPILES: &[&dyn Precompile] = &[
     &Ecpairing,
     &Blake2f,
     &PointEvaluation,
+    &Bls12G1Add,
+    &Bls12G1Msm,
+    &Bls12G2Add,
+    &Bls12G2Msm,
+    &Bls12PairingCheck,
+    &Bls12MapFpToG1,
+    &Bls12MapFp2ToG2,
+    &P256Verify,
 ];
 
 struct Ecrecover;
@@ -344,6 +408,156 @@ impl Precompile for PointEvaluation {
 
 fn iter_to_string<I: Iterator<Item = T>, T: std::fmt::Display>(iter: I) -> String {
     format!("[{}]", iter.format(", "))
+}
+
+const G1_POINT_SIZE: usize = 128;
+const G2_POINT_SIZE: usize = 256;
+const SCALAR_SIZE: usize = 32;
+const FP_SIZE: usize = 64;
+
+struct Bls12G1Add;
+impl Precompile for Bls12G1Add {
+    fn address(&self) -> Address {
+        BLS12_G1ADD
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        bls12G1AddCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let (p1, rest) = take_at_most(data, G1_POINT_SIZE);
+        let (p2, _) = take_at_most(rest, G1_POINT_SIZE);
+        Ok(vec![hex::encode_prefixed(p1), hex::encode_prefixed(p2)])
+    }
+}
+
+struct Bls12G1Msm;
+impl Precompile for Bls12G1Msm {
+    fn address(&self) -> Address {
+        BLS12_G1MSM
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        bls12G1MsmCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let pair_size = G1_POINT_SIZE + SCALAR_SIZE;
+        Ok(data.chunks(pair_size).map(hex::encode_prefixed).collect())
+    }
+}
+
+struct Bls12G2Add;
+impl Precompile for Bls12G2Add {
+    fn address(&self) -> Address {
+        BLS12_G2ADD
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        bls12G2AddCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let (p1, rest) = take_at_most(data, G2_POINT_SIZE);
+        let (p2, _) = take_at_most(rest, G2_POINT_SIZE);
+        Ok(vec![hex::encode_prefixed(p1), hex::encode_prefixed(p2)])
+    }
+}
+
+struct Bls12G2Msm;
+impl Precompile for Bls12G2Msm {
+    fn address(&self) -> Address {
+        BLS12_G2MSM
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        bls12G2MsmCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let pair_size = G2_POINT_SIZE + SCALAR_SIZE;
+        Ok(data.chunks(pair_size).map(hex::encode_prefixed).collect())
+    }
+}
+
+struct Bls12PairingCheck;
+impl Precompile for Bls12PairingCheck {
+    fn address(&self) -> Address {
+        BLS12_PAIRING_CHECK
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        bls12PairingCheckCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let pair_size = G1_POINT_SIZE + G2_POINT_SIZE;
+        Ok(data.chunks(pair_size).map(hex::encode_prefixed).collect())
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = bls12PairingCheckCall::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
+    }
+}
+
+struct Bls12MapFpToG1;
+impl Precompile for Bls12MapFpToG1 {
+    fn address(&self) -> Address {
+        BLS12_MAP_FP_TO_G1
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        bls12MapFpToG1Call::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let (fp, _) = take_at_most(data, FP_SIZE);
+        Ok(vec![hex::encode_prefixed(fp)])
+    }
+}
+
+struct Bls12MapFp2ToG2;
+impl Precompile for Bls12MapFp2ToG2 {
+    fn address(&self) -> Address {
+        BLS12_MAP_FP2_TO_G2
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        bls12MapFp2ToG2Call::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let (fp2, _) = take_at_most(data, G1_POINT_SIZE);
+        Ok(vec![hex::encode_prefixed(fp2)])
+    }
+}
+
+struct P256Verify;
+impl Precompile for P256Verify {
+    fn address(&self) -> Address {
+        P256_VERIFY
+    }
+
+    fn signature(&self, _: &[u8]) -> &'static str {
+        p256VerifyCall::SIGNATURE
+    }
+
+    fn decode_call(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let p256VerifyCall { hash, r, s, qx, qy } = p256VerifyCall::abi_decode_raw(data)?;
+        Ok(vec![hash.to_string(), r.to_string(), s.to_string(), qx.to_string(), qy.to_string()])
+    }
+
+    fn decode_return(&self, data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
+        let ret = p256VerifyCall::abi_decode_returns(data)?;
+        Ok(vec![ret.to_string()])
+    }
+}
+
+fn take_at_most(data: &[u8], n: usize) -> (&[u8], &[u8]) {
+    let n = n.min(data.len());
+    data.split_at(n)
 }
 
 #[cfg(test)]

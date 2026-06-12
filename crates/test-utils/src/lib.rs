@@ -14,6 +14,7 @@ extern crate tracing;
 #[macro_use]
 mod macros;
 
+pub mod etherscan;
 pub mod rpc;
 
 pub mod fd_lock;
@@ -21,9 +22,14 @@ pub mod fd_lock;
 mod filter;
 pub use filter::Filter;
 
+mod ext;
+pub use ext::ExtTester;
+
+mod prj;
+pub use prj::{TestCommand, TestProject};
+
 // Utilities for making it easier to handle tests.
 pub mod util;
-pub use util::{TestCommand, TestProject};
 
 mod script;
 pub use script::{ScriptOutcome, ScriptTester};
