@@ -16,14 +16,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let tag_name = try_env_var("TAG_NAME").unwrap_or_else(|| String::from("dev"));
     let is_nightly = tag_name.contains("nightly");
-    let version_suffix = if is_nightly { "nightly" } else { &tag_name };
 
     if is_nightly {
         println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION=true");
     }
 
     let pkg_version = env_var("CARGO_PKG_VERSION");
-    let version = format!("{pkg_version}-{version_suffix}");
+    let version = foundry_version(&pkg_version, &tag_name);
 
     // `PROFILE` captures only release or debug. Get the actual name from the out directory.
     let out_dir = PathBuf::from(env_var("OUT_DIR"));
@@ -90,4 +89,17 @@ fn env_var(name: &str) -> String {
 fn try_env_var(name: &str) -> Option<String> {
     println!("cargo:rerun-if-env-changed={name}");
     std::env::var(name).ok()
+}
+
+fn foundry_version(pkg_version: &str, tag_name: &str) -> String {
+    if tag_name.contains("nightly") {
+        return format!("{pkg_version}-nightly");
+    }
+
+    let tag_version = tag_name.strip_prefix('v').unwrap_or(tag_name);
+    if tag_version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        tag_version.to_owned()
+    } else {
+        format!("{pkg_version}-{tag_name}")
+    }
 }
