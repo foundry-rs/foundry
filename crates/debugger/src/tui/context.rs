@@ -3,7 +3,7 @@
 use crate::{DebugNode, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use foundry_evm_core::buffer::BufferKind;
+use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
@@ -236,12 +236,14 @@ impl TUIContext<'_> {
             KeyCode::Char('g') => {
                 self.draw_memory.inner_call_index = 0;
                 self.current_step = 0;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to bottom of file
             KeyCode::Char('G') => {
                 self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
                 self.current_step = self.n_steps() - 1;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to previous call
@@ -249,6 +251,7 @@ impl TUIContext<'_> {
                 self.draw_memory.inner_call_index =
                     self.draw_memory.inner_call_index.saturating_sub(1);
                 self.current_step = self.n_steps() - 1;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to next call
@@ -257,6 +260,7 @@ impl TUIContext<'_> {
             {
                 self.draw_memory.inner_call_index += 1;
                 self.current_step = 0;
+                self.scroll_memory_to_current_write();
             }
 
             // Step forward
@@ -268,7 +272,8 @@ impl TUIContext<'_> {
                         is_jump(step, prev)
                     })
                 {
-                    this.current_step += i
+                    this.current_step += i;
+                    this.scroll_memory_to_current_write();
                 }
             }),
 
@@ -286,6 +291,7 @@ impl TUIContext<'_> {
                     })
                     .map(|(i, _)| i)
                     .unwrap_or_default();
+                this.scroll_memory_to_current_write();
             }),
 
             // Toggle stack labels
@@ -408,6 +414,7 @@ impl TUIContext<'_> {
         self.current_step = target.step_index;
         self.draw_memory.current_buf_startline = 0;
         self.draw_memory.current_stack_startline = 0;
+        self.scroll_memory_to_current_write();
         self.key_buffer.clear();
 
         let pc = candidate.pc;
@@ -437,6 +444,7 @@ impl TUIContext<'_> {
                 {
                     self.draw_memory.inner_call_index = i;
                     self.current_step = step;
+                    self.scroll_memory_to_current_write();
                     break;
                 }
             }
@@ -465,6 +473,7 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index -= 1;
             self.current_step = self.n_steps() - 1;
         }
+        self.scroll_memory_to_current_write();
     }
 
     fn step(&mut self) {
@@ -474,6 +483,30 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index += 1;
             self.current_step = 0;
         }
+        self.scroll_memory_to_current_write();
+    }
+
+    fn scroll_memory_to_current_write(&mut self) {
+        if self.active_buffer != BufferKind::Memory {
+            return;
+        }
+
+        if let Some(line) = self.current_memory_write_line() {
+            self.draw_memory.current_buf_startline = line;
+        }
+    }
+
+    fn current_memory_write_line(&self) -> Option<usize> {
+        let memory_len = self.current_step().memory.as_ref()?.len();
+
+        if self.current_step > 0 {
+            let prev_step = &self.debug_steps()[self.current_step - 1];
+            if let Some(line) = bounded_memory_write_start_line(prev_step, memory_len) {
+                return Some(line);
+            }
+        }
+
+        bounded_memory_write_start_line(self.current_step(), memory_len)
     }
 
     /// Calls a closure `f` the number of times specified in the key buffer, and at least once.
@@ -679,6 +712,20 @@ fn pretty_opcode(step: &CallTraceStep) -> String {
     }
 }
 
+fn memory_write_start_line(step: &CallTraceStep) -> Option<usize> {
+    let stack = step.stack.as_ref()?;
+    let access = get_buffer_accesses(step.op.get(), stack)?.write?;
+    if access.len == 0 {
+        return None;
+    }
+    Some(access.offset / 32)
+}
+
+fn bounded_memory_write_start_line(step: &CallTraceStep, memory_len: usize) -> Option<usize> {
+    let line = memory_write_start_line(step)?;
+    (line < memory_len.div_ceil(32)).then_some(line)
+}
+
 fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
     if !matches!(prev.op, OpCode::JUMP | OpCode::JUMPI) {
         return false;
@@ -692,16 +739,22 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{Bytes, U256};
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::ContractSources;
     use revm::interpreter::InstructionResult;
 
     fn step(pc: usize) -> CallTraceStep {
+        step_with_stack(pc, OpCode::STOP, &[])
+    }
+
+    fn step_with_stack(pc: usize, op: OpCode, stack: &[usize]) -> CallTraceStep {
         CallTraceStep {
             pc,
-            op: OpCode::STOP,
-            stack: None,
+            op,
+            stack: (!stack.is_empty()).then(|| {
+                stack.iter().copied().map(U256::from).collect::<Vec<_>>().into_boxed_slice()
+            }),
             push_stack: None,
             memory: None,
             returndata: Bytes::new(),
@@ -947,5 +1000,69 @@ mod tests {
         assert_eq!(tui.pc_input, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn memory_write_start_line_uses_write_offset() {
+        assert_eq!(memory_write_start_line(&step_with_stack(0, OpCode::MSTORE, &[0, 96])), Some(3));
+        assert_eq!(
+            memory_write_start_line(&step_with_stack(0, OpCode::MSTORE8, &[0, 33])),
+            Some(1)
+        );
+        assert_eq!(memory_write_start_line(&step(0)), None);
+    }
+
+    #[test]
+    fn bounded_memory_write_start_line_requires_visible_non_empty_write() {
+        let write_at_128 = step_with_stack(0, OpCode::MSTORE, &[0, 128]);
+        assert_eq!(bounded_memory_write_start_line(&write_at_128, 160), Some(4));
+        assert_eq!(bounded_memory_write_start_line(&write_at_128, 128), None);
+
+        let zero_len_copy = step_with_stack(0, OpCode::CALLDATACOPY, &[0, 0, 1_000_000]);
+        assert_eq!(memory_write_start_line(&zero_len_copy), None);
+        assert_eq!(bounded_memory_write_start_line(&zero_len_copy, 32), None);
+    }
+
+    #[test]
+    fn stepping_past_memory_write_without_memory_snapshot_keeps_scroll_position() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.draw_memory.current_buf_startline = 99;
+
+        tui.step();
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 99);
+    }
+
+    #[test]
+    fn memory_write_autoscroll_only_applies_to_memory_buffer() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+        tui.draw_memory.current_buf_startline = 7;
+
+        tui.step();
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 7);
     }
 }
