@@ -1010,9 +1010,13 @@ impl<'ast> State<'_, 'ast> {
 
             self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
-            self.end();
+            if override_.is_some() {
+                self.end();
+                self.end();
+            } else {
+                self.end();
+            }
         }
-        self.end();
     }
 
     fn print_attribute(

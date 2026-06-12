@@ -145,6 +145,30 @@ fn test_all_dirs_are_declared(dirs: &[&str]) {
     }
 }
 
+#[test]
+fn issue_15151_override_var_without_initializer_does_not_indent_next_item() {
+    let source = r#"contract BaseStorage {
+    uint256 public total;
+}
+
+contract ChildStorage is BaseStorage {
+    uint256 public override total;
+}
+
+struct Info {
+    uint256 a;
+}
+"#;
+    let formatted = format(source, Path::new("15151.sol"), Arc::new(FormatterConfig::default()));
+    let lines: Vec<&str> = formatted.lines().collect();
+
+    let struct_line = lines
+        .iter()
+        .find(|line| line.starts_with("struct Info"))
+        .expect("missing struct declaration");
+    assert_eq!(*struct_line, "struct Info {");
+}
+
 macro_rules! fmt_tests {
     ($($(#[$attr:meta])* $dir:ident),+ $(,)?) => {
         #[test]
