@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+
+# `use` and `err` always exit, so code following them is reachable but flagged.
+# shellcheck disable=SC2317
+
 set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
@@ -449,7 +453,7 @@ update() {
 
 list() {
   if [ -d "$FOUNDRY_VERSIONS_DIR" ]; then
-    for VERSION in $FOUNDRY_VERSIONS_DIR/*; do
+    for VERSION in "$FOUNDRY_VERSIONS_DIR"/*; do
       say "${VERSION##*/}"
       for bin in "${BINS[@]}"; do
         bin_path="$VERSION/$bin"
@@ -810,4 +814,7 @@ Contribute : https://github.com/foundry-rs/foundry/blob/HEAD/CONTRIBUTING.md
 }
 
 
-main "$@"
+# Skip execution when sourced by tests.
+if [ "${FOUNDRYUP_TEST:-0}" != "1" ]; then
+  main "$@"
+fi
