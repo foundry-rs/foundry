@@ -578,3 +578,143 @@ checkTaikoStylePackedBytes1ArrayKzgCallReturnsCounterexample(uint256)
     );
     assert!(!stdout.contains("symbolic KZG point-evaluation precompile"), "{stdout}");
 });
+
+forgetest_init!(symbolic_kzg_precompile_explores_invalid_symbolic_length, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_kzg_precompile_explores_invalid_symbolic_length because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicKzgInvalidLength.t.sol",
+        r#"
+contract SymbolicKzgInvalidLength {
+    function checkKzgInvalidLengthIsNotDropped(uint8 size) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            hex"73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000",
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        bool ok;
+        assembly {
+            ok := staticcall(gas(), 0x0a, add(input, 0x20), size, 0, 0)
+        }
+
+        if (!ok) assert(size == 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgInvalidLength"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed (0x01); counterexample:
+checkKzgInvalidLengthIsNotDropped(uint8)
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_kzg_precompile_inactive_before_cancun, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_kzg_precompile_inactive_before_cancun because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicPreCancunKzg.t.sol",
+        r#"
+contract SymbolicPreCancunKzg {
+    function checkAddress0aIsEmptyAccountBeforeCancun(uint256) public {
+        bytes memory input = new bytes(191);
+        (bool ok, bytes memory out) = address(0x0a).staticcall(input);
+
+        assert(ok);
+        assert(out.length == 0);
+
+        uint256 codeSize;
+        bytes32 codeHash;
+        assembly {
+            codeSize := extcodesize(0x0a)
+            codeHash := extcodehash(0x0a)
+        }
+
+        assert(codeSize == 0);
+        assert(codeHash == bytes32(0));
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--evm-version",
+            "shanghai",
+            "--match-contract",
+            "SymbolicPreCancunKzg",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkAddress0aIsEmptyAccountBeforeCancun(uint256)
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_kzg_precompile_residual_reports_incomplete, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_kzg_precompile_residual_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicKzgResidual.t.sol",
+        r#"
+contract SymbolicKzgResidual {
+    function checkUnmodeledKzgResidual(bytes32 z) public {
+        bytes memory input = abi.encodePacked(
+            hex"01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b",
+            z,
+            hex"1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9",
+            hex"8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7",
+            hex"a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+        );
+
+        address(0x0a).staticcall(input);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicKzgResidual"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        stdout.contains("symbolic KZG point-evaluation precompile residual not modeled"),
+        "{stdout}"
+    );
+});

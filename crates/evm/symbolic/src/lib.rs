@@ -237,6 +237,7 @@ pub struct SymbolicStats {
 pub struct SymbolicExecutor {
     config: SymbolicConfig,
     solver: Box<dyn runtime::SymbolicSolver>,
+    deferred_incomplete: Option<&'static str>,
 }
 
 #[cfg(test)]

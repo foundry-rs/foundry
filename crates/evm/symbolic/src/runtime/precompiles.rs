@@ -22,6 +22,14 @@ pub(crate) fn precompile_number(address: Address) -> Option<u8> {
     }
 }
 
+/// Returns the `precompile_number` helper result for the active EVM spec.
+pub(crate) fn precompile_number_for_spec(address: Address, spec_id: SpecId) -> Option<u8> {
+    match precompile_number(address)? {
+        10 if spec_id < SpecId::CANCUN => None,
+        number => Some(number),
+    }
+}
+
 /// Returns the `precompile_address` precompile helper result.
 pub(crate) fn precompile_address(number: u8) -> Address {
     let mut bytes = [0u8; 20];
@@ -30,16 +38,17 @@ pub(crate) fn precompile_address(number: u8) -> Address {
 }
 
 /// Returns whether `is_supported_precompile` holds.
-pub(crate) fn is_supported_precompile(address: Address) -> bool {
-    precompile_number(address).is_some()
+pub(crate) fn is_supported_precompile(address: Address, spec_id: SpecId) -> bool {
+    precompile_number_for_spec(address, spec_id).is_some()
 }
 
 /// Computes the `execute_precompile` precompile helper result.
 pub(crate) fn execute_precompile(
     address: Address,
     input: &[u8],
+    spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    let output = match precompile_number(address) {
+    let output = match precompile_number_for_spec(address, spec_id) {
         Some(1) => secp256k1::ec_recover_run(input, u64::MAX),
         Some(2) => hash::sha256_run(input, u64::MAX),
         Some(3) => hash::ripemd160_run(input, u64::MAX),
@@ -69,6 +78,7 @@ pub(crate) fn execute_symbolic_precompile(
     address: Address,
     input: Vec<SymWord>,
     input_len: SymWord,
+    spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     if input.iter().all(|byte| matches!(byte, SymWord::Concrete(_)))
         && let SymWord::Concrete(input_len) = input_len
@@ -76,10 +86,10 @@ pub(crate) fn execute_symbolic_precompile(
     {
         let input_len = input_len.to::<usize>();
         let input = concrete_bytes(&input[..input_len], "symbolic precompile input")?;
-        return execute_precompile(address, &input);
+        return execute_precompile(address, &input, spec_id);
     }
 
-    match precompile_number(address) {
+    match precompile_number_for_spec(address, spec_id) {
         Some(1) => {
             let word = symbolic_hash_word_with_len("ecrecover", input, input_len);
             let mut bytes = vec![SymWord::zero(); 12];
@@ -169,7 +179,7 @@ pub(crate) fn execute_symbolic_precompile(
                     .ok_or(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"))?,
                 "symbolic precompile input",
             )?;
-            execute_precompile(address, &input)
+            execute_precompile(address, &input, spec_id)
         }
     }
 }
@@ -189,7 +199,7 @@ pub(crate) fn symbolic_kzg_point_evaluation_precompile(
 
     let input = &input[..input_len];
     if let Ok(input) = concrete_bytes(input, "symbolic KZG point-evaluation precompile input") {
-        return execute_precompile(precompile_address(10), &input);
+        return execute_precompile(precompile_address(10), &input, SpecId::CANCUN);
     }
 
     if let Some(SymWord::Concrete(version)) = input.first()

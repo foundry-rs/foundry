@@ -930,16 +930,17 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        if is_supported_precompile(code_address) {
+        let spec_id: SpecId = executor.spec_id().into();
+        if is_supported_precompile(code_address, spec_id) {
             let input_len = bounded_copy_size_word(&in_size);
             let input = call_input_from_memory(&state.memory, in_offset, &in_size);
-            if precompile_number(code_address) == Some(10) {
+            if precompile_number_for_spec(code_address, spec_id) == Some(10) {
                 return self.execute_kzg_precompile_call(
                     executor, state, worklist, kind, to, value, out_offset, &out_size, input,
                     input_len,
                 );
             }
-            match execute_symbolic_precompile(code_address, input, input_len)? {
+            match execute_symbolic_precompile(code_address, input, input_len, spec_id)? {
                 Some(return_data) => {
                     state.return_data = return_data;
                     if matches!(kind, CallKind::Call) {
@@ -1188,21 +1189,22 @@ impl SymbolicExecutor {
         }
 
         let success_condition = kzg_success_witness_condition(&input, &input_len);
+        let failure_condition = kzg_failure_witness_condition(state, &input, &input_len);
+        let modeled_condition =
+            BoolExpr::or(vec![success_condition.clone(), failure_condition.clone()]);
+        let (_, residual_sat) = self.constraints_with_condition(state, modeled_condition.not())?;
+        if residual_sat {
+            self.defer_incomplete(KZG_RESIDUAL_REASON);
+        }
+
         let (success_constraints, success_sat) =
             self.constraints_with_condition(state, success_condition)?;
 
-        let failure_constraints = kzg_failure_witness_conditions(state, &input, &input_len)
-            .into_iter()
-            .map(|condition| self.constraints_with_condition(state, condition))
-            .find_map(|result| match result {
-                Ok((constraints, true)) => Some(Ok(constraints)),
-                Ok((_, false)) => None,
-                Err(err) => Some(Err(err)),
-            })
-            .transpose()?;
+        let (failure_constraints, failure_sat) =
+            self.constraints_with_condition(state, failure_condition)?;
 
-        match (success_sat, failure_constraints) {
-            (true, Some(failure_constraints)) => {
+        match (success_sat, failure_sat) {
+            (true, true) => {
                 let mut failure = state.clone();
                 failure.constraints = failure_constraints;
                 self.apply_precompile_outcome(
@@ -1230,7 +1232,7 @@ impl SymbolicExecutor {
                 )?;
                 Ok(StepOutcome::Continue)
             }
-            (true, None) => {
+            (true, false) => {
                 state.constraints = success_constraints;
                 self.apply_precompile_outcome(
                     executor,
@@ -1244,16 +1246,14 @@ impl SymbolicExecutor {
                 )?;
                 Ok(StepOutcome::Continue)
             }
-            (false, Some(failure_constraints)) => {
+            (false, true) => {
                 state.constraints = failure_constraints;
                 self.apply_precompile_outcome(
                     executor, state, kind, to, value, out_offset, out_size, None,
                 )?;
                 Ok(StepOutcome::Continue)
             }
-            (false, None) => Err(SymbolicError::Unsupported(
-                "symbolic KZG point-evaluation precompile could not construct replayable witness",
-            )),
+            (false, false) => Err(SymbolicError::Unsupported(KZG_RESIDUAL_REASON)),
         }
     }
 
@@ -1558,6 +1558,7 @@ const KZG_SUCCESS_INPUT: [u8; KZG_POINT_EVALUATION_INPUT_LEN] = hex!(
 const KZG_INVALID_PROOF: [u8; 48] = [0xff; 48];
 const KZG_ZERO_COMMITMENT: [u8; 48] = [0x00; 48];
 const KZG_ONE_COMMITMENT: [u8; 48] = [0x01; 48];
+const KZG_RESIDUAL_REASON: &str = "symbolic KZG point-evaluation precompile residual not modeled";
 
 fn kzg_success_return_data() -> SymReturnData {
     SymReturnData::from_concrete_bytes(kzg_point_evaluation::RETURN_VALUE.to_vec())
@@ -1579,7 +1580,7 @@ fn kzg_constrained_outcome(
     }
 
     if let Some(input) = constrained_bytes_at(state, input, 0, input_len) {
-        return execute_precompile(precompile_address(10), &input).map(Some);
+        return execute_precompile(precompile_address(10), &input, SpecId::CANCUN).map(Some);
     }
 
     if constrained_byte(state, &input[0])
@@ -1617,15 +1618,18 @@ fn kzg_success_witness_condition(input: &[SymWord], input_len: &SymWord) -> Bool
     ])
 }
 
-fn kzg_failure_witness_conditions(
+fn kzg_failure_witness_condition(
     state: &PathState,
     input: &[SymWord],
     input_len: &SymWord,
-) -> Vec<BoolExpr> {
+) -> BoolExpr {
     let len_192 = word_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN);
     let mut conditions = vec![
-        word_eq_condition(input_len, 0),
-        BoolExpr::and(vec![len_192.clone(), byte_eq_condition(input, 0, 0)]),
+        word_ne_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
+        BoolExpr::and(vec![
+            len_192.clone(),
+            byte_ne_condition(input, 0, kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG),
+        ]),
         BoolExpr::and(vec![
             len_192.clone(),
             bytes_eq_condition(input, KZG_Z_OFFSET, &KZG_BLS_MODULUS),
@@ -1642,11 +1646,10 @@ fn kzg_failure_witness_conditions(
 
     if let Some(commitment) = constrained_bytes_at(state, input, KZG_COMMITMENT_OFFSET, 48) {
         let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
-        conditions.extend(
-            kzg_versioned_hash_mismatch_conditions(state, input, &expected_hash)
-                .into_iter()
-                .map(|mismatch| BoolExpr::and(vec![len_192.clone(), mismatch])),
-        );
+        conditions.push(BoolExpr::and(vec![
+            len_192.clone(),
+            kzg_versioned_hash_mismatch_condition(input, &expected_hash),
+        ]));
     }
 
     let expected_hash = &KZG_SUCCESS_INPUT[KZG_VERSIONED_HASH_OFFSET..KZG_Z_OFFSET];
@@ -1659,34 +1662,18 @@ fn kzg_failure_witness_conditions(
 
     for commitment in [&KZG_ZERO_COMMITMENT, &KZG_ONE_COMMITMENT] {
         let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(commitment);
-        for mismatch in kzg_versioned_hash_mismatch_conditions(state, input, &expected_hash) {
-            conditions.push(BoolExpr::and(vec![
-                len_192.clone(),
-                bytes_eq_condition(input, KZG_COMMITMENT_OFFSET, commitment),
-                mismatch,
-            ]));
-        }
+        conditions.push(BoolExpr::and(vec![
+            len_192.clone(),
+            bytes_eq_condition(input, KZG_COMMITMENT_OFFSET, commitment),
+            kzg_versioned_hash_mismatch_condition(input, &expected_hash),
+        ]));
     }
 
-    conditions
+    BoolExpr::or(conditions)
 }
 
-fn kzg_versioned_hash_mismatch_conditions(
-    state: &PathState,
-    input: &[SymWord],
-    expected_hash: &[u8; 32],
-) -> Vec<BoolExpr> {
-    expected_hash
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(idx, expected)| {
-            match input.get(idx).and_then(|byte| constrained_byte(state, byte)) {
-                Some(actual) if actual != expected => BoolExpr::Const(true),
-                _ => byte_eq_condition(input, idx, expected ^ 1),
-            }
-        })
-        .collect()
+fn kzg_versioned_hash_mismatch_condition(input: &[SymWord], expected_hash: &[u8; 32]) -> BoolExpr {
+    bytes_ne_condition(input, KZG_VERSIONED_HASH_OFFSET, expected_hash)
 }
 
 fn word_eq_condition(word: &SymWord, value: usize) -> BoolExpr {
@@ -1697,9 +1684,20 @@ fn word_eq_condition(word: &SymWord, value: usize) -> BoolExpr {
     }
 }
 
+fn word_ne_condition(word: &SymWord, value: usize) -> BoolExpr {
+    word_eq_condition(word, value).not()
+}
+
 fn byte_eq_condition(input: &[SymWord], offset: usize, value: u8) -> BoolExpr {
     match input.get(offset) {
         Some(word) => word_eq_condition(word, value as usize),
+        None => BoolExpr::Const(false),
+    }
+}
+
+fn byte_ne_condition(input: &[SymWord], offset: usize, value: u8) -> BoolExpr {
+    match input.get(offset) {
+        Some(word) => word_ne_condition(word, value as usize),
         None => BoolExpr::Const(false),
     }
 }
@@ -1716,6 +1714,22 @@ fn bytes_eq_condition(input: &[SymWord], offset: usize, bytes: &[u8]) -> BoolExp
             .iter()
             .zip(bytes)
             .map(|(word, byte)| word_eq_condition(word, *byte as usize))
+            .collect(),
+    )
+}
+
+fn bytes_ne_condition(input: &[SymWord], offset: usize, bytes: &[u8]) -> BoolExpr {
+    let Some(end) = offset.checked_add(bytes.len()) else {
+        return BoolExpr::Const(false);
+    };
+    if end > input.len() {
+        return BoolExpr::Const(false);
+    }
+    BoolExpr::or(
+        input[offset..end]
+            .iter()
+            .zip(bytes)
+            .map(|(word, byte)| word_ne_condition(word, *byte as usize))
             .collect(),
     )
 }

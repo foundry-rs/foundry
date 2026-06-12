@@ -1522,13 +1522,22 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     ];
 
     let input_len = SymWord::Concrete(U256::from(input.len()));
-    let sha = execute_symbolic_precompile(precompile_address(2), input.clone(), input_len.clone())
-        .unwrap()
-        .unwrap();
-    let sha_again =
-        execute_symbolic_precompile(precompile_address(2), input.clone(), input_len.clone())
-            .unwrap()
-            .unwrap();
+    let sha = execute_symbolic_precompile(
+        precompile_address(2),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let sha_again = execute_symbolic_precompile(
+        precompile_address(2),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
     let sha_word = word_from_bytes((0..32).map(|idx| sha.byte(idx)));
     let sha_again_word = word_from_bytes((0..32).map(|idx| sha_again.byte(idx)));
 
@@ -1536,14 +1545,22 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     assert_eq!(sha_word, sha_again_word);
     assert!(matches!(sha_word, SymWord::Expr(Expr::Hash { algorithm: "sha256", .. })));
 
-    let ecrecover =
-        execute_symbolic_precompile(precompile_address(1), input.clone(), input_len.clone())
-            .unwrap()
-            .unwrap();
-    let ecrecover_again =
-        execute_symbolic_precompile(precompile_address(1), input.clone(), input_len.clone())
-            .unwrap()
-            .unwrap();
+    let ecrecover = execute_symbolic_precompile(
+        precompile_address(1),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let ecrecover_again = execute_symbolic_precompile(
+        precompile_address(1),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(ecrecover.len, 32);
     for idx in 0..12 {
@@ -1553,12 +1570,18 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
         assert_eq!(ecrecover.byte(idx), ecrecover_again.byte(idx));
     }
 
-    let ripemd =
-        execute_symbolic_precompile(precompile_address(3), input.clone(), input_len.clone())
+    let ripemd = execute_symbolic_precompile(
+        precompile_address(3),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let ripemd_again =
+        execute_symbolic_precompile(precompile_address(3), input, input_len, SpecId::CANCUN)
             .unwrap()
             .unwrap();
-    let ripemd_again =
-        execute_symbolic_precompile(precompile_address(3), input, input_len).unwrap().unwrap();
 
     assert_eq!(ripemd.len, 32);
     for idx in 0..12 {
@@ -1579,9 +1602,14 @@ fn identity_precompile_preserves_symbolic_input_len() {
         SymWord::Concrete(U256::from(4)),
     ];
     let input_len = SymWord::Expr(Expr::Var("size".to_string()));
-    let return_data = execute_symbolic_precompile(precompile_address(4), input, input_len.clone())
-        .unwrap()
-        .unwrap();
+    let return_data = execute_symbolic_precompile(
+        precompile_address(4),
+        input,
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(return_data.len, 4);
     assert_eq!(return_data.len_word(), input_len);
@@ -1604,6 +1632,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
         precompile_address(5),
         modexp_input.clone(),
         SymWord::Concrete(U256::from(modexp_input.len())),
+        SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
@@ -1611,6 +1640,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
         precompile_address(5),
         modexp_input.clone(),
         SymWord::Concrete(U256::from(modexp_input.len())),
+        SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
@@ -1623,6 +1653,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
         precompile_address(9),
         blake_input,
         SymWord::Concrete(U256::from(213)),
+        SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
@@ -1637,6 +1668,7 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
         precompile_address(6),
         bn_input,
         SymWord::Concrete(U256::from(128)),
+        SpecId::CANCUN,
     )
     .unwrap_err();
     assert!(matches!(
@@ -1649,6 +1681,7 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
         precompile_address(9),
         blake_input,
         SymWord::Concrete(U256::from(213)),
+        SpecId::CANCUN,
     )
     .unwrap_err();
     assert!(matches!(
