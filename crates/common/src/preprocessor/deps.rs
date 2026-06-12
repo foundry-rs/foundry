@@ -6,7 +6,10 @@ use foundry_compilers::Updates;
 use itertools::Itertools;
 use solar::sema::{
     Gcx, Hir,
-    hir::{CallArgs, CallOptions, ContractId, Expr, ExprKind, Stmt, StmtKind, TypeKind, Visit},
+    hir::{
+        CallArgs, CallOptions, ContractId, Expr, ExprKind, Function, FunctionKind, StateMutability,
+        Stmt, StmtKind, TypeKind, Visit,
+    },
     interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
 use std::{
@@ -153,10 +156,12 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     /// Project source dir, used to determine if referenced contract is a source contract.
     src_dir: &'src Path,
     /// Whether the contract being analyzed lives in a script file.
-    /// `new Contract(...)` in scripts must not be rewritten: native script CREATE/CREATE2 frames
-    /// are handled by the script execution inspector, but `vm.deployCode` runs at a deeper call
-    /// depth and bypasses that machinery.
+    /// Script bytecode references must not be rewritten: native script CREATE/CREATE2 frames
+    /// are handled by the script execution inspector, and `type(Contract).creationCode` must keep
+    /// its native mutability semantics.
     is_script: bool,
+    /// Whether `type(Contract).creationCode` should keep native Solidity semantics.
+    preserve_native_creation_code: bool,
     /// Dependencies collected for current contract.
     dependencies: Vec<BytecodeDependency>,
     /// Unique HIR ids of contracts referenced from current contract.
@@ -170,6 +175,7 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
             src,
             src_dir,
             is_script,
+            preserve_native_creation_code: false,
             dependencies: vec![],
             referenced_contracts: HashSet::default(),
         }
@@ -179,9 +185,26 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
     /// Discards any reference that is not in project src directory (e.g. external
     /// libraries or mock contracts that extend source contracts).
     fn collect_dependency(&mut self, dependency: BytecodeDependency) {
-        // New-expressions in scripts must not be rewritten. See field doc on `is_script`.
-        if self.is_script && matches!(&dependency.kind, BytecodeDependencyKind::New { .. }) {
-            trace!("skip new-expression in script");
+        // Script bytecode references must not be rewritten. See field doc on `is_script`.
+        if self.is_script {
+            match &dependency.kind {
+                BytecodeDependencyKind::CreationCode => {
+                    trace!("skip creationCode in script");
+                    return;
+                }
+                BytecodeDependencyKind::New { .. } => {
+                    trace!("skip new-expression in script");
+                    return;
+                }
+            }
+        }
+
+        // `type(Contract).creationCode` has native `pure` semantics. Rewriting it to a `view`
+        // cheatcode call would make valid pure functions fail to compile.
+        if self.preserve_native_creation_code
+            && matches!(&dependency.kind, BytecodeDependencyKind::CreationCode)
+        {
+            trace!("skip creationCode in native creationCode context");
             return;
         }
 
@@ -207,6 +230,16 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
 
     fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
+    }
+
+    fn visit_function(&mut self, func: &'gcx Function<'gcx>) -> ControlFlow<Self::BreakValue> {
+        let previous = self.preserve_native_creation_code;
+        self.preserve_native_creation_code = previous
+            || func.state_mutability == StateMutability::Pure
+            || matches!(func.kind, FunctionKind::Modifier);
+        self.walk_function(func)?;
+        self.preserve_native_creation_code = previous;
+        ControlFlow::Continue(())
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
