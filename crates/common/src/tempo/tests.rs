@@ -110,11 +110,14 @@ fn resolves_known_fee_token_symbols() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn resolves_fee_token_symbol_from_tempo_mainnet() -> eyre::Result<()> {
-    let provider =
-        ProviderBuilder::new_with_network::<TempoNetwork>().connect_http("https://rpc.tempo.xyz".parse()?);
+    let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect_http("https://rpc.tempo.xyz".parse()?);
     let valid_fee_token = address!("0x20C00000000000000000000014f22CA97301EB73");
 
-    assert_eq!(resolve_fee_token_symbol(&provider, valid_fee_token).await.as_deref(), Some("USDT0"));
+    assert_eq!(
+        resolve_fee_token_symbol(&provider, valid_fee_token).await.as_deref(),
+        Some("USDT0")
+    );
 
     // Non-existent fee token should not cause an error, but return None
     let invalid_fee_token = address!("0x20C0000000000000000000000000000000000004");
