@@ -5,7 +5,7 @@
 # so no network calls are made.
 
 # Mocks/globals are used indirectly by the sourced foundryup functions.
-# shellcheck disable=SC2329,SC2034
+# shellcheck disable=SC2329,SC2034,SC2317
 
 set -uo pipefail
 
