@@ -3,11 +3,15 @@ use eyre::WrapErr;
 use foundry_evm_hardforks::TempoHardfork;
 use serde::Deserialize;
 use std::env;
-use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
+use tempo_alloy::contracts::precompiles::{DEFAULT_FEE_TOKEN, ITIP20};
 
 use alloy_chains::{Chain, NamedChain};
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, address};
-use tempo_alloy::TempoNetwork;
+use alloy_provider::mock::Asserter;
+use alloy_rpc_types::TransactionRequest;
+use alloy_sol_types::{SolCall, SolValue};
+use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
@@ -64,36 +68,132 @@ async fn test_fork_schedule_parses_configured_rpcs() -> eyre::Result<()> {
     Ok(())
 }
 
-#[test]
-fn resolves_canonical_fee_token_for_tempo_chains() {
+#[tokio::test]
+async fn resolves_canonical_fee_token_for_tempo_chains() {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
+    let tx = TempoTransactionRequest {
+        inner: TransactionRequest::default().with_from(Address::repeat_byte(0x11)),
+        ..Default::default()
+    };
+
     for chain in [
         NamedChain::Tempo,
         NamedChain::TempoModerato,
         NamedChain::TempoTestnet,
         NamedChain::TempoDevnet,
     ] {
-        assert_eq!(resolve_fee_token(Some(chain.into()), None), Some(DEFAULT_FEE_TOKEN));
+        asserter.push_success(&Address::ZERO.abi_encode());
+        assert_eq!(
+            resolve_fee_token::<TempoNetwork>(&provider, Some(chain.into()), Some(&tx), None).await,
+            Some(DEFAULT_FEE_TOKEN)
+        );
     }
 }
 
-#[test]
-fn leaves_non_tempo_chains_without_a_default() {
-    assert_eq!(resolve_fee_token(Some(NamedChain::Mainnet.into()), None), None);
-}
+#[tokio::test]
+async fn leaves_non_tempo_chains_without_a_default() {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+    let tx = TempoTransactionRequest::default();
 
-#[test]
-fn leaves_unknown_chain_without_a_default() {
-    assert_eq!(resolve_fee_token(None, None), None);
-}
-
-#[test]
-fn explicit_fee_token_overrides_chain_default() {
-    let explicit = Address::repeat_byte(0x42);
     assert_eq!(
-        resolve_fee_token(Some(Chain::from_named(NamedChain::Tempo)), Some(explicit)),
+        resolve_fee_token::<TempoNetwork>(
+            &provider,
+            Some(NamedChain::Mainnet.into()),
+            Some(&tx),
+            None
+        )
+        .await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn leaves_unknown_chain_without_a_default() {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+
+    assert_eq!(resolve_fee_token::<TempoNetwork>(&provider, None, None, None).await, None);
+}
+
+#[tokio::test]
+async fn explicit_fee_token_overrides_chain_default() {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+    let explicit = Address::repeat_byte(0x42);
+    let tx = TempoTransactionRequest { fee_token: Some(explicit), ..Default::default() };
+
+    assert_eq!(
+        resolve_fee_token::<TempoNetwork>(
+            &provider,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            Some(&tx),
+            None
+        )
+        .await,
         Some(explicit)
     );
-    assert_eq!(resolve_fee_token(None, Some(explicit)), Some(explicit));
+    assert_eq!(
+        resolve_fee_token::<TempoNetwork>(&provider, None, Some(&tx), None).await,
+        Some(explicit)
+    );
+}
+
+#[tokio::test]
+async fn stored_user_token_takes_priority_before_default() {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
+    let fee_payer = Address::repeat_byte(0x11);
+    let tx = TempoTransactionRequest {
+        inner: TransactionRequest::default().with_from(fee_payer),
+        ..Default::default()
+    };
+
+    asserter.push_success(&BETA_USD_ADDRESS.abi_encode());
+
+    assert_eq!(
+        resolve_fee_token::<TempoNetwork>(
+            &provider,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            Some(&tx),
+            None
+        )
+        .await,
+        Some(BETA_USD_ADDRESS)
+    );
+}
+
+#[tokio::test]
+async fn arbitrary_tip20_call_falls_back_to_default() {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
+    let tx = TempoTransactionRequest {
+        inner: TransactionRequest::default()
+            .with_from(Address::repeat_byte(0x11))
+            .with_to(ALPHA_USD_ADDRESS)
+            .with_input(ITIP20::symbolCall.abi_encode()),
+        ..Default::default()
+    };
+
+    asserter.push_failure_msg("user token lookup failed");
+
+    assert_eq!(
+        resolve_fee_token::<TempoNetwork>(
+            &provider,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            Some(&tx),
+            None
+        )
+        .await,
+        Some(DEFAULT_FEE_TOKEN)
+    );
 }
 
 #[test]

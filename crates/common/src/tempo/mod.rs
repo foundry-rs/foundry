@@ -13,7 +13,9 @@ use eyre::{Context, Result};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
 pub use tempo_alloy::contracts::precompiles::PATH_USD_ADDRESS;
-use tempo_alloy::contracts::precompiles::{DEFAULT_FEE_TOKEN, ITIP20};
+use tempo_alloy::contracts::precompiles::{
+    DEFAULT_FEE_TOKEN, IFeeManager, ITIP20, TIP_FEE_MANAGER_ADDRESS,
+};
 
 mod keystore;
 mod registry;
@@ -67,14 +69,48 @@ pub const ALPHA_USD_ADDRESS: Address = address!("0x20C00000000000000000000000000
 pub const BETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000002");
 pub const THETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000003");
 
-/// Resolves an explicit Tempo fee token or the canonical default for a known Tempo network.
-///
-/// TODO: fee token resolution is incomplete, must use FeeTokenManager.
-pub fn resolve_fee_token(
+/// Resolves the Tempo fee token selected by the network without mutating the transaction request.
+pub async fn resolve_fee_token<N>(
+    provider: &dyn Provider<N>,
     chain: Option<Chain>,
-    explicit_fee_token: Option<Address>,
-) -> Option<Address> {
-    explicit_fee_token.or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))
+    tx: Option<&N::TransactionRequest>,
+    fee_payer: Option<Address>,
+) -> Option<Address>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+{
+    if let Some(fee_token) = tx.and_then(|tx| tx.fee_token()) {
+        return Some(fee_token);
+    }
+    let tx = tx?;
+    if !chain.is_some_and(Chain::is_tempo) {
+        return None;
+    }
+
+    let caller = tx.from();
+    let fee_payer = fee_payer.or(caller);
+    if let Some(fee_payer) = fee_payer
+        && let Some(fee_token) = stored_user_fee_token(provider, fee_payer).await
+    {
+        return Some(fee_token);
+    }
+
+    Some(DEFAULT_FEE_TOKEN)
+}
+
+async fn stored_user_fee_token<N>(provider: &dyn Provider<N>, fee_payer: Address) -> Option<Address>
+where
+    N: Network,
+    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
+{
+    let call = IFeeManager::userTokensCall { user: fee_payer };
+    let tx = N::TransactionRequest::default()
+        .with_to(TIP_FEE_MANAGER_ADDRESS)
+        .with_input(call.abi_encode());
+    let output = provider.call(tx).await.ok()?;
+    let fee_token = IFeeManager::userTokensCall::abi_decode_returns(&output).ok()?;
+    (!fee_token.is_zero()).then_some(fee_token)
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
@@ -106,19 +142,29 @@ where
     (!symbol.is_empty()).then_some(symbol)
 }
 
-/// Prints the selected Tempo fee token when one is set.
+/// Prints the fee token selected for display, resolving the chain default and unknown symbols
+/// without mutating a transaction request.
 ///
-/// Unknown symbols are resolved on-chain only when a provider is supplied, because some provider
-/// modes such as `--curl` must preserve the first RPC request for the user's intended action.
+/// On-chain fee-token and symbol lookups are performed only when a provider is supplied, because
+/// some provider modes such as `--curl` must preserve the first RPC request for the user's
+/// intended action.
 pub async fn maybe_print_fee_token<N, P>(
     provider: Option<&P>,
-    fee_token: Option<Address>,
+    chain: Option<Chain>,
+    tx: Option<&N::TransactionRequest>,
+    fee_payer: Option<Address>,
 ) -> Result<()>
 where
     N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
+    let fee_token = if let Some(provider) = provider {
+        resolve_fee_token(provider as &dyn Provider<N>, chain, tx, fee_payer).await
+    } else {
+        tx.and_then(|tx| tx.fee_token())
+    };
+
     if let Some(fee_token) = fee_token {
         let symbol = if let Some(symbol) = known_fee_token_symbol(fee_token) {
             Some(symbol.to_string())
@@ -133,21 +179,6 @@ where
         }
     }
     Ok(())
-}
-
-/// Prints the fee token selected for display, resolving the chain default and unknown symbols
-/// without mutating a transaction request.
-pub async fn maybe_print_resolved_fee_token<N, P>(
-    provider: Option<&P>,
-    chain: Option<Chain>,
-    fee_token: Option<Address>,
-) -> Result<()>
-where
-    N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
-    P: Provider<N>,
-{
-    maybe_print_fee_token(provider, resolve_fee_token(chain, fee_token)).await
 }
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.

@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::parse_tokens,
     provider::ProviderBuilder,
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -577,10 +577,11 @@ impl CreateArgs {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         }
-        maybe_print_resolved_fee_token(
+        maybe_print_fee_token(
             resolve_unknown_fee_token_symbol.then_some(&provider),
             Some(chain),
-            deployer.tx.fee_token(),
+            Some(&deployer.tx),
+            tempo_sponsor.as_ref().map(|s| s.sponsor()),
         )
         .await?;
 

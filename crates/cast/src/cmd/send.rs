@@ -18,7 +18,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token},
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
@@ -324,6 +324,7 @@ impl SendTxArgs {
                 provider,
                 tx_request,
                 Some(chain),
+                tempo_sponsor.as_ref().map(|s| s.sponsor()),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -353,10 +354,11 @@ impl SendTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             }
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
-                tx_request.fee_token(),
+                Some(&tx_request),
+                tempo_sponsor.as_ref().map(|s| s.sponsor()),
             )
             .await?;
 
@@ -388,6 +390,7 @@ impl SendTxArgs {
                 &signer,
                 &ak,
                 Some(chain),
+                tempo_sponsor.as_ref().map(|s| s.sponsor()),
                 send_tx.cast_async,
                 send_tx.confirmations,
                 timeout,
@@ -430,6 +433,7 @@ impl SendTxArgs {
                 provider,
                 tx_request,
                 Some(chain),
+                None,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -470,6 +474,7 @@ impl SendTxArgs {
                 provider,
                 tx_request,
                 Some(chain),
+                tempo_sponsor.as_ref().map(|s| s.sponsor()),
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -488,6 +493,7 @@ pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     provider: P,
     tx: N::TransactionRequest,
     chain: Option<Chain>,
+    fee_payer: Option<Address>,
     cast_async: bool,
     sync: bool,
     confs: u64,
@@ -498,10 +504,11 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    maybe_print_resolved_fee_token(
+    maybe_print_fee_token(
         resolve_unknown_fee_token_symbol.then_some(&provider),
         chain,
-        tx.fee_token(),
+        Some(&tx),
+        fee_payer,
     )
     .await?;
     let cast = CastTxSender::new(provider);
@@ -533,6 +540,7 @@ pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
     signer: &WalletSigner,
     access_key: &TempoAccessKeyConfig,
     chain: Option<Chain>,
+    fee_payer: Option<Address>,
     cast_async: bool,
     confirmations: u64,
     timeout: u64,
@@ -544,10 +552,11 @@ where
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
-    maybe_print_resolved_fee_token(
+    maybe_print_fee_token(
         resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
-        tx.fee_token(),
+        Some(&tx),
+        fee_payer,
     )
     .await?;
     let raw_tx = tx

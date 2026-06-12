@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
@@ -437,6 +437,7 @@ impl Erc20Subcommand {
                         signer,
                         access_key,
                         Some(chain),
+                        tempo_sponsor.as_ref().map(|s| s.sponsor()),
                         $send_tx.cast_async,
                         $send_tx.confirmations,
                         timeout,
@@ -463,10 +464,11 @@ impl Erc20Subcommand {
                     if let Some(sponsor) = &tempo_sponsor {
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     }
-                    maybe_print_resolved_fee_token(
+                    maybe_print_fee_token(
                         (!config.eth_rpc_curl).then_some(&$provider),
                         Some(chain),
-                        tx.fee_token(),
+                        Some(&tx),
+                        tempo_sponsor.as_ref().map(|s| s.sponsor()),
                     )
                     .await?;
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
@@ -503,6 +505,7 @@ impl Erc20Subcommand {
                         $provider,
                         tx,
                         Some(chain),
+                        tempo_sponsor.as_ref().map(|s| s.sponsor()),
                         $send_tx.cast_async,
                         $send_tx.sync,
                         $send_tx.confirmations,
