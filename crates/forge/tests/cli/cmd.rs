@@ -86,6 +86,24 @@ Find more information in the book: https://getfoundry.sh/forge/overview
 "#]]);
 });
 
+forgetest!(lsp_help_describes_editor_language_server_entrypoint, |_prj, cmd| {
+    let output = cmd.args(["lsp", "--help"]).assert_success();
+    let stdout = output.get_output().stdout_lossy();
+
+    assert!(stdout.contains("Start the Solar-backed Forge language server"), "{stdout}");
+    assert!(stdout.contains("Usage: forge lsp"), "{stdout}");
+});
+
+forgetest!(lsp_reports_unavailable_backend_without_stdout, |_prj, cmd| {
+    let output = cmd.arg("lsp").assert_failure().get_output().clone();
+
+    assert!(output.stdout.is_empty(), "{}", output.stdout_lossy());
+    assert_eq!(
+        output.stderr_lossy(),
+        "Error: Solar LSP support is not available in this build; it can be enabled once the Solar LSP backend is available as a Foundry dependency\n"
+    );
+});
+
 // checks that `clean` can be invoked even if out and cache don't exist
 forgetest!(can_clean_non_existing, |prj, cmd| {
     cmd.arg("clean");

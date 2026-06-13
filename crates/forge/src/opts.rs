@@ -132,6 +132,10 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "l")]
     Lint(LintArgs),
 
+    /// Start the Solar-backed Forge language server.
+    #[command(hide = true)]
+    Lsp,
+
     /// Get specialized information about a smart contract.
     #[command(visible_alias = "in")]
     Inspect(inspect::InspectArgs),

@@ -176,6 +176,10 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => cmd.run(),
+        ForgeSubcommand::Lsp => eyre::bail!(
+            "Solar LSP support is not available in this build; \
+             it can be enabled once the Solar LSP backend is available as a Foundry dependency"
+        ),
     }
 }
 
@@ -215,6 +219,7 @@ const fn subcommand_name(cmd: &ForgeSubcommand) -> &'static str {
         ForgeSubcommand::Eip712(_) => "eip712",
         ForgeSubcommand::BindJson(_) => "bind-json",
         ForgeSubcommand::Lint(_) => "lint",
+        ForgeSubcommand::Lsp => "lsp",
     }
 }
 
