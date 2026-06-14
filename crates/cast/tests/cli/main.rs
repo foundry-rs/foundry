@@ -6,7 +6,9 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest};
+use alloy_rpc_types::{
+    Authorization, BlockNumberOrTag, Index, TransactionRequest, engine::JwtSecret,
+};
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
@@ -5647,7 +5649,16 @@ casttest!(curl_call_with_jwt, |_prj, cmd| {
     assert!(output.contains("eth_call"));
     assert!(output.contains("jsonrpc"));
     assert!(output.contains(rpc));
-    assert!(output.contains("Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9."));
+
+    let jwt = output
+        .split("Authorization: Bearer ")
+        .nth(1)
+        .expect("missing Authorization header")
+        .split('\'')
+        .next()
+        .expect("malformed Authorization header");
+    let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+    secret.validate(jwt).unwrap();
 });
 
 // tests that the --jwt-secret flag outputs a valid curl command with Authorization header
@@ -5667,7 +5678,16 @@ casttest!(curl_rpc_with_jwt, |_prj, cmd| {
     assert!(output.contains("eth_blockNumber"));
     assert!(output.contains("jsonrpc"));
     assert!(output.contains(rpc));
-    assert!(output.contains("Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9."));
+
+    let jwt = output
+        .split("Authorization: Bearer ")
+        .nth(1)
+        .expect("missing Authorization header")
+        .split('\'')
+        .next()
+        .expect("malformed Authorization header");
+    let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+    secret.validate(jwt).unwrap();
 });
 
 // tests that the --curl flag outputs a valid curl command for cast block-number
