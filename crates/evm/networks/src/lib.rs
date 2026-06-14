@@ -239,6 +239,7 @@ impl NetworkConfigs {
     ///
     /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
     /// at the given timestamp, otherwise returns pre-Canyon parameters.
+    #[allow(clippy::missing_const_for_fn)] // The optimism feature path calls non-const OP hardfork helpers.
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
