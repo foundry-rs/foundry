@@ -44,10 +44,10 @@ pub fn generate_curl_command(
     let mut cmd = String::from("curl -X POST");
     cmd.push_str(" -H 'Content-Type: application/json'");
 
-    if let Some(jwt_secret) = jwt_secret {
-        if let Ok(jwt) = build_jwt(jwt_secret) {
-            cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt.as_str())));
-        }
+    if let Some(jwt_secret) = jwt_secret
+        && let Ok(jwt) = build_jwt(jwt_secret)
+    {
+        cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt.as_str())));
     }
 
     if let Some(hdrs) = headers {
@@ -102,13 +102,10 @@ impl CurlTransport {
         let mut cmd = String::from("curl -X POST");
         cmd.push_str(" -H 'Content-Type: application/json'");
 
-        if let Some(jwt_secret) = &self.jwt {
-            if let Ok(jwt) = build_jwt(jwt_secret) {
-                cmd.push_str(&format!(
-                    " -H 'Authorization: Bearer {}'",
-                    shell_escape(jwt.as_str())
-                ));
-            }
+        if let Some(jwt_secret) = &self.jwt
+            && let Ok(jwt) = build_jwt(jwt_secret)
+        {
+            cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt.as_str())));
         }
 
         for h in &self.headers {
