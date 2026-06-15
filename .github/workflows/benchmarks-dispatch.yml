@@ -1,6 +1,6 @@
 ---
 # yamllint disable rule:line-length
-name: bench
+name: bench (dispatch)
 
 permissions: {}
 
@@ -30,8 +30,7 @@ jobs:
     # Scopes the EVENTS_* mTLS secrets; shared across all `bench` subcommands.
     environment: bench
     permissions:
-      issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Validate request
         id: request
