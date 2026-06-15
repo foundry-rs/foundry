@@ -1388,6 +1388,8 @@ impl SymbolicWorld {
         if beneficiary != address && !matches!(balance, SymWord::Concrete(value) if value.is_zero())
         {
             let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
+            // Symbolic balances are treated as possibly non-zero, matching transfer's
+            // account-existence approximation.
             self.set_balance_word(beneficiary, sym_add(beneficiary_balance, balance));
             self.balances.insert(address, SymWord::zero());
         }
