@@ -254,7 +254,13 @@ enum InvariantCorpusPersistence {
 }
 
 impl InvariantCorpusPersistence {
-    const fn writes_after_campaign(self) -> bool {
+    // Worker count only selects today's compatible write timing. The in-campaign sharing strategy
+    // is modeled separately by `InvariantCorpusSharing`.
+    const fn for_worker_count(worker_count: usize) -> Self {
+        if worker_count > 1 { Self::Deferred } else { Self::Live }
+    }
+
+    const fn is_deferred(self) -> bool {
         matches!(self, Self::Deferred)
     }
 }
@@ -263,7 +269,8 @@ impl InvariantCorpusPersistence {
 enum InvariantCorpusSharing {
     /// Workers only use their local corpus during campaign execution.
     None,
-    /// TODO: exchange new corpus entries through an in-memory campaign-local broker.
+    /// TODO: publish worker discoveries after campaign processing and import sibling entries
+    /// before generating new inputs.
     #[allow(dead_code)]
     CampaignLocal,
 }
@@ -279,7 +286,7 @@ impl InvariantCorpusPolicy {
     // modeled separately so a future campaign-local corpus broker can extend this policy without
     // changing worker call sites.
     const fn finalizes_campaign_outputs(self) -> bool {
-        self.persistence.writes_after_campaign()
+        self.persistence.is_deferred()
     }
 }
 
@@ -690,16 +697,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&replay_targets),
             Some(self.dynamic_target_ctx()),
         )?;
-        // Persistence describes write timing; the worker count only selects today's compatible
-        // behavior. Single-worker campaigns retain live writes, while parallel campaigns collect
-        // outputs for one coordinator-finalized write after workers finish.
-        let corpus_persistence = if actual_worker_count > 1 {
-            InvariantCorpusPersistence::Deferred
-        } else {
-            InvariantCorpusPersistence::Live
-        };
         let corpus_policy = InvariantCorpusPolicy {
-            persistence: corpus_persistence,
+            persistence: InvariantCorpusPersistence::for_worker_count(actual_worker_count),
             sharing: InvariantCorpusSharing::None,
         };
         let mut runner = self.runner.clone();
@@ -2044,11 +2043,9 @@ mod tests {
     }
 
     #[test]
-    fn invariant_corpus_policy_keeps_single_worker_live_and_isolated() {
-        let policy = InvariantCorpusPolicy {
-            persistence: InvariantCorpusPersistence::Live,
-            sharing: InvariantCorpusSharing::None,
-        };
+    fn invariant_corpus_persistence_selects_live_writes_for_single_worker() {
+        let persistence = InvariantCorpusPersistence::for_worker_count(1);
+        let policy = InvariantCorpusPolicy { persistence, sharing: InvariantCorpusSharing::None };
 
         assert_eq!(policy.persistence, InvariantCorpusPersistence::Live);
         assert_eq!(policy.sharing, InvariantCorpusSharing::None);
@@ -2056,11 +2053,9 @@ mod tests {
     }
 
     #[test]
-    fn invariant_corpus_policy_keeps_parallel_workers_deferred_and_isolated() {
-        let policy = InvariantCorpusPolicy {
-            persistence: InvariantCorpusPersistence::Deferred,
-            sharing: InvariantCorpusSharing::None,
-        };
+    fn invariant_corpus_persistence_selects_deferred_writes_for_parallel_workers() {
+        let persistence = InvariantCorpusPersistence::for_worker_count(2);
+        let policy = InvariantCorpusPolicy { persistence, sharing: InvariantCorpusSharing::None };
 
         assert_eq!(policy.persistence, InvariantCorpusPersistence::Deferred);
         assert_eq!(policy.sharing, InvariantCorpusSharing::None);
