@@ -10195,9 +10195,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.40.1"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15e0cdc845c8dbf41255c9add80923b45df7bf1dd0473e41483ac398005dba12"
+checksum = "ac492384995d832d6910920a932c000436623ec18668ff9291cb78f96c8b710f"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
@@ -10207,10 +10207,11 @@ dependencies = [
  "boa_engine",
  "boa_gc",
  "colorchoice",
- "revm 40.0.3",
+ "revm 41.0.0",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]
