@@ -3457,6 +3457,42 @@ contract SaltedSrcScript is Script {
     assert_eq!(tx["arguments"][0], "SaltedSrc");
 });
 
+// Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
+// The injected cheatcode is `view`, so using it in a `pure` script helper breaks compilation.
+forgetest_init!(can_build_script_creation_code_in_pure_function, |prj, cmd| {
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "CreationCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+
+contract CreationCodeScript is Script {
+    function run() public {
+        vm.broadcast();
+        (bool ok,) = address(0).call(_getCreationCode());
+        ok;
+    }
+
+    function _getCreationCode() internal pure returns (bytes memory) {
+        return type(Token).creationCode;
+    }
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
+});
+
 forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(

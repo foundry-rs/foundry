@@ -30,5 +30,3 @@ in introspection (see [`spec.md`](./spec.md) §8).
 
 Concrete JSON Schemas describing each identifier are introduced alongside
 the commands that adopt them.
-
-
