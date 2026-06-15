@@ -44,7 +44,7 @@ use foundry_config::{
     },
     filter::GlobMatcher,
 };
-use foundry_debugger::Debugger;
+use foundry_debugger::{Debugger, DebuggerLayout};
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -120,6 +120,10 @@ pub struct TestArgs {
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
     debug: bool,
+
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    debug_layout: Option<DebuggerLayoutArg>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
@@ -425,6 +429,24 @@ pub struct TestArgs {
     /// Analogous to `--invariant-timeout` for invariant campaigns.
     #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
     pub mutation_timeout: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum DebuggerLayoutArg {
+    #[default]
+    Auto,
+    Horizontal,
+    Vertical,
+}
+
+impl From<DebuggerLayoutArg> for DebuggerLayout {
+    fn from(value: DebuggerLayoutArg) -> Self {
+        match value {
+            DebuggerLayoutArg::Auto => Self::Auto,
+            DebuggerLayoutArg::Horizontal => Self::Horizontal,
+            DebuggerLayoutArg::Vertical => Self::Vertical,
+        }
+    }
 }
 
 impl TestArgs {
@@ -886,7 +908,8 @@ impl TestArgs {
             let mut builder = Debugger::builder()
                 .traces(traces)
                 .sources(sources)
-                .breakpoints(test_result.breakpoints);
+                .breakpoints(test_result.breakpoints)
+                .layout(self.debug_layout.unwrap_or_default().into());
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);

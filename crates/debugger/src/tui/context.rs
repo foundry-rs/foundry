@@ -1,6 +1,6 @@
 //! Debugger context and event handler implementation.
 
-use crate::{DebugNode, ExitReason, debugger::DebuggerContext};
+use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
@@ -110,6 +110,10 @@ impl<'a> TUIContext<'a> {
 
     pub(crate) fn debug_arena(&self) -> &[DebugNode] {
         &self.debugger_context.debug_arena
+    }
+
+    pub(crate) const fn layout(&self) -> DebuggerLayout {
+        self.debugger_context.layout
     }
 
     pub(crate) fn debug_call(&self) -> &DebugNode {
@@ -231,6 +235,9 @@ impl TUIContext<'_> {
                 self.active_buffer = self.active_buffer.next();
                 self.draw_memory.current_buf_startline = 0;
             }
+
+            // Cycle layout
+            KeyCode::Char('l') => self.cycle_layout(),
 
             // Go to top of file
             KeyCode::Char('g') => {
@@ -519,6 +526,15 @@ impl TUIContext<'_> {
     fn n_steps(&self) -> usize {
         self.debug_steps().len()
     }
+
+    fn cycle_layout(&mut self) {
+        let layout = self.debugger_context.layout.next();
+        self.debugger_context.layout = layout;
+        self.status = Some(StatusMessage {
+            kind: StatusKind::Info,
+            text: format!("Debugger layout: {}", layout.as_str()),
+        });
+    }
 }
 
 impl TuiApp for TUIContext<'_> {
@@ -787,6 +803,7 @@ mod tests {
             identified_contracts: Default::default(),
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
+            layout: Default::default(),
         }
     }
 

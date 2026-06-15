@@ -23,7 +23,7 @@ use alloy_primitives::{
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
@@ -47,6 +47,7 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+use foundry_debugger::DebuggerLayout;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -183,6 +184,10 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub debug: bool,
 
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    pub debug_layout: Option<DebuggerLayoutArg>,
+
     /// Dumps all debugger steps to file.
     #[arg(
         long,
@@ -249,6 +254,24 @@ pub struct ScriptArgs {
 
     #[command(flatten)]
     pub retry: RetryArgs,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum DebuggerLayoutArg {
+    #[default]
+    Auto,
+    Horizontal,
+    Vertical,
+}
+
+impl From<DebuggerLayoutArg> for DebuggerLayout {
+    fn from(value: DebuggerLayoutArg) -> Self {
+        match value {
+            DebuggerLayoutArg::Auto => Self::Auto,
+            DebuggerLayoutArg::Horizontal => Self::Horizontal,
+            DebuggerLayoutArg::Vertical => Self::Vertical,
+        }
+    }
 }
 
 impl ScriptArgs {
