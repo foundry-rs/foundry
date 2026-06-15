@@ -707,7 +707,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
-        let worker_outputs = if actual_worker_count > 1 {
+        let worker_outputs = if corpus_policy.finalizes_campaign_outputs() {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
