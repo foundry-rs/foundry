@@ -275,6 +275,9 @@ struct InvariantCorpusPolicy {
 }
 
 impl InvariantCorpusPolicy {
+    // Today, campaign output finalization is only a persistence decision. The sharing dimension is
+    // modeled separately so a future campaign-local corpus broker can extend this policy without
+    // changing worker call sites.
     const fn finalizes_campaign_outputs(self) -> bool {
         self.persistence.writes_after_campaign()
     }
