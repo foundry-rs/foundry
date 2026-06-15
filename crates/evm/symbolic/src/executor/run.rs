@@ -19,7 +19,7 @@ impl SymbolicExecutor {
     }
 
     /// Returns and clears any deferred incomplete reason.
-    fn take_deferred_incomplete(&mut self) -> Option<&'static str> {
+    const fn take_deferred_incomplete(&mut self) -> Option<&'static str> {
         self.deferred_incomplete.take()
     }
 
