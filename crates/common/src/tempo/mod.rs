@@ -142,29 +142,19 @@ where
     (!symbol.is_empty()).then_some(symbol)
 }
 
-/// Prints the fee token selected for display, resolving the chain default and unknown symbols
-/// without mutating a transaction request.
+/// Prints the selected Tempo fee token when one is set.
 ///
-/// On-chain fee-token and symbol lookups are performed only when a provider is supplied, because
-/// some provider modes such as `--curl` must preserve the first RPC request for the user's
-/// intended action.
+/// Unknown symbols are resolved on-chain only when a provider is supplied, because some provider
+/// modes such as `--curl` must preserve the first RPC request for the user's intended action.
 pub async fn maybe_print_fee_token<N, P>(
     provider: Option<&P>,
-    chain: Option<Chain>,
-    tx: Option<&N::TransactionRequest>,
-    fee_payer: Option<Address>,
+    fee_token: Option<Address>,
 ) -> Result<()>
 where
     N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
     P: Provider<N>,
 {
-    let fee_token = if let Some(provider) = provider {
-        resolve_fee_token(provider as &dyn Provider<N>, chain, tx, fee_payer).await
-    } else {
-        tx.and_then(|tx| tx.fee_token())
-    };
-
     if let Some(fee_token) = fee_token {
         let symbol = if let Some(symbol) = known_fee_token_symbol(fee_token) {
             Some(symbol.to_string())
@@ -181,6 +171,26 @@ where
     Ok(())
 }
 
+/// Prints the fee token selected for display, resolving the chain default and unknown symbols
+/// without mutating a transaction request.
+pub async fn maybe_print_resolved_fee_token<N, P>(
+    provider: Option<&P>,
+    chain: Option<Chain>,
+    tx: Option<&N::TransactionRequest>,
+    fee_payer: Option<Address>,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    let fee_token = if let Some(provider) = provider {
+        resolve_fee_token(provider as &dyn Provider<N>, chain, tx, fee_payer).await
+    } else {
+        tx.and_then(|tx| tx.fee_token())
+    };
+    maybe_print_fee_token(provider, fee_token).await
+}
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
 pub struct TempoSponsor {

@@ -17,15 +17,15 @@ use eyre::Result;
 use foundry_cli::{
     json::print_json_object,
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, maybe_print_resolved_lane, parse_fee_token_address, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, maybe_print_fee_token,
-        read_tempo_keys_file, tempo_keys_path,
+        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
+        maybe_print_resolved_fee_token, read_tempo_keys_file, tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -49,8 +49,7 @@ use tempo_primitives::transaction::{
 use yansi::Paint;
 
 use crate::cmd::tempo_policy_args::{
-    SelectorArg, parse_period, parse_policy_token, parse_scope, parse_selector_arg,
-    parse_selector_bytes,
+    SelectorArg, parse_period, parse_scope, parse_selector_arg, parse_selector_bytes,
 };
 
 use crate::{
@@ -132,7 +131,7 @@ pub enum KeychainSubcommand {
             id = "doctor_fee_token",
             long = "fee-token",
             value_name = "TOKEN",
-            value_parser = parse_policy_token
+            value_parser = parse_fee_token_address
         )]
         fee_token: Option<Address>,
 
@@ -405,8 +404,8 @@ pub enum KeychainPolicySubcommand {
         /// The key address to update.
         key_address: Address,
 
-        /// Token address, numeric TIP-20 token id, or PathUSD.
-        #[arg(long, value_parser = parse_policy_token)]
+        /// Token address, numeric TIP-20 token id, or known Tempo fee-token symbol.
+        #[arg(long, value_parser = parse_fee_token_address)]
         token: Address,
 
         /// New raw token-denominated limit.
@@ -3189,7 +3188,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             }
-            maybe_print_fee_token(
+            maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),

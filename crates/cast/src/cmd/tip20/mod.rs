@@ -17,7 +17,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{str::FromStr, time::Duration};
@@ -277,7 +277,7 @@ pub(super) async fn send_tip20_transaction(
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         }
-        maybe_print_fee_token(
+        maybe_print_resolved_fee_token(
             (!config.eth_rpc_curl).then_some(&provider),
             Some(chain),
             Some(&tx),

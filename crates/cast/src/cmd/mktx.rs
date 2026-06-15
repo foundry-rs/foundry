@@ -16,7 +16,7 @@ use foundry_cli::{
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::maybe_print_fee_token,
+    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::maybe_print_resolved_fee_token,
 };
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
@@ -181,7 +181,7 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             }
-            maybe_print_fee_token(
+            maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
@@ -202,7 +202,7 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             }
-            maybe_print_fee_token(
+            maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
@@ -227,7 +227,7 @@ impl MakeTxArgs {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         }
-        maybe_print_fee_token(
+        maybe_print_resolved_fee_token(
             (!config.eth_rpc_curl).then_some(&provider),
             Some(chain),
             Some(&tx),

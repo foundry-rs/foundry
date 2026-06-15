@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
@@ -464,7 +464,7 @@ impl Erc20Subcommand {
                     if let Some(sponsor) = &tempo_sponsor {
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     }
-                    maybe_print_fee_token(
+                    maybe_print_resolved_fee_token(
                         (!config.eth_rpc_curl).then_some(&$provider),
                         Some(chain),
                         Some(&tx),

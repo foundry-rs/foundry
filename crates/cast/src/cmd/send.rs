@@ -18,7 +18,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
@@ -354,7 +354,7 @@ impl SendTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             }
-            maybe_print_fee_token(
+            maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx_request),
@@ -504,7 +504,7 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    maybe_print_fee_token(
+    maybe_print_resolved_fee_token(
         resolve_unknown_fee_token_symbol.then_some(&provider),
         chain,
         Some(&tx),
@@ -552,7 +552,7 @@ where
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
-    maybe_print_fee_token(
+    maybe_print_resolved_fee_token(
         resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
         Some(&tx),
