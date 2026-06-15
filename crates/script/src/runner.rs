@@ -3,7 +3,7 @@ use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_evm::revm::context::Transaction;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, map::AddressHashMap};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
 use foundry_common::TransactionMaybeSigned;
@@ -65,18 +65,25 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
         let mut library_transactions = VecDeque::new();
         let mut traces = Traces::default();
+        let mut debug_bytecodes: AddressHashMap<Bytes> = Default::default();
 
         // Deploy libraries
         match libraries {
             ScriptPredeployLibraries::Default(libraries) => {
                 for code in libraries {
-                    let result = self
+                    let RawCallResult {
+                        traces: deploy_traces,
+                        debug_bytecodes: deploy_debug_bytecodes,
+                        ..
+                    } = self
                         .executor
                         .deploy(self.evm_opts.sender, code.clone(), U256::ZERO, None)
                         .expect("couldn't deploy library")
                         .raw;
 
-                    if let Some(deploy_traces) = result.traces {
+                    debug_bytecodes.extend(deploy_debug_bytecodes);
+
+                    if let Some(deploy_traces) = deploy_traces {
                         traces.push((TraceKind::Deployment, deploy_traces));
                     }
 
@@ -102,7 +109,11 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         continue;
                     }
                     let calldata = [salt.as_ref(), library.as_ref()].concat();
-                    let result = self
+                    let RawCallResult {
+                        traces: deploy_traces,
+                        debug_bytecodes: deploy_debug_bytecodes,
+                        ..
+                    } = self
                         .executor
                         .transact_raw(
                             self.evm_opts.sender,
@@ -112,7 +123,9 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         )
                         .expect("couldn't deploy library");
 
-                    if let Some(deploy_traces) = result.traces {
+                    debug_bytecodes.extend(deploy_debug_bytecodes);
+
+                    if let Some(deploy_traces) = deploy_traces {
                         traces.push((TraceKind::Deployment, deploy_traces));
                     }
 
@@ -159,7 +172,13 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         // Deploy an instance of the contract
         let DeployResult {
             address,
-            raw: RawCallResult { mut logs, traces: constructor_traces, .. },
+            raw:
+                RawCallResult {
+                    mut logs,
+                    traces: constructor_traces,
+                    debug_bytecodes: constructor_debug_bytecodes,
+                    ..
+                },
         } = self
             .executor
             .deploy(CALLER, code, U256::ZERO, None)
@@ -175,6 +194,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         }
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
+        debug_bytecodes.extend(constructor_debug_bytecodes);
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions) = if setup {
@@ -185,11 +205,13 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     labels,
                     logs: setup_logs,
                     gas_used,
+                    debug_bytecodes: setup_debug_bytecodes,
                     transactions: setup_transactions,
                     ..
                 }) => {
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
+                    debug_bytecodes.extend(setup_debug_bytecodes);
 
                     if let Some(txs) = setup_transactions {
                         library_transactions.extend(txs);
@@ -204,11 +226,13 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         labels,
                         logs: setup_logs,
                         gas_used,
+                        debug_bytecodes: setup_debug_bytecodes,
                         transactions,
                         ..
                     } = err.raw;
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
+                    debug_bytecodes.extend(setup_debug_bytecodes);
 
                     if let Some(txs) = transactions {
                         library_transactions.extend(txs);
@@ -230,6 +254,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 success,
                 gas_used,
                 labeled_addresses,
+                debug_bytecodes,
                 transactions,
                 logs,
                 traces,
@@ -273,7 +298,10 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 value.unwrap_or(U256::ZERO),
                 None,
             );
-            let (address, RawCallResult { gas_used, logs, traces, exit_reason, .. }) = match res {
+            let (
+                address,
+                RawCallResult { gas_used, logs, traces, debug_bytecodes, exit_reason, .. },
+            ) = match res {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
@@ -288,6 +316,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 success: address != Address::ZERO,
                 gas_used,
                 logs,
+                debug_bytecodes,
                 // Manually adjust gas for the trace to add back the stipend/real used gas
                 traces: traces
                     .map(|traces| vec![(TraceKind::Execution, traces)])
@@ -348,15 +377,25 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         }
 
         let RawCallResult {
-            result, reverted, logs, traces, labels, transactions, exit_reason, ..
+            result,
+            reverted,
+            logs,
+            traces,
+            labels,
+            transactions,
+            debug_bytecodes,
+            exit_reason,
+            cheatcodes,
+            ..
         } = res;
-        let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
+        let breakpoints = cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
             returned: result,
             success: !reverted,
             gas_used,
             logs,
+            debug_bytecodes,
             traces: traces
                 .map(|traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas

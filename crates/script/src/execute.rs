@@ -168,6 +168,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.logs.extend(script_result.logs);
             setup_result.traces.extend(script_result.traces);
             setup_result.labeled_addresses.extend(script_result.labeled_addresses);
+            setup_result.debug_bytecodes.extend(script_result.debug_bytecodes);
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
@@ -359,9 +360,13 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             )
             .build();
 
-        let mut identifier = TraceIdentifiers::new()
-            .with_local(known_contracts)
-            .with_external(&self.script_config.config, chain_id)?;
+        let mut identifier = if self.execution_result.debug_bytecodes.is_empty() {
+            TraceIdentifiers::new().with_local(known_contracts)
+        } else {
+            TraceIdentifiers::new()
+                .with_local_and_bytecodes(known_contracts, &self.execution_result.debug_bytecodes)
+        }
+        .with_external(&self.script_config.config, chain_id)?;
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);

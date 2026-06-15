@@ -684,6 +684,8 @@ pub struct ScriptResult<N: Network> {
     pub gas_used: u64,
     pub labeled_addresses: AddressHashMap<String>,
     #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
+    #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
     #[serde(skip)]
@@ -701,6 +703,7 @@ impl<N: Network> Default for ScriptResult<N> {
             traces: Default::default(),
             gas_used: Default::default(),
             labeled_addresses: Default::default(),
+            debug_bytecodes: Default::default(),
             transactions: Default::default(),
             returned: Default::default(),
             exit_reason: Default::default(),

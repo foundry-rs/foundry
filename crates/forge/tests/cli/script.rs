@@ -1,6 +1,9 @@
 //! Contains various tests related to `forge script`.
 
-use crate::{constants::TEMPLATE_CONTRACT, utils::generate_large_runtime_contract};
+use crate::{
+    constants::TEMPLATE_CONTRACT,
+    utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
+};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, address, hex};
@@ -42,6 +45,72 @@ contract ContractScript is Script {
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
+
+forgetest_async!(script_debug_dump_identifies_contracts_loaded_from_fork, |prj, cmd| {
+    prj.add_source(
+        "ScriptForkDebugTarget.sol",
+        r#"
+contract ScriptForkDebugTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) public {
+        value = newValue;
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    cmd.forge_fuse()
+        .args([
+            "create",
+            "./src/ScriptForkDebugTarget.sol:ScriptForkDebugTarget",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk,
+            "--broadcast",
+        ])
+        .assert_success();
+
+    let deployed = address!("f39fd6e51aad88f6f4ce6ab8827279cfffb92266").create(0).to_string();
+
+    prj.add_script(
+        "DebugRemote.s.sol",
+        &format!(
+            r#"
+interface IScriptForkDebugTarget {{
+    function set(uint256 newValue) external;
+    function value() external view returns (uint256);
+}}
+
+contract DebugRemote {{
+    function run() public {{
+        IScriptForkDebugTarget target = IScriptForkDebugTarget({deployed});
+        target.set(19);
+        require(target.value() == 19, "value");
+    }}
+}}
+"#
+        ),
+    );
+
+    let dump_path = prj.root().join("script_dump.json");
+    cmd.forge_fuse().args([
+        "script",
+        "script/DebugRemote.s.sol:DebugRemote",
+        "--fork-url",
+        rpc.as_str(),
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&dump_path, &deployed, "ScriptForkDebugTarget");
+});
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
