@@ -278,11 +278,6 @@ impl InvariantCorpusPolicy {
     const fn finalizes_campaign_outputs(self) -> bool {
         self.persistence.writes_after_campaign()
     }
-
-    const fn uses_worker_local_progress(self) -> bool {
-        matches!(self.persistence, InvariantCorpusPersistence::Deferred)
-            || matches!(self.sharing, InvariantCorpusSharing::CampaignLocal)
-    }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -1213,11 +1208,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("⚠ {handler_bugs} handler bug(s)"));
                     }
-                    let msg = if corpus_policy.uses_worker_local_progress() {
-                        format!("[w{}] {msg}", plan.worker_id)
-                    } else {
-                        msg
-                    };
                     progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
@@ -2055,7 +2045,6 @@ mod tests {
         assert_eq!(policy.persistence, InvariantCorpusPersistence::Live);
         assert_eq!(policy.sharing, InvariantCorpusSharing::None);
         assert!(!policy.finalizes_campaign_outputs());
-        assert!(!policy.uses_worker_local_progress());
     }
 
     #[test]
@@ -2068,17 +2057,6 @@ mod tests {
         assert_eq!(policy.persistence, InvariantCorpusPersistence::Deferred);
         assert_eq!(policy.sharing, InvariantCorpusSharing::None);
         assert!(policy.finalizes_campaign_outputs());
-        assert!(policy.uses_worker_local_progress());
-    }
-
-    #[test]
-    fn invariant_corpus_policy_treats_campaign_local_sharing_as_worker_local_progress() {
-        let policy = InvariantCorpusPolicy {
-            persistence: InvariantCorpusPersistence::Live,
-            sharing: InvariantCorpusSharing::CampaignLocal,
-        };
-
-        assert!(policy.uses_worker_local_progress());
     }
 
     #[test]
