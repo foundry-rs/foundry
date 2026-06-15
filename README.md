@@ -94,3 +94,5 @@ shall be dual licensed as above, without any additional terms or conditions.
 </sub>
 
 [foundry-docs]: https://getfoundry.sh
+
+<!-- bench trigger smoke test (draft, do not merge) -->
