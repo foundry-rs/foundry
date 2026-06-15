@@ -1354,7 +1354,8 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
-        if is_known_cheatcode(address) || is_supported_precompile(address) {
+        let spec_id: SpecId = executor.spec_id().into();
+        if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
             return Ok(true);
         }
         if self.destroyed_accounts.contains(&address) {
@@ -1406,7 +1407,8 @@ impl SymbolicWorld {
         if is_known_cheatcode(address) {
             return Ok(SymCode::concrete(vec![0]));
         }
-        if is_supported_precompile(address) {
+        let spec_id: SpecId = executor.spec_id().into();
+        if is_supported_precompile(address, spec_id) {
             return Ok(SymCode::default());
         }
         if self.destroyed_accounts.contains(&address) {
@@ -1555,8 +1557,9 @@ impl SymbolicWorld {
         }
 
         let mut targets = Vec::new();
+        let spec_id: SpecId = executor.spec_id().into();
         for address in addresses {
-            if is_known_cheatcode(address) || is_supported_precompile(address) {
+            if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
                 continue;
             }
             if !self.extcode(executor, address)?.is_empty() {
