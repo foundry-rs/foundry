@@ -280,6 +280,95 @@ Encountered a total of 8 failing tests, 1 tests succeeded
     );
 });
 
+forgetest!(expect_emit_params_decode_project_abi_without_selector_cache, |prj, cmd| {
+    prj.insert_vm();
+
+    prj.add_source(
+        "ExpectEmitProjectAbiFailure.sol",
+        r#"
+import "./Vm.sol";
+
+contract CodexProjectAbiEmitter10342 {
+    event CodexExpectEmitProjectAbi10342(uint256 indexed topicValue, uint256 dataValue);
+
+    function emitEvent(uint256 topicValue, uint256 dataValue) external {
+        emit CodexExpectEmitProjectAbi10342(topicValue, dataValue);
+    }
+}
+
+contract ExpectEmitProjectAbiFailureTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    CodexProjectAbiEmitter10342 emitter = new CodexProjectAbiEmitter10342();
+
+    event CodexExpectEmitProjectAbi10342(uint256 indexed topicValue, uint256 dataValue);
+
+    function testMismatch() public {
+        vm.expectEmit(true, true, true, true);
+        emit CodexExpectEmitProjectAbi10342(1, 2);
+        emitter.emitEvent(1, 3);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "ExpectEmitProjectAbiFailureTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+...
+[FAIL: CodexExpectEmitProjectAbi10342 param mismatch at dataValue: expected=2, got=3] testMismatch() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
+forgetest!(expect_emit_decodes_stable_project_abi_collision, |prj, cmd| {
+    prj.insert_vm();
+
+    prj.add_source(
+        "AExpectEmitIndexedCollision.t.sol",
+        r#"
+import "./Vm.sol";
+import "./ZIndexedCollisionEmitter.sol";
+
+contract AExpectEmitIndexedCollisionTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    ZIndexedCollisionEmitter emitter = new ZIndexedCollisionEmitter();
+
+    event CodexExpectEmitIndexedCollision(uint256 indexed marker, uint256 value);
+
+    function testMismatch() public {
+        vm.expectEmit(true, true, false, true);
+        emit CodexExpectEmitIndexedCollision(69, 420);
+        emitter.emitEvent(421, 69);
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "ZIndexedCollisionEmitter.sol",
+        r#"
+contract ZIndexedCollisionEmitter {
+    event CodexExpectEmitIndexedCollision(uint256 value, uint256 indexed marker);
+
+    function emitEvent(uint256 value, uint256 marker) external {
+        emit CodexExpectEmitIndexedCollision(value, marker);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "AExpectEmitIndexedCollisionTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+...
+[FAIL: CodexExpectEmitIndexedCollision param mismatch at value: expected=420, got=421] testMismatch() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(mem_safety_test_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
