@@ -1,7 +1,6 @@
 //! Debugger builder.
 
-use crate::DebuggerLayout;
-use crate::{Debugger, debugger::DebuggerStats, node::flatten_call_trace};
+use crate::{Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace};
 use alloy_primitives::{Address, map::AddressHashMap};
 use foundry_common::get_contract_name;
 use foundry_evm_core::Breakpoints;
@@ -99,7 +98,7 @@ impl DebuggerBuilder {
 
     /// Sets the TUI layout for the debugger.
     #[inline]
-    pub fn layout(mut self, layout: DebuggerLayout) -> Self {
+    pub const fn layout(mut self, layout: DebuggerLayout) -> Self {
         self.layout = layout;
         self
     }
