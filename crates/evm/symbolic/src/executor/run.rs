@@ -139,7 +139,7 @@ impl SymbolicExecutor {
             );
             root.apply_executor_env(input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
-            root.world.clear_transient_storage();
+            root.world.clear_transaction_scoped_state();
             worklist.push_back(root);
         }
         let mut completed_paths = 0usize;
@@ -388,7 +388,7 @@ impl SymbolicExecutor {
                                             );
                                         }
                                         let mut reverted_state = sequence.state.clone();
-                                        reverted_state.world.clear_transient_storage();
+                                        reverted_state.world.clear_transaction_scoped_state();
                                         for invariant_outcome in self.execute_invariant_check(
                                             input.executor,
                                             reverted_state,

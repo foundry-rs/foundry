@@ -997,6 +997,7 @@ impl StorageWrite {
 pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
+    pub(crate) current_transaction_created_accounts: BTreeSet<Address>,
     pub(crate) balances: BTreeMap<Address, SymWord>,
     pub(crate) code_cache: BTreeMap<Address, SymCode>,
     pub(crate) nonces: BTreeMap<Address, u64>,
@@ -1014,6 +1015,9 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
         Self {
             storage: world.storage.clone(),
             transient_storage: world.transient_storage.clone(),
+            current_transaction_created_accounts: world
+                .current_transaction_created_accounts
+                .clone(),
             balances: world.balances.clone(),
             code_cache: world.code_cache.clone(),
             nonces: world.nonces.clone(),
@@ -1031,6 +1035,7 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
 pub(crate) struct SymbolicWorld {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
+    pub(crate) current_transaction_created_accounts: BTreeSet<Address>,
     pub(crate) balances: BTreeMap<Address, SymWord>,
     pub(crate) code_cache: BTreeMap<Address, SymCode>,
     pub(crate) nonces: BTreeMap<Address, u64>,
@@ -1079,9 +1084,20 @@ impl SymbolicWorld {
         self.transient_storage.push(StorageWrite::new(address, key, value));
     }
 
-    /// Clears transaction-scoped transient storage at a top-level call boundary.
-    pub(crate) fn clear_transient_storage(&mut self) {
+    /// Clears transaction-scoped state at a top-level call boundary.
+    pub(crate) fn clear_transaction_scoped_state(&mut self) {
         self.transient_storage.clear();
+        self.current_transaction_created_accounts.clear();
+    }
+
+    /// Applies the `mark_current_transaction_created` symbolic state helper.
+    pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
+        self.current_transaction_created_accounts.insert(address);
+    }
+
+    /// Returns whether `address` was created in the current top-level symbolic transaction.
+    pub(crate) fn was_created_in_current_transaction(&self, address: Address) -> bool {
+        self.current_transaction_created_accounts.contains(&address)
     }
 
     /// Applies the `enable_arbitrary_storage` symbolic state helper.
@@ -1133,6 +1149,7 @@ impl SymbolicWorld {
         };
         self.storage = snapshot.storage;
         self.transient_storage = snapshot.transient_storage;
+        self.current_transaction_created_accounts = snapshot.current_transaction_created_accounts;
         self.balances = snapshot.balances;
         self.code_cache = snapshot.code_cache;
         self.nonces = snapshot.nonces;
@@ -1331,8 +1348,8 @@ impl SymbolicWorld {
         self.destroyed_accounts.remove(&address);
     }
 
-    /// Implements the `selfdestruct` symbolic state helper.
-    pub(crate) fn selfdestruct<FEN: FoundryEvmNetwork>(
+    /// Implements legacy `SELFDESTRUCT` semantics.
+    pub(crate) fn selfdestruct_legacy<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         address: Address,
@@ -1355,6 +1372,22 @@ impl SymbolicWorld {
         self.existing_accounts.remove(&address);
         self.destroyed_accounts.insert(address);
         Ok(())
+    }
+
+    /// Implements Cancun+ `SELFDESTRUCT` semantics for accounts not created in the current tx.
+    pub(crate) fn selfdestruct_cancun_existing<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        address: Address,
+        beneficiary: Address,
+    ) {
+        let balance = self.balance_word_for_address(executor, address);
+        if beneficiary != address && !matches!(balance, SymWord::Concrete(value) if value.is_zero())
+        {
+            let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
+            self.set_balance_word(beneficiary, sym_add(beneficiary_balance, balance));
+            self.balances.insert(address, SymWord::zero());
+        }
     }
 
     /// Implements the `account_exists` symbolic state helper.

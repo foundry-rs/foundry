@@ -99,6 +99,7 @@ impl SymbolicExecutor {
         let mut child = state.child(frame);
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
+        child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
         child.world.transfer(executor, state.address, created, value);
         child.expected_revert = None;
@@ -179,8 +180,10 @@ impl SymbolicExecutor {
                         kind,
                         &outcome.return_data,
                     )?;
-                    parent.world.install_code(created, outcome.return_data.to_code()?);
-                    parent.world.set_nonce(created, 1);
+                    if !parent.world.destroyed_accounts.contains(&created) {
+                        parent.world.install_code(created, outcome.return_data.to_code()?);
+                        parent.world.set_nonce(created, 1);
+                    }
                     parent.stack.push(created_word.clone())?;
                 }
                 TopLevelCallStatus::Revert => {
