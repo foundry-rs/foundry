@@ -400,12 +400,12 @@ op-alloy-rpc-types = "0.24.0"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.36.0"
+alloy-evm = "0.37.0"
 alloy-op-evm = "0.32.0"
 
 # revm
-revm = { version = "40.0.3", default-features = false }
-revm-inspectors = { version = "0.40.0", features = ["serde"] }
+revm = { version = "41.0.0", default-features = false }
+revm-inspectors = { version = "0.40.1", features = ["serde"] }
 op-revm = { version = "20.0.0", default-features = false }
 
 ## cli
