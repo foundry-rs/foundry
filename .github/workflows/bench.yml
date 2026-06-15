@@ -19,9 +19,12 @@ jobs:
       github.event.issue.pull_request &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
       (
-        startsWith(github.event.comment.body, 'derek bench') ||
-        startsWith(github.event.comment.body, 'decofe bench') ||
-        startsWith(github.event.comment.body, '@decofe bench')
+        github.event.comment.body == 'derek bench' ||
+        startsWith(github.event.comment.body, 'derek bench ') ||
+        github.event.comment.body == 'decofe bench' ||
+        startsWith(github.event.comment.body, 'decofe bench ') ||
+        github.event.comment.body == '@decofe bench' ||
+        startsWith(github.event.comment.body, '@decofe bench ')
       )
     runs-on: ubuntu-latest
     # Scopes the EVENTS_* mTLS secrets; shared across all `bench` subcommands.
