@@ -18,7 +18,10 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{maybe_print_resolved_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        maybe_print_resolved_fee_token, resolve_and_set_default_fee_token,
+        resolve_and_set_fee_token,
+    },
 };
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
@@ -148,7 +151,8 @@ impl MakeTxArgs {
             // sponsor hash commits to the sender.
             let signer = eth.wallet.signer().await?;
             let from = signer.address();
-            let (tx, _) = tx_builder.build(from).await?;
+            let (mut tx, _) = tx_builder.build(from).await?;
+            resolve_and_set_default_fee_token::<N>(Some(chain), &mut tx);
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")
             })?;

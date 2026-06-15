@@ -17,7 +17,10 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token,
+        resolve_and_set_default_fee_token, resolve_and_set_fee_token,
+    },
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{str::FromStr, time::Duration};
@@ -245,7 +248,7 @@ pub(super) async fn send_tip20_transaction(
     let chain = builder.chain();
 
     if print_sponsor_hash {
-        let (tx, from) = if let Some(ref ak) = access_key {
+        let (mut tx, from) = if let Some(ref ak) = access_key {
             let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
             (tx, ak.wallet_address)
         } else {
@@ -256,6 +259,7 @@ pub(super) async fn send_tip20_transaction(
             let (tx, _) = builder.build(signer).await?;
             (tx, from)
         };
+        resolve_and_set_default_fee_token::<TempoNetwork>(Some(chain), &mut tx);
         let hash = tx
             .compute_sponsor_hash(from)
             .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;

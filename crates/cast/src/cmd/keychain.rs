@@ -25,8 +25,8 @@ use foundry_common::{
     sh_warn, shell,
     tempo::{
         self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
-        maybe_print_resolved_fee_token, read_tempo_keys_file, resolve_and_set_fee_token,
-        tempo_keys_path,
+        maybe_print_resolved_fee_token, read_tempo_keys_file, resolve_and_set_default_fee_token,
+        resolve_and_set_fee_token, tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3160,10 +3160,12 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
+    let chain = builder.chain();
 
     if print_sponsor_hash {
         let from = root_signer.address();
-        let (tx, _) = builder.build(from).await?;
+        let (mut tx, _) = builder.build(from).await?;
+        resolve_and_set_default_fee_token::<TempoNetwork>(Some(chain), &mut tx);
         let hash = tx
             .compute_sponsor_hash(from)
             .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;

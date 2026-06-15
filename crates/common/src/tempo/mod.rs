@@ -120,6 +120,25 @@ where
     Ok(Some(fee_token))
 }
 
+/// Applies the fee token known without a fee payer lookup.
+///
+/// This is used for `--tempo.print-sponsor-hash`, which does not accept a sponsor address and
+/// therefore cannot resolve sponsor-specific FeeManager state.
+pub fn resolve_and_set_default_fee_token<N>(
+    chain: Option<Chain>,
+    tx: &mut N::TransactionRequest,
+) -> Option<Address>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let fee_token = tx
+        .fee_token()
+        .or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))?;
+    tx.set_fee_token(fee_token);
+    Some(fee_token)
+}
+
 async fn stored_user_fee_token<N>(
     provider: &dyn Provider<N>,
     fee_payer: Address,

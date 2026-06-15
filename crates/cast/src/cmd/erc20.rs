@@ -24,7 +24,10 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token, resolve_and_set_fee_token},
+    tempo::{
+        TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token,
+        resolve_and_set_default_fee_token, resolve_and_set_fee_token,
+    },
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
@@ -412,6 +415,7 @@ impl Erc20Subcommand {
                         .await?;
                     if needs_sponsor_payload {
                         if print_sponsor_hash {
+                            resolve_and_set_default_fee_token::<TempoNetwork>(Some(chain), &mut tx);
                             let hash = tx
                                 .compute_sponsor_hash(access_key.wallet_address)
                                 .ok_or_else(|| {
@@ -462,6 +466,7 @@ impl Erc20Subcommand {
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
                     fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
                     if print_sponsor_hash {
+                        resolve_and_set_default_fee_token::<N>(Some(chain), &mut tx);
                         let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
                             eyre::eyre!("This network does not support sponsored transactions")
                         })?;
@@ -505,6 +510,7 @@ impl Erc20Subcommand {
                     if needs_sponsor_payload {
                         fill_tx(&$provider, &mut tx, from, chain, false).await?;
                         if print_sponsor_hash {
+                            resolve_and_set_default_fee_token::<N>(Some(chain), &mut tx);
                             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                                 eyre::eyre!("This network does not support sponsored transactions")
                             })?;

@@ -15,7 +15,8 @@ use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    known_fee_token_symbol, resolve_and_set_fee_token, resolve_fee_token, resolve_fee_token_symbol,
+    known_fee_token_symbol, resolve_and_set_default_fee_token, resolve_and_set_fee_token,
+    resolve_fee_token, resolve_fee_token_symbol,
 };
 
 #[derive(Debug, Deserialize)]
@@ -274,6 +275,41 @@ async fn fee_token_lookup_decode_error_is_propagated() {
         .await
         .is_err()
     );
+}
+
+#[test]
+fn default_fee_token_resolution_applies_known_print_sponsor_hash_token() {
+    let explicit = Address::repeat_byte(0x42);
+    let mut tx = TempoTransactionRequest { fee_token: Some(explicit), ..Default::default() };
+
+    assert_eq!(
+        resolve_and_set_default_fee_token::<TempoNetwork>(
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+        ),
+        Some(explicit)
+    );
+    assert_eq!(tx.fee_token, Some(explicit));
+
+    let mut tx = TempoTransactionRequest::default();
+    assert_eq!(
+        resolve_and_set_default_fee_token::<TempoNetwork>(
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+        ),
+        Some(DEFAULT_FEE_TOKEN)
+    );
+    assert_eq!(tx.fee_token, Some(DEFAULT_FEE_TOKEN));
+
+    let mut tx = TempoTransactionRequest::default();
+    assert_eq!(
+        resolve_and_set_default_fee_token::<TempoNetwork>(
+            Some(Chain::from_named(NamedChain::Mainnet)),
+            &mut tx,
+        ),
+        None
+    );
+    assert_eq!(tx.fee_token, None);
 }
 
 #[test]
