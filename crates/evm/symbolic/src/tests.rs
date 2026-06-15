@@ -29,6 +29,31 @@ fn precompile_address(index: u8) -> Address {
 }
 
 #[test]
+/// Regression coverage for `precompile_number_for_spec`.
+fn precompile_number_respects_active_spec() {
+    for number in 1..=4 {
+        assert_eq!(
+            precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER),
+            Some(number)
+        );
+    }
+
+    for number in 5..=8 {
+        assert_eq!(precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER), None);
+        assert_eq!(
+            precompile_number_for_spec(precompile_address(number), SpecId::BYZANTIUM),
+            Some(number)
+        );
+    }
+
+    assert_eq!(precompile_number_for_spec(precompile_address(9), SpecId::BYZANTIUM), None);
+    assert_eq!(precompile_number_for_spec(precompile_address(9), SpecId::ISTANBUL), Some(9));
+
+    assert_eq!(precompile_number_for_spec(precompile_address(10), SpecId::ISTANBUL), None);
+    assert_eq!(precompile_number_for_spec(precompile_address(10), SpecId::CANCUN), Some(10));
+}
+
+#[test]
 /// Regression coverage for `pop_worklist` respecting configured exploration order.
 fn pop_worklist_respects_exploration_order() {
     let mut bfs_worklist = VecDeque::from([1, 2, 3]);
