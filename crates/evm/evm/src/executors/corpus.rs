@@ -41,7 +41,7 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, I256};
+use alloy_primitives::{Address, B256, Bytes, I256, keccak256};
 use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, sh_warn};
 use foundry_config::FuzzCorpusConfig;
@@ -53,6 +53,7 @@ use foundry_evm_fuzz::{
         EvmFuzzState, FuzzStateReader, InvariantFuzzState, generate_msg_value, mutate_param_value,
     },
 };
+use parking_lot::RwLock;
 use proptest::{
     prelude::{Just, Rng, Strategy},
     prop_oneof,
@@ -189,6 +190,118 @@ impl CorpusEntry {
 pub(crate) struct CampaignCorpusEntry {
     tx_seq: Vec<BasicTxDetails>,
     dedupe_by_coverage: bool,
+}
+
+impl CampaignCorpusEntry {
+    pub(crate) fn tx_seq(&self) -> &[BasicTxDetails] {
+        &self.tx_seq
+    }
+}
+
+/// Per-worker position in a [`CampaignCorpusExchange`].
+///
+/// The cursor lives with a worker-local corpus manager. The exchange remains append-only, while
+/// each worker independently advances through entries published since its last pull.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CampaignCorpusCursor {
+    next_entry: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct CampaignCorpusCandidate {
+    tx_seq: Arc<[BasicTxDetails]>,
+}
+
+impl CampaignCorpusCandidate {
+    fn new(tx_seq: &[BasicTxDetails]) -> Self {
+        Self { tx_seq: Arc::from(tx_seq) }
+    }
+
+    pub(crate) fn tx_seq(&self) -> &[BasicTxDetails] {
+        &self.tx_seq
+    }
+}
+
+#[derive(Clone)]
+struct CampaignCorpusBroadcast {
+    producer_worker: usize,
+    candidate: CampaignCorpusCandidate,
+}
+
+#[derive(Default)]
+struct CampaignCorpusExchangeInner {
+    entries: Vec<CampaignCorpusBroadcast>,
+    seen_sequences: HashSet<B256>,
+}
+
+/// In-memory exchange for campaign-local corpus candidates.
+///
+/// This deliberately shares only immutable transaction sequences. Workers keep their own
+/// [`WorkerCorpus`] and coverage maps, replay pulled candidates locally, and decide whether a
+/// sequence is useful for their own corpus.
+#[derive(Clone, Default)]
+pub(crate) struct CampaignCorpusExchange {
+    inner: Arc<RwLock<CampaignCorpusExchangeInner>>,
+}
+
+impl CampaignCorpusExchange {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Publishes a new candidate sequence.
+    ///
+    /// Returns `true` when the sequence was accepted into the exchange, and `false` when it was
+    /// empty or already published by any worker in this campaign.
+    pub(crate) fn publish(
+        &self,
+        producer_worker: usize,
+        tx_seq: &[BasicTxDetails],
+    ) -> Result<bool> {
+        if tx_seq.is_empty() {
+            return Ok(false);
+        }
+
+        let fingerprint = corpus_sequence_fingerprint(tx_seq)?;
+        {
+            let mut inner = self.inner.write();
+            if !inner.seen_sequences.insert(fingerprint) {
+                return Ok(false);
+            }
+        }
+
+        let candidate = CampaignCorpusCandidate::new(tx_seq);
+        let mut inner = self.inner.write();
+        inner.entries.push(CampaignCorpusBroadcast { producer_worker, candidate });
+        Ok(true)
+    }
+
+    /// Returns candidates published since `cursor` last pulled, excluding this worker's own
+    /// entries.
+    pub(crate) fn pull_new_for_worker(
+        &self,
+        worker_id: usize,
+        cursor: &mut CampaignCorpusCursor,
+    ) -> Vec<CampaignCorpusCandidate> {
+        let inner = self.inner.read();
+        let start = cursor.next_entry.min(inner.entries.len());
+        let mut entries = Vec::with_capacity(inner.entries.len() - start);
+        entries.extend(
+            inner.entries[start..]
+                .iter()
+                .filter(|entry| entry.producer_worker != worker_id)
+                .map(|entry| entry.candidate.clone()),
+        );
+        cursor.next_entry = inner.entries.len();
+        entries
+    }
+}
+
+fn corpus_sequence_fingerprint(tx_seq: &[BasicTxDetails]) -> Result<B256> {
+    let estimated_size = tx_seq.iter().map(BasicTxDetails::estimate_serialized_size).sum();
+    let mut bytes = Vec::with_capacity(estimated_size);
+    serde_json::to_writer(&mut bytes, tx_seq)?;
+    Ok(keccak256(bytes))
 }
 
 struct ReplayOutcome {
@@ -1357,6 +1470,47 @@ impl WorkerCorpus {
         Ok(imports)
     }
 
+    /// Imports campaign-local corpus candidates after replaying them against this worker's coverage
+    /// maps.
+    ///
+    /// Candidates are only retained when they produce new coverage for this worker. This keeps
+    /// coverage ownership local while allowing workers to consume sibling discoveries in the same
+    /// invariant campaign.
+    #[instrument(skip_all)]
+    pub(crate) fn import_campaign_entries<FEN: FoundryEvmNetwork>(
+        &mut self,
+        entries: impl IntoIterator<Item = CampaignCorpusCandidate>,
+        executor: &Executor<FEN>,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+        dynamic: Option<&DynamicTargetCtx<'_>>,
+    ) -> Result<usize> {
+        let mut imported = 0;
+        for entry in entries {
+            let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic };
+            let coverage = ReplayCoverage {
+                history_map: &mut self.history_map,
+                edge_indices: &mut self.edge_indices,
+                sancov_history_map: &mut self.sancov_history_map,
+                metrics: Some(&mut self.metrics),
+            };
+            let ReplayOutcome { keep_entry, new_coverage, cmp_seq, .. } =
+                replay_corpus_sequence(entry.tx_seq(), executor, target, coverage)?;
+
+            if keep_entry && new_coverage {
+                self.in_memory_corpus.push(CorpusEntry::new_with_cmp(
+                    entry.tx_seq().to_vec(),
+                    cmp_seq,
+                    Uuid::new_v4(),
+                ));
+                self.metrics.corpus_count += 1;
+                imported += 1;
+            }
+        }
+
+        Ok(imported)
+    }
+
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
     /// found from the corpus findings of other workers.
     #[instrument(skip_all)]
@@ -1408,6 +1562,7 @@ impl WorkerCorpus {
 
                 let corpus_entry = CorpusEntry::new_with_cmp(tx_seq.clone(), cmp_seq, entry.uuid);
                 self.in_memory_corpus.push(corpus_entry);
+                self.metrics.corpus_count += 1;
             } else {
                 // Remove the file as it did not generate new coverage.
                 if let Err(err) = std::fs::remove_file(&entry.path) {
@@ -1728,6 +1883,16 @@ mod tests {
         worker_corpus(id, corpus_root, WorkerCorpusSeed::default())
     }
 
+    fn basic_tx_with_calldata(byte: u8) -> BasicTxDetails {
+        BasicTxDetails {
+            call_details: foundry_evm_fuzz::CallDetails {
+                calldata: Bytes::from(vec![byte]),
+                ..basic_tx().call_details
+            },
+            ..basic_tx()
+        }
+    }
+
     fn seeded_worker_corpus(
         id: usize,
         corpus_root: PathBuf,
@@ -1738,6 +1903,41 @@ mod tests {
             corpus_root,
             WorkerCorpusSeed { in_memory_corpus: entries, ..Default::default() },
         )
+    }
+
+    #[test]
+    fn campaign_corpus_exchange_publishes_entries_to_other_workers_only() {
+        let exchange = CampaignCorpusExchange::new();
+        let mut worker0_cursor = CampaignCorpusCursor::default();
+        let mut worker1_cursor = CampaignCorpusCursor::default();
+        let mut worker2_cursor = CampaignCorpusCursor::default();
+
+        exchange.publish(0, &[basic_tx_with_calldata(1)]).unwrap();
+
+        assert!(exchange.pull_new_for_worker(0, &mut worker0_cursor).is_empty());
+
+        let worker1_entries = exchange.pull_new_for_worker(1, &mut worker1_cursor);
+        assert_eq!(worker1_entries.len(), 1);
+        assert_eq!(worker1_entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![1]));
+        assert!(exchange.pull_new_for_worker(1, &mut worker1_cursor).is_empty());
+
+        let worker2_entries = exchange.pull_new_for_worker(2, &mut worker2_cursor);
+        assert_eq!(worker2_entries.len(), 1);
+        assert_eq!(worker2_entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![1]));
+    }
+
+    #[test]
+    fn campaign_corpus_exchange_dedupes_identical_sequences() {
+        let exchange = CampaignCorpusExchange::new();
+        let sequence = vec![basic_tx_with_calldata(1)];
+
+        assert!(exchange.publish(0, &sequence).unwrap());
+        assert!(!exchange.publish(1, &sequence).unwrap());
+
+        let mut cursor = CampaignCorpusCursor::default();
+        let entries = exchange.pull_new_for_worker(2, &mut cursor);
+        assert_eq!(entries.len(), 1);
+        assert!(exchange.pull_new_for_worker(2, &mut cursor).is_empty());
     }
 
     #[test]

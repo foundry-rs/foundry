@@ -1,7 +1,10 @@
 use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
-        corpus::{DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed},
+        corpus::{
+            CampaignCorpusCursor, CampaignCorpusExchange, DynamicTargetCtx, ReplayTarget,
+            WorkerCorpus, WorkerCorpusSeed,
+        },
     },
     inspectors::Fuzzer,
 };
@@ -263,9 +266,7 @@ impl InvariantCorpusPersistence {
 enum InvariantCorpusSharing {
     /// Workers only use their local corpus during campaign execution.
     None,
-    /// TODO: publish worker discoveries after campaign processing and import sibling entries
-    /// before generating new inputs.
-    #[allow(dead_code)]
+    /// Workers exchange new corpus candidates in memory during one invariant campaign.
     CampaignLocal,
 }
 
@@ -276,12 +277,32 @@ struct InvariantCorpusPolicy {
 }
 
 impl InvariantCorpusPolicy {
-    // Today, campaign output finalization is only a persistence decision. The sharing dimension is
-    // modeled separately so a future campaign-local corpus broker can extend this policy without
-    // changing worker call sites.
+    // Deferred persistence is still what makes a worker return campaign outputs to the coordinator;
+    // campaign-local sharing is handled independently by the exchange policy.
     const fn finalizes_campaign_outputs(self) -> bool {
         self.persistence.is_deferred()
     }
+
+    const fn shares_campaign_local(self) -> bool {
+        matches!(self.sharing, InvariantCorpusSharing::CampaignLocal)
+    }
+}
+
+const fn invariant_corpus_policy(
+    config: &InvariantConfig,
+    worker_count: usize,
+) -> InvariantCorpusPolicy {
+    let persistence = if worker_count > 1 {
+        InvariantCorpusPersistence::Deferred
+    } else {
+        InvariantCorpusPersistence::Live
+    };
+    let sharing = if worker_count > 1 && config.corpus.is_coverage_guided() {
+        InvariantCorpusSharing::CampaignLocal
+    } else {
+        InvariantCorpusSharing::None
+    };
+    InvariantCorpusPolicy { persistence, sharing }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -691,15 +712,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&replay_targets),
             Some(self.dynamic_target_ctx()),
         )?;
-        let corpus_persistence = if actual_worker_count > 1 {
-            InvariantCorpusPersistence::Deferred
-        } else {
-            InvariantCorpusPersistence::Live
-        };
-        let corpus_policy = InvariantCorpusPolicy {
-            persistence: corpus_persistence,
-            sharing: InvariantCorpusSharing::None,
-        };
+        let corpus_policy = invariant_corpus_policy(&self.config, actual_worker_count);
+        let corpus_exchange =
+            corpus_policy.shares_campaign_local().then(CampaignCorpusExchange::new);
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -744,6 +759,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         corpus_seed
                             .clone_for_worker(worker_plan.worker_id as usize, actual_worker_count),
                         corpus_policy,
+                        corpus_exchange.clone(),
                         gas_report_samples,
                     );
                     debug!("finished in {:?}", timer.elapsed());
@@ -770,6 +786,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 campaign_seed,
                 corpus_seed.clone(),
                 corpus_policy,
+                None,
                 gas_report_samples,
             )?]
         };
@@ -819,6 +836,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         campaign_seed: InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
         corpus_policy: InvariantCorpusPolicy,
+        corpus_exchange: Option<CampaignCorpusExchange>,
         gas_report_samples: usize,
     ) -> Result<InvariantWorkerOutput> {
         // Note: invariant function signatures (no inputs) are validated upstream in the
@@ -837,6 +855,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             corpus_seed,
         )?;
         let mut corpus_entries = Vec::new();
+        let mut corpus_cursor = CampaignCorpusCursor::default();
+        let dynamic_target_ctx = DynamicTargetCtx {
+            project_contracts,
+            setup_contracts,
+            artifact_filters: &campaign_seed.artifact_filters,
+        };
 
         let mut runs = 0;
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
@@ -848,6 +872,26 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
+
+            if let Some(exchange) = &corpus_exchange {
+                let entries =
+                    exchange.pull_new_for_worker(plan.worker_id as usize, &mut corpus_cursor);
+                if !entries.is_empty() {
+                    let imported = corpus_manager.import_campaign_entries(
+                        entries,
+                        &executor,
+                        None,
+                        Some(&invariant_test.targeted_contracts),
+                        Some(&dynamic_target_ctx),
+                    )?;
+                    trace!(
+                        target: "corpus",
+                        worker = plan.worker_id,
+                        imported,
+                        "imported campaign-local corpus entries"
+                    );
+                }
+            }
 
             let initial_seq = corpus_manager.new_inputs(
                 &mut invariant_test.test_data.branch_runner,
@@ -1134,6 +1178,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.new_coverage,
                     optimization,
                 ) {
+                    if current_run.new_coverage
+                        && let Some(exchange) = &corpus_exchange
+                    {
+                        let _ = exchange.publish(plan.worker_id as usize, input.tx_seq())?;
+                    }
                     corpus_entries.push(input);
                 }
             } else {
@@ -1984,6 +2033,31 @@ mod tests {
             first_generated_u64(&mut worker),
             first_generated_u64(&mut worker_from_advanced_parent)
         );
+    }
+
+    #[test]
+    fn invariant_corpus_policy_enables_campaign_local_sharing_for_parallel_corpus_mode() {
+        let mut config = InvariantConfig {
+            corpus: foundry_config::FuzzCorpusConfig {
+                corpus_dir: Some(std::path::PathBuf::from("corpus")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let parallel = invariant_corpus_policy(&config, 2);
+        assert_eq!(parallel.persistence, InvariantCorpusPersistence::Deferred);
+        assert_eq!(parallel.sharing, InvariantCorpusSharing::CampaignLocal);
+
+        let single = invariant_corpus_policy(&config, 1);
+        assert_eq!(single.persistence, InvariantCorpusPersistence::Live);
+        assert_eq!(single.sharing, InvariantCorpusSharing::None);
+
+        config.corpus.corpus_dir = None;
+        config.corpus.show_edge_coverage = true;
+        let metrics_only = invariant_corpus_policy(&config, 2);
+        assert_eq!(metrics_only.persistence, InvariantCorpusPersistence::Deferred);
+        assert_eq!(metrics_only.sharing, InvariantCorpusSharing::None);
     }
 
     #[test]
