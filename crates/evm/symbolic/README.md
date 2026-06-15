@@ -110,6 +110,11 @@ Current modeling notes:
   incomplete results with an explanatory reason.
 - Symbolic `KECCAK256` supports common Solidity storage patterns; arbitrary
   symbolic hashing may require heuristics and can make a run incomplete.
+- `SELFDESTRUCT` follows the active fork. Before Cancun it deletes the account;
+  from Cancun onward it only deletes contracts created in the same top-level
+  symbolic transaction, otherwise it transfers balance and halts while
+  preserving code and storage. Cancun beneficiaries must resolve to concrete
+  addresses; unresolved symbolic beneficiaries report incomplete.
 - Counterexamples are shown only after successful concrete replay.
 
 ## Writing Symbolic Tests
@@ -476,7 +481,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Area | Current behavior |
 |---|---|
 | Gas-dependent behavior | The engine does not use gas to prove properties. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit CALL-family gas caps are not enforced. Branches, arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or solver constraints derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `snapshotGasLastCall`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
-| Cancun+ `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 same-transaction creation/deletion and end-of-transaction finalization are not fully modeled, so Cancun+ `SELFDESTRUCT` reports incomplete. |
+| `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 is modeled for concrete beneficiaries: contracts created in the current top-level symbolic transaction are deleted, while existing contracts transfer balance and halt without deleting code or storage. Unresolved symbolic Cancun beneficiaries report incomplete. |
 | Symbolic account/code queries | `BALANCE`, `EXTCODESIZE`, `EXTCODEHASH`, and `EXTCODECOPY` on symbolic addresses are scoped to the engine's known symbolic/overlay/code-cache candidates plus the documented empty-account fallback. They do not prove quantified properties over every possible fork/backend account. |
 | Symbolic CALL targets | Concrete targets and symbolic targets constrained to known deployed-contract/precompile candidates are supported. By default, a feasible symbolic target outside the known candidate set reports incomplete. With `symbolic_call_targets = true`, the outside-candidate branch is modeled as an empty-account/no-code successful call, including value transfer for `CALL`; it does not model arbitrary unknown external code or custom/future precompiles. Symbolic cheatcode addresses/selectors still report incomplete. |
 | Symbolic CREATE / CREATE2 inputs | Concrete initcode and common bounded symbolic CREATE2 address expressions are supported. Symbolic runtime sizes and unsupported symbolic initcode shapes report incomplete. |
@@ -494,8 +499,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Resource and scope bounds | `max_paths` / width, execution depth, calldata variant budget, solver query budget, and solver timeout can stop a run as incomplete. Dynamic ABI length settings, `invariant_depth`, and `symbolic.loop` define the explored input/sequence/loop scope; a `PASS` is only within those configured bounds, and skipped larger shapes, deeper sequences, or more loop iterations are not necessarily reported as incomplete. |
 
 Exact failure messages are preserved in the test output, for example
-`unsupported symbolic execution feature: GAS/gasleft() not modeled` or
-`unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled`.
+`unsupported symbolic execution feature: GAS/gasleft() not modeled`.
 
 For real-world bug-shaped examples that exercise the current modeled surface,
 see the community-maintained

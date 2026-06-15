@@ -1831,6 +1831,28 @@ fn symbolic_world_snapshot_restores_overlay_state() {
 }
 
 #[test]
+/// Regression coverage for `symbolic_world_tracks_current_transaction_created_accounts`.
+fn symbolic_world_tracks_current_transaction_created_accounts() {
+    let first = Address::from([0x11; 20]);
+    let second = Address::from([0x22; 20]);
+    let mut world = SymbolicWorld::default();
+
+    world.mark_current_transaction_created(first);
+    let snapshot = world.snapshot_state();
+    world.mark_current_transaction_created(second);
+
+    assert!(world.was_created_in_current_transaction(first));
+    assert!(world.was_created_in_current_transaction(second));
+
+    assert!(world.restore_snapshot(snapshot));
+    assert!(world.was_created_in_current_transaction(first));
+    assert!(!world.was_created_in_current_transaction(second));
+
+    world.clear_transaction_scoped_state();
+    assert!(!world.was_created_in_current_transaction(first));
+}
+
+#[test]
 /// Regression coverage for `extra_dynamic_lengths_are_rejected`.
 fn extra_dynamic_lengths_are_rejected() {
     let function = Function::parse("check(bytes)").unwrap();

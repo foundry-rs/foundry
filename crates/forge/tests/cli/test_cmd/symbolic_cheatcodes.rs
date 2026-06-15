@@ -1165,6 +1165,8 @@ forgetest_init!(symbolic_selfdestruct_updates_account_overlay, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
+/// forge-config: default.evm_version = "shanghai"
+
 contract Killable {
     receive() external payable {}
 
@@ -1197,31 +1199,43 @@ contract SymbolicSelfdestruct is Test {
     );
 
     let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSelfdestruct"])
-        .assert_failure()
+        .args([
+            "test",
+            "--symbolic",
+            "--evm-version",
+            "shanghai",
+            "--match-test",
+            "checkSelfdestruct",
+        ])
+        .assert_success()
         .get_output()
         .stdout_lossy();
 
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled] checkSelfdestruct(uint256)
+[PASS] checkSelfdestruct(uint256)
 "#]],
     );
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
 });
 
-forgetest_init!(symbolic_selfdestruct_accepts_symbolic_beneficiary, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_selfdestruct_accepts_symbolic_beneficiary because z3 is not available"
-        );
-        return;
-    }
+forgetest_init!(
+    symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete because z3 is not available"
+            );
+            return;
+        }
 
-    prj.add_test(
-        "SymbolicSelfdestructBeneficiary.t.sol",
-        r#"
+        prj.add_test(
+            "SymbolicSelfdestructBeneficiary.t.sol",
+            r#"
 import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
 
 contract Killable {
     receive() external payable {}
@@ -1249,22 +1263,203 @@ contract SymbolicSelfdestructBeneficiary is Test {
     }
 }
 "#,
+        );
+
+        let stdout = cmd
+            .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
+            .assert_failure()
+            .get_output()
+            .stdout_lossy();
+
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructBeneficiary(address)
+"#]],
+        );
+        assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+        assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+    }
+);
+
+forgetest_init!(symbolic_selfdestruct_cancun_existing_preserves_account, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_existing_preserves_account because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructCancunExisting.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract KillableCancun {
+    uint256 value = 42;
+
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+
+    function get() external view returns (uint256) {
+        return value;
+    }
+}
+
+contract SymbolicSelfdestructCancunExisting is Test {
+    KillableCancun killable;
+    address payable beneficiary = payable(address(0xB0B));
+
+    function setUp() public {
+        killable = new KillableCancun();
+    }
+
+    function checkCancunSelfdestructExisting(uint256) public {
+        vm.deal(address(killable), 7);
+
+        killable.die(beneficiary);
+
+        assertEq(address(killable).balance, 0);
+        assertEq(beneficiary.balance, 7);
+        assertGt(address(killable).code.length, 0);
+        assertEq(killable.get(), 42);
+    }
+}
+"#,
     );
 
     let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
-        .assert_failure()
+        .args(["test", "--symbolic", "--match-test", "checkCancunSelfdestructExisting"])
+        .assert_success()
         .get_output()
         .stdout_lossy();
 
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled] checkSelfdestructBeneficiary(address)
+[PASS] checkCancunSelfdestructExisting(uint256)
 "#]],
     );
-    assert!(!stdout.contains("symbolic SELFDESTRUCT beneficiary"), "{stdout}");
-    assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+});
+
+forgetest_init!(symbolic_selfdestruct_cancun_same_transaction_deletes_account, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_same_transaction_deletes_account because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructCancunSameTx.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract KillableCancunSameTx {
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
+contract SymbolicSelfdestructCancunSameTx is Test {
+    address payable beneficiary = payable(address(0xB0B));
+
+    function checkCancunSelfdestructSameTransaction(uint256) public {
+        KillableCancunSameTx killable = new KillableCancunSameTx();
+        vm.deal(address(killable), 7);
+
+        killable.die(beneficiary);
+
+        assertEq(address(killable).balance, 0);
+        assertEq(beneficiary.balance, 7);
+        assertEq(address(killable).code.length, 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkCancunSelfdestructSameTransaction"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCancunSelfdestructSameTransaction(uint256)
+"#]],
+    );
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+});
+
+forgetest_init!(symbolic_selfdestruct_cancun_wrong_delete_assertion_fails, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_wrong_delete_assertion_fails because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructCancunWrongDelete.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract KillableCancunWrongDelete {
+    receive() external payable {}
+
+    function die(address payable beneficiary) external {
+        selfdestruct(beneficiary);
+    }
+}
+
+contract SymbolicSelfdestructCancunWrongDelete is Test {
+    KillableCancunWrongDelete killable;
+    address payable beneficiary = payable(address(0xB0B));
+
+    function setUp() public {
+        killable = new KillableCancunWrongDelete();
+    }
+
+    function checkCancunSelfdestructDoesNotDeleteExisting(uint256) public {
+        killable.die(beneficiary);
+
+        assertEq(address(killable).code.length, 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--match-test",
+            "checkCancunSelfdestructDoesNotDeleteExisting",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[FAIL"), "{stdout}");
+    assert!(stdout.contains("counterexample"), "{stdout}");
+    assert!(stdout.contains("checkCancunSelfdestructDoesNotDeleteExisting"), "{stdout}");
+    assert!(!stdout.contains("[PASS] checkCancunSelfdestructDoesNotDeleteExisting"), "{stdout}");
+    assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
 });
 
 forgetest_init!(symbolic_vm_set_blockhash, |prj, cmd| {

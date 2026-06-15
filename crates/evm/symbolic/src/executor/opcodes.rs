@@ -601,11 +601,19 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Revert);
                 }
                 let spec_id: SpecId = executor.spec_id().into();
-                if spec_id >= SpecId::CANCUN {
-                    return Err(SymbolicError::Unsupported("SELFDESTRUCT/EIP-6780 not modeled"));
+                let (beneficiary_word, beneficiary) = state.pop_address_word_or_symbolic_slot()?;
+                if spec_id < SpecId::CANCUN
+                    || state.world.was_created_in_current_transaction(state.address)
+                {
+                    state.world.selfdestruct_legacy(executor, state.address, beneficiary)?;
+                } else {
+                    if state.constrained_word(&beneficiary_word).is_none() {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic SELFDESTRUCT beneficiary",
+                        ));
+                    }
+                    state.world.selfdestruct_cancun_existing(executor, state.address, beneficiary);
                 }
-                let beneficiary = state.pop_address_or_symbolic_slot()?;
-                state.world.selfdestruct(executor, state.address, beneficiary)?;
                 state.return_data = SymReturnData::default();
                 Ok(StepOutcome::Halt)
             }
