@@ -474,10 +474,13 @@ impl PathState {
         self.world.extcode_bytes_word(executor, word, offset, size)
     }
 
-    /// Implements the `pop_address_or_symbolic_slot` symbolic state helper.
-    pub(crate) fn pop_address_or_symbolic_slot(&mut self) -> Result<Address, SymbolicError> {
+    /// Implements the `pop_address_word_or_symbolic_slot` symbolic state helper.
+    pub(crate) fn pop_address_word_or_symbolic_slot(
+        &mut self,
+    ) -> Result<(SymWord, Address), SymbolicError> {
         let word = self.stack.pop()?;
-        Ok(self.address_or_symbolic_slot(word))
+        let address = self.address_or_symbolic_slot(word.clone());
+        Ok((word, address))
     }
 
     /// Returns the `address_or_symbolic_slot` symbolic state helper result.

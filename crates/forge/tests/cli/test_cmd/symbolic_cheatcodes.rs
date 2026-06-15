@@ -1220,18 +1220,22 @@ contract SymbolicSelfdestruct is Test {
     assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
 });
 
-forgetest_init!(symbolic_selfdestruct_accepts_symbolic_beneficiary, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_selfdestruct_accepts_symbolic_beneficiary because z3 is not available"
-        );
-        return;
-    }
+forgetest_init!(
+    symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_selfdestruct_cancun_symbolic_beneficiary_reports_incomplete because z3 is not available"
+            );
+            return;
+        }
 
-    prj.add_test(
-        "SymbolicSelfdestructBeneficiary.t.sol",
-        r#"
+        prj.add_test(
+            "SymbolicSelfdestructBeneficiary.t.sol",
+            r#"
 import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
 
 contract Killable {
     receive() external payable {}
@@ -1259,24 +1263,24 @@ contract SymbolicSelfdestructBeneficiary is Test {
     }
 }
 "#,
-    );
+        );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+        let stdout = cmd
+            .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
+            .assert_failure()
+            .get_output()
+            .stdout_lossy();
 
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkSelfdestructBeneficiary(address)
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic SELFDESTRUCT beneficiary] checkSelfdestructBeneficiary(address)
 "#]],
-    );
-    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
-    assert!(!stdout.contains("symbolic SELFDESTRUCT beneficiary"), "{stdout}");
-    assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
-});
+        );
+        assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+        assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+    }
+);
 
 forgetest_init!(symbolic_selfdestruct_cancun_existing_preserves_account, |prj, cmd| {
     if !z3_available() {
