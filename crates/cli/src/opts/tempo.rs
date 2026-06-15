@@ -138,7 +138,7 @@ pub struct TempoOpts {
     /// knows what hash to sign. The transaction is not sent.
     #[arg(
         long = "tempo.print-sponsor-hash",
-        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig", "sponsor_url"]
+        conflicts_with_all = &["sponsor_signer", "sponsor_sig", "sponsor_url"]
     )]
     pub print_sponsor_hash: bool,
 
@@ -453,13 +453,29 @@ mod tests {
     }
 
     #[test]
-    fn print_sponsor_hash_conflicts_with_sponsor_submission() {
+    fn print_sponsor_hash_allows_sponsor_address() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.print-sponsor-hash",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .unwrap();
+
+        assert!(opts.print_sponsor_hash);
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+    }
+
+    #[test]
+    fn print_sponsor_hash_conflicts_with_sponsor_signature() {
         assert!(
             TempoOpts::try_parse_from([
                 "",
                 "--tempo.print-sponsor-hash",
                 "--tempo.sponsor",
                 "0x1111111111111111111111111111111111111111",
+                "--tempo.sponsor-signature",
+                "0x0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b",
             ])
             .is_err()
         );

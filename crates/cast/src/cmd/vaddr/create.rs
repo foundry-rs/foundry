@@ -21,7 +21,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
     shell,
-    tempo::maybe_print_resolved_fee_token,
+    tempo::{maybe_print_resolved_fee_token, resolve_and_set_fee_token_for_send},
 };
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -189,6 +189,14 @@ async fn register(
         tempo::fill_access_key_transaction(&provider, &mut tx, access_key, chain).await?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send_with_access_key`, so report the selection here.
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(access_key.wallet_address),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
@@ -234,6 +242,14 @@ async fn register(
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send`, so report the selection here.
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(sender),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),

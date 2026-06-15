@@ -175,14 +175,14 @@ where
             .await?;
         }
 
+        let fee_payer = tempo_sponsor.map(|s| s.sponsor()).or_else(|| tx.from());
+        resolve_and_set_fee_token(provider, chain, tx, fee_payer).await?;
+
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
             estimate_gas(tx, provider, estimate_multiplier).await?;
         }
-
-        let fee_payer = tempo_sponsor.map(|s| s.sponsor()).or_else(|| tx.from());
-        resolve_and_set_fee_token(provider, chain, tx, fee_payer).await?;
 
         if let Some(sponsor) = tempo_sponsor {
             let from = tx.from().expect("no sender");

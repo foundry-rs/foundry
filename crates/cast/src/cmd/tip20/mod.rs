@@ -19,7 +19,7 @@ use foundry_common::{
     provider::ProviderBuilder,
     tempo::{
         TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token,
-        resolve_and_set_default_fee_token, resolve_and_set_fee_token,
+        resolve_and_set_fee_token_for_send,
     },
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
@@ -210,6 +210,7 @@ pub(super) async fn send_tip20_transaction(
 ) -> eyre::Result<()> {
     let mut tx_opts = tx_params.into_transaction_opts();
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+    let print_sponsor_fee_payer = tx_opts.tempo.sponsor;
     let sponsor_url = tx_opts.tempo.sponsor_url.clone();
     let expires_at = tx_opts.tempo.resolve_expires();
     let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
@@ -259,7 +260,14 @@ pub(super) async fn send_tip20_transaction(
             let (tx, _) = builder.build(signer).await?;
             (tx, from)
         };
-        resolve_and_set_default_fee_token::<TempoNetwork>(Some(chain), &mut tx);
+        resolve_and_set_fee_token_for_send::<TempoNetwork>(
+            &provider,
+            Some(chain),
+            &mut tx,
+            print_sponsor_fee_payer,
+            !config.eth_rpc_curl,
+        )
+        .await?;
         let hash = tx
             .compute_sponsor_hash(from)
             .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
@@ -279,9 +287,24 @@ pub(super) async fn send_tip20_transaction(
             tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
         }
         if let Some(sponsor) = &tempo_sponsor {
-            resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(sponsor.sponsor()),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
+        } else {
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(browser.address()),
+                !config.eth_rpc_curl,
+            )
+            .await?;
         }
         maybe_print_resolved_fee_token(
             (!config.eth_rpc_curl).then_some(&provider),
@@ -301,8 +324,14 @@ pub(super) async fn send_tip20_transaction(
         let (mut tx, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
-            resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(sponsor.sponsor()),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, ak.wallet_address).await?;
         }
         cast_send_with_access_key(
@@ -363,8 +392,14 @@ pub(super) async fn send_tip20_transaction(
         let (mut tx, _) = builder.build(&signer).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
-            resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(sponsor.sponsor()),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
         }
 

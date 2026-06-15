@@ -120,10 +120,30 @@ where
     Ok(Some(fee_token))
 }
 
-/// Applies the fee token known without a fee payer lookup.
+/// Resolves and applies the Tempo fee token, optionally avoiding the on-chain lookup.
 ///
-/// This is used for `--tempo.print-sponsor-hash`, which does not accept a sponsor address and
-/// therefore cannot resolve sponsor-specific FeeManager state.
+/// Curl mode must not use an RPC lookup here: the curl transport prints the first request and
+/// exits, so this falls back to an explicit fee token or Tempo's default token when lookups are
+/// disabled.
+pub async fn resolve_and_set_fee_token_for_send<N>(
+    provider: &dyn Provider<N>,
+    chain: Option<Chain>,
+    tx: &mut N::TransactionRequest,
+    fee_payer: Option<Address>,
+    allow_lookup: bool,
+) -> Result<Option<Address>>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+{
+    if allow_lookup {
+        resolve_and_set_fee_token(provider, chain, tx, fee_payer).await
+    } else {
+        Ok(resolve_and_set_default_fee_token::<N>(chain, tx))
+    }
+}
+
+/// Applies the fee token known without a fee payer lookup.
 pub fn resolve_and_set_default_fee_token<N>(
     chain: Option<Chain>,
     tx: &mut N::TransactionRequest,
@@ -235,6 +255,7 @@ where
         resolve_fee_token(provider as &dyn Provider<N>, chain, tx, fee_payer).await.ok().flatten()
     } else {
         tx.and_then(|tx| tx.fee_token())
+            .or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))
     };
     maybe_print_fee_token(provider, fee_token).await
 }

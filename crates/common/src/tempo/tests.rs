@@ -16,7 +16,7 @@ use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     known_fee_token_symbol, resolve_and_set_default_fee_token, resolve_and_set_fee_token,
-    resolve_fee_token, resolve_fee_token_symbol,
+    resolve_and_set_fee_token_for_send, resolve_fee_token, resolve_fee_token_symbol,
 };
 
 #[derive(Debug, Deserialize)]
@@ -310,6 +310,45 @@ fn default_fee_token_resolution_applies_known_print_sponsor_hash_token() {
         None
     );
     assert_eq!(tx.fee_token, None);
+}
+
+#[tokio::test]
+async fn send_fee_token_resolution_can_skip_lookup_for_curl_mode() -> eyre::Result<()> {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
+    let fee_payer = Address::repeat_byte(0x11);
+    let mut tx = TempoTransactionRequest::default();
+
+    asserter.push_success(&BETA_USD_ADDRESS.abi_encode());
+    assert_eq!(
+        resolve_and_set_fee_token_for_send::<TempoNetwork>(
+            &provider,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            Some(fee_payer),
+            true,
+        )
+        .await?,
+        Some(BETA_USD_ADDRESS)
+    );
+    assert_eq!(tx.fee_token, Some(BETA_USD_ADDRESS));
+
+    let mut tx = TempoTransactionRequest::default();
+    assert_eq!(
+        resolve_and_set_fee_token_for_send::<TempoNetwork>(
+            &provider,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            Some(fee_payer),
+            false,
+        )
+        .await?,
+        Some(DEFAULT_FEE_TOKEN)
+    );
+    assert_eq!(tx.fee_token, Some(DEFAULT_FEE_TOKEN));
+
+    Ok(())
 }
 
 #[test]

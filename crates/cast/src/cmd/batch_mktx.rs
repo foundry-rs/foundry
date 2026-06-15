@@ -21,7 +21,9 @@ use foundry_cli::{
     utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::maybe_print_resolved_fee_token,
+    FoundryTransactionBuilder,
+    provider::ProviderBuilder,
+    tempo::{maybe_print_resolved_fee_token, resolve_and_set_fee_token_for_send},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
@@ -133,8 +135,16 @@ impl BatchMakeTxArgs {
             }
 
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
-            let (tx, _) = tx_builder.build(from).await?;
+            let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(from),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
@@ -149,8 +159,16 @@ impl BatchMakeTxArgs {
         }
 
         if ethsign {
-            let (tx, _) = tx_builder.build(config.sender).await?;
+            let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(config.sender),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
@@ -170,9 +188,17 @@ impl BatchMakeTxArgs {
         };
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
-            let (tx, _) =
+            let (mut tx, _) =
                 tx_builder.build_with_access_key(access_key.wallet_address, access_key).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(access_key.wallet_address),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
@@ -192,8 +218,16 @@ impl BatchMakeTxArgs {
             alloy_primitives::hex::encode(raw_tx)
         } else {
             tx::validate_from_address(eth.wallet.from, Signer::address(&signer))?;
-            let (tx, _) = tx_builder.build(&signer).await?;
+            let (mut tx, _) = tx_builder.build(&signer).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(Signer::address(&signer)),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),

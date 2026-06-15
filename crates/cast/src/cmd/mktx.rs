@@ -18,10 +18,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{
-        maybe_print_resolved_fee_token, resolve_and_set_default_fee_token,
-        resolve_and_set_fee_token,
-    },
+    tempo::{maybe_print_resolved_fee_token, resolve_and_set_fee_token_for_send},
 };
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
@@ -108,6 +105,7 @@ impl MakeTxArgs {
             self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
+        let print_sponsor_fee_payer = tx.tempo.sponsor;
         let expires_at = tx.tempo.resolve_expires();
         let tempo_sponsor =
             if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
@@ -152,7 +150,14 @@ impl MakeTxArgs {
             let signer = eth.wallet.signer().await?;
             let from = signer.address();
             let (mut tx, _) = tx_builder.build(from).await?;
-            resolve_and_set_default_fee_token::<N>(Some(chain), &mut tx);
+            resolve_and_set_fee_token_for_send::<N>(
+                &provider,
+                Some(chain),
+                &mut tx,
+                print_sponsor_fee_payer,
+                !config.eth_rpc_curl,
+            )
+            .await?;
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")
             })?;
@@ -185,9 +190,24 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                    .await?;
+                resolve_and_set_fee_token_for_send(
+                    &provider,
+                    Some(chain),
+                    &mut tx,
+                    Some(sponsor.sponsor()),
+                    !config.eth_rpc_curl,
+                )
+                .await?;
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
+            } else {
+                resolve_and_set_fee_token_for_send(
+                    &provider,
+                    Some(chain),
+                    &mut tx,
+                    Some(from),
+                    !config.eth_rpc_curl,
+                )
+                .await?;
             }
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
@@ -208,9 +228,24 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                    .await?;
+                resolve_and_set_fee_token_for_send(
+                    &provider,
+                    Some(chain),
+                    &mut tx,
+                    Some(sponsor.sponsor()),
+                    !config.eth_rpc_curl,
+                )
+                .await?;
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
+            } else {
+                resolve_and_set_fee_token_for_send(
+                    &provider,
+                    Some(chain),
+                    &mut tx,
+                    Some(config.sender),
+                    !config.eth_rpc_curl,
+                )
+                .await?;
             }
             maybe_print_resolved_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
@@ -235,9 +270,24 @@ impl MakeTxArgs {
         let (mut tx, _) = tx_builder.build(&signer).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
-            resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await?;
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(sponsor.sponsor()),
+                !config.eth_rpc_curl,
+            )
+            .await?;
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
+        } else {
+            resolve_and_set_fee_token_for_send(
+                &provider,
+                Some(chain),
+                &mut tx,
+                Some(from),
+                !config.eth_rpc_curl,
+            )
+            .await?;
         }
         maybe_print_resolved_fee_token(
             (!config.eth_rpc_curl).then_some(&provider),
