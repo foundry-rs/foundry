@@ -202,7 +202,7 @@ impl CampaignCorpusEntry {
 ///
 /// The cursor lives with a worker-local corpus manager. The exchange remains append-only, while
 /// each worker independently advances through entries published since its last pull.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Default)]
 pub(crate) struct CampaignCorpusCursor {
     next_entry: usize,
 }
@@ -222,7 +222,6 @@ impl CampaignCorpusCandidate {
     }
 }
 
-#[derive(Clone)]
 struct CampaignCorpusBroadcast {
     producer_worker: usize,
     candidate: CampaignCorpusCandidate,
@@ -245,10 +244,6 @@ pub(crate) struct CampaignCorpusExchange {
 }
 
 impl CampaignCorpusExchange {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
     /// Publishes a new candidate sequence.
     ///
     /// Returns `true` when the sequence was accepted into the exchange, and `false` when it was
@@ -263,16 +258,14 @@ impl CampaignCorpusExchange {
         }
 
         let fingerprint = corpus_sequence_fingerprint(tx_seq)?;
-        {
-            let mut inner = self.inner.write();
-            if !inner.seen_sequences.insert(fingerprint) {
-                return Ok(false);
-            }
-        }
-
-        let candidate = CampaignCorpusCandidate::new(tx_seq);
         let mut inner = self.inner.write();
-        inner.entries.push(CampaignCorpusBroadcast { producer_worker, candidate });
+        if !inner.seen_sequences.insert(fingerprint) {
+            return Ok(false);
+        }
+        inner.entries.push(CampaignCorpusBroadcast {
+            producer_worker,
+            candidate: CampaignCorpusCandidate::new(tx_seq),
+        });
         Ok(true)
     }
 
@@ -285,13 +278,11 @@ impl CampaignCorpusExchange {
     ) -> Vec<CampaignCorpusCandidate> {
         let inner = self.inner.read();
         let start = cursor.next_entry.min(inner.entries.len());
-        let mut entries = Vec::with_capacity(inner.entries.len() - start);
-        entries.extend(
-            inner.entries[start..]
-                .iter()
-                .filter(|entry| entry.producer_worker != worker_id)
-                .map(|entry| entry.candidate.clone()),
-        );
+        let entries = inner.entries[start..]
+            .iter()
+            .filter(|entry| entry.producer_worker != worker_id)
+            .map(|entry| entry.candidate.clone())
+            .collect();
         cursor.next_entry = inner.entries.len();
         entries
     }
@@ -1481,13 +1472,10 @@ impl WorkerCorpus {
         &mut self,
         entries: impl IntoIterator<Item = CampaignCorpusCandidate>,
         executor: &Executor<FEN>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<&DynamicTargetCtx<'_>>,
+        target: ReplayTarget<'_>,
     ) -> Result<usize> {
         let mut imported = 0;
         for entry in entries {
-            let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic };
             let coverage = ReplayCoverage {
                 history_map: &mut self.history_map,
                 edge_indices: &mut self.edge_indices,
@@ -1884,13 +1872,9 @@ mod tests {
     }
 
     fn basic_tx_with_calldata(byte: u8) -> BasicTxDetails {
-        BasicTxDetails {
-            call_details: foundry_evm_fuzz::CallDetails {
-                calldata: Bytes::from(vec![byte]),
-                ..basic_tx().call_details
-            },
-            ..basic_tx()
-        }
+        let mut tx = basic_tx();
+        tx.call_details.calldata = Bytes::from(vec![byte]);
+        tx
     }
 
     fn seeded_worker_corpus(
@@ -1907,7 +1891,7 @@ mod tests {
 
     #[test]
     fn campaign_corpus_exchange_publishes_entries_to_other_workers_only() {
-        let exchange = CampaignCorpusExchange::new();
+        let exchange = CampaignCorpusExchange::default();
         let mut worker0_cursor = CampaignCorpusCursor::default();
         let mut worker1_cursor = CampaignCorpusCursor::default();
         let mut worker2_cursor = CampaignCorpusCursor::default();
@@ -1928,7 +1912,7 @@ mod tests {
 
     #[test]
     fn campaign_corpus_exchange_dedupes_identical_sequences() {
-        let exchange = CampaignCorpusExchange::new();
+        let exchange = CampaignCorpusExchange::default();
         let sequence = vec![basic_tx_with_calldata(1)];
 
         assert!(exchange.publish(0, &sequence).unwrap());

@@ -248,7 +248,7 @@ fn invariant_worker_runner(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum InvariantCorpusPersistence {
     /// Preserve the legacy single-worker behavior: each interesting input is written immediately.
     Live,
@@ -256,35 +256,18 @@ enum InvariantCorpusPersistence {
     Deferred,
 }
 
-impl InvariantCorpusPersistence {
-    const fn is_deferred(self) -> bool {
-        matches!(self, Self::Deferred)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum InvariantCorpusSharing {
-    /// Workers only use their local corpus during campaign execution.
-    None,
-    /// Workers exchange new corpus candidates in memory during one invariant campaign.
-    CampaignLocal,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 struct InvariantCorpusPolicy {
     persistence: InvariantCorpusPersistence,
-    sharing: InvariantCorpusSharing,
+    /// Workers exchange new corpus candidates in memory during one invariant campaign.
+    shares_campaign_local: bool,
 }
 
 impl InvariantCorpusPolicy {
     // Deferred persistence is still what makes a worker return campaign outputs to the coordinator;
     // campaign-local sharing is handled independently by the exchange policy.
     const fn finalizes_campaign_outputs(self) -> bool {
-        self.persistence.is_deferred()
-    }
-
-    const fn shares_campaign_local(self) -> bool {
-        matches!(self.sharing, InvariantCorpusSharing::CampaignLocal)
+        matches!(self.persistence, InvariantCorpusPersistence::Deferred)
     }
 }
 
@@ -297,12 +280,8 @@ const fn invariant_corpus_policy(
     } else {
         InvariantCorpusPersistence::Live
     };
-    let sharing = if worker_count > 1 && config.corpus.is_coverage_guided() {
-        InvariantCorpusSharing::CampaignLocal
-    } else {
-        InvariantCorpusSharing::None
-    };
-    InvariantCorpusPolicy { persistence, sharing }
+    let shares_campaign_local = worker_count > 1 && config.corpus.is_coverage_guided();
+    InvariantCorpusPolicy { persistence, shares_campaign_local }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -714,7 +693,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         let corpus_policy = invariant_corpus_policy(&self.config, actual_worker_count);
         let corpus_exchange =
-            corpus_policy.shares_campaign_local().then(CampaignCorpusExchange::new);
+            corpus_policy.shares_campaign_local.then(CampaignCorpusExchange::default);
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -880,9 +859,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     let imported = corpus_manager.import_campaign_entries(
                         entries,
                         &executor,
-                        None,
-                        Some(&invariant_test.targeted_contracts),
-                        Some(&dynamic_target_ctx),
+                        ReplayTarget {
+                            fuzzed_function: None,
+                            fuzzed_contracts: Some(&invariant_test.targeted_contracts),
+                            dynamic: Some(&dynamic_target_ctx),
+                        },
                     )?;
                     trace!(
                         target: "corpus",
@@ -2046,18 +2027,18 @@ mod tests {
         };
 
         let parallel = invariant_corpus_policy(&config, 2);
-        assert_eq!(parallel.persistence, InvariantCorpusPersistence::Deferred);
-        assert_eq!(parallel.sharing, InvariantCorpusSharing::CampaignLocal);
+        assert!(parallel.finalizes_campaign_outputs());
+        assert!(parallel.shares_campaign_local);
 
         let single = invariant_corpus_policy(&config, 1);
-        assert_eq!(single.persistence, InvariantCorpusPersistence::Live);
-        assert_eq!(single.sharing, InvariantCorpusSharing::None);
+        assert!(!single.finalizes_campaign_outputs());
+        assert!(!single.shares_campaign_local);
 
         config.corpus.corpus_dir = None;
         config.corpus.show_edge_coverage = true;
         let metrics_only = invariant_corpus_policy(&config, 2);
-        assert_eq!(metrics_only.persistence, InvariantCorpusPersistence::Deferred);
-        assert_eq!(metrics_only.sharing, InvariantCorpusSharing::None);
+        assert!(metrics_only.finalizes_campaign_outputs());
+        assert!(!metrics_only.shares_campaign_local);
     }
 
     #[test]
