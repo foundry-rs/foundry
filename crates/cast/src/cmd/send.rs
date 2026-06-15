@@ -19,7 +19,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
     tempo::{
-        TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token,
+        TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token,
         resolve_and_set_fee_token_for_send,
     },
 };
@@ -392,7 +392,7 @@ impl SendTxArgs {
                 )
                 .await?;
             }
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx_request),
@@ -566,7 +566,7 @@ where
         resolve_unknown_fee_token_symbol,
     )
     .await?;
-    maybe_print_resolved_fee_token(
+    maybe_print_fee_token(
         resolve_unknown_fee_token_symbol.then_some(&provider),
         chain,
         Some(&tx),
@@ -622,7 +622,7 @@ where
         resolve_unknown_fee_token_symbol,
     )
     .await?;
-    maybe_print_resolved_fee_token(
+    maybe_print_fee_token(
         resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
         Some(&tx),

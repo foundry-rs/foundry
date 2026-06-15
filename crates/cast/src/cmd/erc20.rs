@@ -25,7 +25,7 @@ use foundry_common::{
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
     tempo::{
-        TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token,
+        TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token,
         resolve_and_set_fee_token_for_send,
     },
 };
@@ -509,7 +509,7 @@ impl Erc20Subcommand {
                         )
                         .await?;
                     }
-                    maybe_print_resolved_fee_token(
+                    maybe_print_fee_token(
                         (!config.eth_rpc_curl).then_some(&$provider),
                         Some(chain),
                         Some(&tx),

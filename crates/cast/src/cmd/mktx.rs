@@ -18,7 +18,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{maybe_print_resolved_fee_token, resolve_and_set_fee_token_for_send},
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token_for_send},
 };
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
@@ -209,7 +209,7 @@ impl MakeTxArgs {
                 )
                 .await?;
             }
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
@@ -247,7 +247,7 @@ impl MakeTxArgs {
                 )
                 .await?;
             }
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
@@ -289,7 +289,7 @@ impl MakeTxArgs {
             )
             .await?;
         }
-        maybe_print_resolved_fee_token(
+        maybe_print_fee_token(
             (!config.eth_rpc_curl).then_some(&provider),
             Some(chain),
             Some(&tx),

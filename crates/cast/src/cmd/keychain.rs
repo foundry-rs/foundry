@@ -25,7 +25,7 @@ use foundry_common::{
     sh_warn, shell,
     tempo::{
         self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
-        maybe_print_resolved_fee_token, read_tempo_keys_file, resolve_and_set_fee_token_for_send,
+        maybe_print_fee_token, read_tempo_keys_file, resolve_and_set_fee_token_for_send,
         tempo_keys_path,
     },
 };
@@ -3216,7 +3216,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                 )
                 .await?;
             }
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),

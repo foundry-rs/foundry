@@ -36,7 +36,7 @@ use foundry_common::{
     shell,
     tempo::{
         KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
-        maybe_print_resolved_fee_token, resolve_and_set_fee_token, resolve_fee_token, tempo_home,
+        maybe_print_fee_token, resolve_and_set_fee_token, resolve_fee_token, tempo_home,
     },
 };
 use foundry_config::Config;
@@ -188,7 +188,7 @@ where
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
         }
-        maybe_print_resolved_fee_token(
+        maybe_print_fee_token(
             Some(provider),
             chain,
             Some(tx),
@@ -1285,7 +1285,7 @@ impl BundledState<TempoEvmNetwork> {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
         }
-        maybe_print_resolved_fee_token(
+        maybe_print_fee_token(
             Some(provider.as_ref()),
             Some(Chain::from_named(NamedChain::Tempo)),
             Some(&batch_tx),

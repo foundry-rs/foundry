@@ -23,7 +23,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{maybe_print_resolved_fee_token, resolve_and_set_fee_token_for_send},
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token_for_send},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
@@ -145,7 +145,7 @@ impl BatchMakeTxArgs {
                 !config.eth_rpc_curl,
             )
             .await?;
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
@@ -169,7 +169,7 @@ impl BatchMakeTxArgs {
                 !config.eth_rpc_curl,
             )
             .await?;
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
@@ -199,7 +199,7 @@ impl BatchMakeTxArgs {
                 !config.eth_rpc_curl,
             )
             .await?;
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
@@ -228,7 +228,7 @@ impl BatchMakeTxArgs {
                 !config.eth_rpc_curl,
             )
             .await?;
-            maybe_print_resolved_fee_token(
+            maybe_print_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 Some(&tx),
