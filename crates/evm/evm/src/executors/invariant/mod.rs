@@ -1208,6 +1208,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("⚠ {handler_bugs} handler bug(s)"));
                     }
+                    let msg = if corpus_policy.finalizes_campaign_outputs() {
+                        format!("[w{}] {msg}", plan.worker_id)
+                    } else {
+                        msg
+                    };
                     progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
