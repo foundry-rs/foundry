@@ -64,7 +64,8 @@ contract ScriptForkDebugTarget {
     let rpc = handle.http_endpoint();
     let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-    cmd.forge_fuse()
+    let create_output = cmd
+        .forge_fuse()
         .args([
             "create",
             "./src/ScriptForkDebugTarget.sol:ScriptForkDebugTarget",
@@ -73,10 +74,14 @@ contract ScriptForkDebugTarget {
             "--private-key",
             pk,
             "--broadcast",
+            "--json",
         ])
-        .assert_success();
-
-    let deployed = address!("f39fd6e51aad88f6f4ce6ab8827279cfffb92266").create(0).to_string();
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let create_output: Value = serde_json::from_slice(&create_output).unwrap();
+    let deployed = create_output["deployedTo"].as_str().unwrap().to_owned();
 
     prj.add_script(
         "DebugRemote.s.sol",
@@ -88,8 +93,14 @@ interface IScriptForkDebugTarget {{
 }}
 
 contract DebugRemote {{
+    IScriptForkDebugTarget private target = IScriptForkDebugTarget({deployed});
+
+    function setUp() public {{
+        target.set(7);
+        require(target.value() == 7, "setup value");
+    }}
+
     function run() public {{
-        IScriptForkDebugTarget target = IScriptForkDebugTarget({deployed});
         target.set(19);
         require(target.value() == 19, "value");
     }}

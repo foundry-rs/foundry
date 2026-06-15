@@ -26,11 +26,34 @@ use std::collections::VecDeque;
 pub struct ScriptRunner<FEN: FoundryEvmNetwork> {
     pub executor: Executor<FEN>,
     pub evm_opts: EvmOpts,
+    collect_debug_bytecodes: bool,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
     pub const fn new(executor: Executor<FEN>, evm_opts: EvmOpts) -> Self {
-        Self { executor, evm_opts }
+        Self { executor, evm_opts, collect_debug_bytecodes: false }
+    }
+
+    pub const fn with_debug_bytecodes(mut self, collect_debug_bytecodes: bool) -> Self {
+        self.collect_debug_bytecodes = collect_debug_bytecodes;
+        self
+    }
+
+    fn maybe_debug_bytecodes(
+        &self,
+        debug_bytecodes: AddressHashMap<Bytes>,
+    ) -> AddressHashMap<Bytes> {
+        if self.collect_debug_bytecodes { debug_bytecodes } else { Default::default() }
+    }
+
+    fn extend_debug_bytecodes(
+        &self,
+        target: &mut AddressHashMap<Bytes>,
+        debug_bytecodes: AddressHashMap<Bytes>,
+    ) {
+        if self.collect_debug_bytecodes {
+            target.extend(debug_bytecodes);
+        }
     }
 
     /// Deploys the libraries and broadcast contract. Calls setUp method if requested.
@@ -81,7 +104,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         .expect("couldn't deploy library")
                         .raw;
 
-                    debug_bytecodes.extend(deploy_debug_bytecodes);
+                    self.extend_debug_bytecodes(&mut debug_bytecodes, deploy_debug_bytecodes);
 
                     if let Some(deploy_traces) = deploy_traces {
                         traces.push((TraceKind::Deployment, deploy_traces));
@@ -123,7 +146,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         )
                         .expect("couldn't deploy library");
 
-                    debug_bytecodes.extend(deploy_debug_bytecodes);
+                    self.extend_debug_bytecodes(&mut debug_bytecodes, deploy_debug_bytecodes);
 
                     if let Some(deploy_traces) = deploy_traces {
                         traces.push((TraceKind::Deployment, deploy_traces));
@@ -194,7 +217,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         }
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
-        debug_bytecodes.extend(constructor_debug_bytecodes);
+        self.extend_debug_bytecodes(&mut debug_bytecodes, constructor_debug_bytecodes);
 
         // Optionally call the `setUp` function
         let (success, gas_used, labeled_addresses, transactions) = if setup {
@@ -211,7 +234,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 }) => {
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
-                    debug_bytecodes.extend(setup_debug_bytecodes);
+                    self.extend_debug_bytecodes(&mut debug_bytecodes, setup_debug_bytecodes);
 
                     if let Some(txs) = setup_transactions {
                         library_transactions.extend(txs);
@@ -232,7 +255,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     } = err.raw;
                     traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)));
                     logs.extend_from_slice(&setup_logs);
-                    debug_bytecodes.extend(setup_debug_bytecodes);
+                    self.extend_debug_bytecodes(&mut debug_bytecodes, setup_debug_bytecodes);
 
                     if let Some(txs) = transactions {
                         library_transactions.extend(txs);
@@ -254,7 +277,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 success,
                 gas_used,
                 labeled_addresses,
-                debug_bytecodes,
+                debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),
                 transactions,
                 logs,
                 traces,
@@ -316,7 +339,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 success: address != Address::ZERO,
                 gas_used,
                 logs,
-                debug_bytecodes,
+                debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),
                 // Manually adjust gas for the trace to add back the stipend/real used gas
                 traces: traces
                     .map(|traces| vec![(TraceKind::Execution, traces)])
@@ -395,7 +418,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             success: !reverted,
             gas_used,
             logs,
-            debug_bytecodes,
+            debug_bytecodes: self.maybe_debug_bytecodes(debug_bytecodes),
             traces: traces
                 .map(|traces| {
                     // Manually adjust gas for the trace to add back the stipend/real used gas
