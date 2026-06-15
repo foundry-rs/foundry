@@ -151,6 +151,7 @@ impl BatchSendArgs {
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
+                !config.eth_rpc_curl,
             )
             .await
             .map(drop)
@@ -176,6 +177,7 @@ impl BatchSendArgs {
                     send_tx.cast_async,
                     send_tx.confirmations,
                     timeout,
+                    !config.eth_rpc_curl,
                 )
                 .await?;
             } else {
@@ -198,6 +200,7 @@ impl BatchSendArgs {
                     send_tx.sync,
                     send_tx.confirmations,
                     timeout,
+                    !config.eth_rpc_curl,
                 )
                 .await?;
             }

@@ -17,7 +17,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, print_resolved_fee_token_selection},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{str::FromStr, time::Duration};
@@ -277,7 +277,12 @@ pub(super) async fn send_tip20_transaction(
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         }
-        print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+        maybe_print_resolved_fee_token(
+            (!config.eth_rpc_curl).then_some(&provider),
+            Some(chain),
+            tx.fee_token(),
+        )
+        .await?;
         let tx_hash = browser.send_transaction_via_browser(tx).await?;
         CastTxSender::new(&provider)
             .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
@@ -300,6 +305,7 @@ pub(super) async fn send_tip20_transaction(
             send_tx.cast_async,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     } else if let Some(sponsor_url) = sponsor_url {
@@ -332,6 +338,7 @@ pub(super) async fn send_tip20_transaction(
             send_tx.sync,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     } else {
@@ -360,6 +367,7 @@ pub(super) async fn send_tip20_transaction(
             send_tx.sync,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     }

@@ -6,11 +6,12 @@ use std::env;
 use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
 
 use alloy_chains::{Chain, NamedChain};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, address};
+use tempo_alloy::TempoNetwork;
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    format_fee_token_selection, known_fee_token_symbol, resolve_fee_token,
+    known_fee_token_symbol, resolve_fee_token, resolve_fee_token_symbol,
 };
 
 #[derive(Debug, Deserialize)]
@@ -96,7 +97,7 @@ fn explicit_fee_token_overrides_chain_default() {
 }
 
 #[test]
-fn formats_known_fee_token_selection_with_label() {
+fn resolves_known_fee_token_symbols() {
     for (fee_token, symbol) in [
         (PATH_USD_ADDRESS, "PathUSD"),
         (ALPHA_USD_ADDRESS, "AlphaUSD"),
@@ -104,16 +105,22 @@ fn formats_known_fee_token_selection_with_label() {
         (THETA_USD_ADDRESS, "ThetaUSD"),
     ] {
         assert_eq!(known_fee_token_symbol(fee_token), Some(symbol));
-        assert_eq!(
-            format_fee_token_selection(fee_token),
-            format!("Paying gas in {symbol} ({fee_token})")
-        );
     }
 }
 
-#[test]
-fn formats_unknown_fee_token_selection_as_address() {
-    let fee_token = Address::repeat_byte(0x42);
-    assert_eq!(known_fee_token_symbol(fee_token), None);
-    assert_eq!(format_fee_token_selection(fee_token), format!("Paying gas in {fee_token}"));
+#[tokio::test(flavor = "multi_thread")]
+async fn resolves_fee_token_symbol_from_tempo_mainnet() -> eyre::Result<()> {
+    let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect_http("https://rpc.tempo.xyz".parse()?);
+    let valid_fee_token = address!("0x20C00000000000000000000014f22CA97301EB73");
+
+    assert_eq!(
+        resolve_fee_token_symbol(&provider, valid_fee_token).await.as_deref(),
+        Some("USDT0")
+    );
+
+    // Non-existent fee token should not cause an error, but return None
+    let invalid_fee_token = address!("0x20C0000000000000000000000000000000000004");
+    assert_eq!(resolve_fee_token_symbol(&provider, invalid_fee_token).await.as_deref(), None);
+    Ok(())
 }

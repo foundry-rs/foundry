@@ -16,7 +16,7 @@ use foundry_cli::{
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::print_resolved_fee_token_selection,
+    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::maybe_print_resolved_fee_token,
 };
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
@@ -181,7 +181,12 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             }
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            maybe_print_resolved_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                tx.fee_token(),
+            )
+            .await?;
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             print_scalar(raw_tx)?;
@@ -196,7 +201,12 @@ impl MakeTxArgs {
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             }
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            maybe_print_resolved_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                tx.fee_token(),
+            )
+            .await?;
             let signed_tx = provider.sign_transaction(tx).await?;
 
             print_scalar(signed_tx)?;
@@ -215,7 +225,12 @@ impl MakeTxArgs {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         }
-        print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+        maybe_print_resolved_fee_token(
+            (!config.eth_rpc_curl).then_some(&provider),
+            Some(chain),
+            tx.fee_token(),
+        )
+        .await?;
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;
 

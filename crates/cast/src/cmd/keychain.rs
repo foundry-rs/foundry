@@ -25,7 +25,7 @@ use foundry_common::{
     sh_warn, shell,
     tempo::{
         self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
-        print_resolved_fee_token_selection, read_tempo_keys_file, tempo_keys_path,
+        maybe_print_resolved_fee_token, read_tempo_keys_file, tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3188,7 +3188,12 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             }
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            maybe_print_resolved_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                tx.fee_token(),
+            )
+            .await?;
 
             before_submit()?;
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
@@ -3219,6 +3224,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
+                !config.eth_rpc_curl,
             )
             .await?;
         }
