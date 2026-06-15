@@ -579,8 +579,8 @@ idna_adapter = "=1.1.0"
 # alloy-evm = { git = "https://github.com/paradigmxyz/evm.git", rev = "04d8e4a" }
 
 ## op-revm / op-alloy / alloy-op-evm
-## Pinned to foundry-rs forks until upstream optimism bumps to revm 40.
-op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "4201f16a746f2da2df38f1eac477500d492eaed5" }
+## Pinned to foundry-rs forks until upstream optimism bumps to revm 41.
+op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "8f4569092ca8c41780eccacb9e5ffa1f03202450" }
 alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
