@@ -1,6 +1,6 @@
 //! Debugger builder.
 
-use crate::{Debugger, debugger::DebuggerStats, node::flatten_call_trace};
+use crate::{Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace};
 use alloy_primitives::{Address, map::AddressHashMap};
 use foundry_common::get_contract_name;
 use foundry_evm_core::Breakpoints;
@@ -23,6 +23,8 @@ pub struct DebuggerBuilder {
     sources: ContractSources,
     /// Map of the debugger breakpoints.
     breakpoints: Breakpoints,
+    /// TUI layout selection.
+    layout: DebuggerLayout,
 }
 
 impl DebuggerBuilder {
@@ -94,16 +96,31 @@ impl DebuggerBuilder {
         self
     }
 
+    /// Sets the TUI layout for the debugger.
+    #[inline]
+    pub const fn layout(mut self, layout: DebuggerLayout) -> Self {
+        self.layout = layout;
+        self
+    }
+
     /// Builds the debugger.
     #[inline]
     pub fn build(self) -> Debugger {
-        let Self { mut trace_arenas, stats, identified_contracts, sources, breakpoints } = self;
+        let Self { mut trace_arenas, stats, identified_contracts, sources, breakpoints, layout } =
+            self;
         identify_internal_calls(&mut trace_arenas, &identified_contracts, &sources);
         let mut debug_arena = Vec::new();
         for arena in trace_arenas {
             flatten_call_trace(arena, &mut debug_arena);
         }
-        Debugger::new_with_stats(debug_arena, stats, identified_contracts, sources, breakpoints)
+        Debugger::new_with_stats(
+            debug_arena,
+            stats,
+            identified_contracts,
+            sources,
+            breakpoints,
+            layout,
+        )
     }
 }
 

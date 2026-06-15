@@ -5518,6 +5518,7 @@ version = "1.7.2"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
+ "clap",
  "crossterm",
  "eyre",
  "foundry-common",
