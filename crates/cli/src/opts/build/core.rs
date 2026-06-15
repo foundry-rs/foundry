@@ -280,6 +280,10 @@ impl Provider for BuildOpts {
             dict.insert("ast".to_string(), true.into());
         }
 
+        if self.compiler.experimental {
+            dict.insert("experimental".to_string(), true.into());
+        }
+
         if let Some(optimize) = self.compiler.optimize {
             dict.insert("optimizer".to_string(), optimize.into());
         }

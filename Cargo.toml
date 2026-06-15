@@ -530,6 +530,9 @@ snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+## Temporary dependency on foundry-rs/foundry-core#94 until foundry-compilers is released.
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "39f19b016c2ba793b24255bda83bd3822c8cb525" }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

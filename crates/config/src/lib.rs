@@ -470,6 +470,11 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// Whether to enable Solidity's experimental mode.
+    ///
+    /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
+    /// experimental features.
+    pub experimental: bool,
     /// Whether to include the AST as JSON in the compiler output.
     pub ast: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
@@ -1846,6 +1851,7 @@ impl Config {
             }),
             model_checker,
             via_ir: Some(self.via_ir),
+            experimental: Some(self.experimental),
             // Not used.
             stop_after: None,
             // Set in project paths.
@@ -2762,6 +2768,7 @@ impl Default for Config {
             deny: DenyLevel::Never,
             deny_warnings: false,
             via_ir: false,
+            experimental: false,
             ast: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
@@ -5144,6 +5151,23 @@ mod tests {
         };
 
         assert_eq!(config.evm_spec_id::<TempoHardfork>(), TempoHardfork::T3);
+    }
+
+    #[test]
+    fn solc_settings_include_experimental_setting() {
+        let config = Config { experimental: true, ..Config::default() };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.experimental, Some(true));
+        assert!(settings.cli_settings.extra_args.is_empty());
+
+        let config = Config {
+            experimental: false,
+            extra_args: vec!["--experimental".to_string()],
+            ..Config::default()
+        };
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.settings.experimental, Some(false));
+        assert_eq!(settings.cli_settings.extra_args, vec!["--experimental".to_string()]);
     }
 
     #[test]

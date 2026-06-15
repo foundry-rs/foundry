@@ -5375,8 +5375,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce324cefbd0ad6b8c78acd082a4929e854286dd80835715c46d54aa2116401a3"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39f19b016c2ba793b24255bda83bd3822c8cb525#39f19b016c2ba793b24255bda83bd3822c8cb525"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5407,8 +5406,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8f06259ea4e0d34b2c05324601bdd5808653738ad88928be8b1d0c244f46acb"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39f19b016c2ba793b24255bda83bd3822c8cb525#39f19b016c2ba793b24255bda83bd3822c8cb525"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5417,8 +5415,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "385384abbe9a9e47362e95a0df90a345a78191e8040277580bc391f4eb3390b1"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39f19b016c2ba793b24255bda83bd3822c8cb525#39f19b016c2ba793b24255bda83bd3822c8cb525"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5438,8 +5435,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8331540e110836cdfc2ecdf8ac67263e821911ea27108b51a5ad0b6d4a755b84"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39f19b016c2ba793b24255bda83bd3822c8cb525#39f19b016c2ba793b24255bda83bd3822c8cb525"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5452,8 +5448,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fad57930a31d0577202846e76aa2d14f57d25044057c3a688feed52747cf2b49"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=39f19b016c2ba793b24255bda83bd3822c8cb525#39f19b016c2ba793b24255bda83bd3822c8cb525"
 dependencies = [
  "alloy-primitives",
  "dunce",
