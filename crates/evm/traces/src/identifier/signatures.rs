@@ -444,7 +444,7 @@ mod tests {
         let mut first_abi = JsonAbi::default();
         first_abi.events.insert(first.name.clone(), vec![first.clone()]);
         let mut second_abi = JsonAbi::default();
-        second_abi.events.insert(second.name.clone(), vec![second.clone()]);
+        second_abi.events.insert(second.name.clone(), vec![second]);
 
         let mut cache = SignaturesCache::default();
         cache.extend_from_abis_without_collisions([&first_abi, &second_abi]);
