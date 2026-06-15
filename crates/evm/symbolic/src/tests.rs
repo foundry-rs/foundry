@@ -2031,6 +2031,84 @@ fn bool_comparison_folds_unsigned_boundaries() {
 }
 
 #[test]
+/// Regression coverage for exact `ADDMOD`/`MULMOD` edge-case semantics.
+fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
+    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::ZERO), U256::ZERO);
+    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::ZERO), U256::ZERO);
+
+    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::MAX), U256::from(2));
+    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::MAX), U256::ZERO);
+
+    let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
+    assert_eq!(
+        eval_expr(
+            &Expr::addmod(
+                Expr::Var("a".to_string()),
+                Expr::Const(U256::from(2)),
+                Expr::Const(U256::MAX)
+            ),
+            &model,
+        )
+        .unwrap(),
+        U256::from(2)
+    );
+    assert_eq!(
+        eval_expr(
+            &Expr::mulmod(
+                Expr::Var("a".to_string()),
+                Expr::Var("a".to_string()),
+                Expr::Const(U256::MAX)
+            ),
+            &model,
+        )
+        .unwrap(),
+        U256::ZERO
+    );
+}
+
+#[test]
+/// Regression coverage for exact modular arithmetic SMT emission widening intermediates.
+fn exact_modular_arithmetic_smt_widens_before_modulo() {
+    let addmod = Expr::addmod(
+        Expr::Var("a".to_string()),
+        Expr::Const(U256::from(2)),
+        Expr::Var("m".to_string()),
+    )
+    .smt();
+    let mulmod = Expr::mulmod(
+        Expr::Var("a".to_string()),
+        Expr::Var("b".to_string()),
+        Expr::Var("m".to_string()),
+    )
+    .smt();
+
+    assert!(addmod.contains("((_ zero_extend 256) a)"));
+    assert!(addmod.contains("bvadd"));
+    assert!(addmod.contains("bvurem"));
+    assert!(mulmod.contains("((_ zero_extend 256) b)"));
+    assert!(mulmod.contains("bvmul"));
+    assert!(mulmod.contains("((_ extract 255 0)"));
+}
+
+#[test]
+/// Regression coverage for rejecting old wrapping-intermediate false witnesses.
+fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
+    let constraints = vec![BoolExpr::eq(
+        Expr::addmod(
+            Expr::Var("a".to_string()),
+            Expr::Const(U256::from(2)),
+            Expr::Const(U256::MAX),
+        ),
+        Expr::Const(U256::from(1)),
+    )];
+    let output = format!("sat\n((define-fun a () (_ BitVec 256) #x{}))\n", "f".repeat(64));
+
+    let err = validate_solver_model_output(&output, &constraints).unwrap_err();
+
+    assert!(err.to_string().contains("does not satisfy path constraints"));
+}
+
+#[test]
 /// Regression coverage for exact unsigned-division zero predicate normalization.
 fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
     let numerator = Expr::Var("numerator".to_string());
@@ -2518,6 +2596,21 @@ fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
     assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+}
+
+#[test]
+/// Regression coverage for solver-hard exact `MULMOD` witness search.
+fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
+    let a = Expr::Var("a".to_string());
+    let constraints = vec![
+        BoolExpr::cmp(BoolExprOp::Ugt, a.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::eq(Expr::mulmod(a.clone(), a, Expr::Const(U256::MAX)), Expr::Const(U256::ZERO)),
+    ];
+
+    let model = hard_arith_fallback_model(&constraints).unwrap();
+
+    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert_eq!(model.get("a"), Some(&U256::MAX));
 }
 
 #[test]

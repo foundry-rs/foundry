@@ -206,6 +206,15 @@ impl PathState {
             Expr::Const(value) => u256_to_usize(*value),
             Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
             Expr::Not(_) => None,
+            Expr::AddMod { modulus, .. } | Expr::MulMod { modulus, .. } => {
+                match expr_const_value(modulus) {
+                    Some(modulus) if modulus.is_zero() => Some(0),
+                    Some(modulus) => u256_to_usize(modulus - U256::from(1)),
+                    None => {
+                        self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1))
+                    }
+                }
+            }
             Expr::Ite(_, left, right) => {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
             }
@@ -1617,6 +1626,11 @@ fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
         Expr::Op(_, left, right) => {
             collect_eval_vars(left, vars);
             collect_eval_vars(right, vars);
+        }
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
+            collect_eval_vars(modulus, vars);
         }
         Expr::Ite(condition, left, right) => {
             collect_eval_bool_vars(condition, vars);
