@@ -33,6 +33,14 @@ pub struct CompilerOpts {
     #[serde(skip)]
     pub optimize: Option<bool>,
 
+    /// Enable Solidity's experimental mode.
+    ///
+    /// This passes `--experimental` to solc, which is required by Solidity 0.8.35+ for
+    /// experimental features.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub experimental: bool,
+
     /// The number of runs specifies roughly how often each opcode of the deployed code will be
     /// executed across the life-time of the contract. This means it is a trade-off parameter
     /// between code size (deploy cost) and code execution cost (cost after deployment).
@@ -78,6 +86,12 @@ mod tests {
             args.extra_output,
             vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
         );
+    }
+
+    #[test]
+    fn can_parse_experimental() {
+        let args: CompilerOpts = CompilerOpts::parse_from(["foundry-cli", "--experimental"]);
+        assert!(args.experimental);
     }
 
     #[test]

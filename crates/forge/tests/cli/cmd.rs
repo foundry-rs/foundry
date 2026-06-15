@@ -4159,6 +4159,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "experimental": false,
     "libraries": {}
   }
 }
