@@ -249,13 +249,13 @@ fn invariant_worker_runner(
 enum InvariantCorpusPersistence {
     /// Preserve the legacy single-worker behavior: each interesting input is written immediately.
     Live,
-    /// Return interesting inputs to the campaign coordinator for one final deduped write.
-    FinalOnly,
+    /// Return interesting inputs to the campaign coordinator for delayed merged writes.
+    Deferred,
 }
 
 impl InvariantCorpusPersistence {
     const fn writes_after_campaign(self) -> bool {
-        matches!(self, Self::FinalOnly)
+        matches!(self, Self::Deferred)
     }
 }
 
@@ -280,7 +280,7 @@ impl InvariantCorpusPolicy {
     }
 
     const fn uses_worker_local_progress(self) -> bool {
-        matches!(self.persistence, InvariantCorpusPersistence::FinalOnly)
+        matches!(self.persistence, InvariantCorpusPersistence::Deferred)
             || matches!(self.sharing, InvariantCorpusSharing::CampaignLocal)
     }
 }
@@ -696,7 +696,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // behavior. Single-worker campaigns retain live writes, while parallel campaigns collect
         // outputs for one coordinator-finalized write after workers finish.
         let corpus_persistence = if actual_worker_count > 1 {
-            InvariantCorpusPersistence::FinalOnly
+            InvariantCorpusPersistence::Deferred
         } else {
             InvariantCorpusPersistence::Live
         };
@@ -2059,13 +2059,13 @@ mod tests {
     }
 
     #[test]
-    fn invariant_corpus_policy_keeps_parallel_workers_final_only_and_isolated() {
+    fn invariant_corpus_policy_keeps_parallel_workers_deferred_and_isolated() {
         let policy = InvariantCorpusPolicy {
-            persistence: InvariantCorpusPersistence::FinalOnly,
+            persistence: InvariantCorpusPersistence::Deferred,
             sharing: InvariantCorpusSharing::None,
         };
 
-        assert_eq!(policy.persistence, InvariantCorpusPersistence::FinalOnly);
+        assert_eq!(policy.persistence, InvariantCorpusPersistence::Deferred);
         assert_eq!(policy.sharing, InvariantCorpusSharing::None);
         assert!(policy.finalizes_campaign_outputs());
         assert!(policy.uses_worker_local_progress());
