@@ -774,7 +774,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Returns the signatures identifier.
     pub fn signatures_identifier(&self) -> Option<&SignaturesIdentifier> {
-        self.signatures_identifier.get_or_init(|| SignaturesIdentifier::new(true).ok()).as_ref()
+        self.signatures_identifier
+            .get_or_init(|| {
+                if let Some(artifacts) = &self.config.available_artifacts {
+                    return SignaturesIdentifier::new_offline_with_abis(
+                        artifacts.values().map(|contract| &contract.abi),
+                    )
+                    .ok();
+                }
+                SignaturesIdentifier::new(true).ok()
+            })
+            .as_ref()
     }
 
     /// Decodes the input data and applies the cheatcode.

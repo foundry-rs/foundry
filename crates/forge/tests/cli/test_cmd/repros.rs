@@ -255,14 +255,14 @@ contract Issue6170Test is Test {
 Compiler run successful!
 
 Ran 1 test for test/Issue6170.t.sol:Issue6170Test
-[FAIL: log != expected log] test() ([GAS])
+[FAIL: Values != expected Values] test() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/Issue6170.t.sol:Issue6170Test
-[FAIL: log != expected log] test() ([GAS])
+[FAIL: Values != expected Values] test() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

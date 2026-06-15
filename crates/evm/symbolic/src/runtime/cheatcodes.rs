@@ -1225,10 +1225,40 @@ pub(crate) fn artifact_json_path(path: &str) -> PathBuf {
     }
 }
 
+/// Returns fallback paths for symbolic artifact lookup.
+pub(crate) fn artifact_json_fallback_paths(path: &str) -> Vec<PathBuf> {
+    if path.ends_with(".json") {
+        return Vec::new();
+    }
+
+    let mut parts = path.split(':');
+    let first = parts.next().unwrap_or_default();
+    let second = parts.next();
+    let Some(file_name) = first.rsplit(['/', '\\']).find(|part| !part.is_empty()) else {
+        return Vec::new();
+    };
+
+    if !first.contains('/') && !first.contains('\\') {
+        return Vec::new();
+    }
+
+    let contract = second.map(str::to_string).unwrap_or_else(|| {
+        file_name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(file_name).to_string()
+    });
+    vec![PathBuf::from("out").join(file_name).join(format!("{contract}.json"))]
+}
+
 /// Implements the `artifact_code` cheatcode runtime helper.
 pub(crate) fn artifact_code(path: &str, deployed: bool) -> Result<Vec<u8>, SymbolicError> {
-    let data = std::fs::read_to_string(artifact_json_path(path))
-        .map_err(|_| SymbolicError::Unsupported("symbolic vm.getCode artifact"))?;
+    let mut data = None;
+    for path in std::iter::once(artifact_json_path(path)).chain(artifact_json_fallback_paths(path))
+    {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            data = Some(contents);
+            break;
+        }
+    }
+    let data = data.ok_or(SymbolicError::Unsupported("symbolic vm.getCode artifact"))?;
     let artifact: serde_json::Value = serde_json::from_str(&data)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.getCode artifact"))?;
     let key = if deployed { "deployedBytecode" } else { "bytecode" };

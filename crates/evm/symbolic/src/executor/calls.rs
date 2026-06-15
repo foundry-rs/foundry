@@ -863,6 +863,21 @@ impl SymbolicExecutor {
                 return Ok(outcome);
             }
 
+            if to == CHEATCODE_ADDRESS
+                && let Some(outcome) = self.deploy_code_cheatcode_if_needed(
+                    executor,
+                    state,
+                    worklist,
+                    completed_paths,
+                    selector,
+                    in_offset,
+                    out_offset.clone(),
+                    &out_size,
+                )?
+            {
+                return Ok(outcome);
+            }
+
             let return_data = if to == CHEATCODE_ADDRESS {
                 match self
                     .handle_foundry_cheatcode(executor, state, selector, in_offset, in_size)?

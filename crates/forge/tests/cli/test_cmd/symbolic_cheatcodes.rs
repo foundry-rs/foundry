@@ -4124,3 +4124,112 @@ unsupported symbolic execution feature: symbolic vm.prank delegatecall
 "#]],
     );
 });
+
+forgetest_init!(symbolic_vm_deploy_code_models_constructor_outcomes, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_deploy_code_models_constructor_outcomes because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicDeployCodeCheatcode.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+interface SymbolicDeployCodeVm {
+    function randomBool() external view returns (bool);
+}
+
+contract OkDeployCodeCtor {
+    uint256 public value = 1;
+}
+
+contract RevertingDeployCodeCtor {
+    constructor() {
+        require(false, "ctor");
+    }
+}
+
+contract EnvBranchingDeployCodeCtor {
+    SymbolicDeployCodeVm constant VM =
+        SymbolicDeployCodeVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    constructor() {
+        if (VM.randomBool()) {
+            revert("branch");
+        }
+    }
+}
+
+contract SelfDestructDeployCodeCtor {
+    constructor() payable {
+        selfdestruct(payable(msg.sender));
+    }
+}
+
+contract SymbolicDeployCodeCheatcode is Test {
+    string constant TARGET = "test/SymbolicDeployCodeCheatcode.t.sol";
+
+    function checkDeployCodeExpectedRevert() public {
+        vm.expectRevert();
+        vm.deployCode(string.concat(TARGET, ":RevertingDeployCodeCtor"));
+    }
+
+    function checkDeployCodeBranchingConstructor() public {
+        vm.deployCode(string.concat(TARGET, ":EnvBranchingDeployCodeCtor"));
+    }
+
+    function checkDeployCodeStaticContext() public {
+        (bool ok,) = address(this).staticcall(abi.encodeCall(this.helperDeployCode, ()));
+        assertFalse(ok);
+    }
+
+    function helperDeployCode() external {
+        vm.deployCode(string.concat(TARGET, ":OkDeployCodeCtor"));
+    }
+
+    function checkDeployCodeSelfDestructConstructor() public {
+        address deployed = vm.deployCode(string.concat(TARGET, ":SelfDestructDeployCodeCtor"));
+        assertEq(deployed.code.length, 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicDeployCodeCheatcode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDeployCodeExpectedRevert()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDeployCodeBranchingConstructor()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDeployCodeStaticContext()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDeployCodeSelfDestructConstructor()
+"#]],
+    );
+    assert!(!stdout.contains("symbolic vm.deployCode"), "{stdout}");
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+});
