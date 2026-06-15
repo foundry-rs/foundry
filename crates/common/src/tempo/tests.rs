@@ -15,7 +15,7 @@ use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    known_fee_token_symbol, resolve_fee_token, resolve_fee_token_symbol,
+    known_fee_token_symbol, resolve_and_set_fee_token, resolve_fee_token, resolve_fee_token_symbol,
 };
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +142,32 @@ async fn explicit_fee_token_overrides_chain_default() {
         resolve_fee_token::<TempoNetwork>(&provider, None, Some(&tx), None).await,
         Some(explicit)
     );
+}
+
+#[tokio::test]
+async fn explicit_fee_token_overrides_stored_user_token_when_applied() {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+    let explicit = Address::repeat_byte(0x42);
+    let fee_payer = Address::repeat_byte(0x11);
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest::default().with_from(fee_payer),
+        fee_token: Some(explicit),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            &provider,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            Some(fee_payer),
+        )
+        .await,
+        Some(explicit)
+    );
+    assert_eq!(tx.fee_token, Some(explicit));
 }
 
 #[tokio::test]

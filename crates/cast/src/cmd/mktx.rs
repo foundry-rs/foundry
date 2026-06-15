@@ -16,7 +16,9 @@ use foundry_cli::{
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::maybe_print_resolved_fee_token,
+    FoundryTransactionBuilder,
+    provider::ProviderBuilder,
+    tempo::{maybe_print_resolved_fee_token, resolve_and_set_fee_token},
 };
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
@@ -179,6 +181,8 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
+                    .await;
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             }
             maybe_print_resolved_fee_token(
@@ -200,6 +204,8 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
+                    .await;
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             }
             maybe_print_resolved_fee_token(
@@ -225,6 +231,8 @@ impl MakeTxArgs {
         let (mut tx, _) = tx_builder.build(&signer).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
+            resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
+                .await;
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         }
         maybe_print_resolved_fee_token(

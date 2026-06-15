@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token, resolve_and_set_fee_token},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
@@ -423,6 +423,13 @@ impl Erc20Subcommand {
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
+                            resolve_and_set_fee_token(
+                                &$provider,
+                                Some(chain),
+                                &mut tx,
+                                Some(sponsor.sponsor()),
+                            )
+                            .await;
                             sponsor
                                 .attach_and_print::<TempoNetwork>(
                                     &mut tx,
@@ -462,6 +469,13 @@ impl Erc20Subcommand {
                         return Ok(());
                     }
                     if let Some(sponsor) = &tempo_sponsor {
+                        resolve_and_set_fee_token(
+                            &$provider,
+                            Some(chain),
+                            &mut tx,
+                            Some(sponsor.sponsor()),
+                        )
+                        .await;
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     }
                     maybe_print_resolved_fee_token(
@@ -498,6 +512,13 @@ impl Erc20Subcommand {
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
+                            resolve_and_set_fee_token(
+                                &$provider,
+                                Some(chain),
+                                &mut tx,
+                                Some(sponsor.sponsor()),
+                            )
+                            .await;
                             sponsor.attach_and_print::<N>(&mut tx, from).await?;
                         }
                     }

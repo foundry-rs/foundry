@@ -99,6 +99,25 @@ where
     Some(DEFAULT_FEE_TOKEN)
 }
 
+/// Resolves and applies the Tempo fee token selected by the network.
+///
+/// This must happen before computing a sponsor digest, because Tempo sponsor signatures commit to
+/// the fee token.
+pub async fn resolve_and_set_fee_token<N>(
+    provider: &dyn Provider<N>,
+    chain: Option<Chain>,
+    tx: &mut N::TransactionRequest,
+    fee_payer: Option<Address>,
+) -> Option<Address>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+{
+    let fee_token = resolve_fee_token(provider, chain, Some(tx), fee_payer).await?;
+    tx.set_fee_token(fee_token);
+    Some(fee_token)
+}
+
 async fn stored_user_fee_token<N>(provider: &dyn Provider<N>, fee_payer: Address) -> Option<Address>
 where
     N: Network,

@@ -18,7 +18,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token},
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_resolved_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
@@ -317,6 +317,13 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(
+                    &provider,
+                    Some(chain),
+                    &mut tx_request,
+                    Some(sponsor.sponsor()),
+                )
+                .await;
                 sponsor.attach_and_print::<N>(&mut tx_request, config.sender).await?;
             }
 
@@ -352,6 +359,13 @@ impl SendTxArgs {
                 tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(
+                    &provider,
+                    Some(chain),
+                    &mut tx_request,
+                    Some(sponsor.sponsor()),
+                )
+                .await;
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             }
             maybe_print_resolved_fee_token(
@@ -382,6 +396,13 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(
+                    &provider,
+                    Some(chain),
+                    &mut tx_request,
+                    Some(sponsor.sponsor()),
+                )
+                .await;
                 sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
             }
             cast_send_with_access_key(
@@ -462,6 +483,13 @@ impl SendTxArgs {
             )?;
 
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(
+                    &provider,
+                    Some(chain),
+                    &mut tx_request,
+                    Some(sponsor.sponsor()),
+                )
+                .await;
                 sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
             }
 

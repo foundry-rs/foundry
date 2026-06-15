@@ -25,7 +25,8 @@ use foundry_common::{
     sh_warn, shell,
     tempo::{
         self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
-        maybe_print_resolved_fee_token, read_tempo_keys_file, tempo_keys_path,
+        maybe_print_resolved_fee_token, read_tempo_keys_file, resolve_and_set_fee_token,
+        tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3186,6 +3187,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                 tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
+                    .await;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             }
             maybe_print_resolved_fee_token(
@@ -3208,6 +3211,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             let (mut tx, _) = builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
+                resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
+                    .await;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
             }
 

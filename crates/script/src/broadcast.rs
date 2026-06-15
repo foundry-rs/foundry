@@ -36,7 +36,7 @@ use foundry_common::{
     shell,
     tempo::{
         KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
-        maybe_print_resolved_fee_token, resolve_fee_token, tempo_home,
+        maybe_print_resolved_fee_token, resolve_and_set_fee_token, resolve_fee_token, tempo_home,
     },
 };
 use foundry_config::Config;
@@ -183,6 +183,7 @@ where
 
         if let Some(sponsor) = tempo_sponsor {
             let from = tx.from().expect("no sender");
+            resolve_and_set_fee_token(provider, chain, tx, Some(sponsor.sponsor())).await;
             sponsor.attach_and_print::<N>(tx, from).await?;
         }
         maybe_print_resolved_fee_token(
