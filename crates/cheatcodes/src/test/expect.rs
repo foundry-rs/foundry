@@ -1114,7 +1114,9 @@ fn decode_event(
     }
     let t0 = topics[0]; // event sig
     // Try to identify the event
-    let event = foundry_common::block_on(identifier.identify_event(t0))?;
+    let event = foundry_common::block_on(
+        identifier.identify_event_with_indexed_count(t0, topics.len().saturating_sub(1)),
+    )?;
 
     // Check if event already has indexed information from signatures
     let has_indexed_info = event.inputs.iter().any(|p| p.indexed);

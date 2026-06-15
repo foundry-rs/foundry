@@ -322,6 +322,53 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+forgetest!(expect_emit_decodes_stable_project_abi_collision, |prj, cmd| {
+    prj.insert_vm();
+
+    prj.add_source(
+        "AExpectEmitIndexedCollision.t.sol",
+        r#"
+import "./Vm.sol";
+import "./ZIndexedCollisionEmitter.sol";
+
+contract AExpectEmitIndexedCollisionTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    ZIndexedCollisionEmitter emitter = new ZIndexedCollisionEmitter();
+
+    event CodexExpectEmitIndexedCollision(uint256 indexed marker, uint256 value);
+
+    function testMismatch() public {
+        vm.expectEmit(true, true, false, true);
+        emit CodexExpectEmitIndexedCollision(69, 420);
+        emitter.emitEvent(421, 69);
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "ZIndexedCollisionEmitter.sol",
+        r#"
+contract ZIndexedCollisionEmitter {
+    event CodexExpectEmitIndexedCollision(uint256 value, uint256 indexed marker);
+
+    function emitEvent(uint256 value, uint256 marker) external {
+        emit CodexExpectEmitIndexedCollision(value, marker);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "AExpectEmitIndexedCollisionTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+...
+[FAIL: CodexExpectEmitIndexedCollision param mismatch at value: expected=420, got=421] testMismatch() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 forgetest!(mem_safety_test_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();

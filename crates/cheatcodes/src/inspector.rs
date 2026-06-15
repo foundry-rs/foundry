@@ -778,7 +778,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             .get_or_init(|| {
                 if let Some(artifacts) = &self.config.available_artifacts {
                     return SignaturesIdentifier::new_offline_with_abis(
-                        artifacts.values().map(|contract| &contract.abi),
+                        artifacts.iter().map(|(_, contract)| &contract.abi),
                     )
                     .ok();
                 }
