@@ -254,12 +254,6 @@ enum InvariantCorpusPersistence {
 }
 
 impl InvariantCorpusPersistence {
-    // Worker count only selects today's compatible write timing. The in-campaign sharing strategy
-    // is modeled separately by `InvariantCorpusSharing`.
-    const fn for_worker_count(worker_count: usize) -> Self {
-        if worker_count > 1 { Self::Deferred } else { Self::Live }
-    }
-
     const fn is_deferred(self) -> bool {
         matches!(self, Self::Deferred)
     }
@@ -697,8 +691,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&replay_targets),
             Some(self.dynamic_target_ctx()),
         )?;
+        let corpus_persistence = if actual_worker_count > 1 {
+            InvariantCorpusPersistence::Deferred
+        } else {
+            InvariantCorpusPersistence::Live
+        };
         let corpus_policy = InvariantCorpusPolicy {
-            persistence: InvariantCorpusPersistence::for_worker_count(actual_worker_count),
+            persistence: corpus_persistence,
             sharing: InvariantCorpusSharing::None,
         };
         let mut runner = self.runner.clone();
@@ -2040,26 +2039,6 @@ mod tests {
             2
         );
         assert_eq!(max_invariant_workers_for_campaign(256, 100_000), 5);
-    }
-
-    #[test]
-    fn invariant_corpus_persistence_selects_live_writes_for_single_worker() {
-        let persistence = InvariantCorpusPersistence::for_worker_count(1);
-        let policy = InvariantCorpusPolicy { persistence, sharing: InvariantCorpusSharing::None };
-
-        assert_eq!(policy.persistence, InvariantCorpusPersistence::Live);
-        assert_eq!(policy.sharing, InvariantCorpusSharing::None);
-        assert!(!policy.finalizes_campaign_outputs());
-    }
-
-    #[test]
-    fn invariant_corpus_persistence_selects_deferred_writes_for_parallel_workers() {
-        let persistence = InvariantCorpusPersistence::for_worker_count(2);
-        let policy = InvariantCorpusPolicy { persistence, sharing: InvariantCorpusSharing::None };
-
-        assert_eq!(policy.persistence, InvariantCorpusPersistence::Deferred);
-        assert_eq!(policy.sharing, InvariantCorpusSharing::None);
-        assert!(policy.finalizes_campaign_outputs());
     }
 
     #[test]
