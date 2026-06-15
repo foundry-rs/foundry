@@ -5,7 +5,7 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, PrecompilesFor, SpecFor, TxEnvFor,
+        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
@@ -22,7 +22,6 @@ use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
-use itertools::Itertools;
 use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
@@ -832,7 +831,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns true if the address is a precompile
     pub fn is_existing_precompile(&self, addr: &Address) -> bool {
-        self.inner.precompiles().addresses().contains(addr)
+        self.inner.precompile_addresses().contains(addr)
     }
 
     /// Sets the initial journaled state to use when initializing forks
@@ -1958,12 +1957,12 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.is_empty()
     }
 
-    pub fn precompiles(&self) -> PrecompilesFor<FEN> {
+    pub fn precompile_addresses(&self) -> AddressSet {
         let evm = FEN::EvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(self.spec_id), Default::default()),
         );
-        evm.precompiles().clone()
+        evm.precompiles().addresses().copied().collect()
     }
 
     /// Returns a new, empty, `JournaledState` with set precompiles
@@ -1973,7 +1972,7 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
             journal_inner.set_spec_id(self.spec_id.into());
             journal_inner
         };
-        let precompile_addresses: AddressSet = self.precompiles().addresses().copied().collect();
+        let precompile_addresses = self.precompile_addresses();
         journal.warm_addresses.set_precompile_addresses(&precompile_addresses);
         journal
     }

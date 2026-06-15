@@ -588,7 +588,7 @@ op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = 
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 
 ## foundry-fork-db
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "8027e5ccdfe55e562a1111495d2c9acb6e27a930" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ba6246789fc12cf8fe78aa74aadf31d663f08c1f" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "8e09dcfc3665dce3403fd367cfce96b31317fbf0" }
