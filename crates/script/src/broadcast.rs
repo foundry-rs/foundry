@@ -175,8 +175,9 @@ where
             .await?;
         }
 
-        let fee_payer = tempo_sponsor.map(|s| s.sponsor()).or_else(|| tx.from());
-        resolve_and_set_fee_token(Some(provider), chain, tx, fee_payer).await?;
+        if tempo_sponsor.is_none() {
+            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?;
+        }
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
@@ -187,9 +188,9 @@ where
         if let Some(sponsor) = tempo_sponsor {
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
+        } else {
+            maybe_print_fee_token(Some(provider), chain, Some(tx), None).await?;
         }
-        maybe_print_fee_token(Some(provider), chain, Some(tx), tempo_sponsor.map(|s| s.sponsor()))
-            .await?;
 
         Ok(())
     }
@@ -1249,13 +1250,14 @@ impl BundledState<TempoEvmNetwork> {
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
-        if let Some(fee_token) = resolve_fee_token(
-            provider.as_ref(),
-            Some(Chain::from_named(NamedChain::Tempo)),
-            Some(&batch_tx),
-            tempo_sponsor.as_ref().map(|s| s.sponsor()),
-        )
-        .await?
+        if tempo_sponsor.is_none()
+            && let Some(fee_token) = resolve_fee_token(
+                provider.as_ref(),
+                Some(Chain::from_named(NamedChain::Tempo)),
+                Some(&batch_tx),
+                Some(sender),
+            )
+            .await?
         {
             batch_tx.set_fee_token(fee_token);
         }
@@ -1279,14 +1281,15 @@ impl BundledState<TempoEvmNetwork> {
 
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
+        } else {
+            maybe_print_fee_token(
+                Some(provider.as_ref()),
+                Some(Chain::from_named(NamedChain::Tempo)),
+                Some(&batch_tx),
+                None,
+            )
+            .await?;
         }
-        maybe_print_fee_token(
-            Some(provider.as_ref()),
-            Some(Chain::from_named(NamedChain::Tempo)),
-            Some(&batch_tx),
-            tempo_sponsor.as_ref().map(|s| s.sponsor()),
-        )
-        .await?;
 
         // Sign and send.
         let tx_hash = match batch_signer {

@@ -105,7 +105,6 @@ impl MakeTxArgs {
             self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
-        let print_sponsor_fee_payer = tx.tempo.sponsor;
         let expires_at = tx.tempo.resolve_expires();
         let tempo_sponsor =
             if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
@@ -149,14 +148,7 @@ impl MakeTxArgs {
             // sponsor hash commits to the sender.
             let signer = eth.wallet.signer().await?;
             let from = signer.address();
-            let (mut tx, _) = tx_builder.build(from).await?;
-            resolve_and_set_fee_token::<N>(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                &mut tx,
-                print_sponsor_fee_payer,
-            )
-            .await?;
+            let (tx, _) = tx_builder.build(from).await?;
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")
             })?;
@@ -189,13 +181,6 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(sponsor.sponsor()),
-                )
-                .await?;
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             } else {
                 resolve_and_set_fee_token(
@@ -205,14 +190,14 @@ impl MakeTxArgs {
                     Some(from),
                 )
                 .await?;
+                maybe_print_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    Some(&tx),
+                    None,
+                )
+                .await?;
             }
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                tempo_sponsor.as_ref().map(|s| s.sponsor()),
-            )
-            .await?;
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             print_scalar(raw_tx)?;
@@ -225,13 +210,6 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(sponsor.sponsor()),
-                )
-                .await?;
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             } else {
                 resolve_and_set_fee_token(
@@ -241,14 +219,14 @@ impl MakeTxArgs {
                     Some(config.sender),
                 )
                 .await?;
+                maybe_print_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    Some(&tx),
+                    None,
+                )
+                .await?;
             }
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                tempo_sponsor.as_ref().map(|s| s.sponsor()),
-            )
-            .await?;
             let signed_tx = provider.sign_transaction(tx).await?;
 
             print_scalar(signed_tx)?;
@@ -265,13 +243,6 @@ impl MakeTxArgs {
         let (mut tx, _) = tx_builder.build(&signer).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
-            resolve_and_set_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                &mut tx,
-                Some(sponsor.sponsor()),
-            )
-            .await?;
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         } else {
             resolve_and_set_fee_token(
@@ -281,14 +252,14 @@ impl MakeTxArgs {
                 Some(from),
             )
             .await?;
+            maybe_print_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                Some(&tx),
+                None,
+            )
+            .await?;
         }
-        maybe_print_fee_token(
-            (!config.eth_rpc_curl).then_some(&provider),
-            Some(chain),
-            Some(&tx),
-            tempo_sponsor.as_ref().map(|s| s.sponsor()),
-        )
-        .await?;
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;
 

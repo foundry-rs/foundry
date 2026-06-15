@@ -575,13 +575,6 @@ impl CreateArgs {
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
         if let Some(sponsor) = &tempo_sponsor {
-            resolve_and_set_fee_token(
-                resolve_unknown_fee_token_symbol.then_some(&provider),
-                Some(chain),
-                &mut deployer.tx,
-                Some(sponsor.sponsor()),
-            )
-            .await?;
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         } else {
             resolve_and_set_fee_token(
@@ -591,14 +584,14 @@ impl CreateArgs {
                 Some(deployer_address),
             )
             .await?;
+            maybe_print_fee_token(
+                resolve_unknown_fee_token_symbol.then_some(&provider),
+                Some(chain),
+                Some(&deployer.tx),
+                None,
+            )
+            .await?;
         }
-        maybe_print_fee_token(
-            resolve_unknown_fee_token_symbol.then_some(&provider),
-            Some(chain),
-            Some(&deployer.tx),
-            tempo_sponsor.as_ref().map(|s| s.sponsor()),
-        )
-        .await?;
 
         // Deploy the actual contract
         let (deployed_contract, receipt) = if let Some(browser) = browser_signer {

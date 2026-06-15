@@ -3137,7 +3137,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     before_submit: impl FnOnce() -> Result<()>,
 ) -> Result<KeychainTxOutcome> {
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
-    let print_sponsor_fee_payer = tx_opts.tempo.sponsor;
     let expires_at = tx_opts.tempo.resolve_expires();
     let tempo_sponsor =
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
@@ -3160,18 +3159,10 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .await?
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
-    let chain = builder.chain();
 
     if print_sponsor_hash {
         let from = root_signer.address();
-        let (mut tx, _) = builder.build(from).await?;
-        resolve_and_set_fee_token::<TempoNetwork>(
-            (!config.eth_rpc_curl).then_some(&provider),
-            Some(chain),
-            &mut tx,
-            print_sponsor_fee_payer,
-        )
-        .await?;
+        let (tx, _) = builder.build(from).await?;
         let hash = tx
             .compute_sponsor_hash(from)
             .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
@@ -3195,13 +3186,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                 tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(sponsor.sponsor()),
-                )
-                .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             } else {
                 resolve_and_set_fee_token(
@@ -3211,14 +3195,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                     Some(browser.address()),
                 )
                 .await?;
+                maybe_print_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    Some(&tx),
+                    None,
+                )
+                .await?;
             }
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                tempo_sponsor.as_ref().map(|s| s.sponsor()),
-            )
-            .await?;
 
             before_submit()?;
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
@@ -3232,13 +3216,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             let (mut tx, _) = builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(sponsor.sponsor()),
-                )
-                .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
             } else {
                 resolve_and_set_fee_token(
@@ -3246,6 +3223,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                     Some(chain),
                     &mut tx,
                     Some(from),
+                )
+                .await?;
+                maybe_print_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    Some(&tx),
+                    None,
                 )
                 .await?;
             }
@@ -3259,13 +3243,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             cast_send(
                 provider,
                 tx,
-                Some(chain),
-                tempo_sponsor.as_ref().map(|s| s.sponsor()),
+                tempo_sponsor.is_none().then_some(chain),
+                None,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
-                !config.eth_rpc_curl,
+                tempo_sponsor.is_none() && !config.eth_rpc_curl,
             )
             .await?;
         }
