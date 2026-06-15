@@ -93,6 +93,86 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
+    /// Applies the `deploy_code_cheatcode` symbolic executor helper.
+    pub(super) fn deploy_code_cheatcode<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        completed_paths: &mut usize,
+        artifact: String,
+        constructor_args: Vec<u8>,
+    ) -> Result<CheatcodeOutcome, SymbolicError> {
+        if state.is_static {
+            return Ok(CheatcodeOutcome::Failure);
+        }
+
+        let mut initcode = artifact_code(&artifact, false)?;
+        initcode.extend_from_slice(&constructor_args);
+        let initcode = SymCode::concrete(initcode);
+
+        let nonce = state.world.nonce(executor, state.address)?;
+        let created = state.address.create(nonce);
+        let created_word = SymWord::Concrete(address_word(created));
+
+        let mut failure_world = state.world.clone();
+        failure_world.increment_nonce(executor, state.address)?;
+        if failure_world.has_code_or_nonce(executor, created)? {
+            return Ok(CheatcodeOutcome::Failure);
+        }
+
+        let mut frame = CallFrame::new(
+            created,
+            created,
+            created,
+            state.address,
+            SymWord::zero(),
+            false,
+            SymCalldata::new(Vec::new()),
+        );
+        frame.address_word = created_word.clone();
+        frame.caller_word = state.address_word.clone();
+        let mut child = state.child(frame);
+        let pending_expected_creates = std::mem::take(&mut child.expected_creates);
+        child.world = failure_world.clone();
+        child.world.set_nonce(created, 1);
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
+
+        let mut outcomes =
+            self.execute_external_call(executor, child, &initcode, completed_paths)?;
+        if outcomes.len() != 1 {
+            return Err(SymbolicError::Unsupported("symbolic vm.deployCode branching constructor"));
+        }
+        let outcome = outcomes.remove(0);
+        match outcome.status {
+            TopLevelCallStatus::Success => {
+                state.constraints = outcome.state.constraints;
+                state.next_symbol = outcome.state.next_symbol;
+                state.world = outcome.state.world;
+                state.block = outcome.state.block;
+                state.recorded_logs = outcome.state.recorded_logs;
+                state.access_record = outcome.state.access_record;
+                state.expected_emit = outcome.state.expected_emit;
+                state.expected_calls = outcome.state.expected_calls;
+                state.expected_creates = pending_expected_creates;
+                state.call_mocks = outcome.state.call_mocks;
+                state.function_mocks = outcome.state.function_mocks;
+                self.observe_expected_create(
+                    state,
+                    state.address,
+                    CreateKind::Create,
+                    &outcome.return_data,
+                )?;
+                state.world.install_code(created, outcome.return_data.to_code()?);
+                state.world.set_nonce(created, 1);
+                Ok(CheatcodeOutcome::Continue(vec![created_word]))
+            }
+            TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
+                Ok(CheatcodeOutcome::Failure)
+            }
+        }
+    }
+
     /// Applies the `observe_expected_create` symbolic executor helper.
     pub(super) fn observe_expected_create(
         &mut self,
@@ -281,6 +361,7 @@ impl SymbolicExecutor {
         &mut self,
         executor: &Executor<FEN>,
         state: &mut PathState,
+        completed_paths: &mut usize,
         selector: [u8; 4],
         in_offset: usize,
         in_size: usize,
@@ -1234,6 +1315,28 @@ impl SymbolicExecutor {
                 read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.getCode")?;
             let code = artifact_code(&artifact, selector == selector!("getDeployedCode(string)"))?;
             return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(code)));
+        }
+        if selector == selector!("deployCode(string)") {
+            let artifact =
+                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deployCode")?;
+            return self.deploy_code_cheatcode(
+                executor,
+                state,
+                completed_paths,
+                artifact,
+                Vec::new(),
+            );
+        }
+        if selector == selector!("deployCode(string,bytes)") {
+            let artifact =
+                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deployCode")?;
+            let args = read_abi_dynamic_bytes_arg(
+                &state.memory,
+                args_offset,
+                1,
+                "symbolic vm.deployCode args",
+            )?;
+            return self.deploy_code_cheatcode(executor, state, completed_paths, artifact, args);
         }
         if selector == selector!("deal(address,uint256)") {
             let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;

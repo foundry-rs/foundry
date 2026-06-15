@@ -864,9 +864,14 @@ impl SymbolicExecutor {
             }
 
             let return_data = if to == CHEATCODE_ADDRESS {
-                match self
-                    .handle_foundry_cheatcode(executor, state, selector, in_offset, in_size)?
-                {
+                match self.handle_foundry_cheatcode(
+                    executor,
+                    state,
+                    completed_paths,
+                    selector,
+                    in_offset,
+                    in_size,
+                )? {
                     CheatcodeOutcome::Continue(ret) => SymReturnData::from_words(ret),
                     CheatcodeOutcome::ContinueData(ret) => ret,
                     CheatcodeOutcome::AssumeRejected => return Ok(StepOutcome::AssumeRejected),

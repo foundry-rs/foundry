@@ -1237,6 +1237,18 @@ impl BoolExpr {
         }
         match (&left, &right) {
             (Expr::Const(left), Expr::Const(right)) => Self::Const(left == right),
+            (left, Expr::Const(right)) => {
+                if let Some(left) = expr_known_word(left) {
+                    return Self::Const(left == *right);
+                }
+                Self::Eq(left.clone(), Expr::Const(*right))
+            }
+            (Expr::Const(left), right) => {
+                if let Some(right) = expr_known_word(right) {
+                    return Self::Const(*left == right);
+                }
+                Self::Eq(Expr::Const(*left), right.clone())
+            }
             (
                 Expr::Keccak { len: left_len, bytes: left_bytes, .. },
                 Expr::Keccak { len: right_len, bytes: right_bytes, .. },
