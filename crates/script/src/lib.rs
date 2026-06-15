@@ -23,7 +23,7 @@ use alloy_primitives::{
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
-use clap::{Parser, ValueEnum, ValueHint};
+use clap::{Parser, ValueHint};
 use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
@@ -186,7 +186,7 @@ pub struct ScriptArgs {
 
     /// Debugger layout to use.
     #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    pub debug_layout: Option<DebuggerLayoutArg>,
+    pub debug_layout: Option<DebuggerLayout>,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -254,24 +254,6 @@ pub struct ScriptArgs {
 
     #[command(flatten)]
     pub retry: RetryArgs,
-}
-
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
-pub enum DebuggerLayoutArg {
-    #[default]
-    Auto,
-    Horizontal,
-    Vertical,
-}
-
-impl From<DebuggerLayoutArg> for DebuggerLayout {
-    fn from(value: DebuggerLayoutArg) -> Self {
-        match value {
-            DebuggerLayoutArg::Auto => Self::Auto,
-            DebuggerLayoutArg::Horizontal => Self::Horizontal,
-            DebuggerLayoutArg::Vertical => Self::Vertical,
-        }
-    }
 }
 
 impl ScriptArgs {

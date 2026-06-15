@@ -549,7 +549,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             .decoder(&self.execution_artifacts.decoder)
             .sources(self.build_data.sources)
             .breakpoints(self.execution_result.breakpoints)
-            .layout(self.args.debug_layout.unwrap_or_default().into())
+            .layout(self.args.debug_layout.unwrap_or_default())
             .build()
     }
 }

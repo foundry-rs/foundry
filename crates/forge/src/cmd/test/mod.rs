@@ -123,7 +123,7 @@ pub struct TestArgs {
 
     /// Debugger layout to use.
     #[arg(long = "debug-layout", requires = "debug", value_enum)]
-    debug_layout: Option<DebuggerLayoutArg>,
+    debug_layout: Option<DebuggerLayout>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
@@ -429,24 +429,6 @@ pub struct TestArgs {
     /// Analogous to `--invariant-timeout` for invariant campaigns.
     #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
     pub mutation_timeout: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
-enum DebuggerLayoutArg {
-    #[default]
-    Auto,
-    Horizontal,
-    Vertical,
-}
-
-impl From<DebuggerLayoutArg> for DebuggerLayout {
-    fn from(value: DebuggerLayoutArg) -> Self {
-        match value {
-            DebuggerLayoutArg::Auto => Self::Auto,
-            DebuggerLayoutArg::Horizontal => Self::Horizontal,
-            DebuggerLayoutArg::Vertical => Self::Vertical,
-        }
-    }
 }
 
 impl TestArgs {
@@ -909,7 +891,7 @@ impl TestArgs {
                 .traces(traces)
                 .sources(sources)
                 .breakpoints(test_result.breakpoints)
-                .layout(self.debug_layout.unwrap_or_default().into());
+                .layout(self.debug_layout.unwrap_or_default());
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);

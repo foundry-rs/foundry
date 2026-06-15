@@ -812,6 +812,28 @@ mod tests {
     }
 
     #[test]
+    fn layout_shortcut_cycles_only_concrete_layouts() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Auto);
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Vertical);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: vertical");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+    }
+
+    #[test]
     fn parses_prefixed_hex_pc() {
         assert_eq!(
             parse_pc_candidates("0x2a").unwrap(),
