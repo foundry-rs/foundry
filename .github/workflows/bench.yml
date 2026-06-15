@@ -247,6 +247,7 @@ jobs:
           EVENTS_KEY: ${{ secrets.EVENTS_KEY }}
           EVENTS_CERT: ${{ secrets.EVENTS_CERT }}
           EVENTS_URL: ${{ secrets.EVENTS_URL }}
+          EVENTS_AUTH: ${{ secrets.EVENTS_AUTH }}
         run: |
           set -euo pipefail
           umask 077
@@ -261,6 +262,7 @@ jobs:
             --connect-timeout 10 --max-time 30 \
             -X POST "$EVENTS_URL" \
             -H "Content-Type: application/json" \
+            -H "$EVENTS_AUTH" \
             --key "${RUNNER_TEMP}/key" \
             --cert "${RUNNER_TEMP}/cert" \
             -d @"${RUNNER_TEMP}/bench-event.json"
