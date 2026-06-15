@@ -349,6 +349,52 @@ fn selector_shift_simplifies_to_concrete_word() {
 }
 
 #[test]
+/// Regression coverage for `selector_equality_folds_known_word_expressions`.
+fn selector_equality_folds_known_word_expressions() {
+    let selector = U256::from(0x12345678u32);
+    let other = U256::from(0x9a8325a0u32);
+    let call_word = Expr::op(
+        ExprOp::Or,
+        Expr::op(ExprOp::Shl, Expr::Const(selector), Expr::Const(U256::from(224))),
+        Expr::op(ExprOp::Shr, Expr::Var("arg".to_string()), Expr::Const(U256::from(32))),
+    );
+    let selector_expr = Expr::op(ExprOp::Shr, call_word, Expr::Const(U256::from(224)));
+
+    assert_eq!(BoolExpr::eq(selector_expr.clone(), Expr::Const(selector)), BoolExpr::Const(true));
+    assert_eq!(BoolExpr::eq(selector_expr, Expr::Const(other)), BoolExpr::Const(false));
+}
+
+#[test]
+/// Regression coverage for `calldata_selector_load_simplifies_to_concrete_word`.
+fn calldata_selector_load_simplifies_to_concrete_word() {
+    let function = Function::parse("check(bytes32)").unwrap();
+    let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
+    let selector = U256::from_be_slice(function.selector().as_slice());
+    let loaded = calldata.call_data().load_word(SymWord::zero()).unwrap();
+    let selector_expr = Expr::op(ExprOp::Shr, loaded.into_expr(), Expr::Const(U256::from(224)));
+
+    assert_eq!(expr_known_word(&selector_expr), Some(selector));
+    assert_eq!(BoolExpr::eq(selector_expr, Expr::Const(selector)), BoolExpr::Const(true));
+}
+
+#[test]
+/// Regression coverage for `artifact_json_fallback_paths`.
+fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
+    assert_eq!(
+        artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/NomadLike.json")]
+    );
+    assert_eq!(
+        artifact_json_fallback_paths(r"src\01_NomadZeroRoot.sol:NomadLike"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/NomadLike.json")]
+    );
+    assert_eq!(
+        artifact_json_fallback_paths(r"src\01_NomadZeroRoot.sol"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/01_NomadZeroRoot.json")]
+    );
+}
+
+#[test]
 /// Regression coverage for `dynamic_calldata_encodes_bounded_bytes`.
 fn dynamic_calldata_encodes_bounded_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
