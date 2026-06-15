@@ -176,19 +176,40 @@ impl SignaturesIdentifier {
         Self::new(config.offline)
     }
 
+    /// Creates an offline `SignaturesIdentifier` with the default cache directory and local ABIs.
+    pub fn new_offline_with_abis<'a>(abis: impl IntoIterator<Item = &'a JsonAbi>) -> Result<Self> {
+        Self::new_with_abis(Config::foundry_cache_dir().as_deref(), true, abis)
+    }
+
     /// Creates a new `SignaturesIdentifier`.
     ///
     /// - `cache_dir` is the cache directory to store the signatures.
     /// - `offline` disables the OpenChain client.
     pub fn new_with(cache_dir: Option<&Path>, offline: bool) -> Result<Self> {
+        Self::new_with_abis(cache_dir, offline, [])
+    }
+
+    /// Creates a new `SignaturesIdentifier`, seeding the cache with local ABIs.
+    ///
+    /// - `cache_dir` is the cache directory to store the signatures.
+    /// - `offline` disables the OpenChain client.
+    /// - `abis` contains local ABI signatures that should be preferred without persisting them.
+    pub fn new_with_abis<'a>(
+        cache_dir: Option<&Path>,
+        offline: bool,
+        abis: impl IntoIterator<Item = &'a JsonAbi>,
+    ) -> Result<Self> {
         let client = if offline { None } else { Some(OpenChainClient::new()?) };
-        let (cache, cache_path) = if let Some(cache_dir) = cache_dir {
+        let (mut cache, cache_path) = if let Some(cache_dir) = cache_dir {
             let path = cache_dir.join("signatures");
             let cache = SignaturesCache::load(&path);
             (cache, Some(path))
         } else {
             Default::default()
         };
+        for abi in abis {
+            cache.extend_from_abi(abi);
+        }
         Ok(Self(Arc::new(SignaturesIdentifierInner {
             cache: RwLock::new(cache),
             cache_path,
