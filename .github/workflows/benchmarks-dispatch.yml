@@ -260,6 +260,12 @@ jobs:
             | base64 --decode \
             > "${RUNNER_TEMP}/bench-event.json"
 
+          printf 'EVENTS_AUTH sha256='
+          printf '%s' "$EVENTS_AUTH" | shasum -a 256 | awk '{print $1}'
+          printf 'EVENTS_AUTH len='
+          printf '%s' "$EVENTS_AUTH" | wc -c | tr -d ' '
+          printf '\n'
+
           curl --fail-with-body --silent --show-error --globoff \
             --connect-timeout 10 --max-time 30 \
             -X POST "$EVENTS_URL" \
