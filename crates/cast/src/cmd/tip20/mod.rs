@@ -276,7 +276,7 @@ pub(super) async fn send_tip20_transaction(
         }
         if let Some(sponsor) = &tempo_sponsor {
             resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await;
+                .await?;
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         }
         maybe_print_resolved_fee_token(
@@ -298,7 +298,7 @@ pub(super) async fn send_tip20_transaction(
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
             resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await;
+                .await?;
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, ak.wallet_address).await?;
         }
         cast_send_with_access_key(
@@ -360,7 +360,7 @@ pub(super) async fn send_tip20_transaction(
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
             resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await;
+                .await?;
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
         }
 

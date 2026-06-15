@@ -581,7 +581,7 @@ impl CreateArgs {
                 &mut deployer.tx,
                 Some(sponsor.sponsor()),
             )
-            .await;
+            .await?;
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         }
         maybe_print_resolved_fee_token(

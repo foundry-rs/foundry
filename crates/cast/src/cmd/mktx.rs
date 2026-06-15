@@ -182,7 +182,7 @@ impl MakeTxArgs {
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
                 resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                    .await;
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             }
             maybe_print_resolved_fee_token(
@@ -205,7 +205,7 @@ impl MakeTxArgs {
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
                 resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                    .await;
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             }
             maybe_print_resolved_fee_token(
@@ -232,7 +232,7 @@ impl MakeTxArgs {
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
             resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                .await;
+                .await?;
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         }
         maybe_print_resolved_fee_token(

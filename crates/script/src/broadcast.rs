@@ -181,9 +181,11 @@ where
             estimate_gas(tx, provider, estimate_multiplier).await?;
         }
 
+        let fee_payer = tempo_sponsor.map(|s| s.sponsor()).or_else(|| tx.from());
+        resolve_and_set_fee_token(provider, chain, tx, fee_payer).await?;
+
         if let Some(sponsor) = tempo_sponsor {
             let from = tx.from().expect("no sender");
-            resolve_and_set_fee_token(provider, chain, tx, Some(sponsor.sponsor())).await;
             sponsor.attach_and_print::<N>(tx, from).await?;
         }
         maybe_print_resolved_fee_token(
@@ -643,40 +645,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
                 let sequence_chain = sequence.chain;
-                let sequence_senders = sequence
-                    .transactions()
-                    .skip(remaining_transaction_start(sequence))
-                    .filter(|tx| tx.is_unsigned())
-                    .filter_map(|tx| tx.from())
-                    .collect::<AddressHashSet>();
-                let shared_fee_payer = tempo_sponsor.as_ref().map(|s| s.sponsor()).or_else(|| {
-                    (sequence_senders.len() == 1)
-                        .then(|| *sequence_senders.iter().next().expect("checked len"))
-                });
-                let sequence_fee_token = if let Some(fee_payer) = shared_fee_payer {
-                    let tx = sequence.transactions.iter().skip(already_broadcasted).find_map(
-                        |tx_with_metadata| match tx_with_metadata.tx().clone() {
-                            TransactionMaybeSigned::Unsigned(mut tx) => {
-                                tx.set_chain_id(sequence_chain);
-                                self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
-                                Some(tx)
-                            }
-                            TransactionMaybeSigned::Signed { .. } => None,
-                        },
-                    );
-
-                    Some(
-                        resolve_fee_token(
-                            provider.as_ref(),
-                            Some(sequence_chain.into()),
-                            tx.as_ref(),
-                            Some(fee_payer),
-                        )
-                        .await,
-                    )
-                } else {
-                    None
-                };
                 let mut transactions = Vec::with_capacity(
                     sequence.transactions.len().saturating_sub(already_broadcasted),
                 );
@@ -714,20 +682,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             }
 
                             self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
-
-                            if let Some(fee_token) = sequence_fee_token.flatten() {
-                                tx.set_fee_token(fee_token);
-                            } else if sequence_fee_token.is_none()
-                                && let Some(fee_token) = resolve_fee_token(
-                                    provider.as_ref(),
-                                    Some(sequence_chain.into()),
-                                    Some(&tx),
-                                    tempo_sponsor.as_ref().map(|s| s.sponsor()),
-                                )
-                                .await
-                            {
-                                tx.set_fee_token(fee_token);
-                            }
 
                             send_kind.for_sender(sequence_chain, &from, tx)?
                         }
@@ -1306,7 +1260,7 @@ impl BundledState<TempoEvmNetwork> {
             Some(&batch_tx),
             tempo_sponsor.as_ref().map(|s| s.sponsor()),
         )
-        .await
+        .await?
         {
             batch_tx.set_fee_token(fee_token);
         }
@@ -1662,7 +1616,7 @@ mod tests {
                 false,
                 100,
                 None,
-                Some(Chain::from_named(NamedChain::Tempo)),
+                Some(Chain::from_named(NamedChain::Mainnet)),
             )
             .await
             .unwrap();

@@ -75,28 +75,28 @@ pub async fn resolve_fee_token<N>(
     chain: Option<Chain>,
     tx: Option<&N::TransactionRequest>,
     fee_payer: Option<Address>,
-) -> Option<Address>
+) -> Result<Option<Address>>
 where
     N: Network,
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
 {
     if let Some(fee_token) = tx.and_then(|tx| tx.fee_token()) {
-        return Some(fee_token);
+        return Ok(Some(fee_token));
     }
-    let tx = tx?;
+    let Some(tx) = tx else { return Ok(None) };
     if !chain.is_some_and(Chain::is_tempo) {
-        return None;
+        return Ok(None);
     }
 
     let caller = tx.from();
     let fee_payer = fee_payer.or(caller);
     if let Some(fee_payer) = fee_payer
-        && let Some(fee_token) = stored_user_fee_token(provider, fee_payer).await
+        && let Some(fee_token) = stored_user_fee_token(provider, fee_payer).await?
     {
-        return Some(fee_token);
+        return Ok(Some(fee_token));
     }
 
-    Some(DEFAULT_FEE_TOKEN)
+    Ok(Some(DEFAULT_FEE_TOKEN))
 }
 
 /// Resolves and applies the Tempo fee token selected by the network.
@@ -108,17 +108,22 @@ pub async fn resolve_and_set_fee_token<N>(
     chain: Option<Chain>,
     tx: &mut N::TransactionRequest,
     fee_payer: Option<Address>,
-) -> Option<Address>
+) -> Result<Option<Address>>
 where
     N: Network,
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
 {
-    let fee_token = resolve_fee_token(provider, chain, Some(tx), fee_payer).await?;
+    let Some(fee_token) = resolve_fee_token(provider, chain, Some(tx), fee_payer).await? else {
+        return Ok(None);
+    };
     tx.set_fee_token(fee_token);
-    Some(fee_token)
+    Ok(Some(fee_token))
 }
 
-async fn stored_user_fee_token<N>(provider: &dyn Provider<N>, fee_payer: Address) -> Option<Address>
+async fn stored_user_fee_token<N>(
+    provider: &dyn Provider<N>,
+    fee_payer: Address,
+) -> Result<Option<Address>>
 where
     N: Network,
     N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
@@ -127,9 +132,13 @@ where
     let tx = N::TransactionRequest::default()
         .with_to(TIP_FEE_MANAGER_ADDRESS)
         .with_input(call.abi_encode());
-    let output = provider.call(tx).await.ok()?;
-    let fee_token = IFeeManager::userTokensCall::abi_decode_returns(&output).ok()?;
-    (!fee_token.is_zero()).then_some(fee_token)
+    let output = provider
+        .call(tx)
+        .await
+        .wrap_err_with(|| format!("failed to resolve Tempo fee token for {fee_payer}"))?;
+    let fee_token = IFeeManager::userTokensCall::abi_decode_returns(&output)
+        .wrap_err("failed to decode Tempo fee token lookup")?;
+    Ok((!fee_token.is_zero()).then_some(fee_token))
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
@@ -204,12 +213,13 @@ where
     P: Provider<N>,
 {
     let fee_token = if let Some(provider) = provider {
-        resolve_fee_token(provider as &dyn Provider<N>, chain, tx, fee_payer).await
+        resolve_fee_token(provider as &dyn Provider<N>, chain, tx, fee_payer).await.ok().flatten()
     } else {
         tx.and_then(|tx| tx.fee_token())
     };
     maybe_print_fee_token(provider, fee_token).await
 }
+
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
 pub struct TempoSponsor {

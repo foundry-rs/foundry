@@ -323,7 +323,7 @@ impl SendTxArgs {
                     &mut tx_request,
                     Some(sponsor.sponsor()),
                 )
-                .await;
+                .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, config.sender).await?;
             }
 
@@ -365,7 +365,7 @@ impl SendTxArgs {
                     &mut tx_request,
                     Some(sponsor.sponsor()),
                 )
-                .await;
+                .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             }
             maybe_print_resolved_fee_token(
@@ -402,7 +402,7 @@ impl SendTxArgs {
                     &mut tx_request,
                     Some(sponsor.sponsor()),
                 )
-                .await;
+                .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
             }
             cast_send_with_access_key(
@@ -489,7 +489,7 @@ impl SendTxArgs {
                     &mut tx_request,
                     Some(sponsor.sponsor()),
                 )
-                .await;
+                .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
             }
 

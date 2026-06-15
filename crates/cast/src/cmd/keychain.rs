@@ -3188,7 +3188,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             }
             if let Some(sponsor) = &tempo_sponsor {
                 resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                    .await;
+                    .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             }
             maybe_print_resolved_fee_token(
@@ -3212,7 +3212,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
                 resolve_and_set_fee_token(&provider, Some(chain), &mut tx, Some(sponsor.sponsor()))
-                    .await;
+                    .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
             }
 

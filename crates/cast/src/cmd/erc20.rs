@@ -429,7 +429,7 @@ impl Erc20Subcommand {
                                 &mut tx,
                                 Some(sponsor.sponsor()),
                             )
-                            .await;
+                            .await?;
                             sponsor
                                 .attach_and_print::<TempoNetwork>(
                                     &mut tx,
@@ -475,7 +475,7 @@ impl Erc20Subcommand {
                             &mut tx,
                             Some(sponsor.sponsor()),
                         )
-                        .await;
+                        .await?;
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     }
                     maybe_print_resolved_fee_token(
@@ -518,7 +518,7 @@ impl Erc20Subcommand {
                                 &mut tx,
                                 Some(sponsor.sponsor()),
                             )
-                            .await;
+                            .await?;
                             sponsor.attach_and_print::<N>(&mut tx, from).await?;
                         }
                     }
