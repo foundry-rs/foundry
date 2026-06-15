@@ -384,6 +384,14 @@ fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
         artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),
         vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/NomadLike.json")]
     );
+    assert_eq!(
+        artifact_json_fallback_paths(r"src\01_NomadZeroRoot.sol:NomadLike"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/NomadLike.json")]
+    );
+    assert_eq!(
+        artifact_json_fallback_paths(r"src\01_NomadZeroRoot.sol"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/01_NomadZeroRoot.json")]
+    );
 }
 
 #[test]

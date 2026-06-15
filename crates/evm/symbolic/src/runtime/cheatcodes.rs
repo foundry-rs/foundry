@@ -1234,17 +1234,17 @@ pub(crate) fn artifact_json_fallback_paths(path: &str) -> Vec<PathBuf> {
     let mut parts = path.split(':');
     let first = parts.next().unwrap_or_default();
     let second = parts.next();
-    let file = Path::new(first);
-    let Some(file_name) = file.file_name() else { return Vec::new() };
+    let Some(file_name) = first.rsplit(['/', '\\']).find(|part| !part.is_empty()) else {
+        return Vec::new();
+    };
 
     if !first.contains('/') && !first.contains('\\') {
         return Vec::new();
     }
 
-    let contract = second
-        .map(str::to_string)
-        .or_else(|| file.file_stem().map(|stem| stem.to_string_lossy().to_string()))
-        .unwrap_or_else(|| first.to_string());
+    let contract = second.map(str::to_string).unwrap_or_else(|| {
+        file_name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(file_name).to_string()
+    });
     vec![PathBuf::from("out").join(file_name).join(format!("{contract}.json"))]
 }
 
