@@ -176,7 +176,7 @@ where
         }
 
         let fee_payer = tempo_sponsor.map(|s| s.sponsor()).or_else(|| tx.from());
-        resolve_and_set_fee_token(provider, chain, tx, fee_payer).await?;
+        resolve_and_set_fee_token(Some(provider), chain, tx, fee_payer).await?;
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
@@ -188,13 +188,8 @@ where
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
         }
-        maybe_print_fee_token(
-            Some(provider),
-            chain,
-            Some(tx),
-            tempo_sponsor.map(|s| s.sponsor()),
-        )
-        .await?;
+        maybe_print_fee_token(Some(provider), chain, Some(tx), tempo_sponsor.map(|s| s.sponsor()))
+            .await?;
 
         Ok(())
     }

@@ -18,10 +18,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{
-        TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token,
-        resolve_and_set_fee_token_for_send,
-    },
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
@@ -260,12 +257,11 @@ impl SendTxArgs {
                 let (tx, _) = builder.build(from).await?;
                 (tx, from)
             };
-            resolve_and_set_fee_token_for_send::<N>(
-                &provider,
+            resolve_and_set_fee_token::<N>(
+                (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
                 print_sponsor_fee_payer,
-                !config.eth_rpc_curl,
             )
             .await?;
             let hash = tx
@@ -330,12 +326,11 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx_request,
                     Some(sponsor.sponsor()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, config.sender).await?;
@@ -373,22 +368,20 @@ impl SendTxArgs {
                 tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx_request,
                     Some(sponsor.sponsor()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             } else {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx_request,
                     Some(browser.address()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
             }
@@ -420,12 +413,11 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx_request,
                     Some(sponsor.sponsor()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
@@ -508,12 +500,11 @@ impl SendTxArgs {
             )?;
 
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx_request,
                     Some(sponsor.sponsor()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
@@ -558,12 +549,11 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    resolve_and_set_fee_token_for_send(
-        &provider,
+    resolve_and_set_fee_token(
+        resolve_unknown_fee_token_symbol.then_some(&provider),
         chain,
         &mut tx,
         fee_payer,
-        resolve_unknown_fee_token_symbol,
     )
     .await?;
     maybe_print_fee_token(
@@ -614,12 +604,11 @@ where
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
-    resolve_and_set_fee_token_for_send(
-        provider,
+    resolve_and_set_fee_token(
+        resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
         &mut tx,
         fee_payer,
-        resolve_unknown_fee_token_symbol,
     )
     .await?;
     maybe_print_fee_token(

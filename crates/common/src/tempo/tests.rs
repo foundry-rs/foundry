@@ -15,8 +15,7 @@ use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    known_fee_token_symbol, resolve_and_set_default_fee_token, resolve_and_set_fee_token,
-    resolve_and_set_fee_token_for_send, resolve_fee_token, resolve_fee_token_symbol,
+    known_fee_token_symbol, resolve_and_set_fee_token, resolve_fee_token, resolve_fee_token_symbol,
 };
 
 #[derive(Debug, Deserialize)]
@@ -165,7 +164,7 @@ async fn explicit_fee_token_overrides_stored_user_token_when_applied() -> eyre::
 
     assert_eq!(
         resolve_and_set_fee_token::<TempoNetwork>(
-            &provider,
+            Some(&provider),
             Some(Chain::from_named(NamedChain::Tempo)),
             &mut tx,
             Some(fee_payer),
@@ -277,39 +276,43 @@ async fn fee_token_lookup_decode_error_is_propagated() {
     );
 }
 
-#[test]
-fn default_fee_token_resolution_applies_known_print_sponsor_hash_token() {
+#[tokio::test]
+async fn default_fee_token_resolution_applies_known_print_sponsor_hash_token() -> eyre::Result<()> {
     let explicit = Address::repeat_byte(0x42);
     let mut tx = TempoTransactionRequest { fee_token: Some(explicit), ..Default::default() };
 
-    assert_eq!(
-        resolve_and_set_default_fee_token::<TempoNetwork>(
-            Some(Chain::from_named(NamedChain::Tempo)),
-            &mut tx,
-        ),
-        Some(explicit)
-    );
+    let resolved = resolve_and_set_fee_token::<TempoNetwork>(
+        None,
+        Some(Chain::from_named(NamedChain::Tempo)),
+        &mut tx,
+        None,
+    )
+    .await?;
+    assert_eq!(resolved, Some(explicit));
     assert_eq!(tx.fee_token, Some(explicit));
 
     let mut tx = TempoTransactionRequest::default();
-    assert_eq!(
-        resolve_and_set_default_fee_token::<TempoNetwork>(
-            Some(Chain::from_named(NamedChain::Tempo)),
-            &mut tx,
-        ),
-        Some(DEFAULT_FEE_TOKEN)
-    );
+    let resolved = resolve_and_set_fee_token::<TempoNetwork>(
+        None,
+        Some(Chain::from_named(NamedChain::Tempo)),
+        &mut tx,
+        None,
+    )
+    .await?;
+    assert_eq!(resolved, Some(DEFAULT_FEE_TOKEN));
     assert_eq!(tx.fee_token, Some(DEFAULT_FEE_TOKEN));
 
     let mut tx = TempoTransactionRequest::default();
-    assert_eq!(
-        resolve_and_set_default_fee_token::<TempoNetwork>(
-            Some(Chain::from_named(NamedChain::Mainnet)),
-            &mut tx,
-        ),
-        None
-    );
+    let resolved = resolve_and_set_fee_token::<TempoNetwork>(
+        None,
+        Some(Chain::from_named(NamedChain::Mainnet)),
+        &mut tx,
+        None,
+    )
+    .await?;
+    assert_eq!(resolved, None);
     assert_eq!(tx.fee_token, None);
+    Ok(())
 }
 
 #[tokio::test]
@@ -322,12 +325,11 @@ async fn send_fee_token_resolution_can_skip_lookup_for_curl_mode() -> eyre::Resu
 
     asserter.push_success(&BETA_USD_ADDRESS.abi_encode());
     assert_eq!(
-        resolve_and_set_fee_token_for_send::<TempoNetwork>(
-            &provider,
+        resolve_and_set_fee_token::<TempoNetwork>(
+            Some(&provider),
             Some(Chain::from_named(NamedChain::Tempo)),
             &mut tx,
             Some(fee_payer),
-            true,
         )
         .await?,
         Some(BETA_USD_ADDRESS)
@@ -336,12 +338,11 @@ async fn send_fee_token_resolution_can_skip_lookup_for_curl_mode() -> eyre::Resu
 
     let mut tx = TempoTransactionRequest::default();
     assert_eq!(
-        resolve_and_set_fee_token_for_send::<TempoNetwork>(
-            &provider,
+        resolve_and_set_fee_token::<TempoNetwork>(
+            None,
             Some(Chain::from_named(NamedChain::Tempo)),
             &mut tx,
             Some(fee_payer),
-            false,
         )
         .await?,
         Some(DEFAULT_FEE_TOKEN)

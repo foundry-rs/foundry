@@ -104,7 +104,7 @@ where
 /// This must happen before computing a sponsor digest, because Tempo sponsor signatures commit to
 /// the fee token.
 pub async fn resolve_and_set_fee_token<N>(
-    provider: &dyn Provider<N>,
+    provider: Option<&dyn Provider<N>>,
     chain: Option<Chain>,
     tx: &mut N::TransactionRequest,
     fee_payer: Option<Address>,
@@ -113,50 +113,16 @@ where
     N: Network,
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
 {
-    let Some(fee_token) = resolve_fee_token(provider, chain, Some(tx), fee_payer).await? else {
+    let fee_token = if let Some(provider) = provider {
+        resolve_fee_token(provider, chain, Some(tx), fee_payer).await?
+    } else {
+        tx.fee_token().or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))
+    };
+    let Some(fee_token) = fee_token else {
         return Ok(None);
     };
     tx.set_fee_token(fee_token);
     Ok(Some(fee_token))
-}
-
-/// Resolves and applies the Tempo fee token, optionally avoiding the on-chain lookup.
-///
-/// Curl mode must not use an RPC lookup here: the curl transport prints the first request and
-/// exits, so this falls back to an explicit fee token or Tempo's default token when lookups are
-/// disabled.
-pub async fn resolve_and_set_fee_token_for_send<N>(
-    provider: &dyn Provider<N>,
-    chain: Option<Chain>,
-    tx: &mut N::TransactionRequest,
-    fee_payer: Option<Address>,
-    allow_lookup: bool,
-) -> Result<Option<Address>>
-where
-    N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
-{
-    if allow_lookup {
-        resolve_and_set_fee_token(provider, chain, tx, fee_payer).await
-    } else {
-        Ok(resolve_and_set_default_fee_token::<N>(chain, tx))
-    }
-}
-
-/// Applies the fee token known without a fee payer lookup.
-pub fn resolve_and_set_default_fee_token<N>(
-    chain: Option<Chain>,
-    tx: &mut N::TransactionRequest,
-) -> Option<Address>
-where
-    N: Network,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    let fee_token = tx
-        .fee_token()
-        .or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))?;
-    tx.set_fee_token(fee_token);
-    Some(fee_token)
 }
 
 async fn stored_user_fee_token<N>(
@@ -181,7 +147,7 @@ where
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
-pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
+const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
     match fee_token {
         PATH_USD_ADDRESS => Some("PathUSD"),
         ALPHA_USD_ADDRESS => Some("AlphaUSD"),

@@ -24,10 +24,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{
-        TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token,
-        resolve_and_set_fee_token_for_send,
-    },
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, utils::*};
@@ -416,12 +413,11 @@ impl Erc20Subcommand {
                         .await?;
                     if needs_sponsor_payload {
                         if print_sponsor_hash {
-                            resolve_and_set_fee_token_for_send::<TempoNetwork>(
-                                &$provider,
+                            resolve_and_set_fee_token::<TempoNetwork>(
+                                (!config.eth_rpc_curl).then_some(&$provider),
                                 Some(chain),
                                 &mut tx,
                                 print_sponsor_fee_payer,
-                                !config.eth_rpc_curl,
                             )
                             .await?;
                             let hash = tx
@@ -435,12 +431,11 @@ impl Erc20Subcommand {
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
-                            resolve_and_set_fee_token_for_send(
-                                &$provider,
+                            resolve_and_set_fee_token(
+                                (!config.eth_rpc_curl).then_some(&$provider),
                                 Some(chain),
                                 &mut tx,
                                 Some(sponsor.sponsor()),
-                                !config.eth_rpc_curl,
                             )
                             .await?;
                             sponsor
@@ -475,12 +470,11 @@ impl Erc20Subcommand {
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
                     fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
                     if print_sponsor_hash {
-                        resolve_and_set_fee_token_for_send::<N>(
-                            &$provider,
+                        resolve_and_set_fee_token::<N>(
+                            (!config.eth_rpc_curl).then_some(&$provider),
                             Some(chain),
                             &mut tx,
                             print_sponsor_fee_payer,
-                            !config.eth_rpc_curl,
                         )
                         .await?;
                         let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
@@ -490,22 +484,20 @@ impl Erc20Subcommand {
                         return Ok(());
                     }
                     if let Some(sponsor) = &tempo_sponsor {
-                        resolve_and_set_fee_token_for_send(
-                            &$provider,
+                        resolve_and_set_fee_token(
+                            (!config.eth_rpc_curl).then_some(&$provider),
                             Some(chain),
                             &mut tx,
                             Some(sponsor.sponsor()),
-                            !config.eth_rpc_curl,
                         )
                         .await?;
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     } else {
-                        resolve_and_set_fee_token_for_send(
-                            &$provider,
+                        resolve_and_set_fee_token(
+                            (!config.eth_rpc_curl).then_some(&$provider),
                             Some(chain),
                             &mut tx,
                             Some(browser.address()),
-                            !config.eth_rpc_curl,
                         )
                         .await?;
                     }
@@ -536,12 +528,11 @@ impl Erc20Subcommand {
                     if needs_sponsor_payload {
                         fill_tx(&$provider, &mut tx, from, chain, false).await?;
                         if print_sponsor_hash {
-                            resolve_and_set_fee_token_for_send::<N>(
-                                &$provider,
+                            resolve_and_set_fee_token::<N>(
+                                (!config.eth_rpc_curl).then_some(&$provider),
                                 Some(chain),
                                 &mut tx,
                                 print_sponsor_fee_payer,
-                                !config.eth_rpc_curl,
                             )
                             .await?;
                             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
@@ -551,12 +542,11 @@ impl Erc20Subcommand {
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
-                            resolve_and_set_fee_token_for_send(
-                                &$provider,
+                            resolve_and_set_fee_token(
+                                (!config.eth_rpc_curl).then_some(&$provider),
                                 Some(chain),
                                 &mut tx,
                                 Some(sponsor.sponsor()),
-                                !config.eth_rpc_curl,
                             )
                             .await?;
                             sponsor.attach_and_print::<N>(&mut tx, from).await?;

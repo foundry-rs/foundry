@@ -24,9 +24,8 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
-        maybe_print_fee_token, read_tempo_keys_file, resolve_and_set_fee_token_for_send,
-        tempo_keys_path,
+        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, maybe_print_fee_token,
+        read_tempo_keys_file, resolve_and_set_fee_token, tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3166,12 +3165,11 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     if print_sponsor_hash {
         let from = root_signer.address();
         let (mut tx, _) = builder.build(from).await?;
-        resolve_and_set_fee_token_for_send::<TempoNetwork>(
-            &provider,
+        resolve_and_set_fee_token::<TempoNetwork>(
+            (!config.eth_rpc_curl).then_some(&provider),
             Some(chain),
             &mut tx,
             print_sponsor_fee_payer,
-            !config.eth_rpc_curl,
         )
         .await?;
         let hash = tx
@@ -3197,22 +3195,20 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                 tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(sponsor.sponsor()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             } else {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(browser.address()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
             }
@@ -3236,22 +3232,20 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             let (mut tx, _) = builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(sponsor.sponsor()),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
             } else {
-                resolve_and_set_fee_token_for_send(
-                    &provider,
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(from),
-                    !config.eth_rpc_curl,
                 )
                 .await?;
             }
