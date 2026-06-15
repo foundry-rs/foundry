@@ -47,6 +47,7 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+use foundry_debugger::DebuggerLayout;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -182,6 +183,10 @@ pub struct ScriptArgs {
     /// Takes precedence over broadcast.
     #[arg(long)]
     pub debug: bool,
+
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    pub debug_layout: Option<DebuggerLayout>,
 
     /// Dumps all debugger steps to file.
     #[arg(

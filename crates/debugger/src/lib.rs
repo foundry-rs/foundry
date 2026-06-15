@@ -23,5 +23,5 @@ mod node;
 pub use node::DebugNode;
 
 pub use builder::DebuggerBuilder;
-pub use debugger::Debugger;
+pub use debugger::{Debugger, DebuggerLayout};
 pub use tui::{ExitReason, TUI};
