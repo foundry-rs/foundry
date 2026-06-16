@@ -92,6 +92,9 @@ jobs:
       - name: Shellcheck
         shell: bash
         run: ./.github/scripts/shellcheck.sh
+      - name: foundryup tests
+        shell: bash
+        run: ./foundryup/test.sh
 
   clippy:
     runs-on: depot-ubuntu-latest

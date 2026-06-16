@@ -1,4 +1,4 @@
-//@compile-flags: --severity gas
+//@compile-flags: --only-lint unused-state-variables
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;

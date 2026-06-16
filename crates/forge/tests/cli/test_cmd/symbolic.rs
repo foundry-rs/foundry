@@ -769,10 +769,10 @@ invalid length `nope`
     );
 });
 
-forgetest_init!(symbolic_selfdestruct_cancun_reports_incomplete, |prj, cmd| {
+forgetest_init!(symbolic_selfdestruct_cancun_self_beneficiary_halts, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_selfdestruct_cancun_reports_incomplete because z3 is not available"
+            "skipping symbolic_selfdestruct_cancun_self_beneficiary_halts because z3 is not available"
         );
         return;
     }
@@ -785,8 +785,10 @@ import "forge-std/Test.sol";
 /// forge-config: default.evm_version = "cancun"
 
 contract SymbolicSelfdestructCancun is Test {
-    function checkSelfdestructCancun(address payable beneficiary) public {
-        selfdestruct(beneficiary);
+    function checkSelfdestructCancun(uint256) public {
+        selfdestruct(payable(address(this)));
+
+        assert(false);
     }
 }
 "#,
@@ -794,16 +796,17 @@ contract SymbolicSelfdestructCancun is Test {
 
     let stdout = cmd
         .args(["test", "--symbolic", "--match-test", "checkSelfdestructCancun"])
-        .assert_failure()
+        .assert_success()
         .get_output()
         .stdout_lossy();
 
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-SELFDESTRUCT/EIP-6780 not modeled
+[PASS] checkSelfdestructCancun(uint256)
 "#]],
     );
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
 });
 forgetest_init!(symbolic_invariant_finds_single_step_counterexample, |prj, cmd| {
     if !z3_available() {

@@ -4,14 +4,16 @@ pub mod auth;
 
 use crate::FoundryTransactionBuilder;
 use alloy_chains::Chain;
-use alloy_network::Network;
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, B256, Signature, address};
+use alloy_provider::Provider;
 use alloy_signer::Signer;
+use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
-use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
 pub use tempo_alloy::contracts::precompiles::PATH_USD_ADDRESS;
+use tempo_alloy::contracts::precompiles::{DEFAULT_FEE_TOKEN, ITIP20};
 
 mod keystore;
 mod registry;
@@ -66,6 +68,8 @@ pub const BETA_USD_ADDRESS: Address = address!("0x20C000000000000000000000000000
 pub const THETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000003");
 
 /// Resolves an explicit Tempo fee token or the canonical default for a known Tempo network.
+///
+/// TODO: fee token resolution is incomplete, must use FeeTokenManager.
 pub fn resolve_fee_token(
     chain: Option<Chain>,
     explicit_fee_token: Option<Address>,
@@ -84,29 +88,66 @@ pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> 
     }
 }
 
-/// Formats a Tempo fee-token selection for command output.
-pub fn format_fee_token_selection(fee_token: Address) -> String {
-    match known_fee_token_symbol(fee_token) {
-        Some(symbol) => format!("Paying gas in {symbol} ({fee_token})"),
-        None => format!("Paying gas in {fee_token}"),
+async fn resolve_fee_token_symbol<N, P>(provider: &P, fee_token: Address) -> Option<String>
+where
+    N: Network,
+    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    if let Some(symbol) = known_fee_token_symbol(fee_token) {
+        return Some(symbol.to_string());
     }
+
+    let tx = N::TransactionRequest::default()
+        .with_to(fee_token)
+        .with_input(ITIP20::symbolCall.abi_encode());
+    let output = provider.call(tx).await.ok()?;
+    let symbol = ITIP20::symbolCall::abi_decode_returns(&output).ok()?;
+    (!symbol.is_empty()).then_some(symbol)
 }
 
 /// Prints the selected Tempo fee token when one is set.
-pub fn print_fee_token_selection(fee_token: Option<Address>) -> Result<()> {
+///
+/// Unknown symbols are resolved on-chain only when a provider is supplied, because some provider
+/// modes such as `--curl` must preserve the first RPC request for the user's intended action.
+pub async fn maybe_print_fee_token<N, P>(
+    provider: Option<&P>,
+    fee_token: Option<Address>,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
+    P: Provider<N>,
+{
     if let Some(fee_token) = fee_token {
-        sh_status!("{}", format_fee_token_selection(fee_token))?;
+        let symbol = if let Some(symbol) = known_fee_token_symbol(fee_token) {
+            Some(symbol.to_string())
+        } else if let Some(provider) = provider {
+            resolve_fee_token_symbol(provider, fee_token).await
+        } else {
+            None
+        };
+        match symbol {
+            Some(symbol) => sh_status!("Paying gas in {} ({})", symbol, fee_token)?,
+            None => sh_status!("Paying gas in {}", fee_token)?,
+        }
     }
     Ok(())
 }
 
-/// Prints the fee token selected for display, resolving the chain default without mutating a
-/// transaction request.
-pub fn print_resolved_fee_token_selection(
+/// Prints the fee token selected for display, resolving the chain default and unknown symbols
+/// without mutating a transaction request.
+pub async fn maybe_print_resolved_fee_token<N, P>(
+    provider: Option<&P>,
     chain: Option<Chain>,
     fee_token: Option<Address>,
-) -> Result<()> {
-    print_fee_token_selection(resolve_fee_token(chain, fee_token))
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    maybe_print_fee_token(provider, resolve_fee_token(chain, fee_token)).await
 }
 
 /// Gas sponsor configuration for Tempo fee-payer signatures.

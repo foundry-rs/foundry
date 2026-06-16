@@ -1,7 +1,7 @@
 //! TUI draw implementation.
 
 use super::context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext};
-use crate::{debugger::DebuggerStats, op::OpcodeParam};
+use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
 use foundry_common::fmt::format_token;
@@ -33,12 +33,18 @@ impl TUIContext<'_> {
             return;
         }
 
-        // The horizontal layout draws these panes at 50% width.
-        let min_column_width_for_horizontal = 200;
-        if area.width >= min_column_width_for_horizontal {
-            self.horizontal_layout(f);
-        } else {
-            self.vertical_layout(f);
+        match self.layout() {
+            DebuggerLayout::Horizontal => self.horizontal_layout(f),
+            DebuggerLayout::Vertical => self.vertical_layout(f),
+            DebuggerLayout::Auto => {
+                // The horizontal layout draws these panes at 50% width.
+                let min_column_width_for_horizontal = 200;
+                if area.width >= min_column_width_for_horizontal {
+                    self.horizontal_layout(f);
+                } else {
+                    self.vertical_layout(f);
+                }
+            }
         }
     }
 
@@ -219,7 +225,7 @@ impl TUIContext<'_> {
         }
 
         let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [b]: cycle memory/calldata/returndata buffers";
-        let l2 = "[t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
+        let l2 = "[l]: layout | [t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
             lines.push(Line::from(Span::styled(l1, dimmed)));
@@ -1153,6 +1159,7 @@ mod tests {
             identified_contracts: Default::default(),
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
+            layout: Default::default(),
         }
     }
 

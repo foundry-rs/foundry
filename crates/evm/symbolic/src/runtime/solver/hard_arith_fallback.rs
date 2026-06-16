@@ -25,6 +25,9 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
         Expr::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
             expr_contains_var(left) || expr_contains_var(right)
         }
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
+        }
         Expr::Op(_, left, right) => {
             expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
         }
@@ -47,6 +50,11 @@ pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
         Expr::Not(value) => expr_contains_symbolic_hash(value),
         Expr::Op(_, left, right) => {
             expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right)
+        }
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            expr_contains_symbolic_hash(left)
+                || expr_contains_symbolic_hash(right)
+                || expr_contains_symbolic_hash(modulus)
         }
         Expr::Ite(cond, left, right) => {
             bool_contains_symbolic_hash(cond)
@@ -76,6 +84,9 @@ pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
         Expr::GasLeft(_) => false,
         Expr::Not(value) => expr_contains_var(value),
         Expr::Op(_, left, right) => expr_contains_var(left) || expr_contains_var(right),
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
+        }
         Expr::Ite(cond, left, right) => {
             bool_contains_var(cond) || expr_contains_var(left) || expr_contains_var(right)
         }
@@ -320,6 +331,11 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut BTreeSet<String
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            collect_expr_fallback_vars(left, vars);
+            collect_expr_fallback_vars(right, vars);
+            collect_expr_fallback_vars(modulus, vars);
+        }
         Expr::Ite(cond, left, right) => {
             collect_bool_fallback_vars(cond, vars);
             collect_expr_fallback_vars(left, vars);
@@ -421,6 +437,11 @@ pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut BTreeSet<U256>
         Expr::Op(_, left, right) => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
+        }
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            collect_expr_constants(left, constants);
+            collect_expr_constants(right, constants);
+            collect_expr_constants(modulus, constants);
         }
         Expr::Ite(cond, left, right) => {
             collect_bool_constants(cond, constants);

@@ -674,6 +674,26 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::op(op, left, right)
             }
         }
+        Expr::AddMod { left, right, modulus } => {
+            let left = cache_key_expr(*left);
+            let right = cache_key_expr(*right);
+            let modulus = cache_key_expr(*modulus);
+            if right < left {
+                Expr::addmod(right, left, modulus)
+            } else {
+                Expr::addmod(left, right, modulus)
+            }
+        }
+        Expr::MulMod { left, right, modulus } => {
+            let left = cache_key_expr(*left);
+            let right = cache_key_expr(*right);
+            let modulus = cache_key_expr(*modulus);
+            if right < left {
+                Expr::mulmod(right, left, modulus)
+            } else {
+                Expr::mulmod(left, right, modulus)
+            }
+        }
         Expr::Ite(cond, left, right) => Expr::Ite(
             Box::new(cache_key_bool(*cond)),
             Box::new(cache_key_expr(*left)),
