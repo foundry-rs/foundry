@@ -340,7 +340,7 @@ fn build_invariant_progress_json<M: Serialize>(
     let mut metrics = serde_json::to_value(corpus_metrics).unwrap_or_default();
     if let Some(obj) = metrics.as_object_mut() {
         obj.insert("broken_invariants".to_string(), json!(failure_metrics.unique_failures.len()));
-        obj.insert("broken_handlers".to_string(), json!(failure_metrics.broken_handlers));
+        obj.insert("broken_assertions".to_string(), json!(failure_metrics.broken_handlers));
     }
 
     let mut payload = json!({
@@ -1997,7 +1997,8 @@ mod tests {
         assert_eq!(payload["contract"], json!("InvariantContract"));
         assert!(payload.get("invariant").is_none());
         assert_eq!(payload["metrics"]["corpus_count"], json!(7));
-        assert_eq!(payload["metrics"]["broken_handlers"], json!(0));
+        assert_eq!(payload["metrics"]["broken_assertions"], json!(0));
+        assert!(payload["metrics"].get("broken_handlers").is_none());
         assert_eq!(payload["total_txs"], json!(2));
         assert_eq!(payload["total_gas"], json!(50));
         assert_eq!(payload["tps"], json!(0.2));
@@ -2153,7 +2154,27 @@ mod tests {
     }
 
     #[test]
-    fn invariant_progress_json_includes_failure_counts() {
+    fn invariant_progress_json_rounds_fractional_rates() {
+        let payload = build_invariant_progress_json(
+            InvariantProgressContext {
+                timestamp_secs: 456,
+                contract_name: "TestContract",
+                optimization_best: None,
+                throughput: InvariantThroughputMetrics { total_txs: 1, total_gas: 1 },
+                elapsed: Duration::from_secs(3),
+                worker_id: 0,
+                worker_count: 1,
+            },
+            &json!({ "corpus_count": 1 }),
+            &InvariantFailureMetrics::default(),
+        );
+
+        assert_eq!(payload["tps"], json!(0.33));
+        assert_eq!(payload["gps"], json!(0.33));
+    }
+
+    #[test]
+    fn invariant_progress_json_includes_broken_counts() {
         let mut failure_metrics = InvariantFailureMetrics::default();
         failure_metrics.record_failure("invariant_a", "TestContract", "revert");
         failure_metrics.record_failure("invariant_a", "TestContract", "revert");
@@ -2177,7 +2198,8 @@ mod tests {
         assert!(payload["metrics"].get("failures").is_none());
         assert!(payload["metrics"].get("unique_failures").is_none());
         assert_eq!(payload["metrics"]["broken_invariants"], json!(2));
-        assert_eq!(payload["metrics"]["broken_handlers"], json!(7));
+        assert_eq!(payload["metrics"]["broken_assertions"], json!(7));
+        assert!(payload["metrics"].get("broken_handlers").is_none());
     }
 
     #[test]
