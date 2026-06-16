@@ -436,10 +436,21 @@ Error: No known Etherscan API URL for chain `4202`. To fix this, please:
             "src/Counter.sol:Counter",
         ])
         .assert_success()
-        .stdout_eq(str![""])
+        .stdout_eq(str![[r#"
+[..]	https://sourcify.dev/server/v2/verify/[..]
+
+"#]])
         .stderr_eq(str![[r#"
 Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+
+Verifying on blockscout...
 Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+
+Verifying on sourcify...
+Submitting verification for [Counter] 0x19b248616E4964f43F611b5871CE1250f360E9d3.
+Submitted contract for verification:
+	Verification Job ID: `[..]`
+	URL: https://sourcify.dev/server/v2/verify/[..]
 
 "#]]);
 });
