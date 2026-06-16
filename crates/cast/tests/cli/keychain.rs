@@ -213,7 +213,7 @@ casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
 });
 
-// TODO: remove this check once browser supports T5 KeyAuthorization fields
+// TODO: remove this check once browser supports T5/T6 KeyAuthorization fields
 casttest!(key_authorization_sign_rejects_browser_witness_before_browser_run, |_prj, cmd| {
     let stderr = cmd
         .args([
@@ -232,14 +232,279 @@ casttest!(key_authorization_sign_rejects_browser_witness_before_browser_run, |_p
         .stderr_lossy();
 
     assert!(
-        stderr
-            .contains("browser key authorization signing does not support T5 fields yet: witness"),
+        stderr.contains(
+            "browser key authorization signing does not support T5/T6 fields yet: witness, admin, account"
+        ),
         "unexpected stderr:\n{stderr}"
     );
     assert!(
         !stderr.contains("Waiting for browser wallet connection"),
         "browser flow should not start before rejecting --browser --witness:\n{stderr}"
     );
+});
+
+// Offline: signing an admin key authorization round-trips `is_admin`/`account` into the JSON.
+casttest!(key_authorization_sign_admin_emits_admin_json, |_prj, cmd| {
+    // `sign --admin` derives the bound account from the signer (it has no auth-level --account),
+    // so signing with PK1 binds the authorization to ADDR1.
+    let output = cmd
+        .args([
+            "key-authorization",
+            "sign",
+            accounts::ADDR2,
+            "--chain-id",
+            "31337",
+            "--admin",
+            "--private-key",
+            accounts::PK1,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast key-authorization sign --admin --json should emit valid JSON");
+    assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
+    // The bound account equals the signer (ADDR1), not the authorized key (ADDR2).
+    assert_eq!(
+        parsed["account"].as_str().map(str::to_lowercase),
+        Some(accounts::ADDR1.to_lowercase()),
+        "got: {output}"
+    );
+    assert!(
+        parsed["signed_key_authorization"].as_str().is_some_and(|s| s.starts_with("0x")),
+        "got: {output}"
+    );
+});
+
+// Offline: `--admin` without `--account` is rejected before any signing happens.
+casttest!(key_authorization_encode_admin_requires_account, |_prj, cmd| {
+    let stderr = cmd
+        .args(["key-authorization", "encode", accounts::ADDR2, "--chain-id", "31337", "--admin"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("--admin requires --account"), "unexpected stderr:\n{stderr}");
+});
+
+// Offline: an admin key authorization cannot carry an expiry.
+casttest!(key_authorization_encode_admin_rejects_expiry, |_prj, cmd| {
+    let stderr = cmd
+        .args([
+            "key-authorization",
+            "encode",
+            accounts::ADDR2,
+            "--chain-id",
+            "31337",
+            "--admin",
+            "--account",
+            accounts::ADDR1,
+            "--expiry",
+            "1782647677",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("--expiry"), "unexpected stderr:\n{stderr}");
+});
+
+// Offline: `key-authorization inspect` decodes a signed admin authorization and exposes T6 fields.
+casttest!(key_authorization_inspect_signed_admin_json, |_prj, cmd| {
+    let signed = cmd
+        .args([
+            "key-authorization",
+            "sign",
+            accounts::ADDR2,
+            "--chain-id",
+            "31337",
+            "--admin",
+            "--private-key",
+            accounts::PK1, // root account ADDR1; the bound account is derived from the signer
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let signed = signed.trim().to_string();
+
+    let output = cmd
+        .cast_fuse()
+        .args(["key-authorization", "inspect", &signed, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast key-authorization inspect --json should emit valid JSON");
+    assert_eq!(parsed["signed"], serde_json::Value::Bool(true), "got: {output}");
+    assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
+    assert_eq!(
+        parsed["account"].as_str().map(str::to_lowercase),
+        Some(accounts::ADDR1.to_lowercase()),
+        "got: {output}"
+    );
+    assert_eq!(
+        parsed["signer"].as_str().map(str::to_lowercase),
+        Some(accounts::ADDR1.to_lowercase()),
+        "got: {output}"
+    );
+});
+
+// Offline: inspecting with a mismatched `--account` rejects a replayed admin authorization.
+casttest!(key_authorization_inspect_account_mismatch_rejected, |_prj, cmd| {
+    let signed = cmd
+        .args([
+            "key-authorization",
+            "sign",
+            accounts::ADDR2,
+            "--chain-id",
+            "31337",
+            "--admin",
+            "--private-key",
+            accounts::PK1, // bound to ADDR1
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let signed = signed.trim().to_string();
+
+    let stderr = cmd
+        .cast_fuse()
+        .args(["key-authorization", "inspect", &signed, "--account", accounts::ADDR2])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("is bound to account"), "unexpected stderr:\n{stderr}");
+});
+
+// On-chain (T6): authorize an admin key, then confirm it via `keychain is-admin --json`.
+casttest!(keychain_authorize_admin_then_is_admin, async |_prj, cmd| {
+    use tempo_chainspec::hardfork::TempoHardfork;
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2, // admin key to authorize
+            "--admin",
+            "--private-key",
+            accounts::PK1, // root account ADDR1
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "keychain",
+            "is-admin",
+            accounts::ADDR1, // root account
+            accounts::ADDR2, // admin key
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast keychain is-admin --json should emit valid JSON");
+    assert!(parsed.is_object(), "expected JSON object, got: {output}");
+    assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
+});
+
+// On-chain (T6): a keychain signature from an authorized admin key passes `verify-admin`.
+casttest!(keychain_verify_admin_accepts_admin_signature, async |_prj, cmd| {
+    use alloy_primitives::{Address, B256, hex};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
+
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+
+    // Authorize ADDR2 as an admin key for ADDR1 (PK1).
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--admin",
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    // Build a keychain signature over an arbitrary hash, signed by the admin key (PK2) for ADDR1.
+    let account: Address = accounts::ADDR1.parse().unwrap();
+    let hash = B256::repeat_byte(0x42);
+    let key: PrivateKeySigner = accounts::PK2.parse().unwrap();
+    let signing_hash = KeychainSignature::signing_hash(hash, account);
+    let inner = key.sign_hash_sync(&signing_hash).unwrap();
+    let signature = TempoSignature::Keychain(KeychainSignature::new(
+        account,
+        PrimitiveSignature::Secp256k1(inner),
+    ))
+    .to_bytes();
+    let signature_hex = hex::encode_prefixed(signature);
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "keychain",
+            "verify-admin",
+            accounts::ADDR1,
+            &hash.to_string(),
+            &signature_hex,
+            "--rpc-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast keychain verify-admin --json should emit valid JSON");
+    assert_eq!(parsed["valid"], serde_json::Value::Bool(true), "got: {output}");
+});
+
+// On-chain (T6): `keychain authorize --admin` rejects spending limits before submitting.
+casttest!(keychain_authorize_admin_rejects_limits, async |_prj, cmd| {
+    use tempo_chainspec::hardfork::TempoHardfork;
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+
+    let stderr = cmd
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--admin",
+            "--enforce-limits",
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("spending limits"), "unexpected stderr:\n{stderr}");
 });
 
 casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {

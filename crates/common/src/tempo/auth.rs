@@ -198,6 +198,20 @@ pub async fn ensure_access_key(cfg: EnsureAccessKeyConfig) -> Result<AccessKeyOu
                         signed.authorization.key_type,
                     );
                 }
+                // A 402 access key is a limited key; an admin key is never valid here.
+                if signed.authorization.is_admin() {
+                    eyre::bail!(
+                        "wallet returned an admin key authorization, expected a limited access key"
+                    );
+                }
+                // A T6 account-bound authorization must target the authorizing account.
+                if let Some(account) = signed.authorization.account
+                    && account != account_address
+                {
+                    eyre::bail!(
+                        "wallet authorized account {account} but the authorizing account is {account_address}",
+                    );
+                }
                 let chain_id = signed.authorization.chain_id;
                 let key_authorization =
                     if hex_str.starts_with("0x") { hex_str } else { format!("0x{hex_str}") };
