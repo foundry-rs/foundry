@@ -11,7 +11,8 @@ use crate::{
 };
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, Selector, U256, keccak256, map::AddressMap,
+    Address, B256, Bytes, FixedBytes, I256, Selector, U256, keccak256,
+    map::{AddressMap, B256HashSet},
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -50,7 +51,7 @@ use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::{HashMap as Map, HashSet, btree_map::Entry},
+    collections::{HashMap as Map, HashSet, VecDeque, btree_map::Entry},
     num::NonZeroUsize,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -271,7 +272,7 @@ struct CampaignCorpusPlateau {
 }
 
 impl CampaignCorpusPlateau {
-    fn new(config: &InvariantConfig, now: Instant) -> Self {
+    const fn new(config: &InvariantConfig, now: Instant) -> Self {
         Self {
             plateau_runs: config.corpus_sync.plateau_runs,
             plateau_timeout: Duration::from_secs(config.corpus_sync.plateau_timeout),
@@ -286,7 +287,7 @@ impl CampaignCorpusPlateau {
                 && now.duration_since(self.last_new_coverage) >= self.plateau_timeout)
     }
 
-    fn record_run(&mut self, new_coverage: bool, now: Instant) {
+    const fn record_run(&mut self, new_coverage: bool, now: Instant) {
         if new_coverage {
             self.runs_since_new_coverage = 0;
             self.last_new_coverage = now;
@@ -297,11 +298,50 @@ impl CampaignCorpusPlateau {
 }
 
 #[derive(Clone)]
+struct AttemptedCampaignSequences {
+    fingerprints: B256HashSet,
+    order: VecDeque<B256>,
+    limit: usize,
+}
+
+impl AttemptedCampaignSequences {
+    fn new(limit: usize) -> Self {
+        Self {
+            fingerprints: B256HashSet::with_capacity_and_hasher(limit, Default::default()),
+            order: VecDeque::with_capacity(limit),
+            limit,
+        }
+    }
+
+    const fn fingerprints(&self) -> &B256HashSet {
+        &self.fingerprints
+    }
+
+    fn insert(&mut self, fingerprint: B256) -> bool {
+        if self.limit == 0 {
+            return true;
+        }
+        if !self.fingerprints.insert(fingerprint) {
+            return false;
+        }
+
+        self.order.push_back(fingerprint);
+        while self.order.len() > self.limit {
+            if let Some(fingerprint) = self.order.pop_front() {
+                self.fingerprints.remove(&fingerprint);
+            }
+        }
+        true
+    }
+}
+
+#[derive(Clone)]
 struct CampaignCorpusWorkerSync {
     worker_id: usize,
     max_batch: NonZeroUsize,
     plateau: CampaignCorpusPlateau,
     exchange: CampaignCorpusExchange,
+    attempted_sequences: AttemptedCampaignSequences,
 }
 
 impl CampaignCorpusWorkerSync {
@@ -311,20 +351,30 @@ impl CampaignCorpusWorkerSync {
         exchange: CampaignCorpusExchange,
         now: Instant,
     ) -> Self {
+        let limits = exchange.limits();
         Self {
             worker_id,
             max_batch: config.corpus_sync.effective_max_batch(),
             plateau: CampaignCorpusPlateau::new(config, now),
             exchange,
+            attempted_sequences: AttemptedCampaignSequences::new(limits.max_seen_sequences()),
         }
     }
 
     fn pull_due_entries(&mut self, now: Instant) -> Vec<CampaignCorpusCandidate> {
-        if self.plateau.should_pull(now) {
-            self.exchange.pull_new_for_worker_limited(self.worker_id, self.max_batch.get())
-        } else {
-            Vec::new()
+        if !self.plateau.should_pull(now) {
+            return Vec::new();
         }
+
+        self.exchange
+            .pull_for_worker_limited(
+                self.worker_id,
+                self.max_batch.get(),
+                self.attempted_sequences.fingerprints(),
+            )
+            .into_iter()
+            .filter(|entry| self.attempted_sequences.insert(entry.fingerprint()))
+            .collect()
     }
 
     fn publish_entry(&self, entry: &CampaignCorpusEntry) -> Result<()> {
@@ -332,12 +382,8 @@ impl CampaignCorpusWorkerSync {
         Ok(())
     }
 
-    fn record_run(&mut self, new_coverage: bool, now: Instant) {
+    const fn record_run(&mut self, new_coverage: bool, now: Instant) {
         self.plateau.record_run(new_coverage, now);
-    }
-
-    fn complete(&self) {
-        self.exchange.complete_worker(self.worker_id);
     }
 }
 
@@ -764,7 +810,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 actual_worker_count,
                 self.config.corpus_sync.effective_max_batch(),
             );
-            CampaignCorpusExchange::with_limits(actual_worker_count, limits)
+            CampaignCorpusExchange::with_limits(limits)
         });
         let mut runner = self.runner.clone();
         let config = self.config.clone();
@@ -1384,9 +1430,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        if let Some(sync) = &corpus_sync {
-            sync.complete();
-        }
         drop(corpus_manager);
         let reported_plan = if campaign_state.is_timed_campaign() {
             InvariantWorkerPlan { runs, ..plan }
@@ -2062,6 +2105,19 @@ mod tests {
         TestRunner::new_with_rng(config, rng)
     }
 
+    fn basic_tx() -> BasicTxDetails {
+        BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: foundry_evm_fuzz::CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::new(),
+                value: None,
+            },
+        }
+    }
+
     #[test]
     fn invariant_worker_seed_preserves_master_seed_and_derives_workers() {
         let seed = U256::from(0x1234);
@@ -2197,6 +2253,45 @@ mod tests {
         plateau.record_run(false, start + Duration::from_secs(1));
         assert!(!plateau.should_pull(start + Duration::from_secs(4)));
         assert!(plateau.should_pull(start + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn campaign_corpus_worker_sync_tracks_attempted_sequences_locally() {
+        let start = Instant::now();
+        let config = InvariantConfig {
+            corpus_sync: foundry_config::InvariantCorpusSyncConfig {
+                plateau_runs: 1,
+                plateau_timeout: 0,
+                max_batch: 1,
+            },
+            ..Default::default()
+        };
+        let exchange = CampaignCorpusExchange::with_limits(
+            CampaignCorpusExchangeLimits::for_campaign(1, NonZeroUsize::new(16).unwrap()),
+        );
+        let mut sync = CampaignCorpusWorkerSync::new(1, &config, exchange.clone(), start);
+
+        sync.record_run(false, start + Duration::from_secs(1));
+        exchange.publish(0, &[basic_tx()]).unwrap();
+        let first = sync.pull_due_entries(start + Duration::from_secs(1));
+        assert_eq!(first.len(), 1);
+
+        let second = sync.pull_due_entries(start + Duration::from_secs(2));
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn attempted_campaign_sequences_are_bounded() {
+        let mut attempted = AttemptedCampaignSequences::new(2);
+        let first = B256::repeat_byte(1);
+        let second = B256::repeat_byte(2);
+        let third = B256::repeat_byte(3);
+
+        assert!(attempted.insert(first));
+        assert!(!attempted.insert(first));
+        assert!(attempted.insert(second));
+        assert!(attempted.insert(third));
+        assert!(attempted.insert(first));
     }
 
     #[test]
