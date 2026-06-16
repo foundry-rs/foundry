@@ -130,13 +130,13 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub legacy: bool,
 
-    /// How to estimate EIP1559 fees: `low`, `market` (default), or `aggressive`.
+    /// How to estimate EIP-1559 fees: `low`, `market` (default), or `aggressive`.
     ///
-    /// `market` is the default (`base_fee * 2` plus a 20th-percentile priority
-    /// fee). `low` bids a smaller tip and max-fee cap (may stall if the base fee
-    /// rises); `aggressive` bids a larger tip for faster inclusion. Note that the
-    /// base fee paid is set by the network, not this flag. Ignored for `--legacy`
-    /// and overridden by `--with-gas-price` / `--priority-gas-price`.
+    /// The preset sets the priority-fee percentile and the `maxFeePerGas` buffer
+    /// (`low`: `base_fee * 1.5`, others: `* 2`); `low`'s tighter buffer is more
+    /// likely to stall if the base fee rises. `--with-gas-price` and
+    /// `--priority-gas-price` override only `maxFeePerGas` and
+    /// `maxPriorityFeePerGas` respectively. Ignored for `--legacy`.
     #[arg(long, value_name = "PRESET")]
     pub eip1559_fee_estimate: Option<Eip1559FeeEstimatePreset>,
 

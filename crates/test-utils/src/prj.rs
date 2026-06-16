@@ -857,7 +857,7 @@ fn test_redactions() -> snapbox::Redactions {
             ("[ESTIMATED_BASE_FEE_PER_GAS]", r"Estimated base fee per gas:\s*(\d+(\.\d+)?)\s*gwei"),
             (
                 "[ESTIMATED_PRIORITY_FEE_PER_GAS]",
-                r"Estimated priority fee per gas:\s*(\d+(\.\d+)?)\s*gwei",
+                r"Estimated max priority fee per gas:\s*(\d+(\.\d+)?)\s*gwei",
             ),
             ("[ESTIMATED_TOTAL_GAS_USED]", r"Estimated total gas used for script: \d+"),
             (

@@ -96,6 +96,47 @@ where
     Ok(ResolvedEip1559Fees { max_fee_per_gas, max_priority_fee_per_gas, base_fee_per_gas })
 }
 
+/// Applies, in order, the optional `browser_suggested_tip`, `with_gas_price` and
+/// `priority_gas_price` overrides to estimated EIP-1559 fees.
+///
+/// `with_gas_price` overrides only `maxFeePerGas` and `priority_gas_price` only
+/// `maxPriorityFeePerGas`. Errors if the result has `maxPriorityFeePerGas` above
+/// `maxFeePerGas`.
+pub fn resolve_broadcast_eip1559_fees(
+    mut fees: ResolvedEip1559Fees,
+    with_gas_price: Option<u128>,
+    priority_gas_price: Option<u128>,
+    browser_suggested_tip: Option<u128>,
+) -> Result<ResolvedEip1559Fees> {
+    // Raise both caps by the same delta so `maxFeePerGas` keeps its buffer above
+    // the higher tip.
+    if let Some(suggested_tip) = browser_suggested_tip
+        && suggested_tip > fees.max_priority_fee_per_gas
+    {
+        let delta = suggested_tip - fees.max_priority_fee_per_gas;
+        fees.max_fee_per_gas = fees.max_fee_per_gas.saturating_add(delta);
+        fees.max_priority_fee_per_gas = suggested_tip;
+    }
+
+    if let Some(max_fee_per_gas) = with_gas_price {
+        fees.max_fee_per_gas = max_fee_per_gas;
+    }
+
+    if let Some(max_priority_fee_per_gas) = priority_gas_price {
+        fees.max_priority_fee_per_gas = max_priority_fee_per_gas;
+    }
+
+    if fees.max_priority_fee_per_gas > fees.max_fee_per_gas {
+        eyre::bail!(
+            "maxPriorityFeePerGas ({}) cannot be higher than maxFeePerGas ({})",
+            fees.max_priority_fee_per_gas,
+            fees.max_fee_per_gas,
+        );
+    }
+
+    Ok(fees)
+}
+
 /// Estimates the priority fee as the median of the per-block sampled rewards,
 /// ignoring zero rewards and never returning less than [`MIN_PRIORITY_FEE`].
 fn estimate_priority_fee(rewards: &[Vec<u128>]) -> u128 {
@@ -127,6 +168,44 @@ mod tests {
         // Median of non-zero rewards.
         assert_eq!(estimate_priority_fee(&[vec![1], vec![3], vec![5]]), 3);
         assert_eq!(estimate_priority_fee(&[vec![2], vec![4]]), 3);
+    }
+
+    fn fees(max: u128, priority: u128) -> ResolvedEip1559Fees {
+        ResolvedEip1559Fees {
+            max_fee_per_gas: max,
+            max_priority_fee_per_gas: priority,
+            base_fee_per_gas: 100,
+        }
+    }
+
+    #[test]
+    fn resolve_overrides_each_field_independently() {
+        // No overrides: passthrough.
+        let r = resolve_broadcast_eip1559_fees(fees(300, 50), None, None, None).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (300, 50));
+
+        // `--with-gas-price` overrides only max, `--priority-gas-price` only priority.
+        let r = resolve_broadcast_eip1559_fees(fees(300, 50), Some(500), None, None).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (500, 50));
+        let r = resolve_broadcast_eip1559_fees(fees(300, 50), None, Some(80), None).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (300, 80));
+
+        // Invalid when the resulting priority exceeds max.
+        let err = resolve_broadcast_eip1559_fees(fees(300, 50), None, Some(400), None).unwrap_err();
+        assert!(err.to_string().contains("cannot be higher than maxFeePerGas"));
+    }
+
+    #[test]
+    fn resolve_browser_tip_raises_both_caps_by_delta() {
+        // Higher tip raises priority to the tip and max by the same delta.
+        let r = resolve_broadcast_eip1559_fees(fees(300, 50), None, None, Some(120)).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (370, 120)); // 300 + (120 - 50)
+
+        // Lower tip is ignored; max saturates instead of overflowing.
+        let r = resolve_broadcast_eip1559_fees(fees(300, 50), None, None, Some(10)).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (300, 50));
+        let r = resolve_broadcast_eip1559_fees(fees(u128::MAX, 50), None, None, Some(120)).unwrap();
+        assert_eq!((r.max_fee_per_gas, r.max_priority_fee_per_gas), (u128::MAX, 120));
     }
 
     #[test]
