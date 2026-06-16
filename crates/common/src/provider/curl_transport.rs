@@ -217,7 +217,7 @@ mod tests {
         let transport = CurlTransport::new("https://eth.example.com".parse().unwrap())
             .with_jwt(Some(jwt_secret.to_string()));
         let req = make_test_request();
-        let cmd = transport.generate_curl_command(&req).unwrap(); 
+        let cmd = transport.generate_curl_command(&req).unwrap();
 
         let jwt = cmd
             .split("Authorization: Bearer ")
