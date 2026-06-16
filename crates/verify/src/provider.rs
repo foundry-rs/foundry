@@ -215,10 +215,6 @@ impl VerificationProviderType {
 
         // 1. Explicit `--verifier sourcify` always wins over ETHERSCAN_API_KEY.
         if is_explicit && self.is_sourcify() {
-            sh_status!(
-                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
-            or use the --verifier flag to verify on another provider."
-            )?;
             return Ok(Box::<SourcifyVerificationProvider>::default());
         }
 
@@ -276,10 +272,6 @@ impl VerificationProviderType {
 
         // 5. No key, no explicit verifier: default to Sourcify.
         if self.is_sourcify() {
-            sh_status!(
-                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
-            or use the --verifier flag to verify on another provider."
-            )?;
             return Ok(Box::<SourcifyVerificationProvider>::default());
         }
 
