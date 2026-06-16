@@ -41,7 +41,7 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Bytes, I256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, I256, keccak256, map::B256HashSet};
 use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, sh_warn};
 use foundry_config::FuzzCorpusConfig;
@@ -62,7 +62,7 @@ use proptest::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -83,6 +83,8 @@ const FAVORABILITY_THRESHOLD: f64 = 0.3;
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
+const EXCHANGE_RETENTION_ROUNDS: usize = 4;
+const EXCHANGE_SEEN_DEDUPE_FACTOR: usize = 4;
 
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
@@ -200,8 +202,8 @@ impl CampaignCorpusEntry {
 
 /// Per-worker position in a [`CampaignCorpusExchange`].
 ///
-/// The cursor lives with a worker-local corpus manager. The exchange remains append-only, while
-/// each worker independently advances through entries published since its last pull.
+/// This is an absolute entry index, not an offset into the exchange's retained buffer. The
+/// distinction lets the exchange prune old entries without invalidating worker-local cursors.
 #[derive(Default)]
 pub(crate) struct CampaignCorpusCursor {
     next_entry: usize,
@@ -223,23 +225,160 @@ impl CampaignCorpusCandidate {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CampaignCorpusExchangeLimits {
+    max_entries: usize,
+    max_seen_sequences: usize,
+}
+
+impl CampaignCorpusExchangeLimits {
+    pub(crate) fn for_campaign(worker_count: usize, max_batch: usize) -> Self {
+        let worker_count = worker_count.max(1);
+        let max_batch = max_batch.max(1);
+        let max_entries =
+            max_batch.saturating_mul(worker_count).saturating_mul(EXCHANGE_RETENTION_ROUNDS);
+        let max_seen_sequences = max_entries.saturating_mul(EXCHANGE_SEEN_DEDUPE_FACTOR);
+        Self { max_entries, max_seen_sequences }
+    }
+
+    #[cfg(test)]
+    fn new(max_entries: usize, max_seen_sequences: usize) -> Self {
+        Self { max_entries, max_seen_sequences }
+    }
+}
+
+impl Default for CampaignCorpusExchangeLimits {
+    fn default() -> Self {
+        Self::for_campaign(1, 64)
+    }
+}
+
 struct CampaignCorpusExchangeInner {
-    entries: Vec<CampaignCorpusCandidate>,
-    seen_sequences: HashSet<B256>,
+    base_entry: usize,
+    entries: VecDeque<CampaignCorpusCandidate>,
+    seen_sequences: B256HashSet,
+    seen_sequence_order: VecDeque<B256>,
+    worker_states: Vec<CampaignCorpusWorkerState>,
+    limits: CampaignCorpusExchangeLimits,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CampaignCorpusWorkerState {
+    next_entry: usize,
+    completed: bool,
+}
+
+impl CampaignCorpusWorkerState {
+    fn active(next_entry: usize) -> Self {
+        Self { next_entry, completed: false }
+    }
+}
+
+impl CampaignCorpusExchangeInner {
+    fn new(worker_count: usize, limits: CampaignCorpusExchangeLimits) -> Self {
+        Self {
+            base_entry: 0,
+            entries: VecDeque::with_capacity(limits.max_entries),
+            seen_sequences: B256HashSet::with_capacity_and_hasher(
+                limits.max_seen_sequences,
+                Default::default(),
+            ),
+            seen_sequence_order: VecDeque::with_capacity(limits.max_seen_sequences),
+            worker_states: vec![CampaignCorpusWorkerState::active(0); worker_count],
+            limits,
+        }
+    }
+
+    fn tail_entry(&self) -> usize {
+        self.base_entry + self.entries.len()
+    }
+
+    fn register_worker(&mut self, worker_id: usize) {
+        if worker_id >= self.worker_states.len() {
+            self.worker_states
+                .resize(worker_id + 1, CampaignCorpusWorkerState::active(self.base_entry));
+        }
+    }
+
+    fn record_worker_next_entry(&mut self, worker_id: usize, next_entry: usize) {
+        self.register_worker(worker_id);
+        self.worker_states[worker_id] = CampaignCorpusWorkerState::active(
+            next_entry.max(self.base_entry).min(self.tail_entry()),
+        );
+    }
+
+    fn complete_worker(&mut self, worker_id: usize) {
+        self.register_worker(worker_id);
+        self.worker_states[worker_id] =
+            CampaignCorpusWorkerState { next_entry: self.tail_entry(), completed: true };
+    }
+
+    fn prune(&mut self) {
+        self.prune_acknowledged_entries();
+        self.enforce_entry_limit();
+        self.enforce_seen_limit();
+    }
+
+    fn prune_acknowledged_entries(&mut self) {
+        let tail = self.tail_entry();
+        let min_ack = self
+            .worker_states
+            .iter()
+            .filter(|state| !state.completed)
+            .map(|state| state.next_entry)
+            .min()
+            .unwrap_or(tail);
+        let to_remove = min_ack.saturating_sub(self.base_entry).min(self.entries.len());
+        for _ in 0..to_remove {
+            self.entries.pop_front();
+            self.base_entry += 1;
+        }
+    }
+
+    fn enforce_entry_limit(&mut self) {
+        while self.entries.len() > self.limits.max_entries {
+            self.entries.pop_front();
+            self.base_entry += 1;
+        }
+
+        for state in &mut self.worker_states {
+            state.next_entry = state.next_entry.max(self.base_entry);
+        }
+    }
+
+    fn enforce_seen_limit(&mut self) {
+        while self.seen_sequence_order.len() > self.limits.max_seen_sequences {
+            if let Some(fingerprint) = self.seen_sequence_order.pop_front() {
+                self.seen_sequences.remove(&fingerprint);
+            }
+        }
+    }
+}
+
+impl Default for CampaignCorpusExchangeInner {
+    fn default() -> Self {
+        Self::new(1, CampaignCorpusExchangeLimits::default())
+    }
 }
 
 /// In-memory exchange for campaign-local corpus candidates.
 ///
 /// This deliberately shares only immutable transaction sequences. Workers keep their own
 /// [`WorkerCorpus`] and coverage maps, replay pulled candidates locally, and decide whether a
-/// sequence is useful for their own corpus.
+/// sequence is useful for their own corpus. Retention is bounded: acknowledged entries are pruned
+/// first, and a hard cap drops the oldest retained entries if a slow worker stops pulling.
 #[derive(Clone, Default)]
 pub(crate) struct CampaignCorpusExchange {
     inner: Arc<RwLock<CampaignCorpusExchangeInner>>,
 }
 
 impl CampaignCorpusExchange {
+    pub(crate) fn with_limits(worker_count: usize, limits: CampaignCorpusExchangeLimits) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(CampaignCorpusExchangeInner::new(worker_count, limits))),
+        }
+    }
+
     /// Publishes a new candidate sequence.
     ///
     /// Returns `true` when the sequence was accepted into the exchange, and `false` when it was
@@ -258,7 +397,9 @@ impl CampaignCorpusExchange {
         if !inner.seen_sequences.insert(fingerprint) {
             return Ok(false);
         }
-        inner.entries.push(CampaignCorpusCandidate::new(producer_worker, tx_seq));
+        inner.seen_sequence_order.push_back(fingerprint);
+        inner.entries.push_back(CampaignCorpusCandidate::new(producer_worker, tx_seq));
+        inner.prune();
         Ok(true)
     }
 
@@ -285,11 +426,15 @@ impl CampaignCorpusExchange {
             return Vec::new();
         }
 
-        let inner = self.inner.read();
-        let start = cursor.next_entry.min(inner.entries.len());
-        let mut entries = Vec::new();
-        let mut next_entry = inner.entries.len();
-        for (offset, entry) in inner.entries[start..].iter().enumerate() {
+        let mut inner = self.inner.write();
+        inner.register_worker(worker_id);
+
+        let start = cursor.next_entry.max(inner.base_entry).min(inner.tail_entry());
+        let start_offset = start - inner.base_entry;
+        let remaining = inner.entries.len().saturating_sub(start_offset);
+        let mut entries = Vec::with_capacity(limit.min(remaining));
+        let mut next_entry = inner.tail_entry();
+        for (offset, entry) in inner.entries.iter().skip(start_offset).enumerate() {
             if entry.producer_worker == worker_id {
                 continue;
             }
@@ -301,7 +446,30 @@ impl CampaignCorpusExchange {
             }
         }
         cursor.next_entry = next_entry;
+        inner.record_worker_next_entry(worker_id, next_entry);
+        inner.prune();
         entries
+    }
+
+    pub(crate) fn complete_worker(&self, worker_id: usize) {
+        let mut inner = self.inner.write();
+        inner.complete_worker(worker_id);
+        inner.prune();
+    }
+
+    #[cfg(test)]
+    fn retained_entry_count(&self) -> usize {
+        self.inner.read().entries.len()
+    }
+
+    #[cfg(test)]
+    fn seen_sequence_count(&self) -> usize {
+        self.inner.read().seen_sequences.len()
+    }
+
+    #[cfg(test)]
+    fn base_entry_index(&self) -> usize {
+        self.inner.read().base_entry
     }
 }
 
@@ -1908,7 +2076,8 @@ mod tests {
 
     #[test]
     fn campaign_corpus_exchange_publishes_entries_to_other_workers_only() {
-        let exchange = CampaignCorpusExchange::default();
+        let exchange =
+            CampaignCorpusExchange::with_limits(3, CampaignCorpusExchangeLimits::new(16, 16));
         let mut worker0_cursor = CampaignCorpusCursor::default();
         let mut worker1_cursor = CampaignCorpusCursor::default();
         let mut worker2_cursor = CampaignCorpusCursor::default();
@@ -1929,7 +2098,8 @@ mod tests {
 
     #[test]
     fn campaign_corpus_exchange_dedupes_identical_sequences() {
-        let exchange = CampaignCorpusExchange::default();
+        let exchange =
+            CampaignCorpusExchange::with_limits(3, CampaignCorpusExchangeLimits::new(16, 16));
         let sequence = vec![basic_tx_with_calldata(1)];
 
         assert!(exchange.publish(0, &sequence).unwrap());
@@ -1943,7 +2113,8 @@ mod tests {
 
     #[test]
     fn campaign_corpus_exchange_respects_pull_limit() {
-        let exchange = CampaignCorpusExchange::default();
+        let exchange =
+            CampaignCorpusExchange::with_limits(2, CampaignCorpusExchangeLimits::new(16, 16));
         let mut cursor = CampaignCorpusCursor::default();
 
         for calldata in 1..=3 {
@@ -1958,6 +2129,75 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![3]));
         assert!(exchange.pull_new_for_worker_limited(1, &mut cursor, 2).is_empty());
+    }
+
+    #[test]
+    fn campaign_corpus_exchange_prunes_entries_seen_by_all_workers() {
+        let exchange =
+            CampaignCorpusExchange::with_limits(2, CampaignCorpusExchangeLimits::new(16, 16));
+        let mut worker0_cursor = CampaignCorpusCursor::default();
+        let mut worker1_cursor = CampaignCorpusCursor::default();
+
+        exchange.publish(0, &[basic_tx_with_calldata(1)]).unwrap();
+        exchange.publish(1, &[basic_tx_with_calldata(2)]).unwrap();
+
+        assert_eq!(exchange.retained_entry_count(), 2);
+        assert_eq!(exchange.pull_new_for_worker(0, &mut worker0_cursor).len(), 1);
+        assert_eq!(exchange.retained_entry_count(), 2);
+
+        assert_eq!(exchange.pull_new_for_worker(1, &mut worker1_cursor).len(), 1);
+        assert_eq!(exchange.retained_entry_count(), 0);
+        assert_eq!(exchange.base_entry_index(), 2);
+    }
+
+    #[test]
+    fn campaign_corpus_exchange_hard_cap_drops_old_entries_for_slow_workers() {
+        let exchange =
+            CampaignCorpusExchange::with_limits(2, CampaignCorpusExchangeLimits::new(2, 16));
+        let mut worker1_cursor = CampaignCorpusCursor::default();
+
+        for calldata in 1..=4 {
+            exchange.publish(0, &[basic_tx_with_calldata(calldata)]).unwrap();
+        }
+
+        assert_eq!(exchange.retained_entry_count(), 2);
+        assert_eq!(exchange.base_entry_index(), 2);
+
+        let entries = exchange.pull_new_for_worker_limited(1, &mut worker1_cursor, 4);
+        let calldatas = entries
+            .iter()
+            .map(|entry| entry.tx_seq()[0].call_details.calldata.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(calldatas, vec![Bytes::from(vec![3]), Bytes::from(vec![4])]);
+    }
+
+    #[test]
+    fn campaign_corpus_exchange_completed_workers_do_not_pin_entries() {
+        let exchange =
+            CampaignCorpusExchange::with_limits(2, CampaignCorpusExchangeLimits::new(16, 16));
+        let mut worker1_cursor = CampaignCorpusCursor::default();
+
+        exchange.complete_worker(0);
+        exchange.publish(1, &[basic_tx_with_calldata(1)]).unwrap();
+
+        assert_eq!(exchange.retained_entry_count(), 1);
+        assert!(exchange.pull_new_for_worker(1, &mut worker1_cursor).is_empty());
+        assert_eq!(exchange.retained_entry_count(), 0);
+        assert_eq!(exchange.base_entry_index(), 1);
+    }
+
+    #[test]
+    fn campaign_corpus_exchange_bounds_dedupe_window() {
+        let exchange =
+            CampaignCorpusExchange::with_limits(2, CampaignCorpusExchangeLimits::new(16, 2));
+        let sequence = vec![basic_tx_with_calldata(1)];
+
+        assert!(exchange.publish(0, &sequence).unwrap());
+        assert!(exchange.publish(0, &[basic_tx_with_calldata(2)]).unwrap());
+        assert!(exchange.publish(0, &[basic_tx_with_calldata(3)]).unwrap());
+
+        assert_eq!(exchange.seen_sequence_count(), 2);
+        assert!(exchange.publish(1, &sequence).unwrap());
     }
 
     #[test]

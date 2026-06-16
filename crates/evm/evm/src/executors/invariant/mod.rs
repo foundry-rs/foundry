@@ -2,8 +2,8 @@ use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
         corpus::{
-            CampaignCorpusCursor, CampaignCorpusExchange, DynamicTargetCtx, ReplayTarget,
-            WorkerCorpus, WorkerCorpusSeed,
+            CampaignCorpusCursor, CampaignCorpusExchange, CampaignCorpusExchangeLimits,
+            DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
         },
     },
     inspectors::Fuzzer,
@@ -714,8 +714,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(self.dynamic_target_ctx()),
         )?;
         let corpus_policy = invariant_corpus_policy(&self.config, actual_worker_count);
-        let corpus_exchange =
-            corpus_policy.shares_campaign_local().then(CampaignCorpusExchange::default);
+        let corpus_exchange = corpus_policy.shares_campaign_local().then(|| {
+            let limits = CampaignCorpusExchangeLimits::for_campaign(
+                actual_worker_count,
+                self.config.corpus_sync.max_batch,
+            );
+            CampaignCorpusExchange::with_limits(actual_worker_count, limits)
+        });
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -1338,6 +1343,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
+        if let Some(exchange) = &corpus_exchange {
+            exchange.complete_worker(plan.worker_id as usize);
+        }
         drop(corpus_manager);
         let reported_plan = if campaign_state.is_timed_campaign() {
             InvariantWorkerPlan { runs, ..plan }
