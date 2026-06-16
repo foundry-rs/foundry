@@ -249,26 +249,12 @@ fn invariant_worker_runner(
 }
 
 #[derive(Clone, Copy)]
-enum InvariantCorpusPersistence {
-    /// Preserve the legacy single-worker behavior: each interesting input is written immediately.
-    Live,
-    /// Return interesting inputs to the campaign coordinator for delayed merged writes.
-    Deferred,
-}
-
-#[derive(Clone, Copy)]
 struct InvariantCorpusPolicy {
-    persistence: InvariantCorpusPersistence,
+    finalizes_campaign_outputs: bool,
     sync: CampaignCorpusSyncPolicy,
 }
 
 impl InvariantCorpusPolicy {
-    // Deferred persistence is still what makes a worker return campaign outputs to the coordinator;
-    // campaign-local sharing is handled independently by the exchange policy.
-    const fn finalizes_campaign_outputs(self) -> bool {
-        matches!(self.persistence, InvariantCorpusPersistence::Deferred)
-    }
-
     const fn shares_campaign_local(self) -> bool {
         !matches!(self.sync, CampaignCorpusSyncPolicy::Off)
     }
@@ -331,10 +317,6 @@ impl CampaignCorpusSyncState {
         }
     }
 
-    const fn max_batch(&self) -> usize {
-        self.policy.max_batch()
-    }
-
     fn record_run(&mut self, new_coverage: bool, now: Instant) {
         if new_coverage {
             self.runs_since_new_coverage = 0;
@@ -349,13 +331,10 @@ const fn invariant_corpus_policy(
     config: &InvariantConfig,
     worker_count: usize,
 ) -> InvariantCorpusPolicy {
-    let persistence = if worker_count > 1 {
-        InvariantCorpusPersistence::Deferred
-    } else {
-        InvariantCorpusPersistence::Live
-    };
-    let sync = CampaignCorpusSyncPolicy::from_config(config, worker_count);
-    InvariantCorpusPolicy { persistence, sync }
+    InvariantCorpusPolicy {
+        finalizes_campaign_outputs: worker_count > 1,
+        sync: CampaignCorpusSyncPolicy::from_config(config, worker_count),
+    }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -776,7 +755,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
-        let worker_outputs = if corpus_policy.finalizes_campaign_outputs() {
+        let worker_outputs = if corpus_policy.finalizes_campaign_outputs {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
@@ -853,7 +832,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         } else {
             aggregator.finish_with_corpus_entries()?
         };
-        if corpus_policy.finalizes_campaign_outputs() {
+        if corpus_policy.finalizes_campaign_outputs {
             let dynamic_target_ctx = self.dynamic_target_ctx();
             corpus_seed.persist_filtered_campaign_outputs(
                 &self.config.corpus,
@@ -934,7 +913,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let entries = exchange.pull_new_for_worker_limited(
                     plan.worker_id as usize,
                     &mut corpus_cursor,
-                    corpus_sync_state.max_batch(),
+                    corpus_sync_state.policy.max_batch(),
                 );
                 if !entries.is_empty() {
                     let imported = corpus_manager.import_campaign_entries(
@@ -1233,7 +1212,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
             });
-            if corpus_policy.finalizes_campaign_outputs() {
+            if corpus_policy.finalizes_campaign_outputs {
                 if let Some(input) = corpus_manager.process_inputs_for_campaign(
                     &current_run.inputs,
                     &current_run.cmp_seq,
@@ -1322,7 +1301,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("⚠ {handler_bugs} handler bug(s)"));
                     }
-                    let msg = if corpus_policy.finalizes_campaign_outputs() {
+                    let msg = if corpus_policy.finalizes_campaign_outputs {
                         format!("[w{}] {msg}", plan.worker_id)
                     } else {
                         msg
@@ -2110,18 +2089,18 @@ mod tests {
         };
 
         let parallel = invariant_corpus_policy(&config, 2);
-        assert!(parallel.finalizes_campaign_outputs());
+        assert!(parallel.finalizes_campaign_outputs);
         assert!(parallel.shares_campaign_local());
         assert_eq!(parallel.sync, CampaignCorpusSyncPolicy::Eager);
 
         let single = invariant_corpus_policy(&config, 1);
-        assert!(!single.finalizes_campaign_outputs());
+        assert!(!single.finalizes_campaign_outputs);
         assert!(!single.shares_campaign_local());
 
         config.corpus.corpus_dir = None;
         config.corpus.show_edge_coverage = true;
         let metrics_only = invariant_corpus_policy(&config, 2);
-        assert!(metrics_only.finalizes_campaign_outputs());
+        assert!(metrics_only.finalizes_campaign_outputs);
         assert!(!metrics_only.shares_campaign_local());
     }
 
@@ -2169,7 +2148,7 @@ mod tests {
         assert!(!state.should_pull(start + Duration::from_secs(1)));
         state.record_run(false, start + Duration::from_secs(2));
         assert!(state.should_pull(start + Duration::from_secs(2)));
-        assert_eq!(state.max_batch(), 3);
+        assert_eq!(state.policy.max_batch(), 3);
 
         state.record_run(true, start + Duration::from_secs(3));
         assert!(!state.should_pull(start + Duration::from_secs(3)));

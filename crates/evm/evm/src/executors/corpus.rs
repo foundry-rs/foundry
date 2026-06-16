@@ -209,12 +209,13 @@ pub(crate) struct CampaignCorpusCursor {
 
 #[derive(Clone)]
 pub(crate) struct CampaignCorpusCandidate {
+    producer_worker: usize,
     tx_seq: Arc<[BasicTxDetails]>,
 }
 
 impl CampaignCorpusCandidate {
-    fn new(tx_seq: &[BasicTxDetails]) -> Self {
-        Self { tx_seq: Arc::from(tx_seq) }
+    fn new(producer_worker: usize, tx_seq: &[BasicTxDetails]) -> Self {
+        Self { producer_worker, tx_seq: Arc::from(tx_seq) }
     }
 
     pub(crate) fn tx_seq(&self) -> &[BasicTxDetails] {
@@ -222,22 +223,10 @@ impl CampaignCorpusCandidate {
     }
 }
 
-struct CampaignCorpusBroadcast {
-    producer_worker: usize,
-    candidate: CampaignCorpusCandidate,
-}
-
 #[derive(Default)]
 struct CampaignCorpusExchangeInner {
-    entries: Vec<CampaignCorpusBroadcast>,
+    entries: Vec<CampaignCorpusCandidate>,
     seen_sequences: HashSet<B256>,
-}
-
-#[derive(Default)]
-struct CampaignCorpusExchangeMetrics {
-    published: AtomicUsize,
-    deduped: AtomicUsize,
-    pulled: AtomicUsize,
 }
 
 /// In-memory exchange for campaign-local corpus candidates.
@@ -248,7 +237,6 @@ struct CampaignCorpusExchangeMetrics {
 #[derive(Clone, Default)]
 pub(crate) struct CampaignCorpusExchange {
     inner: Arc<RwLock<CampaignCorpusExchangeInner>>,
-    metrics: Arc<CampaignCorpusExchangeMetrics>,
 }
 
 impl CampaignCorpusExchange {
@@ -268,14 +256,9 @@ impl CampaignCorpusExchange {
         let fingerprint = corpus_sequence_fingerprint(tx_seq)?;
         let mut inner = self.inner.write();
         if !inner.seen_sequences.insert(fingerprint) {
-            self.metrics.deduped.fetch_add(1, Ordering::Relaxed);
             return Ok(false);
         }
-        inner.entries.push(CampaignCorpusBroadcast {
-            producer_worker,
-            candidate: CampaignCorpusCandidate::new(tx_seq),
-        });
-        self.metrics.published.fetch_add(1, Ordering::Relaxed);
+        inner.entries.push(CampaignCorpusCandidate::new(producer_worker, tx_seq));
         Ok(true)
     }
 
@@ -311,24 +294,14 @@ impl CampaignCorpusExchange {
                 continue;
             }
 
-            entries.push(entry.candidate.clone());
+            entries.push(entry.clone());
             if entries.len() == limit {
                 next_entry = start + offset + 1;
                 break;
             }
         }
         cursor.next_entry = next_entry;
-        self.metrics.pulled.fetch_add(entries.len(), Ordering::Relaxed);
         entries
-    }
-
-    #[cfg(test)]
-    fn metrics(&self) -> (usize, usize, usize) {
-        (
-            self.metrics.published.load(Ordering::Relaxed),
-            self.metrics.deduped.load(Ordering::Relaxed),
-            self.metrics.pulled.load(Ordering::Relaxed),
-        )
     }
 }
 
@@ -1966,7 +1939,6 @@ mod tests {
         let entries = exchange.pull_new_for_worker(2, &mut cursor);
         assert_eq!(entries.len(), 1);
         assert!(exchange.pull_new_for_worker(2, &mut cursor).is_empty());
-        assert_eq!(exchange.metrics(), (1, 1, 1));
     }
 
     #[test]
@@ -1986,7 +1958,6 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![3]));
         assert!(exchange.pull_new_for_worker_limited(1, &mut cursor, 2).is_empty());
-        assert_eq!(exchange.metrics(), (3, 0, 3));
     }
 
     #[test]
