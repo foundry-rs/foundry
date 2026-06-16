@@ -37,7 +37,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantCorpusSyncMode, InvariantWorkers, figment,
+    Config, InlineConfig, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -204,17 +204,13 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
     pub invariant_workers: Option<InvariantWorkers>,
 
-    /// Campaign-local corpus synchronization mode for parallel invariant workers.
-    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_MODE", value_name = "MODE")]
-    pub invariant_corpus_sync_mode: Option<InvariantCorpusSyncMode>,
+    /// Consecutive worker-local runs without new coverage before corpus sync.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_PLATEAU_RUNS", value_name = "RUNS")]
+    pub invariant_corpus_sync_plateau_runs: Option<u32>,
 
-    /// Consecutive worker-local runs without new coverage before on-stall corpus sync.
-    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_STALL_RUNS", value_name = "RUNS")]
-    pub invariant_corpus_sync_stall_runs: Option<u32>,
-
-    /// Seconds without new coverage before on-stall corpus sync.
-    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_STALL_TIMEOUT", value_name = "SECONDS")]
-    pub invariant_corpus_sync_stall_timeout: Option<u64>,
+    /// Seconds without new coverage before corpus sync.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_PLATEAU_TIMEOUT", value_name = "SECONDS")]
+    pub invariant_corpus_sync_plateau_timeout: Option<u64>,
 
     /// Maximum sibling corpus candidates replayed in one campaign-local sync.
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_MAX_BATCH", value_name = "COUNT")]
@@ -1936,14 +1932,12 @@ impl Provider for TestArgs {
             invariant_dict.insert("workers".to_string(), Value::serialize(invariant_workers)?);
         }
         let mut invariant_corpus_sync_dict = Dict::default();
-        if let Some(mode) = self.invariant_corpus_sync_mode {
-            invariant_corpus_sync_dict.insert("mode".to_string(), Value::serialize(mode)?);
+        if let Some(plateau_runs) = self.invariant_corpus_sync_plateau_runs {
+            invariant_corpus_sync_dict.insert("plateau_runs".to_string(), plateau_runs.into());
         }
-        if let Some(stall_runs) = self.invariant_corpus_sync_stall_runs {
-            invariant_corpus_sync_dict.insert("stall_runs".to_string(), stall_runs.into());
-        }
-        if let Some(stall_timeout) = self.invariant_corpus_sync_stall_timeout {
-            invariant_corpus_sync_dict.insert("stall_timeout".to_string(), stall_timeout.into());
+        if let Some(plateau_timeout) = self.invariant_corpus_sync_plateau_timeout {
+            invariant_corpus_sync_dict
+                .insert("plateau_timeout".to_string(), plateau_timeout.into());
         }
         if let Some(max_batch) = self.invariant_corpus_sync_max_batch {
             invariant_corpus_sync_dict.insert("max_batch".to_string(), max_batch.into());
@@ -2414,25 +2408,18 @@ mod tests {
     fn invariant_corpus_sync_args_merge_into_figment() {
         let args = TestArgs::parse_from([
             "foundry-cli",
-            "--invariant-corpus-sync-mode",
-            "on-stall",
-            "--invariant-corpus-sync-stall-runs",
+            "--invariant-corpus-sync-plateau-runs",
             "9",
-            "--invariant-corpus-sync-stall-timeout",
+            "--invariant-corpus-sync-plateau-timeout",
             "12",
             "--invariant-corpus-sync-max-batch",
             "21",
         ]);
-        assert_eq!(args.invariant_corpus_sync_mode, Some(InvariantCorpusSyncMode::OnStall));
 
         let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<u32>("invariant.corpus_sync.plateau_runs").unwrap(), 9);
         assert_eq!(
-            figment.extract_inner::<InvariantCorpusSyncMode>("invariant.corpus_sync.mode").unwrap(),
-            InvariantCorpusSyncMode::OnStall
-        );
-        assert_eq!(figment.extract_inner::<u32>("invariant.corpus_sync.stall_runs").unwrap(), 9);
-        assert_eq!(
-            figment.extract_inner::<u64>("invariant.corpus_sync.stall_timeout").unwrap(),
+            figment.extract_inner::<u64>("invariant.corpus_sync.plateau_timeout").unwrap(),
             12
         );
         assert_eq!(figment.extract_inner::<usize>("invariant.corpus_sync.max_batch").unwrap(), 21);

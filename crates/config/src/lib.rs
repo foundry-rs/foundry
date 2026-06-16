@@ -111,9 +111,7 @@ mod fuzz;
 pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::{
-    InvariantConfig, InvariantCorpusSyncConfig, InvariantCorpusSyncMode, InvariantWorkers,
-};
+pub use invariant::{InvariantConfig, InvariantCorpusSyncConfig, InvariantWorkers};
 
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -5015,7 +5013,7 @@ mod tests {
                 runs = 512
                 depth = 10
                 workers = 4
-                corpus_sync = { mode = 'on-stall', stall_runs = 9, stall_timeout = 12, max_batch = 21 }
+                corpus_sync = { plateau_runs = 9, plateau_timeout = 12, max_batch = 21 }
             ",
             )?;
 
@@ -5027,9 +5025,8 @@ mod tests {
                     depth: 10,
                     workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
                     corpus_sync: InvariantCorpusSyncConfig {
-                        mode: InvariantCorpusSyncMode::OnStall,
-                        stall_runs: 9,
-                        stall_timeout: 12,
+                        plateau_runs: 9,
+                        plateau_timeout: 12,
                         max_batch: 21,
                     },
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),

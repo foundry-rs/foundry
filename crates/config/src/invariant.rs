@@ -97,55 +97,20 @@ fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
         .ok_or_else(|| "invariant workers must be greater than 0".to_string())
 }
 
-/// Campaign-local corpus synchronization mode for parallel invariant workers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum InvariantCorpusSyncMode {
-    /// Keep the existing behavior: workers attempt to import sibling corpus candidates each run.
-    #[default]
-    Eager,
-    /// Import sibling corpus candidates only after a worker stops finding new coverage.
-    OnStall,
-    /// Disable campaign-local corpus sharing while preserving final merged persistence.
-    Off,
-}
-
-impl FromStr for InvariantCorpusSyncMode {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "eager" => Ok(Self::Eager),
-            "on-stall" | "on_stall" | "onstall" => Ok(Self::OnStall),
-            "off" | "none" | "disabled" => Ok(Self::Off),
-            value => Err(format!(
-                "invalid invariant corpus sync mode `{value}`; expected `eager`, `on-stall`, or `off`"
-            )),
-        }
-    }
-}
-
-/// Controls campaign-local corpus exchange between parallel invariant workers.
+/// Controls plateau-triggered campaign-local corpus exchange between parallel invariant workers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantCorpusSyncConfig {
-    /// Synchronization trigger used by parallel coverage-guided invariant workers.
-    pub mode: InvariantCorpusSyncMode,
-    /// Number of consecutive worker-local runs without new coverage before `on-stall` pulls.
-    pub stall_runs: u32,
-    /// Seconds without new coverage before `on-stall` pulls.
-    pub stall_timeout: u64,
+    /// Number of consecutive worker-local runs without new coverage before pulling siblings.
+    pub plateau_runs: u32,
+    /// Seconds without new coverage before pulling siblings.
+    pub plateau_timeout: u64,
     /// Maximum number of sibling candidates replayed by a worker in one sync attempt.
     pub max_batch: usize,
 }
 
 impl Default for InvariantCorpusSyncConfig {
     fn default() -> Self {
-        Self {
-            mode: InvariantCorpusSyncMode::default(),
-            stall_runs: 128,
-            stall_timeout: 30,
-            max_batch: 64,
-        }
+        Self { plateau_runs: 128, plateau_timeout: 30, max_batch: 64 }
     }
 }
 
@@ -271,21 +236,5 @@ mod tests {
     fn invariant_workers_reject_zero() {
         let err = serde_json::from_str::<InvariantWorkers>(r#"0"#).unwrap_err();
         assert!(err.to_string().contains("greater than 0"));
-    }
-
-    #[test]
-    fn invariant_corpus_sync_mode_accepts_aliases() {
-        assert_eq!(
-            "eager".parse::<InvariantCorpusSyncMode>().unwrap(),
-            InvariantCorpusSyncMode::Eager
-        );
-        assert_eq!(
-            "on_stall".parse::<InvariantCorpusSyncMode>().unwrap(),
-            InvariantCorpusSyncMode::OnStall
-        );
-        assert_eq!(
-            "none".parse::<InvariantCorpusSyncMode>().unwrap(),
-            InvariantCorpusSyncMode::Off
-        );
     }
 }
