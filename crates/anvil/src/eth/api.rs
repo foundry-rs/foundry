@@ -1156,30 +1156,40 @@ impl<N: Network> EthApi<N> {
             // Snapshot the cached entries for the whole range under a single lock. The
             // `FeeHistoryService` populates the cache asynchronously and can lag the chain head,
             // so some entries may still be missing here.
-            let mut items: Vec<Option<FeeHistoryCacheItem>> = {
+            let cached: Vec<Option<FeeHistoryCacheItem>> = {
                 let cache = self.fee_history_cache.lock();
                 (lowest..=highest).map(|n| cache.get(&n).cloned()).collect()
             };
 
-            // Compute any missing entries on demand (without holding the lock), using the same
-            // logic as the service. A block that can't be found is a hard error rather than a
-            // silently dropped entry, which would otherwise shorten or misalign the response.
+            // Resolve the whole range into concrete items: take each cache hit, or compute the
+            // miss on demand (without holding the lock) using the same logic as the service. A
+            // block that can't be found is a hard error rather than a silently dropped entry, so
+            // `items` always holds exactly one entry per requested block.
             let mut warmed: Vec<(u64, FeeHistoryCacheItem)> = Vec::new();
-            for (idx, n) in (lowest..=highest).enumerate() {
-                if items[idx].is_none() {
-                    let block = self
-                        .backend
-                        .get_block(n)
-                        .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
-                    let header = block.header;
-                    let hash = header.hash_slow();
-                    let (item, block_number) =
-                        create_fee_history_cache_item(hash, &header, &storage_info, blob_params);
-                    if let Some(block_number) = block_number {
-                        warmed.push((block_number, item.clone()));
+            let mut items: Vec<FeeHistoryCacheItem> = Vec::with_capacity(cached.len());
+            for (cached_item, n) in cached.into_iter().zip(lowest..=highest) {
+                let item = match cached_item {
+                    Some(item) => item,
+                    None => {
+                        let block = self
+                            .backend
+                            .get_block(n)
+                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                        let header = block.header;
+                        let hash = header.hash_slow();
+                        let (item, block_number) = create_fee_history_cache_item(
+                            hash,
+                            &header,
+                            &storage_info,
+                            blob_params,
+                        );
+                        if let Some(block_number) = block_number {
+                            warmed.push((block_number, item.clone()));
+                        }
+                        item
                     }
-                    items[idx] = Some(item);
-                }
+                };
+                items.push(item);
             }
 
             // Warm the cache with the on-demand entries under a single lock, then trim to the
@@ -1194,7 +1204,7 @@ impl<N: Network> EthApi<N> {
                 }
             }
 
-            for item in items.into_iter().flatten() {
+            for item in items {
                 response.base_fee_per_gas.push(item.base_fee);
                 response.base_fee_per_blob_gas.push(item.base_fee_per_blob_gas.unwrap_or(0));
                 response.blob_gas_used_ratio.push(item.blob_gas_used_ratio);
