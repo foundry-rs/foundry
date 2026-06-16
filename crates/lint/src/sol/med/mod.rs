@@ -36,6 +36,9 @@ use unused_return::UNUSED_RETURN;
 mod locked_ether;
 use locked_ether::LOCKED_ETHER;
 
+mod mapping_deletion;
+use mapping_deletion::MAPPING_DELETION;
+
 mod weak_prng;
 use weak_prng::WEAK_PRNG;
 
@@ -52,5 +55,6 @@ register_lints!(
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
     (LockedEther, late, (LOCKED_ETHER)),
-    (WeakPrng, early, (WEAK_PRNG))
+    (WeakPrng, early, (WEAK_PRNG)),
+    (MappingDeletion, late, (MAPPING_DELETION))
 );
