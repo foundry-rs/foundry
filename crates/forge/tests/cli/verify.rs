@@ -298,7 +298,15 @@ forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| 
             .stderr_lossy();
 
         assert!(output.contains("Verifying on etherscan"), "Etherscan run missing: {output}");
-        assert!(output.contains("Verifying on sourcify"), "Sourcify run missing: {output}");
+        assert!(
+            output.contains("Verification Job ID")
+                || output.contains("Contract source code already fully verified"),
+            "Sourcify submission did not succeed: {output}"
+        );
+        assert!(
+            !output.contains("sourcify verification failed"),
+            "Sourcify failure warning logged: {output}"
+        );
     }
 });
 
@@ -333,7 +341,15 @@ forgetest!(can_create_verify_sepolia_etherscan_also_runs_sourcify, |prj, cmd| {
             .stderr_lossy();
 
         assert!(output.contains("Verifying on etherscan"), "Etherscan run missing: {output}");
-        assert!(output.contains("Verifying on sourcify"), "Sourcify run missing: {output}");
+        assert!(
+            output.contains("Verification Job ID")
+                || output.contains("Contract source code already fully verified"),
+            "Sourcify submission did not succeed: {output}"
+        );
+        assert!(
+            !output.contains("sourcify verification failed"),
+            "Sourcify failure warning logged: {output}"
+        );
     }
 });
 
