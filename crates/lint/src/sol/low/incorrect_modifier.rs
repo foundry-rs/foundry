@@ -163,12 +163,17 @@ fn stmt_outcome(stmt: &Stmt<'_>) -> Outcome {
 ///   *without* running the modified function body, which is exactly what this lint flags, so they
 ///   behave like a `return` ([`Outcome::RETURNS`]).
 fn call_outcome(expr: &Expr<'_>) -> Option<Outcome> {
-    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return None };
+    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return None };
     let ExprKind::Ident(resolutions) = &callee.peel_parens().kind else { return None };
     resolutions.iter().find_map(|res| match res {
         Res::Builtin(
             Builtin::Revert | Builtin::RevertMsg | Builtin::YulRevert | Builtin::YulInvalid,
         ) => Some(Outcome::COVERED),
+        Res::Builtin(Builtin::Require | Builtin::Assert)
+            if args.exprs().next().is_some_and(is_literal_false) =>
+        {
+            Some(Outcome::COVERED)
+        }
         Res::Builtin(
             Builtin::YulReturn
             | Builtin::YulStop
@@ -177,4 +182,11 @@ fn call_outcome(expr: &Expr<'_>) -> Option<Outcome> {
         ) => Some(Outcome::RETURNS),
         _ => None,
     })
+}
+
+fn is_literal_false(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Lit(lit) if matches!(lit.kind, ast::LitKind::Bool(false))
+    )
 }

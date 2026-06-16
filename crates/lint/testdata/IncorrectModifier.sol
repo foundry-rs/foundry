@@ -55,6 +55,22 @@ contract IncorrectModifier {
         }
     }
 
+    modifier requireFalseOrExecutes() {
+        if (paused) {
+            require(false, "disabled");
+            return;
+        }
+        _;
+    }
+
+    modifier assertFalseOrExecutes() {
+        if (paused) {
+            assert(false);
+            return;
+        }
+        _;
+    }
+
     modifier afterPlaceholderIsIrrelevant() {
         _;
         if (paused) {
