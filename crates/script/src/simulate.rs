@@ -293,7 +293,13 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
 
         while let Some(mut tx) = txes_iter.next() {
             let tx_rpc = tx.rpc.clone();
-            let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
+            let provider_info = manager
+                .get_or_init_provider(
+                    &tx.rpc,
+                    self.args.legacy,
+                    self.script_config.config.eip1559_fee_estimate,
+                )
+                .await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
                 // Handles chain specific requirements for unsigned transactions.
@@ -369,37 +375,73 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
 
                 // We don't store it in the transactions, since we want the most updated value.
                 // Right before broadcasting.
+                // `per_gas` is the legacy gas price or, for EIP-1559, the `maxFeePerGas`
+                // (a base-fee buffer plus the priority fee), which is what the transaction
+                // can pay at most -- not the spot base fee shown by block explorers.
                 let per_gas = if let Some(gas_price) = self.args.with_gas_price {
                     gas_price.to()
                 } else {
                     provider_info.gas_price()?
                 };
 
-                let estimated_gas_price_raw = format_units(per_gas, 9)
-                    .unwrap_or_else(|_| "[Could not calculate]".to_string());
-                let estimated_gas_price =
-                    estimated_gas_price_raw.trim_end_matches('0').trim_end_matches('.');
+                // Format a wei value as a trimmed gwei string.
+                let fmt_gwei = |wei: u128| {
+                    let raw = format_units(wei, 9)
+                        .unwrap_or_else(|_| "[Could not calculate]".to_string());
+                    raw.trim_end_matches('0').trim_end_matches('.').to_string()
+                };
+
+                let estimated_gas_price = fmt_gwei(per_gas);
+
+                // Surface the EIP-1559 fee breakdown so users aren't surprised that the
+                // "max fee" exceeds the current base fee. Skipped when `--with-gas-price`
+                // pins the max fee directly; otherwise a `--priority-gas-price` override is
+                // reflected so the display matches what will actually be broadcast.
+                let fee_breakdown = if self.args.with_gas_price.is_none() {
+                    provider_info.eip1559_fees().map(|fees| {
+                        let priority_fee = self
+                            .args
+                            .priority_gas_price
+                            .map(|p| p.to())
+                            .unwrap_or(fees.max_priority_fee_per_gas);
+                        (fmt_gwei(fees.base_fee_per_gas), fmt_gwei(priority_fee))
+                    })
+                } else {
+                    None
+                };
 
                 let estimated_amount_raw = format_units(total_gas.saturating_mul(per_gas), 18)
                     .unwrap_or_else(|_| "[Could not calculate]".to_string());
                 let estimated_amount = estimated_amount_raw.trim_end_matches('0');
 
                 if shell::is_json() {
-                    sh_println!(
-                        "{}",
-                        serde_json::json!({
-                            "chain": provider_info.chain,
-                            "estimated_gas_price": estimated_gas_price,
-                            "estimated_total_gas_used": total_gas,
-                            "estimated_amount_required": estimated_amount,
-                            "token_symbol": token_symbol,
-                        })
-                    )?;
+                    let mut json = serde_json::json!({
+                        "chain": provider_info.chain,
+                        "estimated_gas_price": estimated_gas_price,
+                        "estimated_total_gas_used": total_gas,
+                        "estimated_amount_required": estimated_amount,
+                        "token_symbol": token_symbol,
+                    });
+                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                        json["estimated_max_fee_per_gas"] =
+                            serde_json::Value::from(estimated_gas_price.clone());
+                        json["estimated_base_fee_per_gas"] =
+                            serde_json::Value::from(base_fee.clone());
+                        json["estimated_max_priority_fee_per_gas"] =
+                            serde_json::Value::from(priority_fee.clone());
+                    }
+                    sh_println!("{}", json)?;
                 } else {
                     sh_println!("\n==========================")?;
                     sh_println!("\nChain {}", provider_info.chain)?;
 
-                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
+                    if let Some((base_fee, priority_fee)) = &fee_breakdown {
+                        sh_println!("\nEstimated max fee per gas: {estimated_gas_price} gwei")?;
+                        sh_println!("Estimated base fee per gas: {base_fee} gwei")?;
+                        sh_println!("Estimated priority fee per gas: {priority_fee} gwei")?;
+                    } else {
+                        sh_println!("\nEstimated gas price: {estimated_gas_price} gwei")?;
+                    }
                     sh_println!("\nEstimated total gas used for script: {total_gas}")?;
                     sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
                     sh_println!("\n==========================")?;

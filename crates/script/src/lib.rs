@@ -41,7 +41,7 @@ use foundry_common::{
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
-    Config, figment,
+    Config, Eip1559FeeEstimatePreset, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
@@ -129,6 +129,16 @@ pub struct ScriptArgs {
     /// This is auto-enabled for common networks without EIP1559.
     #[arg(long)]
     pub legacy: bool,
+
+    /// How to estimate EIP1559 fees: `low`, `market` (default), or `aggressive`.
+    ///
+    /// `market` is the default (`base_fee * 2` plus a 20th-percentile priority
+    /// fee). `low` bids a smaller tip and max-fee cap (may stall if the base fee
+    /// rises); `aggressive` bids a larger tip for faster inclusion. Note that the
+    /// base fee paid is set by the network, not this flag. Ignored for `--legacy`
+    /// and overridden by `--with-gas-price` / `--priority-gas-price`.
+    #[arg(long, value_name = "PRESET")]
+    pub eip1559_fee_estimate: Option<Eip1559FeeEstimatePreset>,
 
     /// Broadcasts the transactions.
     #[arg(long)]
@@ -668,6 +678,13 @@ impl Provider for ScriptArgs {
 
         if let Some(timeout) = self.timeout {
             dict.insert("transaction_timeout".to_string(), timeout.into());
+        }
+
+        if let Some(preset) = self.eip1559_fee_estimate {
+            dict.insert(
+                "eip1559_fee_estimate".to_string(),
+                figment::value::Value::from(preset.to_string()),
+            );
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -1452,6 +1469,21 @@ mod tests {
         let args =
             ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
         assert!(args.priority_gas_price.is_some());
+    }
+
+    #[test]
+    fn test_eip1559_fee_estimate() {
+        // Defaults to unset (config provides `market`).
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1"]);
+        assert!(args.eip1559_fee_estimate.is_none());
+
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "DeployV1",
+            "--eip1559-fee-estimate",
+            "aggressive",
+        ]);
+        assert_eq!(args.eip1559_fee_estimate, Some(Eip1559FeeEstimatePreset::Aggressive));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5910>

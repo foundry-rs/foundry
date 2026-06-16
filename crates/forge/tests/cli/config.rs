@@ -7,8 +7,9 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
-    SettingsOverrides, SolcReq, SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout,
+    CompilationRestrictions, Config, Eip1559FeeEstimatePreset, FsPermissions, FuzzConfig,
+    FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq, SymbolicConfig,
+    SymbolicExplorationOrder, SymbolicStorageLayout,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -79,6 +80,7 @@ ffi = false
 live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
+eip1559_fee_estimate = "market"
 prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
@@ -374,6 +376,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -1515,6 +1518,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
+  "eip1559_fee_estimate": "market",
   "prompt_timeout": 120,
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",

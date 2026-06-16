@@ -32,7 +32,7 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
-    provider::{ProviderBuilder, try_get_http_provider},
+    provider::{ProviderBuilder, fee::estimate_eip1559_fees, try_get_http_provider},
     shell,
     tempo::{
         KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
@@ -599,7 +599,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         )
                     }
                     (false, _, _) => {
-                        let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let mut fees = estimate_eip1559_fees(
+                            &provider,
+                            self.script_config.config.eip1559_fee_estimate,
+                        )
+                        .await
+                        .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?
+                        .estimation();
 
                         // When using --browser, the browser wallet may override the
                         // priority fee with its own estimate (from
@@ -622,6 +628,17 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                         if let Some(priority_gas_price) = self.args.priority_gas_price {
                             fees.max_priority_fee_per_gas = priority_gas_price.to();
+                        }
+
+                        // A one-sided `--with-gas-price` / `--priority-gas-price`
+                        // override (or a browser tip) can leave the priority fee above
+                        // the max fee, which is an invalid EIP-1559 transaction.
+                        if fees.max_priority_fee_per_gas > fees.max_fee_per_gas {
+                            eyre::bail!(
+                                "maxPriorityFeePerGas ({}) cannot be higher than maxFeePerGas ({})",
+                                fees.max_priority_fee_per_gas,
+                                fees.max_fee_per_gas,
+                            );
                         }
 
                         (None, Some(fees))
@@ -1213,11 +1230,21 @@ impl BundledState<TempoEvmNetwork> {
         let nonce = provider.get_transaction_count(sender).await?;
 
         // Get gas prices - batch transactions are Tempo-only, always use EIP-1559 style fees
-        let fees = provider.estimate_eip1559_fees().await?;
+        let fees = estimate_eip1559_fees(&provider, self.script_config.config.eip1559_fee_estimate)
+            .await?
+            .estimation();
         let max_fee_per_gas =
             self.args.with_gas_price.map(|p| p.to()).unwrap_or(fees.max_fee_per_gas);
         let max_priority_fee_per_gas =
             self.args.priority_gas_price.map(|p| p.to()).unwrap_or(fees.max_priority_fee_per_gas);
+
+        // A one-sided `--with-gas-price` / `--priority-gas-price` override can leave
+        // the priority fee above the max fee, which is an invalid EIP-1559 transaction.
+        if max_priority_fee_per_gas > max_fee_per_gas {
+            eyre::bail!(
+                "maxPriorityFeePerGas ({max_priority_fee_per_gas}) cannot be higher than maxFeePerGas ({max_fee_per_gas})"
+            );
+        }
 
         let mut batch_tx = TempoTransactionRequest {
             inner: TransactionRequest {
