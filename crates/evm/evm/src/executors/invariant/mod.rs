@@ -274,7 +274,7 @@ impl CampaignCorpusSyncState {
         Self {
             plateau_runs: config.corpus_sync.plateau_runs,
             plateau_timeout: Duration::from_secs(config.corpus_sync.plateau_timeout),
-            max_batch: config.corpus_sync.max_batch,
+            max_batch: config.corpus_sync.max_batch.max(1),
             runs_since_new_coverage: 0,
             last_new_coverage: now,
         }
@@ -2102,6 +2102,21 @@ mod tests {
         assert_eq!(state.plateau_runs, 7);
         assert_eq!(state.plateau_timeout, Duration::from_secs(11));
         assert_eq!(state.max_batch, 13);
+    }
+
+    #[test]
+    fn campaign_corpus_sync_state_clamps_zero_max_batch() {
+        let config = InvariantConfig {
+            corpus_sync: foundry_config::InvariantCorpusSyncConfig {
+                plateau_runs: 1,
+                plateau_timeout: 1,
+                max_batch: 0,
+            },
+            ..Default::default()
+        };
+
+        let state = CampaignCorpusSyncState::new(&config, Instant::now());
+        assert_eq!(state.max_batch, 1);
     }
 
     #[test]
