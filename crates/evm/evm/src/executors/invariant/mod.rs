@@ -19,7 +19,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     sh_eprintln, sh_println,
 };
-use foundry_config::{InvariantConfig, InvariantWorkers};
+use foundry_config::{InvariantConfig, InvariantCorpusSyncMode, InvariantWorkers};
 use foundry_evm_core::{
     FoundryBlock,
     constants::{
@@ -259,8 +259,7 @@ enum InvariantCorpusPersistence {
 #[derive(Clone, Copy)]
 struct InvariantCorpusPolicy {
     persistence: InvariantCorpusPersistence,
-    /// Workers exchange new corpus candidates in memory during one invariant campaign.
-    shares_campaign_local: bool,
+    sync: CampaignCorpusSyncPolicy,
 }
 
 impl InvariantCorpusPolicy {
@@ -268,6 +267,81 @@ impl InvariantCorpusPolicy {
     // campaign-local sharing is handled independently by the exchange policy.
     const fn finalizes_campaign_outputs(self) -> bool {
         matches!(self.persistence, InvariantCorpusPersistence::Deferred)
+    }
+
+    const fn shares_campaign_local(self) -> bool {
+        !matches!(self.sync, CampaignCorpusSyncPolicy::Off)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CampaignCorpusSyncPolicy {
+    Off,
+    Eager,
+    OnStall { stall_runs: u32, stall_timeout: Duration, max_batch: usize },
+}
+
+impl CampaignCorpusSyncPolicy {
+    const fn from_config(config: &InvariantConfig, worker_count: usize) -> Self {
+        if worker_count <= 1 || !config.corpus.is_coverage_guided() {
+            return Self::Off;
+        }
+
+        match config.corpus_sync.mode {
+            InvariantCorpusSyncMode::Off => Self::Off,
+            InvariantCorpusSyncMode::Eager => Self::Eager,
+            InvariantCorpusSyncMode::OnStall => Self::OnStall {
+                stall_runs: config.corpus_sync.stall_runs,
+                stall_timeout: Duration::from_secs(config.corpus_sync.stall_timeout),
+                max_batch: config.corpus_sync.max_batch,
+            },
+        }
+    }
+
+    const fn max_batch(self) -> usize {
+        match self {
+            Self::Off => 0,
+            Self::Eager => usize::MAX,
+            Self::OnStall { max_batch, .. } => max_batch,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CampaignCorpusSyncState {
+    policy: CampaignCorpusSyncPolicy,
+    runs_since_new_coverage: u32,
+    last_new_coverage: Instant,
+}
+
+impl CampaignCorpusSyncState {
+    fn new(policy: CampaignCorpusSyncPolicy, now: Instant) -> Self {
+        Self { policy, runs_since_new_coverage: 0, last_new_coverage: now }
+    }
+
+    fn should_pull(&self, now: Instant) -> bool {
+        match self.policy {
+            CampaignCorpusSyncPolicy::Off => false,
+            CampaignCorpusSyncPolicy::Eager => true,
+            CampaignCorpusSyncPolicy::OnStall { stall_runs, stall_timeout, .. } => {
+                (stall_runs > 0 && self.runs_since_new_coverage >= stall_runs)
+                    || (!stall_timeout.is_zero()
+                        && now.duration_since(self.last_new_coverage) >= stall_timeout)
+            }
+        }
+    }
+
+    const fn max_batch(&self) -> usize {
+        self.policy.max_batch()
+    }
+
+    fn record_run(&mut self, new_coverage: bool, now: Instant) {
+        if new_coverage {
+            self.runs_since_new_coverage = 0;
+            self.last_new_coverage = now;
+        } else {
+            self.runs_since_new_coverage = self.runs_since_new_coverage.saturating_add(1);
+        }
     }
 }
 
@@ -280,8 +354,8 @@ const fn invariant_corpus_policy(
     } else {
         InvariantCorpusPersistence::Live
     };
-    let shares_campaign_local = worker_count > 1 && config.corpus.is_coverage_guided();
-    InvariantCorpusPolicy { persistence, shares_campaign_local }
+    let sync = CampaignCorpusSyncPolicy::from_config(config, worker_count);
+    InvariantCorpusPolicy { persistence, sync }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -693,7 +767,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         let corpus_policy = invariant_corpus_policy(&self.config, actual_worker_count);
         let corpus_exchange =
-            corpus_policy.shares_campaign_local.then(CampaignCorpusExchange::default);
+            corpus_policy.shares_campaign_local().then(CampaignCorpusExchange::default);
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -835,6 +909,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         let mut corpus_entries = Vec::new();
         let mut corpus_cursor = CampaignCorpusCursor::default();
+        let mut corpus_sync_state =
+            CampaignCorpusSyncState::new(corpus_policy.sync, Instant::now());
         let dynamic_target_ctx = DynamicTargetCtx {
             project_contracts,
             setup_contracts,
@@ -852,9 +928,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
 
-            if let Some(exchange) = &corpus_exchange {
-                let entries =
-                    exchange.pull_new_for_worker(plan.worker_id as usize, &mut corpus_cursor);
+            if let Some(exchange) = &corpus_exchange
+                && corpus_sync_state.should_pull(Instant::now())
+            {
+                let entries = exchange.pull_new_for_worker_limited(
+                    plan.worker_id as usize,
+                    &mut corpus_cursor,
+                    corpus_sync_state.max_batch(),
+                );
                 if !entries.is_empty() {
                     let imported = corpus_manager.import_campaign_entries(
                         entries,
@@ -1199,8 +1280,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
+            let run_found_new_coverage = current_run.new_coverage;
             current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
+            corpus_sync_state.record_run(run_found_new_coverage, Instant::now());
             runs += 1;
             let total_runs = campaign_state.increment_runs();
             debug_assert!(
@@ -2028,17 +2111,85 @@ mod tests {
 
         let parallel = invariant_corpus_policy(&config, 2);
         assert!(parallel.finalizes_campaign_outputs());
-        assert!(parallel.shares_campaign_local);
+        assert!(parallel.shares_campaign_local());
+        assert_eq!(parallel.sync, CampaignCorpusSyncPolicy::Eager);
 
         let single = invariant_corpus_policy(&config, 1);
         assert!(!single.finalizes_campaign_outputs());
-        assert!(!single.shares_campaign_local);
+        assert!(!single.shares_campaign_local());
 
         config.corpus.corpus_dir = None;
         config.corpus.show_edge_coverage = true;
         let metrics_only = invariant_corpus_policy(&config, 2);
         assert!(metrics_only.finalizes_campaign_outputs());
-        assert!(!metrics_only.shares_campaign_local);
+        assert!(!metrics_only.shares_campaign_local());
+    }
+
+    #[test]
+    fn invariant_corpus_policy_uses_on_stall_config_when_enabled() {
+        let config = InvariantConfig {
+            corpus: foundry_config::FuzzCorpusConfig {
+                corpus_dir: Some(std::path::PathBuf::from("corpus")),
+                ..Default::default()
+            },
+            corpus_sync: foundry_config::InvariantCorpusSyncConfig {
+                mode: foundry_config::InvariantCorpusSyncMode::OnStall,
+                stall_runs: 7,
+                stall_timeout: 11,
+                max_batch: 13,
+            },
+            ..Default::default()
+        };
+
+        let policy = invariant_corpus_policy(&config, 2);
+        assert_eq!(
+            policy.sync,
+            CampaignCorpusSyncPolicy::OnStall {
+                stall_runs: 7,
+                stall_timeout: Duration::from_secs(11),
+                max_batch: 13,
+            }
+        );
+    }
+
+    #[test]
+    fn campaign_corpus_sync_state_pulls_only_after_stall_threshold() {
+        let start = Instant::now();
+        let mut state = CampaignCorpusSyncState::new(
+            CampaignCorpusSyncPolicy::OnStall {
+                stall_runs: 2,
+                stall_timeout: Duration::from_secs(60),
+                max_batch: 3,
+            },
+            start,
+        );
+
+        assert!(!state.should_pull(start));
+        state.record_run(false, start + Duration::from_secs(1));
+        assert!(!state.should_pull(start + Duration::from_secs(1)));
+        state.record_run(false, start + Duration::from_secs(2));
+        assert!(state.should_pull(start + Duration::from_secs(2)));
+        assert_eq!(state.max_batch(), 3);
+
+        state.record_run(true, start + Duration::from_secs(3));
+        assert!(!state.should_pull(start + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn campaign_corpus_sync_state_pulls_after_stall_timeout() {
+        let start = Instant::now();
+        let mut state = CampaignCorpusSyncState::new(
+            CampaignCorpusSyncPolicy::OnStall {
+                stall_runs: 100,
+                stall_timeout: Duration::from_secs(5),
+                max_batch: 8,
+            },
+            start,
+        );
+
+        state.record_run(false, start + Duration::from_secs(1));
+        assert!(!state.should_pull(start + Duration::from_secs(4)));
+        assert!(state.should_pull(start + Duration::from_secs(5)));
     }
 
     #[test]

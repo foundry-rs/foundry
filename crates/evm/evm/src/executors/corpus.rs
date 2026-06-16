@@ -233,6 +233,13 @@ struct CampaignCorpusExchangeInner {
     seen_sequences: HashSet<B256>,
 }
 
+#[derive(Default)]
+struct CampaignCorpusExchangeMetrics {
+    published: AtomicUsize,
+    deduped: AtomicUsize,
+    pulled: AtomicUsize,
+}
+
 /// In-memory exchange for campaign-local corpus candidates.
 ///
 /// This deliberately shares only immutable transaction sequences. Workers keep their own
@@ -241,6 +248,7 @@ struct CampaignCorpusExchangeInner {
 #[derive(Clone, Default)]
 pub(crate) struct CampaignCorpusExchange {
     inner: Arc<RwLock<CampaignCorpusExchangeInner>>,
+    metrics: Arc<CampaignCorpusExchangeMetrics>,
 }
 
 impl CampaignCorpusExchange {
@@ -260,31 +268,67 @@ impl CampaignCorpusExchange {
         let fingerprint = corpus_sequence_fingerprint(tx_seq)?;
         let mut inner = self.inner.write();
         if !inner.seen_sequences.insert(fingerprint) {
+            self.metrics.deduped.fetch_add(1, Ordering::Relaxed);
             return Ok(false);
         }
         inner.entries.push(CampaignCorpusBroadcast {
             producer_worker,
             candidate: CampaignCorpusCandidate::new(tx_seq),
         });
+        self.metrics.published.fetch_add(1, Ordering::Relaxed);
         Ok(true)
     }
 
     /// Returns candidates published since `cursor` last pulled, excluding this worker's own
     /// entries.
+    #[cfg(test)]
     pub(crate) fn pull_new_for_worker(
         &self,
         worker_id: usize,
         cursor: &mut CampaignCorpusCursor,
     ) -> Vec<CampaignCorpusCandidate> {
+        self.pull_new_for_worker_limited(worker_id, cursor, usize::MAX)
+    }
+
+    /// Returns up to `limit` candidates published since `cursor` last pulled, excluding this
+    /// worker's own entries.
+    pub(crate) fn pull_new_for_worker_limited(
+        &self,
+        worker_id: usize,
+        cursor: &mut CampaignCorpusCursor,
+        limit: usize,
+    ) -> Vec<CampaignCorpusCandidate> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
         let inner = self.inner.read();
         let start = cursor.next_entry.min(inner.entries.len());
-        let entries = inner.entries[start..]
-            .iter()
-            .filter(|entry| entry.producer_worker != worker_id)
-            .map(|entry| entry.candidate.clone())
-            .collect();
-        cursor.next_entry = inner.entries.len();
+        let mut entries = Vec::new();
+        let mut next_entry = inner.entries.len();
+        for (offset, entry) in inner.entries[start..].iter().enumerate() {
+            if entry.producer_worker == worker_id {
+                continue;
+            }
+
+            entries.push(entry.candidate.clone());
+            if entries.len() == limit {
+                next_entry = start + offset + 1;
+                break;
+            }
+        }
+        cursor.next_entry = next_entry;
+        self.metrics.pulled.fetch_add(entries.len(), Ordering::Relaxed);
         entries
+    }
+
+    #[cfg(test)]
+    fn metrics(&self) -> (usize, usize, usize) {
+        (
+            self.metrics.published.load(Ordering::Relaxed),
+            self.metrics.deduped.load(Ordering::Relaxed),
+            self.metrics.pulled.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -1922,6 +1966,27 @@ mod tests {
         let entries = exchange.pull_new_for_worker(2, &mut cursor);
         assert_eq!(entries.len(), 1);
         assert!(exchange.pull_new_for_worker(2, &mut cursor).is_empty());
+        assert_eq!(exchange.metrics(), (1, 1, 1));
+    }
+
+    #[test]
+    fn campaign_corpus_exchange_respects_pull_limit() {
+        let exchange = CampaignCorpusExchange::default();
+        let mut cursor = CampaignCorpusCursor::default();
+
+        for calldata in 1..=3 {
+            exchange.publish(0, &[basic_tx_with_calldata(calldata)]).unwrap();
+        }
+
+        let entries = exchange.pull_new_for_worker_limited(1, &mut cursor, 2);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![1]));
+        assert_eq!(entries[1].tx_seq()[0].call_details.calldata, Bytes::from(vec![2]));
+        let entries = exchange.pull_new_for_worker_limited(1, &mut cursor, 2);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![3]));
+        assert!(exchange.pull_new_for_worker_limited(1, &mut cursor, 2).is_empty());
+        assert_eq!(exchange.metrics(), (3, 0, 3));
     }
 
     #[test]
