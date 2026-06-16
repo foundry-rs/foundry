@@ -6,7 +6,7 @@ use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use clap::{Parser, Subcommand};
-use eyre::{Result, WrapErr};
+use eyre::{Result, WrapErr, ensure};
 use foundry_cli::{
     json::print_json_success,
     opts::RpcOpts,
@@ -421,8 +421,36 @@ async fn recovery_warning(
 }
 
 fn decode_claim_receipt(receipt: &Bytes) -> Result<IReceivePolicyGuard::ClaimReceiptV1> {
-    IReceivePolicyGuard::ClaimReceiptV1::abi_decode(receipt)
-        .wrap_err("invalid ReceivePolicyGuard claim receipt")
+    let decoded = IReceivePolicyGuard::ClaimReceiptV1::abi_decode(receipt)
+        .wrap_err("invalid ReceivePolicyGuard claim receipt")?;
+
+    ensure!(
+        decoded.version == 1,
+        "unsupported ReceivePolicyGuard claim receipt version {}",
+        decoded.version
+    );
+    ensure!(decoded.token != Address::ZERO, "ReceivePolicyGuard claim receipt token is zero");
+    ensure!(
+        decoded.recipient != RECEIVE_POLICY_GUARD_ADDRESS,
+        "ReceivePolicyGuard claim receipt recipient cannot be the guard precompile"
+    );
+    ensure!(
+        matches!(
+            decoded.blockedReason,
+            reason if reason == ITIP403Registry::BlockedReason::TOKEN_FILTER as u8 ||
+                reason == ITIP403Registry::BlockedReason::RECEIVE_POLICY as u8
+        ),
+        "ReceivePolicyGuard claim receipt blocked reason is not claimable"
+    );
+    ensure!(
+        matches!(
+            decoded.kind,
+            IReceivePolicyGuard::InboundKind::TRANSFER | IReceivePolicyGuard::InboundKind::MINT
+        ),
+        "ReceivePolicyGuard claim receipt inbound kind is unknown"
+    );
+
+    Ok(decoded)
 }
 
 fn receipt_payload(
@@ -433,8 +461,8 @@ fn receipt_payload(
     let receipt_key = keccak256(receipt);
     let delivery_state = match amount {
         Some(amount) if amount > U256::ZERO => "held",
-        Some(_) => "failed",
-        None => "held",
+        Some(_) => "not_held",
+        None => "unknown",
     };
     let mut payload = json!({
         "receipt": format!("{receipt}"),
@@ -579,9 +607,38 @@ mod tests {
     }
 
     #[test]
-    fn receipt_payload_preserves_held_and_failed_states() {
+    fn rejects_semantically_invalid_guard_claim_receipts() {
+        let receipt = sample_receipt();
+        let decoded = IReceivePolicyGuard::ClaimReceiptV1::abi_decode(&receipt).unwrap();
+
+        let mut bad_version = decoded.clone();
+        bad_version.version = 2;
+        let err = decode_claim_receipt(&bad_version.abi_encode().into()).unwrap_err();
+        assert!(err.to_string().contains("unsupported ReceivePolicyGuard claim receipt version"));
+
+        let mut bad_token = decoded.clone();
+        bad_token.token = Address::ZERO;
+        let err = decode_claim_receipt(&bad_token.abi_encode().into()).unwrap_err();
+        assert!(err.to_string().contains("token is zero"));
+
+        let mut bad_recipient = decoded.clone();
+        bad_recipient.recipient = RECEIVE_POLICY_GUARD_ADDRESS;
+        let err = decode_claim_receipt(&bad_recipient.abi_encode().into()).unwrap_err();
+        assert!(err.to_string().contains("recipient cannot be the guard precompile"));
+
+        let mut bad_reason = decoded.clone();
+        bad_reason.blockedReason = ITIP403Registry::BlockedReason::NONE as u8;
+        let err = decode_claim_receipt(&bad_reason.abi_encode().into()).unwrap_err();
+        assert!(err.to_string().contains("blocked reason is not claimable"));
+    }
+
+    #[test]
+    fn receipt_payload_preserves_delivery_state_confidence() {
         let receipt = sample_receipt();
         let decoded = decode_claim_receipt(&receipt).unwrap();
+
+        let unknown = receipt_payload(&receipt, &decoded, None);
+        assert_eq!(unknown["delivery_state"], "unknown");
 
         let held = receipt_payload(&receipt, &decoded, Some(U256::from(1)));
         assert_eq!(held["delivery_state"], "held");
@@ -589,9 +646,9 @@ mod tests {
         assert_eq!(held["kind"], "transfer");
         assert_eq!(held["held_balance"], "1");
 
-        let failed = receipt_payload(&receipt, &decoded, Some(U256::ZERO));
-        assert_eq!(failed["delivery_state"], "failed");
-        assert_eq!(failed["held_balance"], "0");
+        let not_held = receipt_payload(&receipt, &decoded, Some(U256::ZERO));
+        assert_eq!(not_held["delivery_state"], "not_held");
+        assert_eq!(not_held["held_balance"], "0");
     }
 
     #[test]
