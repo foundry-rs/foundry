@@ -114,6 +114,16 @@ impl Default for InvariantCorpusSyncConfig {
     }
 }
 
+impl InvariantCorpusSyncConfig {
+    /// Returns the configured replay batch size, clamped to a usable value.
+    pub const fn effective_max_batch(&self) -> NonZeroUsize {
+        match NonZeroUsize::new(self.max_batch) {
+            Some(max_batch) => max_batch,
+            None => NonZeroUsize::MIN,
+        }
+    }
+}
+
 /// Contains for invariant testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
