@@ -52,7 +52,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::{HashMap as Map, HashSet, VecDeque, btree_map::Entry},
-    num::NonZeroUsize,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -338,7 +337,7 @@ impl AttemptedCampaignSequences {
 #[derive(Clone)]
 struct CampaignCorpusWorkerSync {
     worker_id: usize,
-    max_batch: NonZeroUsize,
+    max_batch: usize,
     plateau: CampaignCorpusPlateau,
     exchange: CampaignCorpusExchange,
     attempted_sequences: AttemptedCampaignSequences,
@@ -369,7 +368,7 @@ impl CampaignCorpusWorkerSync {
         self.exchange
             .pull_for_worker_limited(
                 self.worker_id,
-                self.max_batch.get(),
+                self.max_batch,
                 self.attempted_sequences.fingerprints(),
             )
             .into_iter()
@@ -2211,7 +2210,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(config.corpus_sync.effective_max_batch().get(), 1);
+        assert_eq!(config.corpus_sync.effective_max_batch(), 1);
     }
 
     #[test]
@@ -2266,9 +2265,8 @@ mod tests {
             },
             ..Default::default()
         };
-        let exchange = CampaignCorpusExchange::with_limits(
-            CampaignCorpusExchangeLimits::for_campaign(1, NonZeroUsize::new(16).unwrap()),
-        );
+        let exchange =
+            CampaignCorpusExchange::with_limits(CampaignCorpusExchangeLimits::for_campaign(1, 16));
         let mut sync = CampaignCorpusWorkerSync::new(1, &config, exchange.clone(), start);
 
         sync.record_run(false, start + Duration::from_secs(1));

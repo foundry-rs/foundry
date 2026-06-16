@@ -64,7 +64,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashSet, VecDeque},
     fmt,
-    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -234,9 +233,9 @@ impl CampaignCorpusExchangeLimits {
     ///
     /// The exchange keeps a few batches per worker so slower workers can still pull sibling
     /// findings, while the dedupe window is allowed to be larger than the retained candidate queue.
-    pub(crate) fn for_campaign(worker_count: usize, max_batch: NonZeroUsize) -> Self {
+    pub(crate) fn for_campaign(worker_count: usize, max_batch: usize) -> Self {
+        assert!(max_batch > 0, "campaign corpus sync max_batch must be greater than 0");
         let worker_count = worker_count.max(1);
-        let max_batch = max_batch.get();
         let max_entries =
             max_batch.saturating_mul(worker_count).saturating_mul(EXCHANGE_RETENTION_ROUNDS);
         let max_seen_sequences = max_entries.saturating_mul(EXCHANGE_SEEN_DEDUPE_FACTOR);
@@ -250,7 +249,7 @@ impl CampaignCorpusExchangeLimits {
 
 impl Default for CampaignCorpusExchangeLimits {
     fn default() -> Self {
-        Self::for_campaign(1, NonZeroUsize::new(64).unwrap())
+        Self::for_campaign(1, 64)
     }
 }
 
@@ -2093,6 +2092,12 @@ mod tests {
 
         assert_eq!(seen_sequence_count(&exchange), 2);
         assert!(exchange.publish(1, &sequence).unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "campaign corpus sync max_batch must be greater than 0")]
+    fn campaign_corpus_exchange_limits_reject_zero_batch() {
+        let _ = CampaignCorpusExchangeLimits::for_campaign(1, 0);
     }
 
     #[test]
