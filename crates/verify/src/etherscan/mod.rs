@@ -116,14 +116,12 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         return Err(eyre!("Could not detect deployment: {}", resp.result));
                     }
 
-                    sh_err!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
-                        `{}`",
+                    warn!("Failed verify submission: {:?}", resp);
+                    eyre::bail!(
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
                         resp.message,
                         resp.result
-                    )?;
-                    warn!("Failed verify submission: {:?}", resp);
-                    std::process::exit(1);
+                    );
                 }
 
                 Ok(Some(resp))
