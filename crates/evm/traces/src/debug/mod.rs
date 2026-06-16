@@ -206,7 +206,8 @@ impl<'a> DebugStepsWalker<'a> {
 /// Tries to parse the function name from the source code and detect the contract name which
 /// contains the given function.
 ///
-/// Returns string in the format `Contract::function`.
+/// Returns a string in the format `Contract::function(types)` when parameters can be resolved,
+/// falling back to `Contract::function`.
 fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<String> {
     let start = loc.offset() as usize;
     let (source_part, end) = source_span(&source.source, start, loc.length() as usize)?;
@@ -239,7 +240,8 @@ fn canonical_function_signature(function_name: &str, source_part: &str) -> Optio
     Some(function_signature(function_name, &types))
 }
 
-fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
+/// Formats an ABI-style function signature from a name and canonical parameter types.
+pub fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
     let mut signature = String::new();
     signature.push_str(function_name);
     signature.push('(');

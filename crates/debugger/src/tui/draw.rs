@@ -8,7 +8,7 @@ use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::{
-    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters,
+    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters, function_signature,
 };
 use ratatui::{
     Frame,
@@ -922,20 +922,6 @@ fn function_selector(function_name: &str, types: &[DynSolType]) -> [u8; 4] {
     keccak256(signature.as_bytes())[..4].try_into().unwrap()
 }
 
-fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
-    let mut signature = String::new();
-    signature.push_str(function_name);
-    signature.push('(');
-    for (i, ty) in types.iter().enumerate() {
-        if i > 0 {
-            signature.push(',');
-        }
-        signature.push_str(&ty.sol_type_name());
-    }
-    signature.push(')');
-    signature
-}
-
 fn decode_abi_sequence(types: &[DynSolType], data: &[u8]) -> Option<Vec<String>> {
     if types.is_empty() {
         return Some(Vec::new());
@@ -1124,13 +1110,18 @@ mod tests {
     }
 
     fn internal_call_step(end_step: usize, return_data: Vec<String>) -> CallTraceStep {
+        internal_call_step_named("DebugMe::foo", end_step, Some(Vec::new()), Some(return_data))
+    }
+
+    fn internal_call_step_named(
+        func_name: &str,
+        end_step: usize,
+        args: Option<Vec<String>>,
+        return_data: Option<Vec<String>>,
+    ) -> CallTraceStep {
         let mut step = trace_step(Vec::new());
         step.decoded = Some(Box::new(DecodedTraceStep::InternalCall(
-            DecodedInternalCall {
-                func_name: "DebugMe::foo".to_string(),
-                args: Some(Vec::new()),
-                return_data: Some(return_data),
-            },
+            DecodedInternalCall { func_name: func_name.to_string(), args, return_data },
             end_step,
         )));
         step
@@ -1251,6 +1242,43 @@ mod tests {
     }
 
     #[test]
+    fn decode_internal_parameter_values_accepts_matching_overload_args() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![internal_call_step_named(
+                "DebugMe::foo(uint256)",
+                2,
+                Some(vec!["42".to_string()]),
+                None,
+            )],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")),
+            Some(vec!["42".to_string()])
+        );
+    }
+
+    #[test]
+    fn decode_internal_parameter_values_rejects_wrong_overload_args() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![internal_call_step_named(
+                "DebugMe::foo(address)",
+                2,
+                Some(vec!["0x000000000000000000000000000000000000002a".to_string()]),
+                None,
+            )],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")), None);
+    }
+
+    #[test]
     fn decode_return_values_uses_absolute_internal_call_end_step() {
         let mut context = context_with_arena(vec![debug_node(
             0,
@@ -1274,6 +1302,27 @@ mod tests {
         tui.draw_memory.inner_call_index = 2;
 
         assert_eq!(tui.decode_return_values(&scope("foo", "()")), Some(vec!["7".to_string()]));
+    }
+
+    #[test]
+    fn decode_return_values_rejects_wrong_overload() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![
+                internal_call_step_named(
+                    "DebugMe::foo(address)",
+                    1,
+                    None,
+                    Some(vec!["99".to_string()]),
+                ),
+                trace_step(Vec::new()),
+            ],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 1;
+
+        assert_eq!(tui.decode_return_values(&scope("foo", "(uint256 amount)")), None);
     }
 
     #[test]

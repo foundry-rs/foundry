@@ -55,6 +55,32 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     drop(dotenv);
 }
 
+fn collect_debug_dump_internal_calls<'a>(
+    value: &'a serde_json::Value,
+    calls: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_debug_dump_internal_calls(value, calls);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if let Some(call) = map
+                .get("InternalCall")
+                .and_then(|value| value.as_array())
+                .and_then(|values| values.first())
+            {
+                calls.push(call);
+            }
+            for value in map.values() {
+                collect_debug_dump_internal_calls(value, calls);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
 /// These are run separately by the `flaky_testdata` test below.
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
@@ -2665,6 +2691,70 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
+});
+
+forgetest!(debug_dump_disambiguates_overloaded_internal_functions, |prj, cmd| {
+    prj.add_source(
+        "DebugVars",
+        r"
+contract DebugVarsTest {
+    function testOverloadedInternalDebugVars() public {
+        uint256 amount = foo(uint256(42));
+        address who = foo(address(0x000000000000000000000000000000000000bEEF));
+
+        require(amount == 43, 'bad amount');
+        require(who == address(0x000000000000000000000000000000000000bEEF), 'bad address');
+    }
+
+    function foo(uint256 amount) internal pure returns (uint256 out) {
+        uint256 next = amount + 1;
+        return next;
+    }
+
+    function foo(address who) internal pure returns (address out) {
+        address seen = who;
+        return seen;
+    }
+}
+",
+    );
+
+    let dump_path = prj.root().join("overloads_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testOverloadedInternalDebugVars",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut calls = Vec::new();
+    collect_debug_dump_internal_calls(&dump, &mut calls);
+
+    let uint_call = calls
+        .iter()
+        .find(|call| call["func_name"] == "DebugVarsTest::foo(uint256)")
+        .expect("missing uint256 overload in debugger dump");
+    assert_eq!(uint_call["args"], serde_json::json!(["42"]));
+    assert_eq!(uint_call["return_data"], serde_json::json!(["43"]));
+
+    let address_call = calls
+        .iter()
+        .find(|call| call["func_name"] == "DebugVarsTest::foo(address)")
+        .expect("missing address overload in debugger dump");
+    assert_eq!(
+        address_call["args"],
+        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
+    assert_eq!(
+        address_call["return_data"],
+        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10322>
