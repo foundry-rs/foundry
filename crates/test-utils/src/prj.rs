@@ -853,6 +853,12 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
             ("[ESTIMATED_GAS_PRICE]", r"Estimated gas price:\s*(\d+(\.\d+)?)\s*gwei"),
+            ("[ESTIMATED_MAX_FEE_PER_GAS]", r"Estimated max fee per gas:\s*(\d+(\.\d+)?)\s*gwei"),
+            ("[ESTIMATED_BASE_FEE_PER_GAS]", r"Estimated base fee per gas:\s*(\d+(\.\d+)?)\s*gwei"),
+            (
+                "[ESTIMATED_PRIORITY_FEE_PER_GAS]",
+                r"Estimated priority fee per gas:\s*(\d+(\.\d+)?)\s*gwei",
+            ),
             ("[ESTIMATED_TOTAL_GAS_USED]", r"Estimated total gas used for script: \d+"),
             (
                 "[ESTIMATED_AMOUNT_REQUIRED]",
