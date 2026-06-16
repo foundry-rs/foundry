@@ -125,10 +125,10 @@ pub enum ReceivePolicyReceiptSubcommand {
         receipt: Bytes,
 
         #[command(flatten)]
-        send_tx: SendTxOpts,
+        send_tx: Box<SendTxOpts>,
 
         #[command(flatten)]
-        tx: TxParams,
+        tx: Box<TxParams>,
     },
 }
 
@@ -165,7 +165,7 @@ impl ReceivePolicySubcommand {
                     receipt_balance(receipt, rpc).await?
                 }
                 ReceivePolicyReceiptSubcommand::Burn { receipt, send_tx, tx } => {
-                    burn_receipt(receipt, send_tx, tx).await?
+                    burn_receipt(receipt, *send_tx, *tx).await?
                 }
             },
             Self::Claim { to, receipt, send_tx, tx } => claim(to, receipt, send_tx, tx).await?,
@@ -503,7 +503,7 @@ fn recovery_mode(recovery_authority: Address) -> &'static str {
     if recovery_authority == Address::ZERO { "originator" } else { "authority" }
 }
 
-fn policy_type(policy_type: ITIP403Registry::PolicyType) -> &'static str {
+const fn policy_type(policy_type: ITIP403Registry::PolicyType) -> &'static str {
     match policy_type {
         ITIP403Registry::PolicyType::WHITELIST => "whitelist",
         ITIP403Registry::PolicyType::BLACKLIST => "blacklist",
@@ -512,7 +512,7 @@ fn policy_type(policy_type: ITIP403Registry::PolicyType) -> &'static str {
     }
 }
 
-fn blocked_reason(reason: ITIP403Registry::BlockedReason) -> &'static str {
+const fn blocked_reason(reason: ITIP403Registry::BlockedReason) -> &'static str {
     match reason {
         ITIP403Registry::BlockedReason::NONE => "none",
         ITIP403Registry::BlockedReason::TOKEN_FILTER => "token_filter",
@@ -521,7 +521,7 @@ fn blocked_reason(reason: ITIP403Registry::BlockedReason) -> &'static str {
     }
 }
 
-fn blocked_reason_u8(reason: u8) -> &'static str {
+const fn blocked_reason_u8(reason: u8) -> &'static str {
     match reason {
         0 => "none",
         1 => "token_filter",
@@ -530,7 +530,7 @@ fn blocked_reason_u8(reason: u8) -> &'static str {
     }
 }
 
-fn inbound_kind(kind: IReceivePolicyGuard::InboundKind) -> &'static str {
+const fn inbound_kind(kind: IReceivePolicyGuard::InboundKind) -> &'static str {
     match kind {
         IReceivePolicyGuard::InboundKind::TRANSFER => "transfer",
         IReceivePolicyGuard::InboundKind::MINT => "mint",
