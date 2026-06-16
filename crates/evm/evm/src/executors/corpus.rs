@@ -345,12 +345,6 @@ impl CampaignCorpusExchange {
         Ok(true)
     }
 
-    /// Returns retained candidates from other workers.
-    #[cfg(test)]
-    pub(crate) fn pull_for_worker(&self, worker_id: usize) -> Vec<CampaignCorpusCandidate> {
-        self.pull_for_worker_limited(worker_id, usize::MAX, &B256HashSet::default())
-    }
-
     /// Returns up to `limit` retained candidates from other workers, excluding fingerprints the
     /// caller already attempted locally.
     pub(crate) fn pull_for_worker_limited(
@@ -372,16 +366,6 @@ impl CampaignCorpusExchange {
             .take(limit)
             .cloned()
             .collect()
-    }
-
-    #[cfg(test)]
-    fn retained_entry_count(&self) -> usize {
-        self.inner.read().entries.len()
-    }
-
-    #[cfg(test)]
-    fn seen_sequence_count(&self) -> usize {
-        self.inner.read().seen_sequences.len()
     }
 }
 
@@ -1979,6 +1963,21 @@ mod tests {
         )
     }
 
+    fn pull_for_worker(
+        exchange: &CampaignCorpusExchange,
+        worker_id: usize,
+    ) -> Vec<CampaignCorpusCandidate> {
+        exchange.pull_for_worker_limited(worker_id, usize::MAX, &B256HashSet::default())
+    }
+
+    fn retained_entry_count(exchange: &CampaignCorpusExchange) -> usize {
+        exchange.inner.read().entries.len()
+    }
+
+    fn seen_sequence_count(exchange: &CampaignCorpusExchange) -> usize {
+        exchange.inner.read().seen_sequences.len()
+    }
+
     #[test]
     fn campaign_corpus_exchange_publishes_retained_entries_to_other_workers_only() {
         let exchange = CampaignCorpusExchange::with_limits(CampaignCorpusExchangeLimits {
@@ -1988,14 +1987,14 @@ mod tests {
 
         exchange.publish(0, &[basic_tx_with_calldata(1)]).unwrap();
 
-        assert!(exchange.pull_for_worker(0).is_empty());
+        assert!(pull_for_worker(&exchange, 0).is_empty());
 
-        let worker1_entries = exchange.pull_for_worker(1);
+        let worker1_entries = pull_for_worker(&exchange, 1);
         assert_eq!(worker1_entries.len(), 1);
         assert_eq!(worker1_entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![1]));
-        assert_eq!(exchange.pull_for_worker(1).len(), 1);
+        assert_eq!(pull_for_worker(&exchange, 1).len(), 1);
 
-        let worker2_entries = exchange.pull_for_worker(2);
+        let worker2_entries = pull_for_worker(&exchange, 2);
         assert_eq!(worker2_entries.len(), 1);
         assert_eq!(worker2_entries[0].tx_seq()[0].call_details.calldata, Bytes::from(vec![1]));
     }
@@ -2011,7 +2010,7 @@ mod tests {
         assert!(exchange.publish(0, &sequence).unwrap());
         assert!(!exchange.publish(1, &sequence).unwrap());
 
-        let entries = exchange.pull_for_worker(2);
+        let entries = pull_for_worker(&exchange, 2);
         assert_eq!(entries.len(), 1);
     }
 
@@ -2051,12 +2050,12 @@ mod tests {
         exchange.publish(0, &[basic_tx_with_calldata(1)]).unwrap();
         exchange.publish(1, &[basic_tx_with_calldata(2)]).unwrap();
 
-        assert_eq!(exchange.retained_entry_count(), 2);
-        assert_eq!(exchange.pull_for_worker(0).len(), 1);
-        assert_eq!(exchange.retained_entry_count(), 2);
+        assert_eq!(retained_entry_count(&exchange), 2);
+        assert_eq!(pull_for_worker(&exchange, 0).len(), 1);
+        assert_eq!(retained_entry_count(&exchange), 2);
 
-        assert_eq!(exchange.pull_for_worker(1).len(), 1);
-        assert_eq!(exchange.retained_entry_count(), 2);
+        assert_eq!(pull_for_worker(&exchange, 1).len(), 1);
+        assert_eq!(retained_entry_count(&exchange), 2);
     }
 
     #[test]
@@ -2070,7 +2069,7 @@ mod tests {
             exchange.publish(0, &[basic_tx_with_calldata(calldata)]).unwrap();
         }
 
-        assert_eq!(exchange.retained_entry_count(), 2);
+        assert_eq!(retained_entry_count(&exchange), 2);
 
         let entries = exchange.pull_for_worker_limited(1, 4, &B256HashSet::default());
         let calldatas = entries
@@ -2092,7 +2091,7 @@ mod tests {
         assert!(exchange.publish(0, &[basic_tx_with_calldata(2)]).unwrap());
         assert!(exchange.publish(0, &[basic_tx_with_calldata(3)]).unwrap());
 
-        assert_eq!(exchange.seen_sequence_count(), 2);
+        assert_eq!(seen_sequence_count(&exchange), 2);
         assert!(exchange.publish(1, &sequence).unwrap());
     }
 
