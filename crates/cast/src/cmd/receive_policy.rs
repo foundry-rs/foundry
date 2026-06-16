@@ -626,7 +626,7 @@ mod tests {
         let err = decode_claim_receipt(&bad_recipient.abi_encode().into()).unwrap_err();
         assert!(err.to_string().contains("recipient cannot be the guard precompile"));
 
-        let mut bad_reason = decoded.clone();
+        let mut bad_reason = decoded;
         bad_reason.blockedReason = ITIP403Registry::BlockedReason::NONE as u8;
         let err = decode_claim_receipt(&bad_reason.abi_encode().into()).unwrap_err();
         assert!(err.to_string().contains("blocked reason is not claimable"));
