@@ -555,21 +555,46 @@ impl VerifyArgs {
         let runs =
             self.collect_runs(chain, etherscan_key.as_deref(), resolved, had_user_verifier_url)?;
 
+        // Submit every provider before polling any of them
         let mut required_err = None;
+        let mut pending_check = None;
         for ProviderRun { label, args, mut provider, required } in runs {
             sh_status!("\nVerifying on {label}...")?;
-            if let Err(err) = provider.verify(args, context.clone()).await {
-                if required {
-                    required_err = Some(wrap_verifier_url_error(
-                        err,
-                        verifier_url.as_deref(),
-                        using_etherscan,
-                    ));
-                } else {
-                    sh_warn!("{label} verification failed: {err}")?;
+            let watch = args.watch;
+            match provider.submit(args, context.clone()).await {
+                Ok(check_args) => {
+                    if required
+                        && watch
+                        && let Some(check_args) = check_args
+                    {
+                        pending_check = Some((label, provider, check_args));
+                    }
+                }
+                Err(err) => {
+                    if required {
+                        required_err = Some(wrap_verifier_url_error(
+                            err,
+                            verifier_url.as_deref(),
+                            using_etherscan,
+                        ));
+                    } else {
+                        sh_warn!("{label} verification failed: {err}")?;
+                    }
                 }
             }
         }
+
+        // Poll the primary submission for completion
+        if required_err.is_none()
+            && let Some((label, provider, check_args)) = pending_check
+        {
+            sh_status!("\nWaiting for {label} verification result...")?;
+            if let Err(err) = provider.check(check_args).await {
+                required_err =
+                    Some(wrap_verifier_url_error(err, verifier_url.as_deref(), using_etherscan));
+            }
+        }
+
         required_err.map_or(Ok(()), Err)
     }
 
@@ -607,6 +632,7 @@ impl VerifyArgs {
             // For chains with Sourcify-compatible APIs, use the chain's URL from etherscan_urls
             // Otherwise, drop the URL so Sourcify falls back to its default.
             args.verifier.verifier_url = sourcify_api_url(chain);
+            args.watch = false;
             runs.push(ProviderRun {
                 label: VerificationProviderType::Sourcify,
                 args,
