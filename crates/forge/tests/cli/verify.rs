@@ -285,7 +285,7 @@ forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| 
             .root_arg()
             .args([
                 "--chain-id",
-                &info.chain.to_string(),
+                info.chain.as_ref(),
                 &address,
                 contract_path,
                 "--etherscan-api-key",
