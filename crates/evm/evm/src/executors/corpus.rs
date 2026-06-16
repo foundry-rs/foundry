@@ -188,26 +188,15 @@ impl CorpusEntry {
     }
 }
 
-/// Corpus entry selected by a worker and returned for logical-campaign persistence.
+/// Coverage corpus entry selected by a worker for campaign-local sharing and persistence.
 #[derive(Debug, Clone)]
 pub(crate) struct CampaignCorpusEntry {
     tx_seq: Vec<BasicTxDetails>,
-    kind: CampaignCorpusEntryKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CampaignCorpusEntryKind {
-    Coverage,
-    Optimization,
 }
 
 impl CampaignCorpusEntry {
     pub(crate) fn tx_seq(&self) -> &[BasicTxDetails] {
         &self.tx_seq
-    }
-
-    pub(crate) fn is_coverage_entry(&self) -> bool {
-        matches!(self.kind, CampaignCorpusEntryKind::Coverage)
     }
 }
 
@@ -646,18 +635,16 @@ impl WorkerCorpusSeed {
 
         let mut output_dir_ready = false;
         for entry in entries {
-            if entry.is_coverage_entry() {
-                let coverage = ReplayCoverage {
-                    history_map: &mut history_map,
-                    edge_indices: &mut edge_indices,
-                    sancov_history_map: &mut sancov_history_map,
-                    metrics: None,
-                };
-                let ReplayOutcome { keep_entry, new_coverage, .. } =
-                    replay_corpus_sequence(&entry.tx_seq, executor, target, coverage)?;
-                if !keep_entry || !new_coverage {
-                    continue;
-                }
+            let coverage = ReplayCoverage {
+                history_map: &mut history_map,
+                edge_indices: &mut edge_indices,
+                sancov_history_map: &mut sancov_history_map,
+                metrics: None,
+            };
+            let ReplayOutcome { keep_entry, new_coverage, .. } =
+                replay_corpus_sequence(&entry.tx_seq, executor, target, coverage)?;
+            if !keep_entry || !new_coverage {
+                continue;
             }
 
             if !output_dir_ready {
@@ -1093,29 +1080,21 @@ impl WorkerCorpus {
             return None;
         }
 
-        // Collect inputs if current run produced new coverage or improved optimization.
-        if !new_coverage && !improved_optimization {
+        // Campaign corpus sharing is coverage-driven. Keep the existing single-worker
+        // optimization corpus behavior, but do not create campaign-local entries for
+        // optimization-only runs.
+        let should_record_corpus = new_coverage || (persist_now && improved_optimization);
+        if !should_record_corpus {
             return None;
         }
 
-        // When the run is interesting only because of optimization (no new coverage),
-        // add the best prefix to the corpus instead of the full run — the prefix is
-        // the sequence that actually achieved the best value.
         assert!(!inputs.is_empty());
-        let corpus_inputs = if improved_optimization && !new_coverage {
-            self.optimization_best_sequence.clone()
-        } else {
-            inputs.to_vec()
-        };
+        let corpus_inputs =
+            if new_coverage { inputs.to_vec() } else { self.optimization_best_sequence.clone() };
         let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
-        let kind = if new_coverage {
-            CampaignCorpusEntryKind::Coverage
-        } else {
-            CampaignCorpusEntryKind::Optimization
-        };
         let campaign_entry =
-            (!persist_now).then(|| CampaignCorpusEntry { tx_seq: corpus_inputs.clone(), kind });
+            (!persist_now).then(|| CampaignCorpusEntry { tx_seq: corpus_inputs.clone() });
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
         if persist_now && let Some(worker_corpus) = &self.worker_dir {
@@ -2259,40 +2238,37 @@ mod tests {
         let record = manager.process_inputs_for_campaign(&[basic_tx()], &[], true, None);
 
         let record = record.unwrap();
-        assert!(record.is_coverage_entry());
+        assert_eq!(record.tx_seq().len(), 1);
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
     }
 
     #[test]
-    fn merged_campaign_outputs_write_corpus_and_optimization_to_master_dir() {
+    fn campaign_processing_returns_no_entry_without_new_coverage() {
         let corpus_root = temp_corpus_dir();
         let mut manager = empty_worker_corpus(1, corpus_root.clone());
         let sequence = vec![basic_tx()];
-        let record = manager
-            .process_inputs_for_campaign(
-                &sequence,
-                &[],
-                false,
-                Some((I256::try_from(7).unwrap(), sequence.clone())),
-            )
-            .unwrap();
-        let inputs = vec![record];
+        assert!(
+            manager
+                .process_inputs_for_campaign(
+                    &sequence,
+                    &[],
+                    false,
+                    Some((I256::try_from(7).unwrap(), sequence.clone())),
+                )
+                .is_none()
+        );
+
         WorkerCorpus::persist_campaign_outputs(
             &corpus_config(corpus_root.clone()),
-            inputs,
+            Vec::new(),
             Some((I256::try_from(7).unwrap(), &sequence)),
         );
 
         let master_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
         let entries = read_corpus_dir(&master_corpus_dir).collect::<Vec<_>>();
-        assert_eq!(entries.len(), 1);
-        let persisted_sequence = entries[0].read_tx_seq().unwrap();
-        assert_eq!(persisted_sequence.len(), sequence.len());
-        assert_eq!(persisted_sequence[0].sender, sequence[0].sender);
-        assert_eq!(persisted_sequence[0].call_details.target, sequence[0].call_details.target);
-        assert_eq!(persisted_sequence[0].call_details.calldata, sequence[0].call_details.calldata);
+        assert!(entries.is_empty());
 
         let state: OptimizationState =
             foundry_common::fs::read_json_file(&corpus_root.join(OPTIMIZATION_BEST_FILE)).unwrap();
@@ -2325,7 +2301,7 @@ mod tests {
     }
 
     #[test]
-    fn non_master_campaign_worker_uses_persisted_optimization_baseline() {
+    fn non_master_campaign_worker_returns_no_corpus_entry_without_new_coverage() {
         let corpus_root = temp_corpus_dir();
         let persisted_sequence = vec![basic_tx()];
         let persisted_state = OptimizationState {
@@ -2364,7 +2340,11 @@ mod tests {
             false,
             Some((I256::try_from(150).unwrap(), better_sequence.clone())),
         );
-        assert!(better.is_some());
+        assert!(better.is_none());
+
+        let (value, sequence) = manager.optimization_initial_state();
+        assert_eq!(value, Some(I256::try_from(150).unwrap()));
+        assert_eq!(sequence.len(), 1);
     }
 
     #[test]

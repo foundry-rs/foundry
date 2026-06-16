@@ -327,10 +327,8 @@ impl CampaignCorpusWorkerSync {
         }
     }
 
-    fn publish_coverage_entry(&self, entry: &CampaignCorpusEntry) -> Result<()> {
-        if entry.is_coverage_entry() {
-            let _ = self.exchange.publish(self.worker_id, entry.tx_seq())?;
-        }
+    fn publish_entry(&self, entry: &CampaignCorpusEntry) -> Result<()> {
+        let _ = self.exchange.publish(self.worker_id, entry.tx_seq())?;
         Ok(())
     }
 
@@ -1240,7 +1238,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     optimization,
                 ) {
                     if let Some(sync) = &corpus_sync {
-                        sync.publish_coverage_entry(&input)?;
+                        sync.publish_entry(&input)?;
                     }
                     corpus_entries.push(input);
                 }
