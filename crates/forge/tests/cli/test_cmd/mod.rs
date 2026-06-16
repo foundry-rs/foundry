@@ -1,5 +1,6 @@
 //! Contains various tests for `forge test`.
 
+use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, U256};
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
@@ -9,11 +10,7 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod core;
 mod fuzz;
@@ -2852,17 +2849,6 @@ contract ForkDebugTest {{
     cmd.assert_success();
     assert_debug_dump_identifies_contract(&table_dump_path, &deployed, "ForkDebugTarget");
 });
-
-fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
-    let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
-    let target_identified = identified.iter().any(|(identified_address, name)| {
-        identified_address.eq_ignore_ascii_case(address)
-            && name.as_str().is_some_and(|name| name == contract_name)
-    });
-    assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
-}
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
