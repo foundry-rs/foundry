@@ -1,0 +1,48 @@
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         require(x >= x);
+   │                 ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         require(y == y);
+   │                 ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         if (arr[i] < arr[i]) {}
+   │             ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         if (m[x] != m[x]) {}
+   │             ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         if (msg.sender == msg.sender) {}
+   │             ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         require(x <= (x));
+   │                 ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
