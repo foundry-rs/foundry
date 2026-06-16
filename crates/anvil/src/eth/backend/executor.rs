@@ -176,7 +176,7 @@ where
                 .map_err(BlockExecutionError::other)?;
 
             if let Some(hook) = &mut self.state_hook {
-                hook.on_state(&result.state);
+                hook.on_state(result.state.clone());
             }
             self.evm.db_mut().commit(result.state);
         }
@@ -223,7 +223,7 @@ where
         } = output;
 
         if let Some(hook) = &mut self.state_hook {
-            hook.on_state(&state);
+            hook.on_state(state.clone());
         }
 
         let gas_used = result.tx_gas_used();

@@ -21,7 +21,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
     shell,
-    tempo::print_resolved_fee_token_selection,
+    tempo::maybe_print_resolved_fee_token,
 };
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -189,7 +189,12 @@ async fn register(
         tempo::fill_access_key_transaction(&provider, &mut tx, access_key, chain).await?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send_with_access_key`, so report the selection here.
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            maybe_print_resolved_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                tx.fee_token(),
+            )
+            .await?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -219,6 +224,7 @@ async fn register(
                 send_tx.cast_async,
                 send_tx.confirmations,
                 timeout,
+                !config.eth_rpc_curl,
             )
             .await
         }
@@ -226,7 +232,12 @@ async fn register(
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send`, so report the selection here.
-            print_resolved_fee_token_selection(Some(chain), tx.fee_token())?;
+            maybe_print_resolved_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                tx.fee_token(),
+            )
+            .await?;
             let cast = CastTxSender::new(&provider);
             if send_tx.sync {
                 cast.send_sync(tx).await.map(|(tx_hash, _)| tx_hash)
@@ -252,6 +263,7 @@ async fn register(
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
+                !config.eth_rpc_curl,
             )
             .await
         }

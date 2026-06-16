@@ -863,6 +863,21 @@ impl SymbolicExecutor {
                 return Ok(outcome);
             }
 
+            if to == CHEATCODE_ADDRESS
+                && let Some(outcome) = self.deploy_code_cheatcode_if_needed(
+                    executor,
+                    state,
+                    worklist,
+                    completed_paths,
+                    selector,
+                    in_offset,
+                    out_offset.clone(),
+                    &out_size,
+                )?
+            {
+                return Ok(outcome);
+            }
+
             let return_data = if to == CHEATCODE_ADDRESS {
                 match self
                     .handle_foundry_cheatcode(executor, state, selector, in_offset, in_size)?
@@ -930,10 +945,17 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        if is_supported_precompile(code_address) {
+        let spec_id: SpecId = executor.spec_id().into();
+        if is_supported_precompile(code_address, spec_id) {
             let input_len = bounded_copy_size_word(&in_size);
             let input = call_input_from_memory(&state.memory, in_offset, &in_size);
-            match execute_symbolic_precompile(code_address, input, input_len)? {
+            if precompile_number_for_spec(code_address, spec_id) == Some(10) {
+                return self.execute_kzg_precompile_call(
+                    executor, state, worklist, kind, to, value, out_offset, &out_size, input,
+                    input_len,
+                );
+            }
+            match execute_symbolic_precompile(code_address, input, input_len, spec_id)? {
                 Some(return_data) => {
                     state.return_data = return_data;
                     if matches!(kind, CallKind::Call) {
@@ -1157,6 +1179,130 @@ impl SymbolicExecutor {
         *state = first;
         spill_batch(parents, worklist, self.config.exploration_order);
         Ok(StepOutcome::Continue)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    /// Implements the KZG point-evaluation precompile call helper.
+    fn execute_kzg_precompile_call<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        kind: CallKind,
+        to: Address,
+        value: SymWord,
+        out_offset: SymWord,
+        out_size: &BoundedCopySize,
+        input: Vec<SymWord>,
+        input_len: SymWord,
+    ) -> Result<StepOutcome, SymbolicError> {
+        if let Some(outcome) = kzg_constrained_outcome(state, &input, &input_len)? {
+            self.apply_precompile_outcome(
+                executor, state, kind, to, value, out_offset, out_size, outcome,
+            )?;
+            return Ok(StepOutcome::Continue);
+        }
+
+        let success_condition = kzg_success_witness_condition(&input, &input_len);
+        let failure_condition = kzg_failure_witness_condition(state, &input, &input_len);
+        let modeled_condition =
+            BoolExpr::or(vec![success_condition.clone(), failure_condition.clone()]);
+        let (_, residual_sat) = self.constraints_with_condition(state, modeled_condition.not())?;
+        if residual_sat {
+            self.defer_incomplete(KZG_RESIDUAL_REASON);
+        }
+
+        let (success_constraints, success_sat) =
+            self.constraints_with_condition(state, success_condition)?;
+
+        let (failure_constraints, failure_sat) =
+            self.constraints_with_condition(state, failure_condition)?;
+
+        match (success_sat, failure_sat) {
+            (true, true) => {
+                let mut failure = state.clone();
+                failure.constraints = failure_constraints;
+                self.apply_precompile_outcome(
+                    executor,
+                    &mut failure,
+                    kind,
+                    to,
+                    value.clone(),
+                    out_offset.clone(),
+                    out_size,
+                    None,
+                )?;
+                worklist.push_back(failure);
+
+                state.constraints = success_constraints;
+                self.apply_precompile_outcome(
+                    executor,
+                    state,
+                    kind,
+                    to,
+                    value,
+                    out_offset,
+                    out_size,
+                    Some(kzg_success_return_data()),
+                )?;
+                Ok(StepOutcome::Continue)
+            }
+            (true, false) => {
+                state.constraints = success_constraints;
+                self.apply_precompile_outcome(
+                    executor,
+                    state,
+                    kind,
+                    to,
+                    value,
+                    out_offset,
+                    out_size,
+                    Some(kzg_success_return_data()),
+                )?;
+                Ok(StepOutcome::Continue)
+            }
+            (false, true) => {
+                state.constraints = failure_constraints;
+                self.apply_precompile_outcome(
+                    executor, state, kind, to, value, out_offset, out_size, None,
+                )?;
+                Ok(StepOutcome::Continue)
+            }
+            (false, false) => Err(SymbolicError::Unsupported(KZG_RESIDUAL_REASON)),
+        }
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    /// Applies a precompile call result to the current symbolic state.
+    fn apply_precompile_outcome<FEN: FoundryEvmNetwork>(
+        &self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        kind: CallKind,
+        to: Address,
+        value: SymWord,
+        out_offset: SymWord,
+        out_size: &BoundedCopySize,
+        outcome: Option<SymReturnData>,
+    ) -> Result<(), SymbolicError> {
+        match outcome {
+            Some(return_data) => {
+                state.return_data = return_data;
+                if matches!(kind, CallKind::Call) {
+                    state.world.transfer(executor, state.address, to, value);
+                }
+                let return_data = state.return_data.clone();
+                state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
+                state.stack.push(SymWord::Concrete(U256::from(1)))?;
+            }
+            None => {
+                state.return_data = SymReturnData::default();
+                let return_data = state.return_data.clone();
+                state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
+                state.stack.push(SymWord::zero())?;
+            }
+        }
+        Ok(())
     }
 
     /// Implements the `prepare_value_transfer` symbolic executor helper.
@@ -1404,6 +1550,218 @@ impl SymbolicExecutor {
         spill_batch(parents, worklist, self.config.exploration_order);
         Ok(StepOutcome::Continue)
     }
+}
+
+const KZG_POINT_EVALUATION_INPUT_LEN: usize = 192;
+const KZG_VERSIONED_HASH_OFFSET: usize = 0;
+const KZG_Z_OFFSET: usize = 32;
+const KZG_Y_OFFSET: usize = 64;
+const KZG_COMMITMENT_OFFSET: usize = 96;
+const KZG_PROOF_OFFSET: usize = 144;
+
+const KZG_BLS_MODULUS: [u8; 32] =
+    hex!("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
+
+const KZG_SUCCESS_INPUT: [u8; KZG_POINT_EVALUATION_INPUT_LEN] = hex!(
+    "01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b"
+    "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000"
+    "1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9"
+    "8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca25f26936857bc3a7c2539ea8ec3a952b7"
+    "a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc2160744faf0070725e00b60ad9a026a15b1a8c"
+);
+
+const KZG_INVALID_PROOF: [u8; 48] = [0xff; 48];
+const KZG_ZERO_COMMITMENT: [u8; 48] = [0x00; 48];
+const KZG_ONE_COMMITMENT: [u8; 48] = [0x01; 48];
+const KZG_RESIDUAL_REASON: &str = "symbolic KZG point-evaluation precompile residual not modeled";
+
+fn kzg_success_return_data() -> SymReturnData {
+    SymReturnData::from_concrete_bytes(kzg_point_evaluation::RETURN_VALUE.to_vec())
+}
+
+fn kzg_constrained_outcome(
+    state: &PathState,
+    input: &[SymWord],
+    input_len: &SymWord,
+) -> Result<Option<Option<SymReturnData>>, SymbolicError> {
+    let Some(input_len) = state.constrained_usize(input_len) else {
+        return Ok(None);
+    };
+    if input_len != KZG_POINT_EVALUATION_INPUT_LEN {
+        return Ok(Some(None));
+    }
+    if input_len > input.len() {
+        return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
+    }
+
+    if let Some(input) = constrained_bytes_at(state, input, 0, input_len) {
+        return execute_precompile(precompile_address(10), &input, SpecId::CANCUN).map(Some);
+    }
+
+    if constrained_byte(state, &input[0])
+        .is_some_and(|version| version != kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG)
+    {
+        return Ok(Some(None));
+    }
+
+    if constrained_bytes_at(state, input, KZG_Z_OFFSET, KZG_BLS_MODULUS.len())
+        .is_some_and(|z| z == KZG_BLS_MODULUS)
+        || constrained_bytes_at(state, input, KZG_Y_OFFSET, KZG_BLS_MODULUS.len())
+            .is_some_and(|y| y == KZG_BLS_MODULUS)
+        || constrained_bytes_at(state, input, KZG_PROOF_OFFSET, KZG_INVALID_PROOF.len())
+            .is_some_and(|proof| proof == KZG_INVALID_PROOF)
+    {
+        return Ok(Some(None));
+    }
+
+    if let Some(commitment) = constrained_bytes_at(state, input, KZG_COMMITMENT_OFFSET, 48) {
+        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        for (idx, expected) in expected_hash.into_iter().enumerate() {
+            if constrained_byte(state, &input[idx]).is_some_and(|actual| actual != expected) {
+                return Ok(Some(None));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn kzg_success_witness_condition(input: &[SymWord], input_len: &SymWord) -> BoolExpr {
+    BoolExpr::and(vec![
+        word_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
+        bytes_eq_condition(input, KZG_VERSIONED_HASH_OFFSET, &KZG_SUCCESS_INPUT),
+    ])
+}
+
+fn kzg_failure_witness_condition(
+    state: &PathState,
+    input: &[SymWord],
+    input_len: &SymWord,
+) -> BoolExpr {
+    let len_192 = word_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN);
+    let mut conditions = vec![
+        word_ne_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
+        BoolExpr::and(vec![
+            len_192.clone(),
+            byte_ne_condition(input, 0, kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG),
+        ]),
+        BoolExpr::and(vec![
+            len_192.clone(),
+            bytes_eq_condition(input, KZG_Z_OFFSET, &KZG_BLS_MODULUS),
+        ]),
+        BoolExpr::and(vec![
+            len_192.clone(),
+            bytes_eq_condition(input, KZG_Y_OFFSET, &KZG_BLS_MODULUS),
+        ]),
+        BoolExpr::and(vec![
+            len_192.clone(),
+            bytes_eq_condition(input, KZG_PROOF_OFFSET, &KZG_INVALID_PROOF),
+        ]),
+    ];
+
+    if let Some(commitment) = constrained_bytes_at(state, input, KZG_COMMITMENT_OFFSET, 48) {
+        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
+        conditions.push(BoolExpr::and(vec![
+            len_192.clone(),
+            kzg_versioned_hash_mismatch_condition(input, &expected_hash),
+        ]));
+    }
+
+    let expected_hash = &KZG_SUCCESS_INPUT[KZG_VERSIONED_HASH_OFFSET..KZG_Z_OFFSET];
+    let commitment = &KZG_SUCCESS_INPUT[KZG_COMMITMENT_OFFSET..KZG_PROOF_OFFSET];
+    conditions.push(BoolExpr::and(vec![
+        len_192.clone(),
+        bytes_eq_condition(input, KZG_COMMITMENT_OFFSET, commitment),
+        byte_eq_condition(input, 1, expected_hash[1] ^ 1),
+    ]));
+
+    for commitment in [&KZG_ZERO_COMMITMENT, &KZG_ONE_COMMITMENT] {
+        let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(commitment);
+        conditions.push(BoolExpr::and(vec![
+            len_192.clone(),
+            bytes_eq_condition(input, KZG_COMMITMENT_OFFSET, commitment),
+            kzg_versioned_hash_mismatch_condition(input, &expected_hash),
+        ]));
+    }
+
+    BoolExpr::or(conditions)
+}
+
+fn kzg_versioned_hash_mismatch_condition(input: &[SymWord], expected_hash: &[u8; 32]) -> BoolExpr {
+    bytes_ne_condition(input, KZG_VERSIONED_HASH_OFFSET, expected_hash)
+}
+
+fn word_eq_condition(word: &SymWord, value: usize) -> BoolExpr {
+    let value = U256::from(value);
+    match word {
+        SymWord::Concrete(word) => BoolExpr::Const(*word == value),
+        SymWord::Expr(word) => BoolExpr::eq(word.clone(), Expr::Const(value)),
+    }
+}
+
+fn word_ne_condition(word: &SymWord, value: usize) -> BoolExpr {
+    word_eq_condition(word, value).not()
+}
+
+fn byte_eq_condition(input: &[SymWord], offset: usize, value: u8) -> BoolExpr {
+    match input.get(offset) {
+        Some(word) => word_eq_condition(word, value as usize),
+        None => BoolExpr::Const(false),
+    }
+}
+
+fn byte_ne_condition(input: &[SymWord], offset: usize, value: u8) -> BoolExpr {
+    match input.get(offset) {
+        Some(word) => word_ne_condition(word, value as usize),
+        None => BoolExpr::Const(false),
+    }
+}
+
+fn bytes_eq_condition(input: &[SymWord], offset: usize, bytes: &[u8]) -> BoolExpr {
+    let Some(end) = offset.checked_add(bytes.len()) else {
+        return BoolExpr::Const(false);
+    };
+    if end > input.len() {
+        return BoolExpr::Const(false);
+    }
+    BoolExpr::and(
+        input[offset..end]
+            .iter()
+            .zip(bytes)
+            .map(|(word, byte)| word_eq_condition(word, *byte as usize))
+            .collect(),
+    )
+}
+
+fn bytes_ne_condition(input: &[SymWord], offset: usize, bytes: &[u8]) -> BoolExpr {
+    let Some(end) = offset.checked_add(bytes.len()) else {
+        return BoolExpr::Const(false);
+    };
+    if end > input.len() {
+        return BoolExpr::Const(false);
+    }
+    BoolExpr::or(
+        input[offset..end]
+            .iter()
+            .zip(bytes)
+            .map(|(word, byte)| word_ne_condition(word, *byte as usize))
+            .collect(),
+    )
+}
+
+fn constrained_bytes_at(
+    state: &PathState,
+    input: &[SymWord],
+    offset: usize,
+    len: usize,
+) -> Option<Vec<u8>> {
+    let end = offset.checked_add(len)?;
+    let bytes = input.get(offset..end)?;
+    bytes.iter().map(|byte| constrained_byte(state, byte)).collect()
+}
+
+fn constrained_byte(state: &PathState, byte: &SymWord) -> Option<u8> {
+    state.constrained_word(byte).filter(|byte| *byte <= U256::from(u8::MAX)).map(|byte| byte.to())
 }
 
 fn ensure_word_not_gasleft(word: &SymWord) -> Result<(), SymbolicError> {
