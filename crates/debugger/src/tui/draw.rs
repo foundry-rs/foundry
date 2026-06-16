@@ -876,9 +876,17 @@ fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) 
 
 fn decoded_internal_name_matches(decoded_name: &str, scope: &DebugSourceScope) -> bool {
     if let Some((contract_name, function_name)) = decoded_name.rsplit_once("::") {
-        return contract_name == scope.contract_name && function_name == scope.function_name;
+        return contract_name == scope.contract_name
+            && decoded_function_matches(function_name, scope);
     }
-    decoded_name == scope.function_name
+    decoded_function_matches(decoded_name, scope)
+}
+
+fn decoded_function_matches(decoded_name: &str, scope: &DebugSourceScope) -> bool {
+    if decoded_name == scope.function_name {
+        return true;
+    }
+    scope_function_signature(scope).as_deref().is_some_and(|signature| decoded_name == signature)
 }
 
 fn decode_external_parameter_values(
@@ -1296,6 +1304,15 @@ mod tests {
         assert!(super::decoded_internal_name_matches("DebugMe::foo", &scope));
         assert!(!super::decoded_internal_name_matches("DebugMe::barfoo", &scope));
         assert!(!super::decoded_internal_name_matches("Other::foo", &scope));
+    }
+
+    #[test]
+    fn decoded_internal_name_matches_canonical_signature_for_overloads() {
+        let scope = scope("foo", "(uint256 amount)");
+
+        assert!(super::decoded_internal_name_matches("DebugMe::foo(uint256)", &scope));
+        assert!(!super::decoded_internal_name_matches("DebugMe::foo(address)", &scope));
+        assert!(!super::decoded_internal_name_matches("Other::foo(uint256)", &scope));
     }
 
     #[test]
