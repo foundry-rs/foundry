@@ -1172,6 +1172,17 @@ pub(crate) fn get_emit_mismatch_message(
 
     // 1. Different number of topics
     if actual.topics().len() != expected.topics().len() {
+        let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
+        let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
+        let expected_topics = checked_topic_count(expected, is_anonymous);
+        let actual_topics = checked_topic_count(actual, is_anonymous);
+
+        if expected_name == actual_name {
+            return format!(
+                "{actual_name} indexed topic count mismatch: expected {expected_topics}, got {actual_topics}"
+            );
+        }
+
         return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
@@ -1312,6 +1323,10 @@ fn name_mismatched_logs(
     let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
     let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
     format!("{actual_name} != expected {expected_name}")
+}
+
+fn checked_topic_count(log: &RawLog, is_anonymous: bool) -> usize {
+    if is_anonymous { log.topics().len() } else { log.topics().len().saturating_sub(1) }
 }
 
 fn expect_safe_memory<FEN: FoundryEvmNetwork>(
