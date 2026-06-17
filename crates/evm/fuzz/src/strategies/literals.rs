@@ -418,7 +418,8 @@ impl Num {
     }
 
     /// Negates the value, keeping its width and switching to a signed context. Returns `None` if
-    /// the result would not fit in [`I256`].
+    /// the result doesn't fit [`I256`] or, for a width-carrying value, its `intN` type (negating
+    /// `type(intN).min` reverts under checked arithmetic).
     fn neg(self) -> Option<Self> {
         match self {
             // `-x` fits in `I256` iff `x <= 2**255` (`|I256::MIN|`).
@@ -426,7 +427,13 @@ impl Num {
                 (raw <= I256::MIN.into_raw()).then(|| Self::int(raw.wrapping_neg(), true, width))
             }
             Self::Int { signed: true, width, .. } => {
-                self.to_i256()?.checked_neg().map(|i| Self::int(i.into_raw(), true, width))
+                let r = self.to_i256()?.checked_neg()?;
+                if let Some(bits) = width
+                    && !can_fit_int(r, bits)
+                {
+                    return None;
+                }
+                Some(Self::int(r.into_raw(), true, width))
             }
             Self::Bytes { .. } => None,
         }
@@ -468,35 +475,71 @@ fn apply_bin(op: ast::BinOpKind, a: Num, b: Num) -> Option<Num> {
         if op == Pow {
             return signed_pow(x, y, width);
         }
-        let r = match op {
-            Add => x.wrapping_add(y),
-            Sub => x.wrapping_sub(y),
-            Mul => x.wrapping_mul(y),
-            Div => x.checked_div(y)?,
-            Rem => x.checked_rem(y)?,
-            _ => return None,
+        // Mirror the unsigned path: typed signed operands use checked arithmetic (an overflow of
+        // their `intN` type reverts at runtime), untyped literals keep 256-bit wrapping.
+        let r = match width {
+            Some(bits) => {
+                let r = match op {
+                    Add => x.checked_add(y)?,
+                    Sub => x.checked_sub(y)?,
+                    Mul => x.checked_mul(y)?,
+                    Div => x.checked_div(y)?,
+                    Rem => x.checked_rem(y)?,
+                    _ => return None,
+                };
+                if !can_fit_int(r, bits) {
+                    return None;
+                }
+                r
+            }
+            None => match op {
+                Add => x.wrapping_add(y),
+                Sub => x.wrapping_sub(y),
+                Mul => x.wrapping_mul(y),
+                Div => x.checked_div(y)?,
+                Rem => x.checked_rem(y)?,
+                _ => return None,
+            },
         };
         return Some(Num::int(r.into_raw(), true, width));
     }
 
     let (x, y) = (a.as_u256(), b.as_u256());
     let r = match op {
-        // Wrapping (mod 2**256) matches EVM unchecked arithmetic, so the produced values are ones
-        // that can actually occur at runtime.
-        Add => x.wrapping_add(y),
-        Sub => x.wrapping_sub(y),
-        Mul => x.wrapping_mul(y),
+        // Default-checked arithmetic: a width-carrying op overflowing its type reverts at runtime,
+        // so bail (`None`) instead of seeding the wrapped value. Untyped literals keep 256-bit
+        // wrapping.
+        Add => checked_arith(x.checked_add(y), x.wrapping_add(y), width)?,
+        Sub => checked_arith(x.checked_sub(y), x.wrapping_sub(y), width)?,
+        Mul => checked_arith(x.checked_mul(y), x.wrapping_mul(y), width)?,
         Div => x.checked_div(y)?,
         Rem => x.checked_rem(y)?,
         // `pow` overflowing `U256` means an out-of-range constant, so bail rather than seed a
-        // wrapped value. (`2 ** 256 - 1` therefore doesn't fold; use `type(uint256).max`.)
-        Pow => x.checked_pow(y)?,
+        // wrapped value. (`2 ** 256 - 1` therefore doesn't fold; use `type(uint256).max`.) A
+        // width-carrying result must also fit its type, else checked arithmetic would revert.
+        Pow => {
+            let r = x.checked_pow(y)?;
+            checked_arith(Some(r), r, width)?
+        }
         // Unsigned `>>` is a logical shift.
         Shr => shift_amount(y).map_or(U256::ZERO, |s| x.wrapping_shr(s)),
         // Comparisons and logical operators are not folded into values.
         _ => return None,
     };
     Some(Num::int(r, false, width))
+}
+
+/// Resolves a default-checked unsigned arithmetic result.
+///
+/// For a width-carrying operand the result type is checked: it must neither overflow 256 bits
+/// (`checked` is `None`) nor exceed its `uintN` width, otherwise the expression reverts at runtime
+/// and we return `None` instead of seeding an unreachable value. Untyped literal operands keep the
+/// 256-bit wrapping value.
+fn checked_arith(checked: Option<U256>, wrapping: U256, width: Option<usize>) -> Option<U256> {
+    match width {
+        Some(bits) => checked.filter(|r| can_fit_uint(*r, bits)),
+        None => Some(wrapping),
+    }
 }
 
 /// Folds a signed `base ** exp`, returning `None` on a negative exponent or a magnitude that
@@ -507,13 +550,21 @@ fn signed_pow(base: I256, exp: I256, width: Option<usize>) -> Option<Num> {
     }
     let magnitude = base.unsigned_abs().checked_pow(exp.into_raw())?;
     let negative = base.is_negative() && exp.into_raw().bit(0);
-    if negative {
+    let value = if negative {
         // Negative results must fit `[-2**255, 0)`, i.e. magnitude <= |I256::MIN|.
-        (magnitude <= I256::MIN.into_raw()).then(|| Num::int(magnitude.wrapping_neg(), true, width))
+        (magnitude <= I256::MIN.into_raw()).then(|| I256::from_raw(magnitude.wrapping_neg()))?
     } else {
         // Positive results must fit `[0, 2**255)`.
-        (magnitude < I256::MIN.into_raw()).then(|| Num::int(magnitude, true, width))
+        (magnitude < I256::MIN.into_raw()).then(|| I256::from_raw(magnitude))?
+    };
+    // A width-carrying result that overflows its `intN` type reverts under checked arithmetic, so
+    // don't seed a value the expression can never produce.
+    if let Some(bits) = width
+        && !can_fit_int(value, bits)
+    {
+        return None;
     }
+    Some(Num::int(value.into_raw(), true, width))
 }
 
 /// Combines the widths of two operands: an untyped operand (`None`) inherits the other's width;
@@ -806,20 +857,25 @@ mod tests {
             uint8 constant B = uint8(1) << 8;             // 0
             int8 constant D = int8(1) << 7;               // -128
             uint8 constant E = uint8(255) << 256;         // 0 (shift amount >= 256)
-            uint8 constant F = uint8(250) + 10;           // 260 -> 4 (typed + untyped literal)
-            uint8 constant G = uint8(10) ** uint256(3);   // 1000 -> 232 (result type is base uint8)
+            uint8 constant F = uint8(250) + 5;            // 255 (in-range, typed + untyped literal)
+            uint8 constant G = uint8(10) ** uint256(2);   // 100 (in-range, result type is base uint8)
             uint8 constant H = uint8(0x80) >> uint256(0); // 128 (result type is left uint8)
         }"#;
         let map = process_source_literals(source);
 
         assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(255)), "~uint8(0) -> 255");
         assert_word(&map, DynSolType::Uint(8), B256::from(U256::ZERO), "uint8(_) << {8,256} -> 0");
-        assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(4)), "uint8(250) + 10 -> 4");
         assert_word(
             &map,
             DynSolType::Uint(8),
-            B256::from(U256::from(232)),
-            "uint8(10) ** 3 -> 232",
+            B256::from(U256::from(255)),
+            "uint8(250) + 5 -> 255",
+        );
+        assert_word(
+            &map,
+            DynSolType::Uint(8),
+            B256::from(U256::from(100)),
+            "uint8(10) ** 2 -> 100",
         );
         assert_word(
             &map,
@@ -830,23 +886,88 @@ mod tests {
         let neg_128 = B256::from(I256::try_from(-128).unwrap().into_raw());
         assert_word(&map, DynSolType::Int(8), neg_128, "int8(1) << 7 -> -128");
 
-        // Untruncated (widened) results must not leak into a larger bucket.
-        let leaked =
-            |ty, v: u64| map.words.get(&ty).is_some_and(|s| s.contains(&B256::from(U256::from(v))));
+        // The in-width `~` result must not leak its 256-bit form (`uint256::MAX`) into a larger
+        // bucket. (In-range arithmetic results like `255` legitimately seed every width that fits.)
         assert!(
             !map.words
                 .get(&DynSolType::Uint(256))
                 .is_some_and(|s| s.contains(&B256::from(U256::MAX))),
             "~uint8(0) must not seed a uint256 max"
         );
-        assert!(
-            !leaked(DynSolType::Uint(16), 260),
-            "uint8(250) + 10 must not leak 260 into uint16"
-        );
-        assert!(
-            !leaked(DynSolType::Uint(16), 1000),
-            "uint8(10) ** 3 must not leak 1000 into uint16"
-        );
+    }
+
+    #[test]
+    fn test_checked_overflow_does_not_seed() {
+        // Solidity arithmetic is checked by default: a width-carrying `+`/`-`/`*`/`**` that
+        // overflows its type reverts at runtime, so the folder must not seed the (wrapped) value
+        // that can never occur. Operands and in-range siblings still fold normally.
+        let source = r#"
+        contract C {
+            uint8 constant A = uint8(250) + 10;   // 260 -> reverts (panic 0x11), not 4
+            uint8 constant B = uint8(200) * 2;    // 400 -> reverts, not 144
+            uint8 constant C2 = uint8(1) - 2;     // underflow -> reverts, not 255
+            uint8 constant D = uint8(10) ** 3;    // 1000 -> reverts, not 232
+            int8 constant E = int8(100) + 100;    // 200 -> reverts, not -56
+            int8 constant F = int8(64) * 2;       // 128 -> reverts, not -128
+            int8 constant G = int8(5) ** 3;       // 125 -> in range, folds
+        }"#;
+        let map = process_source_literals(source);
+
+        // None of the wrapped values may be seeded under any width.
+        let seeded =
+            |ty, raw: U256| map.words.get(&ty).is_some_and(|s| s.contains(&B256::from(raw)));
+        for bits in [8usize, 16, 32, 64, 128, 256] {
+            assert!(
+                !seeded(DynSolType::Uint(bits), U256::from(4)),
+                "uint8(250)+10 must not seed 4"
+            );
+            assert!(
+                !seeded(DynSolType::Uint(bits), U256::from(144)),
+                "uint8(200)*2 must not seed 144"
+            );
+            assert!(
+                !seeded(DynSolType::Uint(bits), U256::from(255)),
+                "uint8(1)-2 must not seed 255"
+            );
+            assert!(
+                !seeded(DynSolType::Uint(bits), U256::from(232)),
+                "uint8(10)**3 must not seed 232"
+            );
+        }
+        let neg_56 = I256::try_from(-56).unwrap().into_raw();
+        let neg_128 = I256::try_from(-128).unwrap().into_raw();
+        for bits in [8usize, 16, 32, 64, 128, 256] {
+            assert!(!seeded(DynSolType::Int(bits), neg_56), "int8(100)+100 must not seed -56");
+            assert!(!seeded(DynSolType::Int(bits), neg_128), "int8(64)*2 must not seed -128");
+        }
+
+        // The in-range expression and the cast operands themselves still fold.
+        assert_word(&map, DynSolType::Int(8), B256::from(U256::from(125)), "int8(5) ** 3 -> 125");
+        assert_word(&map, DynSolType::Uint(8), B256::from(U256::from(250)), "operand uint8(250)");
+    }
+
+    #[test]
+    fn test_checked_negation_overflow_does_not_seed() {
+        // Negating `type(intN).min` overflows the `intN` type and reverts under checked arithmetic,
+        // so the (wrapped) min value must not be re-seeded; in-range negations still fold.
+        let source = r#"
+        contract C {
+            int8 constant A = -type(int8).min + 1; // -(-128) reverts, must not seed -127
+            int8 constant B = -int8(1);            // -1, folds normally
+        }"#;
+        let map = process_source_literals(source);
+
+        let neg_127 = I256::try_from(-127).unwrap().into_raw();
+        let seeded =
+            |ty, raw: U256| map.words.get(&ty).is_some_and(|s| s.contains(&B256::from(raw)));
+        for bits in [8usize, 16, 32, 64, 128, 256] {
+            assert!(
+                !seeded(DynSolType::Int(bits), neg_127),
+                "-type(int8).min + 1 must not seed -127"
+            );
+        }
+        let neg_one = B256::from(I256::try_from(-1).unwrap().into_raw());
+        assert_word(&map, DynSolType::Int(8), neg_one, "-int8(1) -> -1");
     }
 
     #[test]
