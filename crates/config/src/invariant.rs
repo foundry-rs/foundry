@@ -139,7 +139,7 @@ pub struct InvariantCorpusSyncConfig {
 impl Default for InvariantCorpusSyncConfig {
     fn default() -> Self {
         Self {
-            mode: InvariantCorpusSyncMode::Off,
+            mode: InvariantCorpusSyncMode::Plateau,
             plateau_runs: 10_000,
             plateau_seconds: None,
             max_imports_per_sync: 64,
@@ -289,8 +289,8 @@ mod tests {
     }
 
     #[test]
-    fn invariant_corpus_sync_defaults_off() {
+    fn invariant_corpus_sync_defaults_to_plateau() {
         assert_eq!(InvariantConfig::default().corpus_sync, InvariantCorpusSyncConfig::default());
-        assert!(!InvariantConfig::default().corpus_sync.is_enabled());
+        assert!(InvariantConfig::default().corpus_sync.is_enabled());
     }
 }
