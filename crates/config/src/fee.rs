@@ -7,7 +7,7 @@ use std::{fmt, str::FromStr};
 /// Controls how EIP-1559 fees are estimated, analogous to wallet UIs that offer
 /// "low" / "market" / "aggressive" gas options.
 ///
-/// Used both as a CLI value (`--eip1559-fee-estimate <preset>`) and as a TOML
+/// Used both as a CLI value (`--estimate <preset>`) and as a TOML
 /// configuration value (`eip1559_fee_estimate = "market"`).
 ///
 /// The estimate controls two parameters:

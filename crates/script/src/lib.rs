@@ -137,7 +137,7 @@ pub struct ScriptArgs {
     /// likely to stall if the base fee rises. `--with-gas-price` and
     /// `--priority-gas-price` override only `maxFeePerGas` and
     /// `maxPriorityFeePerGas` respectively. Ignored for `--legacy`.
-    #[arg(long, value_name = "PRESET")]
+    #[arg(long = "estimate", value_name = "PRESET")]
     pub eip1559_fee_estimate: Option<Eip1559FeeEstimatePreset>,
 
     /// Broadcasts the transactions.
@@ -1477,12 +1477,7 @@ mod tests {
         let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1"]);
         assert!(args.eip1559_fee_estimate.is_none());
 
-        let args = ScriptArgs::parse_from([
-            "foundry-cli",
-            "DeployV1",
-            "--eip1559-fee-estimate",
-            "aggressive",
-        ]);
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--estimate", "aggressive"]);
         assert_eq!(args.eip1559_fee_estimate, Some(Eip1559FeeEstimatePreset::Aggressive));
     }
 
