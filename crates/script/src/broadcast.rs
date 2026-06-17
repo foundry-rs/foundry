@@ -36,7 +36,7 @@ use foundry_common::{
     shell,
     tempo::{
         KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
-        maybe_print_fee_token, tempo_home,
+        maybe_print_fee_token, resolve_and_set_fee_token, tempo_home,
     },
 };
 use foundry_config::Config;
@@ -107,6 +107,7 @@ where
     /// 1. Nonce synchronization: Waits for the provider's nonce to catch up to the expected
     ///    transaction nonce when doing sequential broadcast
     /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare(
         &mut self,
         provider: &RootProvider<N>,
@@ -115,6 +116,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        chain: Option<Chain>,
     ) -> Result<()> {
         let (tx, access_key_authorization) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
@@ -173,6 +175,13 @@ where
             .await?;
         }
 
+        let fee_token = if let Some(sponsor) = tempo_sponsor {
+            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+            None
+        } else {
+            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
+        };
+
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
@@ -182,8 +191,9 @@ where
         if let Some(sponsor) = tempo_sponsor {
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
+        } else {
+            maybe_print_fee_token(Some(provider), fee_token).await?;
         }
-        maybe_print_fee_token(Some(provider), tx.fee_token()).await?;
 
         Ok(())
     }
@@ -245,6 +255,7 @@ where
     ///
     /// This is a convenience method that combines [`prepare`](Self::prepare) and
     /// [`send`](Self::send) into a single call.
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare_and_send(
         mut self,
         provider: Arc<RootProvider<N>>,
@@ -253,6 +264,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        chain: Option<Chain>,
     ) -> Result<TxHash> {
         self.prepare(
             &provider,
@@ -261,6 +273,7 @@ where
             estimate_via_rpc,
             estimate_multiplier,
             tempo_sponsor,
+            chain,
         )
         .await?;
 
@@ -630,52 +643,51 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
-                let transactions = sequence
-                    .transactions
-                    .iter()
-                    .skip(already_broadcasted)
-                    .map(|tx_with_metadata| {
-                        let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
+                let sequence_chain = sequence.chain;
+                let mut transactions = Vec::with_capacity(
+                    sequence.transactions.len().saturating_sub(already_broadcasted),
+                );
+                for tx_with_metadata in sequence.transactions.iter().skip(already_broadcasted) {
+                    let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
-                        let kind = match tx_with_metadata.tx().clone() {
-                            TransactionMaybeSigned::Signed { tx, .. } => {
-                                if tempo_sponsor.is_some() {
-                                    eyre::bail!(
-                                        "cannot attach Tempo sponsor signature to an already signed script transaction"
-                                    );
-                                }
-                                SendTransactionKind::Signed(tx)
+                    let kind = match tx_with_metadata.tx().clone() {
+                        TransactionMaybeSigned::Signed { tx, .. } => {
+                            if tempo_sponsor.is_some() {
+                                eyre::bail!(
+                                    "cannot attach Tempo sponsor signature to an already signed script transaction"
+                                );
                             }
-                            TransactionMaybeSigned::Unsigned(mut tx) => {
-                                let from = tx.from().expect("No sender for onchain transaction!");
+                            SendTransactionKind::Signed(tx)
+                        }
+                        TransactionMaybeSigned::Unsigned(mut tx) => {
+                            let from = tx.from().expect("No sender for onchain transaction!");
 
-                                tx.set_chain_id(sequence.chain);
+                            tx.set_chain_id(sequence_chain);
 
-                                // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
-                                // alloy
-                                if tx.kind().is_none() {
-                                    tx.set_create();
-                                }
-
-                                if let Some(gas_price) = gas_price {
-                                    tx.set_gas_price(gas_price);
-                                } else {
-                                    let eip1559_fees = eip1559_fees.expect("was set above");
-                                    tx.set_max_priority_fee_per_gas(
-                                        eip1559_fees.max_priority_fee_per_gas,
-                                    );
-                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                                }
-
-                                self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
-
-                                send_kind.for_sender(sequence.chain, &from, tx)?
+                            // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
+                            // alloy
+                            if tx.kind().is_none() {
+                                tx.set_create();
                             }
-                        };
 
-                        Ok((kind, is_fixed_gas_limit))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                            if let Some(gas_price) = gas_price {
+                                tx.set_gas_price(gas_price);
+                            } else {
+                                let eip1559_fees = eip1559_fees.expect("was set above");
+                                tx.set_max_priority_fee_per_gas(
+                                    eip1559_fees.max_priority_fee_per_gas,
+                                );
+                                tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
+                            }
+
+                            self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
+
+                            send_kind.for_sender(sequence_chain, &from, tx)?
+                        }
+                    };
+
+                    transactions.push((kind, is_fixed_gas_limit));
+                }
 
                 let estimate_via_rpc = has_different_gas_calc(sequence.chain)
                     || self.script_config.evm_opts.networks.is_tempo()
@@ -695,6 +707,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
                 let mut index = already_broadcasted;
+                let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     seq_progress.inner.write().set_status(&format!(
@@ -718,6 +731,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
                                             tempo_sponsor.as_deref(),
+                                            Some(sequence_chain.into()),
                                         )
                                         .await;
                                     (res, kind, *is_fixed_gas_limit, 0, None)
@@ -763,6 +777,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
                                             tempo_sponsor.as_deref(),
+                                            Some(sequence_chain.into()),
                                         )
                                         .await;
                                     (
@@ -1238,6 +1253,24 @@ impl BundledState<TempoEvmNetwork> {
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
+        let fee_token = if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    Some(provider.as_ref()),
+                    Some(Chain::from_named(NamedChain::Tempo)),
+                    &mut batch_tx,
+                )
+                .await?;
+            None
+        } else {
+            resolve_and_set_fee_token(
+                Some(provider.as_ref()),
+                Some(Chain::from_named(NamedChain::Tempo)),
+                &mut batch_tx,
+                Some(sender),
+            )
+            .await?
+        };
 
         if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
             batch_tx.key_id = Some(ak.key_address);
@@ -1258,8 +1291,9 @@ impl BundledState<TempoEvmNetwork> {
 
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
+        } else {
+            maybe_print_fee_token(Some(provider.as_ref()), fee_token).await?;
         }
-        maybe_print_fee_token(Some(provider.as_ref()), batch_tx.fee_token()).await?;
 
         // Sign and send.
         let tx_hash = match batch_signer {
@@ -1576,7 +1610,18 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
+        sender
+            .prepare(
+                &provider,
+                false,
+                true,
+                false,
+                100,
+                None,
+                Some(Chain::from_named(NamedChain::Mainnet)),
+            )
+            .await
+            .unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _, _) => {

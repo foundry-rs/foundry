@@ -228,7 +228,34 @@ impl FoldedStackTraceBuilder {
     }
 }
 
+#[cfg(test)]
 mod tests {
+    use alloy_primitives::{Bytes, U256};
+    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+    use revm_inspectors::tracing::{
+        CallTraceArena,
+        types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep, TraceMemberOrder},
+    };
+
+    fn trace_step(gas_remaining: u64) -> CallTraceStep {
+        CallTraceStep {
+            pc: 0,
+            op: OpCode::STOP,
+            stack: Some(Vec::<U256>::new().into_boxed_slice()),
+            push_stack: None,
+            memory: None,
+            returndata: Bytes::new(),
+            gas_remaining,
+            gas_refund_counter: 0,
+            gas_used: 0,
+            gas_cost: 0,
+            storage_change: None,
+            status: Some(InstructionResult::Stop),
+            immediate_bytes: None,
+            decoded: None,
+        }
+    }
+
     #[test]
     fn test_fst_1() {
         let mut trace = super::FoldedStackTraceBuilder::default();
@@ -319,6 +346,29 @@ mod tests {
                 "top;child_b;child_c 500",
                 "top2 1700",
             ]
+        );
+    }
+
+    #[test]
+    fn folded_stack_trace_keeps_precise_internal_function_names() {
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.trace.gas_used = 100;
+        root.trace.gas_limit = 100;
+        root.trace.steps = vec![trace_step(100), trace_step(70)];
+        root.trace.steps[0].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+            DecodedInternalCall {
+                func_name: "DebugVarsTest::foo(uint256)".to_string(),
+                args: Some(vec!["42".to_string()]),
+                return_data: Some(vec!["43".to_string()]),
+            },
+            1,
+        )));
+        root.ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
+
+        assert_eq!(
+            super::build(&arena, false),
+            vec!["fallback 70", "fallback;DebugVarsTest::foo(uint256) 30",]
         );
     }
 }

@@ -168,9 +168,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.logs.extend(script_result.logs);
             setup_result.traces.extend(script_result.traces);
             setup_result.labeled_addresses.extend(script_result.labeled_addresses);
-            if self.args.debug {
-                setup_result.debug_bytecodes.extend(script_result.debug_bytecodes);
-            }
+            setup_result.debug_bytecodes.extend(script_result.debug_bytecodes);
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;

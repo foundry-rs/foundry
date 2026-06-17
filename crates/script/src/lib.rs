@@ -13,7 +13,6 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner};
-use alloy_chains::{Chain, NamedChain};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -37,7 +36,6 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
     shell,
-    tempo::resolve_fee_token,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
@@ -313,10 +311,6 @@ impl ScriptArgs {
         }
 
         tempo.resolve_expires();
-
-        // Resolve the fee token: default only when the active EVM network is Tempo.
-        let chain = evm_opts.networks.is_tempo().then(|| Chain::from_named(NamedChain::Tempo));
-        tempo.fee_token = resolve_fee_token(chain, tempo.fee_token);
 
         let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
@@ -888,6 +882,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;

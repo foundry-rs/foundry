@@ -239,6 +239,65 @@ async fn test_call_tracer_debug_trace_call() {
         }
     }
 
+    let receipt = internal_call_tx_builder.send().await.unwrap().get_receipt().await.unwrap();
+    let internal_call_tx_hash = receipt.transaction_hash;
+    let trace_provider = handle.http_provider();
+
+    let internal_call_tx_traces: GethTrace = trace_provider
+        .raw_request(
+            "debug_traceTransaction".into(),
+            (
+                internal_call_tx_hash,
+                serde_json::json!({
+                    "tracer": "callTracer",
+                    "tracerConfig": {
+                        "withLog": true
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert_eq!(call_frame.calls.len(), 1);
+            assert_eq!(
+                call_frame.calls.first().unwrap().to.unwrap(),
+                *simple_storage_contract.address()
+            );
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
+    let internal_call_only_top_level_call_tx_traces: GethTrace = trace_provider
+        .raw_request(
+            "debug_traceTransaction".into(),
+            (
+                internal_call_tx_hash,
+                serde_json::json!({
+                    "tracer": "callTracer",
+                    "tracerConfig": {
+                        "onlyTopLevelCall": true,
+                        "withLog": true
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_only_top_level_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.is_empty());
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
     // directly calling the SimpleStorage contract should not result in any internal calls
     let direct_call_tx = TransactionRequest::default()
         .from(wallets[1].address())
