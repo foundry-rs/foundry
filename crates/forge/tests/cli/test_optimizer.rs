@@ -1427,7 +1427,7 @@ Traces:
     │   └─ ← [Stop]
     ├─ [..] Counter::number() [staticcall]
     │   └─ ← [Return] 1
-    ├─ [..] StdAssertions::assertEq(1, 1)
+    ├─ [..] StdAssertions::assertEq(uint256,uint256)(1, 1)
     │   └─ ← 
     └─ ← [Stop]
 
