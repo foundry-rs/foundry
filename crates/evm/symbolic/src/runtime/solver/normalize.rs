@@ -186,6 +186,16 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
                 Expr::op(op, left, right)
             }
         }
+        Expr::AddMod { left, right, modulus } => Expr::addmod(
+            normalize_expr_for_solver(*left),
+            normalize_expr_for_solver(*right),
+            normalize_expr_for_solver(*modulus),
+        ),
+        Expr::MulMod { left, right, modulus } => Expr::mulmod(
+            normalize_expr_for_solver(*left),
+            normalize_expr_for_solver(*right),
+            normalize_expr_for_solver(*modulus),
+        ),
         Expr::Ite(cond, left, right) => normalize_ite_expr_for_solver(*cond, *left, *right),
     }
 }
@@ -399,6 +409,9 @@ pub(crate) fn expr_contains_udiv(expr: &Expr) -> bool {
         Expr::Op(op, left, right) => {
             matches!(op, ExprOp::UDiv) || expr_contains_udiv(left) || expr_contains_udiv(right)
         }
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            expr_contains_udiv(left) || expr_contains_udiv(right) || expr_contains_udiv(modulus)
+        }
         Expr::Ite(condition, then_expr, else_expr) => {
             bool_contains_udiv(condition)
                 || expr_contains_udiv(then_expr)
@@ -601,6 +614,7 @@ pub(crate) fn expr_unsigned_bits(expr: &Expr) -> usize {
             expr_unsigned_bits(left).saturating_add(expr_unsigned_bits(right)).min(256)
         }
         Expr::Op(ExprOp::UDiv, left, _) => expr_unsigned_bits(left),
+        Expr::AddMod { modulus, .. } | Expr::MulMod { modulus, .. } => expr_unsigned_bits(modulus),
         Expr::Ite(_, left, right) => expr_unsigned_bits(left).max(expr_unsigned_bits(right)),
         _ => 256,
     }

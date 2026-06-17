@@ -112,7 +112,7 @@ impl SymbolicExecutor {
         constraints: Vec<BoolExpr>,
         completed_paths: &mut usize,
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
-        state.world.clear_transient_storage();
+        state.world.clear_transaction_scoped_state();
         let code = state.world.extcode(executor, target)?;
         let jumpdests = analyze_jumpdests(&code);
         state.call_depth = 0;

@@ -44,7 +44,7 @@ use foundry_config::{
     },
     filter::GlobMatcher,
 };
-use foundry_debugger::Debugger;
+use foundry_debugger::{Debugger, DebuggerLayout};
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -120,6 +120,10 @@ pub struct TestArgs {
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
     debug: bool,
+
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    debug_layout: Option<DebuggerLayout>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
@@ -886,7 +890,8 @@ impl TestArgs {
             let mut builder = Debugger::builder()
                 .traces(traces)
                 .sources(sources)
-                .breakpoints(test_result.breakpoints);
+                .breakpoints(test_result.breakpoints)
+                .layout(self.debug_layout.unwrap_or_default());
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);

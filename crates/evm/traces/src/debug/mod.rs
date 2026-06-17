@@ -206,7 +206,8 @@ impl<'a> DebugStepsWalker<'a> {
 /// Tries to parse the function name from the source code and detect the contract name which
 /// contains the given function.
 ///
-/// Returns string in the format `Contract::function`.
+/// Returns a string in the format `Contract::function(types)` when parameters can be resolved,
+/// falling back to `Contract::function`.
 fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<String> {
     let start = loc.offset() as usize;
     let (source_part, end) = source_span(&source.source, start, loc.length() as usize)?;
@@ -217,7 +218,41 @@ fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<S
     let function_name = source_part.split_once("function")?.1.split('(').next()?.trim();
     let contract_name = source.find_contract_name(start, end)?;
 
-    Some(format!("{contract_name}::{function_name}"))
+    Some(internal_function_identifier(contract_name, function_name, source_part))
+}
+
+fn internal_function_identifier(
+    contract_name: &str,
+    function_name: &str,
+    source_part: &str,
+) -> String {
+    let signature = canonical_function_signature(function_name, source_part)
+        .unwrap_or_else(|| function_name.to_string());
+    format!("{contract_name}::{signature}")
+}
+
+fn canonical_function_signature(function_name: &str, source_part: &str) -> Option<String> {
+    let source_part = source_part.replace('\n', "");
+    let (inputs, _) = parse_types(&source_part);
+    let inputs = inputs?;
+    let types =
+        inputs.params.iter().map(|param| param.resolve().ok()).collect::<Option<Vec<_>>>()?;
+    Some(function_signature(function_name, &types))
+}
+
+/// Formats an ABI-style function signature from a name and canonical parameter types.
+pub fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
+    let mut signature = String::new();
+    signature.push_str(function_name);
+    signature.push('(');
+    for (i, ty) in types.iter().enumerate() {
+        if i > 0 {
+            signature.push(',');
+        }
+        signature.push_str(&ty.sol_type_name());
+    }
+    signature.push(')');
+    signature
 }
 
 fn source_span(source: &str, start: usize, len: usize) -> Option<(&str, usize)> {
@@ -347,7 +382,9 @@ fn memory_range(memory: &[u8], start: usize, len: usize) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_from_memory, decode_step_parameters, source_span};
+    use super::{
+        decode_from_memory, decode_step_parameters, internal_function_identifier, source_span,
+    };
     use alloy_dyn_abi::{DynSolType, parser::Parameters};
     use alloy_primitives::{Bytes, U256};
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
@@ -377,6 +414,18 @@ mod tests {
         assert_eq!(source_span("abcdef", 2, 3), Some(("cde", 5)));
         assert_eq!(source_span("abcdef", 7, 1), None);
         assert_eq!(source_span("abcdef", usize::MAX, 1), None);
+    }
+
+    #[test]
+    fn internal_function_identifier_includes_canonical_signature() {
+        assert_eq!(
+            internal_function_identifier(
+                "DebugMe",
+                "foo",
+                "function foo(uint256 amount, bool ok) internal returns (uint256) {",
+            ),
+            "DebugMe::foo(uint256,bool)"
+        );
     }
 
     #[test]

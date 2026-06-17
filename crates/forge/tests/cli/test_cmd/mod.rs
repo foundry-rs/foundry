@@ -1,5 +1,6 @@
 //! Contains various tests for `forge test`.
 
+use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, U256};
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
@@ -9,11 +10,7 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod core;
 mod fuzz;
@@ -56,6 +53,32 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
         }
     }
     drop(dotenv);
+}
+
+fn collect_debug_dump_internal_calls<'a>(
+    value: &'a serde_json::Value,
+    calls: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_debug_dump_internal_calls(value, calls);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if let Some(call) = map
+                .get("InternalCall")
+                .and_then(|value| value.as_array())
+                .and_then(|values| values.first())
+            {
+                calls.push(call);
+            }
+            for value in map.values() {
+                collect_debug_dump_internal_calls(value, calls);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
@@ -1497,13 +1520,13 @@ Traces:
     ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
     ├─ [22630] SimpleContract::increment()
-    │   ├─ [20147] SimpleContract::_setNum(1)
+    │   ├─ [20147] SimpleContract::_setNum(uint256)(1)
     │   │   └─ ← 0
     │   └─ ← [Stop]
     ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
-    │   ├─ [247] SimpleContract::_setNum(100)
+    │   ├─ [247] SimpleContract::_setNum(uint256)(100)
     │   │   └─ ← 1
-    │   ├─ [22336] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
+    │   ├─ [22336] SimpleContract::_setAddr(address)(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
     │   └─ ← [Stop]
     └─ ← [Stop]
@@ -1553,7 +1576,7 @@ Traces:
     ├─ [..] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] [..] bytes of code
     ├─ [..] SimpleContract::setStr("new value")
-    │   ├─ [..] SimpleContract::_setStr("new value")
+    │   ├─ [..] SimpleContract::_setStr(string)("new value")
     │   │   └─ ← "initial value"
     │   └─ ← [Stop]
     └─ ← [Stop]
@@ -2670,6 +2693,70 @@ contract Dummy {
     assert!(dump_path.exists());
 });
 
+forgetest!(debug_dump_disambiguates_overloaded_internal_functions, |prj, cmd| {
+    prj.add_source(
+        "DebugVars",
+        r"
+contract DebugVarsTest {
+    function testOverloadedInternalDebugVars() public {
+        uint256 amount = foo(uint256(42));
+        address who = foo(address(0x000000000000000000000000000000000000bEEF));
+
+        require(amount == 43, 'bad amount');
+        require(who == address(0x000000000000000000000000000000000000bEEF), 'bad address');
+    }
+
+    function foo(uint256 amount) internal pure returns (uint256 out) {
+        uint256 next = amount + 1;
+        return next;
+    }
+
+    function foo(address who) internal pure returns (address out) {
+        address seen = who;
+        return seen;
+    }
+}
+",
+    );
+
+    let dump_path = prj.root().join("overloads_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testOverloadedInternalDebugVars",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut calls = Vec::new();
+    collect_debug_dump_internal_calls(&dump, &mut calls);
+
+    let uint_call = calls
+        .iter()
+        .find(|call| call["func_name"] == "DebugVarsTest::foo(uint256)")
+        .expect("missing uint256 overload in debugger dump");
+    assert_eq!(uint_call["args"], serde_json::json!(["42"]));
+    assert_eq!(uint_call["return_data"], serde_json::json!(["43"]));
+
+    let address_call = calls
+        .iter()
+        .find(|call| call["func_name"] == "DebugVarsTest::foo(address)")
+        .expect("missing address overload in debugger dump");
+    assert_eq!(
+        address_call["args"],
+        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
+    assert_eq!(
+        address_call["return_data"],
+        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10322>
 forgetest!(test_debug_with_dump_setup_revert, |prj, cmd| {
     prj.add_test(
@@ -2852,17 +2939,6 @@ contract ForkDebugTest {{
     cmd.assert_success();
     assert_debug_dump_identifies_contract(&table_dump_path, &deployed, "ForkDebugTarget");
 });
-
-fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
-    let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
-    let target_identified = identified.iter().any(|(identified_address, name)| {
-        identified_address.eq_ignore_ascii_case(address)
-            && name.as_str().is_some_and(|name| name == contract_name)
-    });
-    assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
-}
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {

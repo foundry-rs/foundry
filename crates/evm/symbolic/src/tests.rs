@@ -29,6 +29,31 @@ fn precompile_address(index: u8) -> Address {
 }
 
 #[test]
+/// Regression coverage for `precompile_number_for_spec`.
+fn precompile_number_respects_active_spec() {
+    for number in 1..=4 {
+        assert_eq!(
+            precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER),
+            Some(number)
+        );
+    }
+
+    for number in 5..=8 {
+        assert_eq!(precompile_number_for_spec(precompile_address(number), SpecId::FRONTIER), None);
+        assert_eq!(
+            precompile_number_for_spec(precompile_address(number), SpecId::BYZANTIUM),
+            Some(number)
+        );
+    }
+
+    assert_eq!(precompile_number_for_spec(precompile_address(9), SpecId::BYZANTIUM), None);
+    assert_eq!(precompile_number_for_spec(precompile_address(9), SpecId::ISTANBUL), Some(9));
+
+    assert_eq!(precompile_number_for_spec(precompile_address(10), SpecId::ISTANBUL), None);
+    assert_eq!(precompile_number_for_spec(precompile_address(10), SpecId::CANCUN), Some(10));
+}
+
+#[test]
 /// Regression coverage for `pop_worklist` respecting configured exploration order.
 fn pop_worklist_respects_exploration_order() {
     let mut bfs_worklist = VecDeque::from([1, 2, 3]);
@@ -321,6 +346,52 @@ fn selector_shift_simplifies_to_concrete_word() {
     let selector_expr = Expr::op(ExprOp::Shr, call_word, Expr::Const(U256::from(224)));
 
     assert_eq!(expr_known_word(&selector_expr), Some(selector));
+}
+
+#[test]
+/// Regression coverage for `selector_equality_folds_known_word_expressions`.
+fn selector_equality_folds_known_word_expressions() {
+    let selector = U256::from(0x12345678u32);
+    let other = U256::from(0x9a8325a0u32);
+    let call_word = Expr::op(
+        ExprOp::Or,
+        Expr::op(ExprOp::Shl, Expr::Const(selector), Expr::Const(U256::from(224))),
+        Expr::op(ExprOp::Shr, Expr::Var("arg".to_string()), Expr::Const(U256::from(32))),
+    );
+    let selector_expr = Expr::op(ExprOp::Shr, call_word, Expr::Const(U256::from(224)));
+
+    assert_eq!(BoolExpr::eq(selector_expr.clone(), Expr::Const(selector)), BoolExpr::Const(true));
+    assert_eq!(BoolExpr::eq(selector_expr, Expr::Const(other)), BoolExpr::Const(false));
+}
+
+#[test]
+/// Regression coverage for `calldata_selector_load_simplifies_to_concrete_word`.
+fn calldata_selector_load_simplifies_to_concrete_word() {
+    let function = Function::parse("check(bytes32)").unwrap();
+    let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
+    let selector = U256::from_be_slice(function.selector().as_slice());
+    let loaded = calldata.call_data().load_word(SymWord::zero()).unwrap();
+    let selector_expr = Expr::op(ExprOp::Shr, loaded.into_expr(), Expr::Const(U256::from(224)));
+
+    assert_eq!(expr_known_word(&selector_expr), Some(selector));
+    assert_eq!(BoolExpr::eq(selector_expr, Expr::Const(selector)), BoolExpr::Const(true));
+}
+
+#[test]
+/// Regression coverage for `artifact_json_fallback_paths`.
+fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
+    assert_eq!(
+        artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/NomadLike.json")]
+    );
+    assert_eq!(
+        artifact_json_fallback_paths(r"src\01_NomadZeroRoot.sol:NomadLike"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/NomadLike.json")]
+    );
+    assert_eq!(
+        artifact_json_fallback_paths(r"src\01_NomadZeroRoot.sol"),
+        vec![std::path::PathBuf::from("out/01_NomadZeroRoot.sol/01_NomadZeroRoot.json")]
+    );
 }
 
 #[test]
@@ -1522,13 +1593,22 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     ];
 
     let input_len = SymWord::Concrete(U256::from(input.len()));
-    let sha = execute_symbolic_precompile(precompile_address(2), input.clone(), input_len.clone())
-        .unwrap()
-        .unwrap();
-    let sha_again =
-        execute_symbolic_precompile(precompile_address(2), input.clone(), input_len.clone())
-            .unwrap()
-            .unwrap();
+    let sha = execute_symbolic_precompile(
+        precompile_address(2),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let sha_again = execute_symbolic_precompile(
+        precompile_address(2),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
     let sha_word = word_from_bytes((0..32).map(|idx| sha.byte(idx)));
     let sha_again_word = word_from_bytes((0..32).map(|idx| sha_again.byte(idx)));
 
@@ -1536,14 +1616,22 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     assert_eq!(sha_word, sha_again_word);
     assert!(matches!(sha_word, SymWord::Expr(Expr::Hash { algorithm: "sha256", .. })));
 
-    let ecrecover =
-        execute_symbolic_precompile(precompile_address(1), input.clone(), input_len.clone())
-            .unwrap()
-            .unwrap();
-    let ecrecover_again =
-        execute_symbolic_precompile(precompile_address(1), input.clone(), input_len.clone())
-            .unwrap()
-            .unwrap();
+    let ecrecover = execute_symbolic_precompile(
+        precompile_address(1),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let ecrecover_again = execute_symbolic_precompile(
+        precompile_address(1),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(ecrecover.len, 32);
     for idx in 0..12 {
@@ -1553,12 +1641,18 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
         assert_eq!(ecrecover.byte(idx), ecrecover_again.byte(idx));
     }
 
-    let ripemd =
-        execute_symbolic_precompile(precompile_address(3), input.clone(), input_len.clone())
+    let ripemd = execute_symbolic_precompile(
+        precompile_address(3),
+        input.clone(),
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
+    let ripemd_again =
+        execute_symbolic_precompile(precompile_address(3), input, input_len, SpecId::CANCUN)
             .unwrap()
             .unwrap();
-    let ripemd_again =
-        execute_symbolic_precompile(precompile_address(3), input, input_len).unwrap().unwrap();
 
     assert_eq!(ripemd.len, 32);
     for idx in 0..12 {
@@ -1579,9 +1673,14 @@ fn identity_precompile_preserves_symbolic_input_len() {
         SymWord::Concrete(U256::from(4)),
     ];
     let input_len = SymWord::Expr(Expr::Var("size".to_string()));
-    let return_data = execute_symbolic_precompile(precompile_address(4), input, input_len.clone())
-        .unwrap()
-        .unwrap();
+    let return_data = execute_symbolic_precompile(
+        precompile_address(4),
+        input,
+        input_len.clone(),
+        SpecId::CANCUN,
+    )
+    .unwrap()
+    .unwrap();
 
     assert_eq!(return_data.len, 4);
     assert_eq!(return_data.len_word(), input_len);
@@ -1604,6 +1703,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
         precompile_address(5),
         modexp_input.clone(),
         SymWord::Concrete(U256::from(modexp_input.len())),
+        SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
@@ -1611,6 +1711,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
         precompile_address(5),
         modexp_input.clone(),
         SymWord::Concrete(U256::from(modexp_input.len())),
+        SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
@@ -1623,6 +1724,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
         precompile_address(9),
         blake_input,
         SymWord::Concrete(U256::from(213)),
+        SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
@@ -1630,13 +1732,14 @@ fn advanced_precompiles_accept_symbolic_payloads() {
 }
 
 #[test]
-/// Regression coverage for `validity_sensitive_symbolic_precompiles_fail_closed`.
-fn validity_sensitive_symbolic_precompiles_fail_closed() {
+/// Regression coverage for `validity_sensitive_symbolic_precompiles_report_incomplete`.
+fn validity_sensitive_symbolic_precompiles_report_incomplete() {
     let bn_input = vec![SymWord::Expr(Expr::Var("point".to_string())); 128];
     let err = execute_symbolic_precompile(
         precompile_address(6),
         bn_input,
         SymWord::Concrete(U256::from(128)),
+        SpecId::CANCUN,
     )
     .unwrap_err();
     assert!(matches!(
@@ -1649,6 +1752,7 @@ fn validity_sensitive_symbolic_precompiles_fail_closed() {
         precompile_address(9),
         blake_input,
         SymWord::Concrete(U256::from(213)),
+        SpecId::CANCUN,
     )
     .unwrap_err();
     assert!(matches!(
@@ -1770,6 +1874,28 @@ fn symbolic_world_snapshot_restores_overlay_state() {
     assert!(world.restore_snapshot(snapshot));
     assert_eq!(world.storage.len(), 1);
     assert_eq!(world.storage[0].value, SymWord::Concrete(U256::from(2)));
+}
+
+#[test]
+/// Regression coverage for `symbolic_world_tracks_current_transaction_created_accounts`.
+fn symbolic_world_tracks_current_transaction_created_accounts() {
+    let first = Address::from([0x11; 20]);
+    let second = Address::from([0x22; 20]);
+    let mut world = SymbolicWorld::default();
+
+    world.mark_current_transaction_created(first);
+    let snapshot = world.snapshot_state();
+    world.mark_current_transaction_created(second);
+
+    assert!(world.was_created_in_current_transaction(first));
+    assert!(world.was_created_in_current_transaction(second));
+
+    assert!(world.restore_snapshot(snapshot));
+    assert!(world.was_created_in_current_transaction(first));
+    assert!(!world.was_created_in_current_transaction(second));
+
+    world.clear_transaction_scoped_state();
+    assert!(!world.was_created_in_current_transaction(first));
 }
 
 #[test]
@@ -2028,6 +2154,84 @@ fn bool_comparison_folds_unsigned_boundaries() {
     assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, Expr::Const(U256::MAX), x()), BoolExpr::Const(true));
     assert_eq!(BoolExpr::cmp(BoolExprOp::Ugt, x(), Expr::Const(U256::MAX)), BoolExpr::Const(false));
     assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, x(), Expr::Const(U256::MAX)), BoolExpr::Const(true));
+}
+
+#[test]
+/// Regression coverage for exact `ADDMOD`/`MULMOD` edge-case semantics.
+fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
+    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::ZERO), U256::ZERO);
+    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::ZERO), U256::ZERO);
+
+    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::MAX), U256::from(2));
+    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::MAX), U256::ZERO);
+
+    let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
+    assert_eq!(
+        eval_expr(
+            &Expr::addmod(
+                Expr::Var("a".to_string()),
+                Expr::Const(U256::from(2)),
+                Expr::Const(U256::MAX)
+            ),
+            &model,
+        )
+        .unwrap(),
+        U256::from(2)
+    );
+    assert_eq!(
+        eval_expr(
+            &Expr::mulmod(
+                Expr::Var("a".to_string()),
+                Expr::Var("a".to_string()),
+                Expr::Const(U256::MAX)
+            ),
+            &model,
+        )
+        .unwrap(),
+        U256::ZERO
+    );
+}
+
+#[test]
+/// Regression coverage for exact modular arithmetic SMT emission widening intermediates.
+fn exact_modular_arithmetic_smt_widens_before_modulo() {
+    let addmod = Expr::addmod(
+        Expr::Var("a".to_string()),
+        Expr::Const(U256::from(2)),
+        Expr::Var("m".to_string()),
+    )
+    .smt();
+    let mulmod = Expr::mulmod(
+        Expr::Var("a".to_string()),
+        Expr::Var("b".to_string()),
+        Expr::Var("m".to_string()),
+    )
+    .smt();
+
+    assert!(addmod.contains("((_ zero_extend 256) a)"));
+    assert!(addmod.contains("bvadd"));
+    assert!(addmod.contains("bvurem"));
+    assert!(mulmod.contains("((_ zero_extend 256) b)"));
+    assert!(mulmod.contains("bvmul"));
+    assert!(mulmod.contains("((_ extract 255 0)"));
+}
+
+#[test]
+/// Regression coverage for rejecting old wrapping-intermediate false witnesses.
+fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
+    let constraints = vec![BoolExpr::eq(
+        Expr::addmod(
+            Expr::Var("a".to_string()),
+            Expr::Const(U256::from(2)),
+            Expr::Const(U256::MAX),
+        ),
+        Expr::Const(U256::from(1)),
+    )];
+    let output = format!("sat\n((define-fun a () (_ BitVec 256) #x{}))\n", "f".repeat(64));
+
+    let err = validate_solver_model_output(&output, &constraints).unwrap_err();
+
+    assert!(err.to_string().contains("does not satisfy path constraints"));
 }
 
 #[test]
@@ -2518,6 +2722,21 @@ fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
     assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+}
+
+#[test]
+/// Regression coverage for solver-hard exact `MULMOD` witness search.
+fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
+    let a = Expr::Var("a".to_string());
+    let constraints = vec![
+        BoolExpr::cmp(BoolExprOp::Ugt, a.clone(), Expr::Const(U256::ZERO)),
+        BoolExpr::eq(Expr::mulmod(a.clone(), a, Expr::Const(U256::MAX)), Expr::Const(U256::ZERO)),
+    ];
+
+    let model = hard_arith_fallback_model(&constraints).unwrap();
+
+    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert_eq!(model.get("a"), Some(&U256::MAX));
 }
 
 #[test]

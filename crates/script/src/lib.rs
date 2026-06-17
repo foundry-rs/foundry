@@ -45,6 +45,7 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+use foundry_debugger::DebuggerLayout;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -180,6 +181,10 @@ pub struct ScriptArgs {
     /// Takes precedence over broadcast.
     #[arg(long)]
     pub debug: bool,
+
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    pub debug_layout: Option<DebuggerLayout>,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -426,8 +431,10 @@ impl ScriptArgs {
 
             let size_limits = pre_simulation
                 .script_config
-                .config
+                .evm_opts
+                .env
                 .code_size_limit
+                .or(pre_simulation.script_config.config.code_size_limit)
                 .map(ContractSizeLimits::with_runtime_limit)
                 .unwrap_or_default();
             pre_simulation.args.check_contract_sizes(
@@ -671,6 +678,8 @@ pub struct ScriptResult<N: Network> {
     pub gas_used: u64,
     pub labeled_addresses: AddressHashMap<String>,
     #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
+    #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
     #[serde(skip)]
@@ -688,6 +697,7 @@ impl<N: Network> Default for ScriptResult<N> {
             traces: Default::default(),
             gas_used: Default::default(),
             labeled_addresses: Default::default(),
+            debug_bytecodes: Default::default(),
             transactions: Default::default(),
             returned: Default::default(),
             exit_reason: Default::default(),
@@ -864,7 +874,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
+        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
+            .with_debug_bytecodes(debug))
     }
 }
 
@@ -1254,6 +1265,22 @@ mod tests {
             "50000",
         ]);
         assert_eq!(args.evm.env.code_size_limit, Some(50000));
+    }
+
+    /// `--code-size-limit` on the CLI should be used by `check_contract_sizes`, not silently
+    /// ignored in favour of the foundry.toml value (which defaults to None → EIP-170's 24576).
+    #[test]
+    fn cli_code_size_limit_is_honoured_by_check() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--code-size-limit",
+            "2147483647",
+        ]);
+        // The CLI flag must land in evm_opts so that the size_limits computation in run() picks
+        // it up via `.evm_opts.env.code_size_limit.or(config.code_size_limit)`.
+        assert_eq!(args.evm.env.code_size_limit, Some(2147483647));
     }
 
     #[test]

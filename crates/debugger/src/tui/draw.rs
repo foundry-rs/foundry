@@ -1,14 +1,14 @@
 //! TUI draw implementation.
 
 use super::context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext};
-use crate::{debugger::DebuggerStats, op::OpcodeParam};
+use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
 use alloy_primitives::{Address, U256, keccak256};
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::{
-    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters,
+    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters, function_signature,
 };
 use ratatui::{
     Frame,
@@ -33,12 +33,18 @@ impl TUIContext<'_> {
             return;
         }
 
-        // The horizontal layout draws these panes at 50% width.
-        let min_column_width_for_horizontal = 200;
-        if area.width >= min_column_width_for_horizontal {
-            self.horizontal_layout(f);
-        } else {
-            self.vertical_layout(f);
+        match self.layout() {
+            DebuggerLayout::Horizontal => self.horizontal_layout(f),
+            DebuggerLayout::Vertical => self.vertical_layout(f),
+            DebuggerLayout::Auto => {
+                // The horizontal layout draws these panes at 50% width.
+                let min_column_width_for_horizontal = 200;
+                if area.width >= min_column_width_for_horizontal {
+                    self.horizontal_layout(f);
+                } else {
+                    self.vertical_layout(f);
+                }
+            }
         }
     }
 
@@ -189,7 +195,9 @@ impl TUIContext<'_> {
     }
 
     fn footer_height(&self) -> u16 {
-        let status_or_input = u16::from(self.pc_input.is_some() || self.status.is_some());
+        let status_or_input = u16::from(
+            self.pc_input.is_some() || self.opcode_search_input.is_some() || self.status.is_some(),
+        );
         let shortcuts = if self.show_shortcuts { 2 } else { 0 };
         status_or_input + shortcuts
     }
@@ -210,6 +218,19 @@ impl TUIContext<'_> {
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
+        } else if let Some(input) = &self.opcode_search_input {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Search opcodes: /",
+                    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(input.as_str()),
+                Span::styled("█", Style::new().fg(Color::Cyan)),
+                Span::styled(
+                    "  Enter: jump | Esc: cancel | after search: n/N repeat",
+                    Style::new().add_modifier(Modifier::DIM),
+                ),
+            ]));
         } else if let Some(status) = &self.status {
             let style = match status.kind {
                 StatusKind::Info => Style::new().fg(Color::Green),
@@ -218,8 +239,8 @@ impl TUIContext<'_> {
             lines.push(Line::from(Span::styled(status.text.as_str(), style)));
         }
 
-        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [b]: cycle memory/calldata/returndata buffers";
-        let l2 = "[t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
+        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [/]: search opcodes | [n/N]: next/prev search";
+        let l2 = "[l]: layout | [b]: cycle buffer | [t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
             lines.push(Line::from(Span::styled(l1, dimmed)));
@@ -870,9 +891,17 @@ fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) 
 
 fn decoded_internal_name_matches(decoded_name: &str, scope: &DebugSourceScope) -> bool {
     if let Some((contract_name, function_name)) = decoded_name.rsplit_once("::") {
-        return contract_name == scope.contract_name && function_name == scope.function_name;
+        return contract_name == scope.contract_name
+            && decoded_function_matches(function_name, scope);
     }
-    decoded_name == scope.function_name
+    decoded_function_matches(decoded_name, scope)
+}
+
+fn decoded_function_matches(decoded_name: &str, scope: &DebugSourceScope) -> bool {
+    if decoded_name == scope.function_name {
+        return true;
+    }
+    scope_function_signature(scope).as_deref().is_some_and(|signature| decoded_name == signature)
 }
 
 fn decode_external_parameter_values(
@@ -906,20 +935,6 @@ fn scope_function_signature(scope: &DebugSourceScope) -> Option<String> {
 fn function_selector(function_name: &str, types: &[DynSolType]) -> [u8; 4] {
     let signature = function_signature(function_name, types);
     keccak256(signature.as_bytes())[..4].try_into().unwrap()
-}
-
-fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
-    let mut signature = String::new();
-    signature.push_str(function_name);
-    signature.push('(');
-    for (i, ty) in types.iter().enumerate() {
-        if i > 0 {
-            signature.push(',');
-        }
-        signature.push_str(&ty.sol_type_name());
-    }
-    signature.push(')');
-    signature
 }
 
 fn decode_abi_sequence(types: &[DynSolType], data: &[u8]) -> Option<Vec<String>> {
@@ -1110,13 +1125,18 @@ mod tests {
     }
 
     fn internal_call_step(end_step: usize, return_data: Vec<String>) -> CallTraceStep {
+        internal_call_step_named("DebugMe::foo", end_step, Some(Vec::new()), Some(return_data))
+    }
+
+    fn internal_call_step_named(
+        func_name: &str,
+        end_step: usize,
+        args: Option<Vec<String>>,
+        return_data: Option<Vec<String>>,
+    ) -> CallTraceStep {
         let mut step = trace_step(Vec::new());
         step.decoded = Some(Box::new(DecodedTraceStep::InternalCall(
-            DecodedInternalCall {
-                func_name: "DebugMe::foo".to_string(),
-                args: Some(Vec::new()),
-                return_data: Some(return_data),
-            },
+            DecodedInternalCall { func_name: func_name.to_string(), args, return_data },
             end_step,
         )));
         step
@@ -1153,6 +1173,7 @@ mod tests {
             identified_contracts: Default::default(),
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
+            layout: Default::default(),
         }
     }
 
@@ -1236,6 +1257,43 @@ mod tests {
     }
 
     #[test]
+    fn decode_internal_parameter_values_accepts_matching_overload_args() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![internal_call_step_named(
+                "DebugMe::foo(uint256)",
+                2,
+                Some(vec!["42".to_string()]),
+                None,
+            )],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")),
+            Some(vec!["42".to_string()])
+        );
+    }
+
+    #[test]
+    fn decode_internal_parameter_values_rejects_wrong_overload_args() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![internal_call_step_named(
+                "DebugMe::foo(address)",
+                2,
+                Some(vec!["0x000000000000000000000000000000000000002a".to_string()]),
+                None,
+            )],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")), None);
+    }
+
+    #[test]
     fn decode_return_values_uses_absolute_internal_call_end_step() {
         let mut context = context_with_arena(vec![debug_node(
             0,
@@ -1259,6 +1317,27 @@ mod tests {
         tui.draw_memory.inner_call_index = 2;
 
         assert_eq!(tui.decode_return_values(&scope("foo", "()")), Some(vec!["7".to_string()]));
+    }
+
+    #[test]
+    fn decode_return_values_rejects_wrong_overload() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![
+                internal_call_step_named(
+                    "DebugMe::foo(address)",
+                    1,
+                    None,
+                    Some(vec!["99".to_string()]),
+                ),
+                trace_step(Vec::new()),
+            ],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 1;
+
+        assert_eq!(tui.decode_return_values(&scope("foo", "(uint256 amount)")), None);
     }
 
     #[test]
@@ -1289,6 +1368,15 @@ mod tests {
         assert!(super::decoded_internal_name_matches("DebugMe::foo", &scope));
         assert!(!super::decoded_internal_name_matches("DebugMe::barfoo", &scope));
         assert!(!super::decoded_internal_name_matches("Other::foo", &scope));
+    }
+
+    #[test]
+    fn decoded_internal_name_matches_canonical_signature_for_overloads() {
+        let scope = scope("foo", "(uint256 amount)");
+
+        assert!(super::decoded_internal_name_matches("DebugMe::foo(uint256)", &scope));
+        assert!(!super::decoded_internal_name_matches("DebugMe::foo(address)", &scope));
+        assert!(!super::decoded_internal_name_matches("Other::foo(uint256)", &scope));
     }
 
     #[test]

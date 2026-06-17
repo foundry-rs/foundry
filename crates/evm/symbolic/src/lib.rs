@@ -22,7 +22,7 @@ use foundry_evm::{
         bytecode::opcode,
         context::{Block, Transaction},
         database::DatabaseRef,
-        precompile::{blake2, bn254, hash, identity, modexp, secp256k1},
+        precompile::{blake2, bn254, hash, identity, kzg_point_evaluation, modexp, secp256k1},
         primitives::hardfork::SpecId,
     },
 };
@@ -237,6 +237,7 @@ pub struct SymbolicStats {
 pub struct SymbolicExecutor {
     config: SymbolicConfig,
     solver: Box<dyn runtime::SymbolicSolver>,
+    deferred_incomplete: Option<&'static str>,
 }
 
 #[cfg(test)]
