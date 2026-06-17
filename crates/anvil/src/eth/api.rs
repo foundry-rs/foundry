@@ -1153,8 +1153,7 @@ impl<N: Network> EthApi<N> {
         // range can dip below the fork block while its newest block is post-fork. Local storage
         // has no pre-fork blocks, so resolving them via `backend.get_block` below would fail.
         // Serve the pre-fork portion from the fork provider and compute only post-fork locally.
-        let mut local_lowest = lowest;
-        if let Some(fork) = self.get_fork()
+        let local_lowest = if let Some(fork) = self.get_fork()
             && fork.predates_fork_inclusive(lowest)
         {
             let fork_block = fork.block_number();
@@ -1173,8 +1172,11 @@ impl<N: Network> EthApi<N> {
             if let Some(reward) = pre.reward {
                 rewards.extend(reward);
             }
-            local_lowest = fork_block + 1;
-        }
+            // Compute only post-fork blocks locally; the pre-fork portion is served above.
+            fork_block + 1
+        } else {
+            lowest
+        };
 
         {
             let storage_info = self.storage_info();
