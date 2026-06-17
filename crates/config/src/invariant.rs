@@ -98,11 +98,10 @@ fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
 }
 
 /// Corpus synchronization strategy for parallel invariant campaigns.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum InvariantCorpusSyncMode {
     /// Do not exchange newly discovered corpus entries between workers during a campaign.
-    #[default]
     Off,
     /// Exchange corpus entries only after a worker has stopped finding new coverage.
     Plateau,
