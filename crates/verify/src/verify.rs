@@ -625,7 +625,10 @@ impl VerifyArgs {
             required: true,
         });
 
-        if !primary_is_sourcify {
+        // Skip the auxiliary Sourcify submission when the user is clearly using a
+        // non-public setup: an explicit `--verifier custom` or a local/dev chain.
+        let is_private_setup = resolved.is_custom() || is_dev_chain(chain);
+        if !primary_is_sourcify && !is_private_setup {
             let mut args = self.clone();
             args.verifier.verifier = Some(VerificationProviderType::Sourcify);
             args.verifier.verifier_api_key = None;
@@ -890,6 +893,12 @@ fn sourcify_api_url(chain: Chain) -> Option<String> {
     }
 }
 
+/// Returns `true` for local/dev chains.
+const fn is_dev_chain(chain: Chain) -> bool {
+    use foundry_config::NamedChain;
+    matches!(chain.named(), Some(NamedChain::Dev | NamedChain::AnvilHardhat | NamedChain::Cannon))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1103,6 +1112,40 @@ mod tests {
         let runs = args.collect_runs(Chain::mainnet(), None, resolved, false).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].label, VerificationProviderType::Sourcify);
+        assert!(runs[0].required);
+    }
+
+    #[test]
+    fn collect_runs_skips_secondary_for_custom_verifier() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            "https://internal.example.com/api",
+        ]);
+        let runs = args
+            .collect_runs(Chain::mainnet(), None, VerificationProviderType::Custom, true)
+            .unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].label, VerificationProviderType::Custom);
+    }
+
+    #[test]
+    fn collect_runs_skips_secondary_on_dev_chain() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--etherscan-api-key",
+            "k",
+        ]);
+        let anvil = Chain::from(31337u64);
+        let resolved = args.verifier.resolve(Some("k"), Some(anvil));
+        let runs = args.collect_runs(anvil, Some("k"), resolved, false).unwrap();
+        assert_eq!(runs.len(), 1);
         assert!(runs[0].required);
     }
 }

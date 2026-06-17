@@ -288,6 +288,10 @@ impl VerificationProviderType {
     pub const fn is_etherscan(&self) -> bool {
         matches!(self, Self::Etherscan)
     }
+
+    pub const fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom)
+    }
 }
 
 #[cfg(test)]
