@@ -15,6 +15,13 @@ pub trait TestFilter: Send + Sync {
 
     /// Returns a contract with the given path should be included.
     fn matches_path(&self, path: &Path) -> bool;
+
+    /// Returns whether the test should be included for the given contract.
+    ///
+    /// `contract_id` is the full artifact identifier (`path:Contract`).
+    fn matches_test_function_in_contract(&self, _contract_id: &str, func: &Function) -> bool {
+        func.is_any_test() && self.matches_test(&func.signature())
+    }
 }
 
 impl<'a> dyn TestFilter + 'a {
@@ -81,6 +88,11 @@ pub trait TestFunctionExt {
     /// Returns `true` if this function is an invariant test.
     fn is_invariant_test(&self) -> bool {
         self.test_function_kind().is_invariant_test()
+    }
+
+    /// Returns `true` if this function is a symbolic test.
+    fn is_symbolic_test(&self) -> bool {
+        self.test_function_kind().is_symbolic_test()
     }
 
     /// Returns `true` if this function is an `afterInvariant` function.
@@ -151,6 +163,8 @@ pub enum TestFunctionKind {
     InvariantTest,
     /// `table*`, with arguments.
     TableTest,
+    /// `check*` or `prove*`, when selected by symbolic test mode.
+    SymbolicTest,
     /// `afterInvariant`.
     AfterInvariant,
     /// `fixture*`.
@@ -192,6 +206,7 @@ impl TestFunctionKind {
             Self::FuzzTest { should_fail: true } => "fuzz fail",
             Self::InvariantTest => "invariant",
             Self::TableTest => "table",
+            Self::SymbolicTest => "symbolic",
             Self::AfterInvariant => "afterInvariant",
             Self::Fixture => "fixture",
             Self::Unknown => "unknown",
@@ -209,7 +224,11 @@ impl TestFunctionKind {
     pub const fn is_any_test(&self) -> bool {
         matches!(
             self,
-            Self::UnitTest { .. } | Self::FuzzTest { .. } | Self::TableTest | Self::InvariantTest
+            Self::UnitTest { .. }
+                | Self::FuzzTest { .. }
+                | Self::TableTest
+                | Self::InvariantTest
+                | Self::SymbolicTest
         )
     }
 
@@ -241,6 +260,12 @@ impl TestFunctionKind {
     #[inline]
     pub const fn is_table_test(&self) -> bool {
         matches!(self, Self::TableTest)
+    }
+
+    /// Returns `true` if this function is a symbolic test.
+    #[inline]
+    pub const fn is_symbolic_test(&self) -> bool {
+        matches!(self, Self::SymbolicTest)
     }
 
     /// Returns `true` if this function is an `afterInvariant` function.

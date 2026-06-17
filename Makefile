@@ -95,7 +95,7 @@ lint-clippy-fix: ## Run clippy on the codebase and fix warnings.
 .PHONY: lint-typos
 lint-typos: ## Run typos on the codebase.
 	@command -v typos >/dev/null || { \
-		echo "typos not found. Please install it by running the command `cargo install typos-cli` or refer to the following link for more information: https://github.com/crate-ci/typos"; \
+		echo "typos not found. Please install it by running the command 'cargo install typos-cli' or refer to the following link for more information: https://github.com/crate-ci/typos"; \
 		exit 1; \
 	}
 	typos

@@ -1,8 +1,101 @@
 //! Configuration for invariant testing
 
 use crate::fuzz::{FuzzCorpusConfig, FuzzDictionaryConfig};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error, Visitor},
+};
+use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
+
+/// Worker selection mode for invariant campaign sharding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvariantWorkers {
+    /// Automatically derive invariant workers from the active `--jobs` / rayon thread pool.
+    Auto,
+    /// Explicit user override for invariant campaign sharding.
+    Fixed(NonZeroUsize),
+}
+
+impl Default for InvariantWorkers {
+    fn default() -> Self {
+        Self::Fixed(NonZeroUsize::MIN)
+    }
+}
+
+impl Serialize for InvariantWorkers {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Fixed(workers) => workers.get().serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for InvariantWorkers {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(InvariantWorkersVisitor)
+    }
+}
+
+impl FromStr for InvariantWorkers {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim();
+        if value.eq_ignore_ascii_case("auto") {
+            return Ok(Self::Auto);
+        }
+
+        let workers = value.parse::<usize>().map_err(|err| err.to_string())?;
+        fixed_workers(workers)
+    }
+}
+
+struct InvariantWorkersVisitor;
+
+impl Visitor<'_> for InvariantWorkersVisitor {
+    type Value = InvariantWorkers;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("`auto` or a positive integer worker count")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        value.parse().map_err(E::custom)
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        let workers = usize::try_from(value).map_err(E::custom)?;
+        fixed_workers(workers).map_err(E::custom)
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        let workers =
+            usize::try_from(value).map_err(|_| E::custom("invariant workers must be positive"))?;
+        fixed_workers(workers).map_err(E::custom)
+    }
+}
+
+fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
+    NonZeroUsize::new(workers)
+        .map(InvariantWorkers::Fixed)
+        .ok_or_else(|| "invariant workers must be greater than 0".to_string())
+}
 
 /// Contains for invariant testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,6 +104,11 @@ pub struct InvariantConfig {
     pub runs: u32,
     /// The number of calls executed to attempt to break invariants in one run.
     pub depth: u32,
+    /// Worker selection mode used to shard invariant runs.
+    ///
+    /// Defaults to `1` for reproducible seeded campaigns. Use `auto` to derive the worker count
+    /// from `--jobs`, or a positive integer for an explicit worker count.
+    pub workers: InvariantWorkers,
     /// Fails the invariant fuzzing if a revert occurs
     pub fail_on_revert: bool,
     /// Allows overriding an unsafe external call when running invariant tests. eg. reentrancy
@@ -33,7 +131,7 @@ pub struct InvariantConfig {
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
     pub show_metrics: bool,
-    /// Optional timeout (in seconds) for each invariant test.
+    /// Optional campaign-global timeout (in seconds) for each invariant test.
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
@@ -56,6 +154,7 @@ impl Default for InvariantConfig {
         Self {
             runs: 256,
             depth: 500,
+            workers: InvariantWorkers::default(),
             fail_on_revert: false,
             call_override: false,
             dictionary: FuzzDictionaryConfig { dictionary_weight: 80, ..Default::default() },
@@ -83,5 +182,39 @@ impl InvariantConfig {
     /// Returns true if generated invariant calls may advance block time or height.
     pub const fn has_delay(&self) -> bool {
         self.max_block_delay.is_some() || self.max_time_delay.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invariant_workers_accept_auto_and_fixed_counts() {
+        assert_eq!("AUTO".parse::<InvariantWorkers>().unwrap(), InvariantWorkers::Auto);
+        assert_eq!(
+            serde_json::from_str::<InvariantWorkers>(r#""auto""#).unwrap(),
+            InvariantWorkers::Auto
+        );
+        assert_eq!(
+            serde_json::from_str::<InvariantWorkers>(r#"4"#).unwrap(),
+            InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap())
+        );
+        assert_eq!(
+            serde_json::from_str::<InvariantWorkers>(r#""4""#).unwrap(),
+            InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap())
+        );
+    }
+
+    #[test]
+    fn invariant_workers_default_to_one() {
+        assert_eq!(InvariantWorkers::default(), InvariantWorkers::Fixed(NonZeroUsize::MIN));
+        assert_eq!(InvariantConfig::default().workers, InvariantWorkers::Fixed(NonZeroUsize::MIN));
+    }
+
+    #[test]
+    fn invariant_workers_reject_zero() {
+        let err = serde_json::from_str::<InvariantWorkers>(r#"0"#).unwrap_err();
+        assert!(err.to_string().contains("greater than 0"));
     }
 }

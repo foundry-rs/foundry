@@ -8,21 +8,31 @@
 
 use super::persist;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use alloy_sol_types::SolCall as _;
 use foundry_wallets::Channel;
 use mpp::{
     client::{
         PaymentProvider,
         channel_ops::{
-            ChannelEntry, OpenPayloadOptions, build_credential, create_voucher_payload,
-            resolve_chain_id, resolve_escrow,
+            ChannelEntry, OpenPayloadOptions, build_credential, compute_expiring_nonce_hash,
+            create_voucher_payload, is_precompile_escrow, resolve_chain_id, resolve_escrow,
         },
-        tempo::signing::{TempoSigningMode, sign_and_encode_async},
+        tempo::signing::{
+            TempoSigningMode, sign_and_encode_async, sign_and_encode_fee_payer_envelope_async,
+            sign_and_encode_fee_payer_request_async,
+        },
     },
     error::MppError,
     protocol::{
         core::{PaymentChallenge, PaymentCredential},
         intents::SessionRequest,
-        methods::tempo::session::TempoSessionExt,
+        methods::tempo::{
+            precompile_voucher::{
+                PRECOMPILE_MAX_CUMULATIVE_AMOUNT, compute_precompile_channel_id,
+                sign_precompile_voucher,
+            },
+            session::{ChannelDescriptor, TempoSessionExt},
+        },
     },
     tempo::{Call, SessionCredentialPayload, compute_channel_id, sign_voucher},
 };
@@ -30,9 +40,14 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
 };
+use tempo_alloy::contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
-/// Shared per-origin in-memory channel state: (channels, key_provisioned).
-type SharedChannelState = (Arc<Mutex<HashMap<String, ChannelEntry>>>, Arc<Mutex<bool>>);
+/// Shared per-origin in-memory channel state: (channels, precompile descriptors, key_provisioned).
+type SharedChannelState = (
+    Arc<Mutex<HashMap<String, ChannelEntry>>>,
+    Arc<Mutex<HashMap<String, ChannelDescriptor>>>,
+    Arc<Mutex<bool>>,
+);
 
 /// Process-wide channel state registry, keyed by origin URL.
 ///
@@ -68,11 +83,25 @@ const VALID_BEFORE_SECS: u64 = 25;
 /// Default gas limit for session open transactions.
 const SESSION_OPEN_GAS_LIMIT: u64 = 10_000_000;
 
+/// Gas limit for session open transactions when the sponsor pays
+/// (`feePayer: true`). Set to the mpp-rs `FeePayerPolicy::max_gas` ceiling
+/// (`MAX_FEE_PAYER_GAS_LIMIT = 2_000_000`, inclusive); exceeding it causes the
+/// sponsor to reject the tx with `verification-failed`. The previous value of
+/// 1M was too tight for Tempo mainnet passkey-wallet `escrow.open`, which
+/// together with the inner `approve` consumes ~1.2M gas and ran out of gas
+/// on-chain (tx reverted, sponsor returned generic `verification-failed`).
+const SESSION_OPEN_FEE_PAYER_GAS_LIMIT: u64 = 2_000_000;
+
 /// Max fee per gas (20 gwei — Tempo's fixed base fee).
 const MAX_FEE_PER_GAS: u128 = 20_000_000_000;
 
 /// Max priority fee per gas.
 const MAX_PRIORITY_FEE_PER_GAS: u128 = 20_000_000_000;
+
+/// Priority fee per gas when the sponsor pays (`feePayer: true`). Must stay
+/// under the server-enforced `MAX_PRIORITY_FEE_PER_GAS_DEFAULT` (10 gwei)
+/// defined by the mpp-rs `FeePayerPolicy`.
+const MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER: u128 = 1_000_000_000;
 
 /// Tempo session provider using expiring nonces.
 ///
@@ -86,6 +115,7 @@ pub struct SessionProvider {
     authorized_signer: Option<Address>,
     default_deposit: Option<u128>,
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
+    precompile_descriptors: Arc<Mutex<HashMap<String, ChannelDescriptor>>>,
     key_provisioned: Arc<Mutex<bool>>,
     persisted: Arc<Mutex<HashMap<String, Channel>>>,
     /// Tracks uncommitted open/top-up state for deferred persistence.
@@ -123,7 +153,7 @@ impl SessionProvider {
             GLOBAL_PERSISTED.get_or_init(|| Arc::new(Mutex::new(persist::load_channels()))).clone();
 
         // Per-origin in-memory channel map + key provisioning state.
-        let (channels, key_provisioned) = {
+        let (channels, precompile_descriptors, key_provisioned) = {
             let global = GLOBAL_CHANNELS.get_or_init(|| Mutex::new(HashMap::new()));
             let mut map = global.lock().unwrap();
             map.entry(origin.clone())
@@ -137,7 +167,11 @@ impl SessionProvider {
                             channels.insert(key.clone(), entry);
                         }
                     }
-                    (Arc::new(Mutex::new(channels)), Arc::new(Mutex::new(true)))
+                    (
+                        Arc::new(Mutex::new(channels)),
+                        Arc::new(Mutex::new(HashMap::new())),
+                        Arc::new(Mutex::new(true)),
+                    )
                 })
                 .clone()
         };
@@ -148,6 +182,7 @@ impl SessionProvider {
             authorized_signer: None,
             default_deposit: None,
             channels,
+            precompile_descriptors,
             key_provisioned,
             persisted,
             pending: Arc::new(Mutex::new(None)),
@@ -173,6 +208,16 @@ impl SessionProvider {
     pub const fn with_default_deposit(mut self, deposit: u128) -> Self {
         self.default_deposit = Some(deposit);
         self
+    }
+
+    /// Address that funds payments for this provider.
+    pub fn funding_wallet_address(&self) -> Address {
+        self.signing_mode.from_address(self.signer.address())
+    }
+
+    /// Chain ID from the selected wallet key, when known.
+    pub const fn key_chain_id(&self) -> Option<u64> {
+        self.key_chain_id
     }
 
     /// Set the chain ID and currencies from the key entry used to initialize
@@ -217,6 +262,7 @@ impl SessionProvider {
             .collect();
         for (key, channel_id) in &keys_to_remove {
             channels.remove(key);
+            self.precompile_descriptors.lock().unwrap().remove(key);
             persisted.remove(key);
             persist::delete_channel_from_db(channel_id);
         }
@@ -267,6 +313,7 @@ impl SessionProvider {
             match action {
                 PendingAction::Open { key } => {
                     self.channels.lock().unwrap().remove(&key);
+                    self.precompile_descriptors.lock().unwrap().remove(&key);
                     self.persisted.lock().unwrap().remove(&key);
                 }
                 PendingAction::TopUp { key, old_deposit } => {
@@ -286,6 +333,7 @@ impl SessionProvider {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn channel_key(
         origin: &str,
         payer: &Address,
@@ -294,13 +342,30 @@ impl SessionProvider {
         currency: &Address,
         escrow: &Address,
         chain_id: u64,
+        operator: Address,
     ) -> String {
         // Use first 8 bytes of origin hash to scope the key without persisting
         // the full URL (which may contain secrets in query params).
+        // `operator` scopes precompile channels (legacy passes ZERO).
         let origin_hash = &alloy_primitives::keccak256(origin.as_bytes()).to_string()[..18];
         let signer = authorized_signer.unwrap_or(*payer);
-        format!("{origin_hash}:{chain_id}:{payer}:{signer}:{payee}:{currency}:{escrow}")
+        format!("{origin_hash}:{chain_id}:{payer}:{signer}:{payee}:{currency}:{escrow}:{operator}")
             .to_lowercase()
+    }
+
+    /// Compute the TIP-1034 expiring nonce hash for fee-sponsored opens.
+    ///
+    /// The submitted transaction uses a fee-payer marker signature that the
+    /// sponsor replaces, and TIP-1034 derives channel identity from that same
+    /// marked transaction preimage.
+    fn compute_fee_payer_expiring_nonce_hash(
+        unsigned_tx: &tempo_primitives::transaction::TempoTransaction,
+        sender: Address,
+    ) -> B256 {
+        let mut tx = unsigned_tx.clone();
+        tx.fee_payer_signature =
+            Some(alloy_primitives::Signature::new(U256::ZERO, U256::ZERO, false));
+        compute_expiring_nonce_hash(&tx, sender)
     }
 
     fn resolve_deposit(&self, suggested: Option<&str>) -> Result<u128, MppError> {
@@ -328,8 +393,11 @@ impl SessionProvider {
         &self,
         payer: Address,
         options: OpenPayloadOptions,
+        operator: Address,
     ) -> Result<(ChannelEntry, SessionCredentialPayload), MppError> {
-        use alloy_sol_types::SolCall as _;
+        if is_precompile_escrow(options.escrow_contract) {
+            return self.create_precompile_open_tx(payer, options, operator).await;
+        }
 
         let authorized_signer = options.authorized_signer.unwrap_or(payer);
         let salt = B256::random();
@@ -400,9 +468,17 @@ impl SessionProvider {
                 fee_token: options.currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if options.fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if options.fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer: options.fee_payer,
                 valid_before,
                 key_authorization: (!*self.key_provisioned.lock().unwrap())
@@ -411,7 +487,11 @@ impl SessionProvider {
             },
         );
 
-        let signed_tx = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx = if options.fee_payer {
+            sign_and_encode_fee_payer_envelope_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
 
         let voucher = sign_voucher(
             &self.signer,
@@ -440,9 +520,143 @@ impl SessionProvider {
                 payload_type: "transaction".to_string(),
                 channel_id: channel_id.to_string(),
                 transaction: signed_tx_hex,
+                descriptor: None,
                 authorized_signer: Some(format!("{authorized_signer}")),
                 cumulative_amount: options.initial_amount.to_string(),
                 signature: voucher_sig_hex,
+            },
+        ))
+    }
+
+    /// Open path for the T5 TIP-1034 reserve channel precompile.
+    /// Single-call tx (no `approve` — TIP-1035). `expiringNonceHash` is
+    /// computed before signing so the derived `channel_id` matches on-chain.
+    async fn create_precompile_open_tx(
+        &self,
+        payer: Address,
+        options: OpenPayloadOptions,
+        operator: Address,
+    ) -> Result<(ChannelEntry, SessionCredentialPayload), MppError> {
+        if options.deposit > PRECOMPILE_MAX_CUMULATIVE_AMOUNT
+            || options.initial_amount > PRECOMPILE_MAX_CUMULATIVE_AMOUNT
+        {
+            return Err(MppError::InvalidConfig(
+                "precompile escrow deposit/initial_amount must fit uint96".to_string(),
+            ));
+        }
+
+        let authorized_signer = options.authorized_signer.unwrap_or(payer);
+        let salt = B256::random();
+
+        let open_data = ITIP20ChannelReserve::openCall::new((
+            options.payee,
+            operator,
+            options.currency,
+            alloy_primitives::Uint::<96, 2>::from(options.deposit),
+            salt,
+            authorized_signer,
+        ))
+        .abi_encode();
+
+        let calls = vec![Call {
+            to: TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS),
+            value: U256::ZERO,
+            input: Bytes::from(open_data),
+        }];
+
+        let valid_before = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            Some(now + VALID_BEFORE_SECS)
+        };
+
+        let tx = mpp::client::tempo::charge::tx_builder::build_tempo_tx(
+            mpp::client::tempo::charge::tx_builder::TempoTxOptions {
+                calls,
+                chain_id: options.chain_id,
+                fee_token: options.currency,
+                nonce: 0,
+                nonce_key: EXPIRING_NONCE_KEY,
+                gas_limit: if options.fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
+                max_fee_per_gas: MAX_FEE_PER_GAS,
+                max_priority_fee_per_gas: if options.fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
+                fee_payer: options.fee_payer,
+                valid_before,
+                key_authorization: (!*self.key_provisioned.lock().unwrap())
+                    .then(|| self.signing_mode.key_authorization().cloned())
+                    .flatten(),
+            },
+        );
+
+        // Must derive before signing: expiringNonceHash binds signing-payload bytes.
+        let expiring_nonce_hash = if options.fee_payer {
+            Self::compute_fee_payer_expiring_nonce_hash(&tx, payer)
+        } else {
+            compute_expiring_nonce_hash(&tx, payer)
+        };
+        let descriptor = ChannelDescriptor {
+            payer: payer.to_string(),
+            payee: options.payee.to_string(),
+            operator: operator.to_string(),
+            token: options.currency.to_string(),
+            salt: salt.to_string(),
+            authorized_signer: authorized_signer.to_string(),
+            expiring_nonce_hash: expiring_nonce_hash.to_string(),
+        };
+        let channel_id = compute_precompile_channel_id(
+            payer,
+            options.payee,
+            operator,
+            options.currency,
+            salt,
+            authorized_signer,
+            expiring_nonce_hash,
+            options.chain_id,
+        );
+
+        let signed_tx = if options.fee_payer {
+            sign_and_encode_fee_payer_request_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
+
+        let voucher = sign_precompile_voucher(
+            &self.signer,
+            channel_id,
+            options.initial_amount,
+            options.chain_id,
+        )
+        .await?;
+
+        let entry = ChannelEntry {
+            channel_id,
+            salt,
+            cumulative_amount: options.initial_amount,
+            escrow_contract: TIP20_CHANNEL_RESERVE_ADDRESS,
+            chain_id: options.chain_id,
+            opened: true,
+        };
+
+        Ok((
+            entry,
+            SessionCredentialPayload::Open {
+                payload_type: "transaction".to_string(),
+                channel_id: channel_id.to_string(),
+                transaction: alloy_primitives::hex::encode_prefixed(&signed_tx),
+                descriptor: Some(descriptor),
+                authorized_signer: Some(format!("{authorized_signer}")),
+                cumulative_amount: options.initial_amount.to_string(),
+                signature: alloy_primitives::hex::encode_prefixed(&voucher),
             },
         ))
     }
@@ -454,7 +668,16 @@ impl SessionProvider {
         currency: Address,
         fee_payer: bool,
     ) -> Result<SessionCredentialPayload, MppError> {
-        use alloy_sol_types::SolCall as _;
+        // Precompile top-up uses different (descriptor-based, uint96) calldata;
+        // fail loudly rather than send legacy calldata to the precompile.
+        if is_precompile_escrow(entry.escrow_contract) {
+            return Err(MppError::InvalidConfig(
+                "T5 precompile escrow top-up is not supported. Close the channel (or wait \
+                 for expiry) and re-run with a larger MPP_DEPOSIT. T5 cumulative_amount is \
+                 capped at uint96."
+                    .to_string(),
+            ));
+        }
 
         alloy_sol_types::sol! {
             interface ITIP20 {
@@ -500,21 +723,34 @@ impl SessionProvider {
                 fee_token: currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer,
                 valid_before,
                 key_authorization: None,
             },
         );
 
-        let signed_tx = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx = if fee_payer {
+            sign_and_encode_fee_payer_envelope_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
 
         Ok(SessionCredentialPayload::TopUp {
             payload_type: "transaction".to_string(),
             channel_id: entry.channel_id.to_string(),
             transaction: alloy_primitives::hex::encode_prefixed(&signed_tx),
+            descriptor: None,
             additional_deposit: additional_deposit.to_string(),
         })
     }
@@ -590,6 +826,26 @@ impl SessionProvider {
             .map_err(|_e| MppError::InvalidConfig("invalid currency address".to_string()))?;
         let amount: u128 = session_req.parse_amount()?;
 
+        // Operator only applies to precompile escrow; legacy escrow forces ZERO
+        // so a stray `methodDetails.operator` can't fragment the cache key.
+        let operator = if is_precompile_escrow(escrow_contract) {
+            match session_req.method_details.as_ref().and_then(|v| v.get("operator")) {
+                None => Address::ZERO,
+                Some(v) => {
+                    let s = v.as_str().ok_or_else(|| {
+                        MppError::InvalidConfig(
+                            "methodDetails.operator must be a string".to_string(),
+                        )
+                    })?;
+                    s.parse::<Address>().map_err(|_| {
+                        MppError::InvalidConfig(format!("invalid operator address: {s}"))
+                    })?
+                }
+            }
+        } else {
+            Address::ZERO
+        };
+
         let payer = self.signing_mode.from_address(self.signer.address());
 
         let key = Self::channel_key(
@@ -600,6 +856,7 @@ impl SessionProvider {
             &currency,
             &escrow_contract,
             chain_id,
+            operator,
         );
 
         let voucher_info = {
@@ -615,13 +872,15 @@ impl SessionProvider {
                     .and_then(|p| p.deposit.parse::<u128>().ok())
                     .unwrap_or(u128::MAX);
 
-                if entry.cumulative_amount + amount > deposit {
-                    Some(Err((entry.clone(), deposit)))
-                } else {
-                    // Clone without incrementing — only commit after
-                    // create_voucher_payload succeeds.
-                    Some(Ok(entry.clone()))
-                }
+                // checked_add: hostile amount must not wrap or panic.
+                let projected = entry.cumulative_amount.checked_add(amount).ok_or_else(|| {
+                    MppError::InvalidConfig("voucher cumulative_amount overflow".to_string())
+                });
+                Some(match projected {
+                    Err(e) => return Err(e),
+                    Ok(p) if p > deposit => Err((entry.clone(), deposit)),
+                    Ok(_) => Ok(entry.clone()),
+                })
             } else {
                 None
             }
@@ -650,7 +909,10 @@ impl SessionProvider {
                         if let Some(p) = persisted.get_mut(&key) {
                             let old = p.deposit.clone();
                             let old_val: u128 = old.parse().unwrap_or(0);
-                            p.deposit = (old_val + additional).to_string();
+                            let new_val = old_val.checked_add(additional).ok_or_else(|| {
+                                MppError::InvalidConfig("top-up deposit overflow".to_string())
+                            })?;
+                            p.deposit = new_val.to_string();
                             old
                         } else {
                             "0".to_string()
@@ -663,15 +925,50 @@ impl SessionProvider {
                 }
                 Ok(entry) => {
                     let old_cumulative = entry.cumulative_amount;
-                    let new_cumulative = old_cumulative + amount;
-                    let payload = create_voucher_payload(
-                        &self.signer,
-                        entry.channel_id,
-                        new_cumulative,
-                        escrow_contract,
-                        chain_id,
-                    )
-                    .await?;
+                    let new_cumulative = old_cumulative.checked_add(amount).ok_or_else(|| {
+                        MppError::InvalidConfig("voucher cumulative_amount overflow".to_string())
+                    })?;
+                    let payload = if is_precompile_escrow(escrow_contract) {
+                        if new_cumulative > PRECOMPILE_MAX_CUMULATIVE_AMOUNT {
+                            return Err(MppError::InvalidConfig(
+                                "precompile voucher cumulative_amount must fit uint96".to_string(),
+                            ));
+                        }
+                        let descriptor = self
+                            .precompile_descriptors
+                            .lock()
+                            .unwrap()
+                            .get(&key)
+                            .cloned()
+                            .ok_or_else(|| {
+                                MppError::InvalidConfig(
+                                    "missing TIP-1034 descriptor for cached precompile channel"
+                                        .to_string(),
+                                )
+                            })?;
+                        let sig = sign_precompile_voucher(
+                            &self.signer,
+                            entry.channel_id,
+                            new_cumulative,
+                            chain_id,
+                        )
+                        .await?;
+                        SessionCredentialPayload::Voucher {
+                            channel_id: entry.channel_id.to_string(),
+                            descriptor: Some(descriptor),
+                            cumulative_amount: new_cumulative.to_string(),
+                            signature: alloy_primitives::hex::encode_prefixed(&sig),
+                        }
+                    } else {
+                        create_voucher_payload(
+                            &self.signer,
+                            entry.channel_id,
+                            new_cumulative,
+                            escrow_contract,
+                            chain_id,
+                        )
+                        .await?
+                    };
 
                     // Payload succeeded — now commit the cumulative increment.
                     {
@@ -717,11 +1014,15 @@ impl SessionProvider {
                     chain_id,
                     fee_payer: session_req.fee_payer(),
                 },
+                operator,
             )
             .await?;
 
         // Update in-memory state but defer disk persistence until server confirms.
         self.channels.lock().unwrap().insert(key.clone(), entry.clone());
+        if let SessionCredentialPayload::Open { descriptor: Some(descriptor), .. } = &payload {
+            self.precompile_descriptors.lock().unwrap().insert(key.clone(), descriptor.clone());
+        }
         let authorized_signer = self.authorized_signer.unwrap_or(payer);
         self.persisted.lock().unwrap().insert(
             key.clone(),
@@ -744,20 +1045,15 @@ impl SessionProvider {
 mod tests {
     use super::*;
     use mpp::client::tempo::signing::KeychainVersion;
+    use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
     use tempo_primitives::transaction::{
         KeyAuthorization, PrimitiveSignature, SignatureType, SignedKeyAuthorization,
     };
 
     /// Create a dummy `SignedKeyAuthorization` for tests.
     fn test_key_authorization() -> SignedKeyAuthorization {
-        SignedKeyAuthorization {
-            authorization: KeyAuthorization::unrestricted(
-                4217,
-                SignatureType::Secp256k1,
-                Address::ZERO,
-            ),
-            signature: PrimitiveSignature::from_bytes(&[0u8; 65]).expect("valid dummy signature"),
-        }
+        KeyAuthorization::unrestricted(4217, SignatureType::Secp256k1, Address::ZERO)
+            .into_signed(PrimitiveSignature::default())
     }
 
     fn strip_key_auth_if_provisioned(
@@ -857,6 +1153,438 @@ mod tests {
             matches!(result_mode, TempoSigningMode::Direct),
             "Direct mode should pass through unchanged"
         );
+    }
+
+    fn payload_transaction_type(payload: &SessionCredentialPayload) -> u8 {
+        let transaction = match payload {
+            SessionCredentialPayload::Open { transaction, .. }
+            | SessionCredentialPayload::TopUp { transaction, .. } => transaction,
+            _ => panic!("expected transaction payload"),
+        };
+        let bytes =
+            alloy_primitives::hex::decode(transaction.strip_prefix("0x").unwrap_or(transaction))
+                .expect("valid transaction hex");
+        bytes[0]
+    }
+
+    /// Regression test for <https://github.com/foundry-rs/foundry/issues/14588>:
+    /// session open/topup transactions must be encoded as `0x78` fee-payer
+    /// envelope when `fee_payer == true`, not as a bare `0x76` Tempo tx.
+    #[tokio::test]
+    async fn test_session_transactions_use_fee_payer_envelope_when_fee_payer_true() {
+        let signer = mpp::PrivateKeySigner::random();
+        let payer = signer.address();
+        let provider = SessionProvider::new(signer, unique_origin())
+            .with_signing_mode(TempoSigningMode::Direct);
+        let escrow_contract = Address::repeat_byte(0x11);
+        let payee = Address::repeat_byte(0x22);
+        let chain_id = 4217;
+
+        let (entry, open_payload) = provider
+            .create_open_tx(
+                payer,
+                OpenPayloadOptions {
+                    authorized_signer: None,
+                    escrow_contract,
+                    payee,
+                    currency: DEFAULT_FEE_TOKEN,
+                    deposit: 1_000_000,
+                    initial_amount: 10,
+                    chain_id,
+                    fee_payer: true,
+                },
+                Address::ZERO,
+            )
+            .await
+            .unwrap();
+        assert_eq!(payload_transaction_type(&open_payload), 0x78);
+
+        let topup_payload =
+            provider.create_topup_tx(&entry, 1_000_000, DEFAULT_FEE_TOKEN, true).await.unwrap();
+        assert_eq!(payload_transaction_type(&topup_payload), 0x78);
+
+        let (_, open_without_fee_payer) = provider
+            .create_open_tx(
+                payer,
+                OpenPayloadOptions {
+                    authorized_signer: None,
+                    escrow_contract,
+                    payee,
+                    currency: DEFAULT_FEE_TOKEN,
+                    deposit: 1_000_000,
+                    initial_amount: 10,
+                    chain_id,
+                    fee_payer: false,
+                },
+                Address::ZERO,
+            )
+            .await
+            .unwrap();
+        assert_eq!(payload_transaction_type(&open_without_fee_payer), 0x76);
+    }
+
+    /// Legacy escrow address must flow into the entry's channel id.
+    #[tokio::test]
+    async fn legacy_solidity_escrow_address_flows_through_open_payload() {
+        let escrow: Address = "0x33b901018174DDabE4841042ab76ba85D4e24f25".parse().unwrap();
+
+        let signer = mpp::PrivateKeySigner::random();
+        let provider = SessionProvider::new(signer, unique_origin());
+        let payer = provider.funding_wallet_address();
+        let opts = OpenPayloadOptions {
+            authorized_signer: None,
+            escrow_contract: escrow,
+            payee: Address::repeat_byte(0x11),
+            currency: Address::repeat_byte(0x22),
+            deposit: 100_000,
+            initial_amount: 1_000,
+            chain_id: 4217,
+            fee_payer: false,
+        };
+        let (payee, currency, chain_id) = (opts.payee, opts.currency, opts.chain_id);
+
+        let (entry, _payload) = provider
+            .create_open_tx(payer, opts, Address::ZERO)
+            .await
+            .expect("create_open_tx with legacy Solidity escrow");
+
+        assert_eq!(entry.escrow_contract, escrow);
+
+        let recomputed =
+            compute_channel_id(payer, payee, currency, entry.salt, payer, escrow, chain_id);
+        assert_eq!(entry.channel_id, recomputed);
+    }
+
+    /// Precompile escrow routes to the precompile branch; id ≠ legacy formula.
+    #[tokio::test]
+    async fn precompile_escrow_open_uses_precompile_channel_id() {
+        let signer = mpp::PrivateKeySigner::random();
+        let provider = SessionProvider::new(signer, unique_origin());
+        let payer = provider.funding_wallet_address();
+        let opts = OpenPayloadOptions {
+            authorized_signer: None,
+            escrow_contract: TIP20_CHANNEL_RESERVE_ADDRESS,
+            payee: Address::repeat_byte(0x11),
+            currency: Address::repeat_byte(0x22),
+            deposit: 100_000,
+            initial_amount: 1_000,
+            chain_id: 4217,
+            fee_payer: false,
+        };
+
+        let (entry, _payload) =
+            provider.create_open_tx(payer, opts, Address::ZERO).await.expect("precompile open");
+
+        assert_eq!(entry.escrow_contract, TIP20_CHANNEL_RESERVE_ADDRESS);
+        let legacy = compute_channel_id(
+            payer,
+            Address::repeat_byte(0x11),
+            Address::repeat_byte(0x22),
+            entry.salt,
+            payer,
+            TIP20_CHANNEL_RESERVE_ADDRESS,
+            4217,
+        );
+        assert_ne!(entry.channel_id, legacy);
+    }
+
+    /// Precompile open rejects `deposit`/`initial_amount` > uint96.
+    #[tokio::test]
+    async fn precompile_escrow_open_rejects_uint96_overflow() {
+        let signer = mpp::PrivateKeySigner::random();
+        let provider = SessionProvider::new(signer, unique_origin());
+        let payer = provider.funding_wallet_address();
+        let opts = OpenPayloadOptions {
+            authorized_signer: None,
+            escrow_contract: TIP20_CHANNEL_RESERVE_ADDRESS,
+            payee: Address::repeat_byte(0x11),
+            currency: Address::repeat_byte(0x22),
+            deposit: PRECOMPILE_MAX_CUMULATIVE_AMOUNT + 1,
+            initial_amount: 1,
+            chain_id: 4217,
+            fee_payer: false,
+        };
+        let err = provider
+            .create_open_tx(payer, opts, Address::ZERO)
+            .await
+            .expect_err("deposit > uint96 must reject");
+        assert!(matches!(err, MppError::InvalidConfig(_)));
+    }
+
+    /// Precompile channels must not fall through to legacy top-up calldata.
+    #[tokio::test]
+    async fn precompile_escrow_topup_is_rejected() {
+        let signer = mpp::PrivateKeySigner::random();
+        let provider = SessionProvider::new(signer, unique_origin());
+        let entry = ChannelEntry {
+            channel_id: B256::ZERO,
+            salt: B256::ZERO,
+            cumulative_amount: 0,
+            escrow_contract: TIP20_CHANNEL_RESERVE_ADDRESS,
+            chain_id: 4217,
+            opened: true,
+        };
+        let err = provider
+            .create_topup_tx(&entry, 1_000, Address::repeat_byte(0x22), false)
+            .await
+            .expect_err("precompile top-up must be rejected");
+        assert!(matches!(err, MppError::InvalidConfig(_)));
+    }
+
+    /// Operator must reach the precompile `open` calldata and bind into the
+    /// returned `channel_id`. Decodes the produced tx to verify both.
+    #[tokio::test]
+    async fn precompile_escrow_open_binds_operator_into_calldata() {
+        use alloy_eips::eip2718::Decodable2718;
+        use tempo_primitives::transaction::TempoTxEnvelope;
+
+        let signer = mpp::PrivateKeySigner::random();
+        let provider = SessionProvider::new(signer, unique_origin());
+        let payer = provider.funding_wallet_address();
+        let base_opts = || OpenPayloadOptions {
+            authorized_signer: None,
+            escrow_contract: TIP20_CHANNEL_RESERVE_ADDRESS,
+            payee: Address::repeat_byte(0x11),
+            currency: Address::repeat_byte(0x22),
+            deposit: 100_000,
+            initial_amount: 1_000,
+            chain_id: 4217,
+            fee_payer: false,
+        };
+        let expected_operator = Address::repeat_byte(0x99);
+
+        let (entry, payload) = provider
+            .create_open_tx(payer, base_opts(), expected_operator)
+            .await
+            .expect("precompile open with explicit operator");
+
+        let SessionCredentialPayload::Open { transaction, .. } = payload else {
+            panic!("expected Open payload");
+        };
+        let tx_bytes = alloy_primitives::hex::decode(&transaction).expect("hex tx");
+        let envelope =
+            TempoTxEnvelope::decode_2718(&mut tx_bytes.as_slice()).expect("decode envelope");
+        let TempoTxEnvelope::AA(aa_signed) = envelope else {
+            panic!("expected AA envelope (0x76)");
+        };
+        let unsigned = aa_signed.strip_signature();
+        assert_eq!(unsigned.calls.len(), 1);
+        let call = &unsigned.calls[0];
+        assert_eq!(call.to, TxKind::Call(TIP20_CHANNEL_RESERVE_ADDRESS));
+
+        let decoded =
+            ITIP20ChannelReserve::openCall::abi_decode(&call.input).expect("decode openCall");
+        assert_eq!(decoded.operator, expected_operator);
+
+        let authorized_signer = payer;
+        let expected_id = compute_precompile_channel_id(
+            payer,
+            base_opts().payee,
+            expected_operator,
+            base_opts().currency,
+            entry.salt,
+            authorized_signer,
+            mpp::client::channel_ops::compute_expiring_nonce_hash(&unsigned, payer),
+            base_opts().chain_id,
+        );
+        assert_eq!(entry.channel_id, expected_id);
+    }
+
+    /// Cumulative addition near `u128::MAX` must not wrap.
+    #[test]
+    fn voucher_cumulative_overflow_is_rejected() {
+        assert!((u128::MAX - 1).checked_add(5).is_none());
+    }
+
+    /// Precompile open carries the key-auth witness iff the key is not yet
+    /// provisioned (otherwise the tx reverts with "access key already exists").
+    #[tokio::test]
+    async fn precompile_open_key_auth_tracks_provisioned_flag() {
+        use alloy_eips::eip2718::Decodable2718;
+        use tempo_primitives::transaction::TempoTxEnvelope;
+
+        async fn key_auth_present(provisioned: bool) -> bool {
+            let signer = mpp::PrivateKeySigner::random();
+            let signing_mode = TempoSigningMode::Keychain {
+                wallet: Address::repeat_byte(0xAA),
+                key_authorization: Some(Box::new(test_key_authorization())),
+                version: KeychainVersion::V2,
+            };
+            let provider =
+                SessionProvider::new(signer, unique_origin()).with_signing_mode(signing_mode);
+            provider.set_key_provisioned(provisioned);
+
+            let payer = provider.funding_wallet_address();
+            let opts = OpenPayloadOptions {
+                authorized_signer: None,
+                escrow_contract: TIP20_CHANNEL_RESERVE_ADDRESS,
+                payee: Address::repeat_byte(0x11),
+                currency: Address::repeat_byte(0x22),
+                deposit: 100_000,
+                initial_amount: 1_000,
+                chain_id: 4217,
+                fee_payer: false,
+            };
+            let (_entry, payload) =
+                provider.create_open_tx(payer, opts, Address::ZERO).await.expect("precompile open");
+            let SessionCredentialPayload::Open { transaction, .. } = payload else {
+                panic!("expected Open payload");
+            };
+            let tx_bytes = alloy_primitives::hex::decode(&transaction).expect("hex tx");
+            let envelope =
+                TempoTxEnvelope::decode_2718(&mut tx_bytes.as_slice()).expect("decode envelope");
+            let TempoTxEnvelope::AA(aa_signed) = envelope else {
+                panic!("expected AA envelope (0x76)");
+            };
+            aa_signed.strip_signature().key_authorization.is_some()
+        }
+
+        assert!(key_auth_present(false).await, "must include witness when not provisioned");
+        assert!(!key_auth_present(true).await, "must omit witness once provisioned");
+    }
+
+    /// Live T5 probe: pays one challenge fetched from
+    /// `FOUNDRY_MPP_T5_RPC_URL` with `FOUNDRY_MPP_T5_PRIVATE_KEY`.
+    #[tokio::test]
+    #[ignore = "integration-only: requires FOUNDRY_MPP_T5_RPC_URL + FOUNDRY_MPP_T5_PRIVATE_KEY"]
+    async fn integration_pay_t5_precompile_endpoint() {
+        use mpp::protocol::core::parse_www_authenticate_all;
+
+        let Ok(url) = std::env::var("FOUNDRY_MPP_T5_RPC_URL") else {
+            let _ = crate::sh_eprintln!("skip: set FOUNDRY_MPP_T5_RPC_URL");
+            return;
+        };
+        let Ok(key_hex) = std::env::var("FOUNDRY_MPP_T5_PRIVATE_KEY") else {
+            let _ = crate::sh_eprintln!("skip: set FOUNDRY_MPP_T5_PRIVATE_KEY");
+            return;
+        };
+
+        let signer: mpp::PrivateKeySigner = key_hex.parse().expect("invalid private key");
+        let deposit: u128 =
+            std::env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(100_000);
+        let provider = SessionProvider::new(signer, url.clone()).with_default_deposit(deposit);
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_blockNumber",
+            "params": []
+        });
+        let resp = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .body(serde_json::to_vec(&body).unwrap())
+            .send()
+            .await
+            .expect("request");
+
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            "endpoint did not return 402; not MPP-gated?"
+        );
+        let www: Vec<_> = resp
+            .headers()
+            .get_all("www-authenticate")
+            .into_iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect();
+        // Only accept a T5 precompile-escrow session challenge: filtering on
+        // `supports()` alone would pass against a legacy session endpoint.
+        let challenge = parse_www_authenticate_all(www)
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .find(|c| {
+                if c.intent.as_str() != "session"
+                    || !provider.supports(c.method.as_str(), c.intent.as_str())
+                {
+                    return false;
+                }
+                let Ok(req) = c.request.decode::<mpp::protocol::intents::SessionRequest>() else {
+                    return false;
+                };
+                req.escrow_contract().ok().and_then(|s| s.parse::<Address>().ok())
+                    == Some(TIP20_CHANNEL_RESERVE_ADDRESS)
+            })
+            .expect("no T5 precompile session challenge offered by endpoint");
+
+        let credential = provider.pay(&challenge).await.expect("pay must succeed");
+        let payload: mpp::protocol::methods::tempo::session::SessionCredentialPayload =
+            credential.payload_as().expect("session payload");
+        match payload {
+            mpp::protocol::methods::tempo::session::SessionCredentialPayload::Open {
+                channel_id,
+                ..
+            }
+            | mpp::protocol::methods::tempo::session::SessionCredentialPayload::Voucher {
+                channel_id,
+                ..
+            } => {
+                assert!(channel_id.starts_with("0x") && channel_id.len() == 66, "{channel_id}");
+            }
+            other => panic!("unexpected payload variant: {other:?}"),
+        }
+    }
+
+    /// `channel_key` scopes by escrow + operator so cached channels can't be
+    /// reused across legacy/precompile or across operators.
+    #[test]
+    fn channel_key_distinguishes_legacy_and_precompile_escrow() {
+        let origin = "https://rpc.example.com";
+        let payer = Address::repeat_byte(0xAA);
+        let payee = Address::repeat_byte(0x11);
+        let currency = Address::repeat_byte(0x22);
+        let chain_id = 4217u64;
+
+        let legacy_escrow: Address = "0x33b901018174DDabE4841042ab76ba85D4e24f25".parse().unwrap();
+        let t5_precompile: Address = "0x4D50500000000000000000000000000000000000".parse().unwrap();
+
+        let legacy_key = SessionProvider::channel_key(
+            origin,
+            &payer,
+            None,
+            &payee,
+            &currency,
+            &legacy_escrow,
+            chain_id,
+            Address::ZERO,
+        );
+        let precompile_key = SessionProvider::channel_key(
+            origin,
+            &payer,
+            None,
+            &payee,
+            &currency,
+            &t5_precompile,
+            chain_id,
+            Address::ZERO,
+        );
+
+        assert_ne!(legacy_key, precompile_key);
+
+        let precompile_op_a = SessionProvider::channel_key(
+            origin,
+            &payer,
+            None,
+            &payee,
+            &currency,
+            &t5_precompile,
+            chain_id,
+            Address::repeat_byte(0xAA),
+        );
+        let precompile_op_b = SessionProvider::channel_key(
+            origin,
+            &payer,
+            None,
+            &payee,
+            &currency,
+            &t5_precompile,
+            chain_id,
+            Address::repeat_byte(0xBB),
+        );
+        assert_ne!(precompile_op_a, precompile_op_b);
+        assert_ne!(precompile_key, precompile_op_a);
     }
 
     /// Verify that a payment serialization lock (mirroring `lock_pay()` in

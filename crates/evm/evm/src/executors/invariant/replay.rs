@@ -1,10 +1,14 @@
 use super::{call_after_invariant_function, call_invariant_function, execute_tx};
 use crate::executors::{
     EarlyExit, Executor,
-    invariant::shrink::{shrink_sequence, shrink_sequence_value},
+    invariant::shrink::{reset_shrink_progress, shrink_sequence, shrink_sequence_value},
 };
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{I256, Log, map::HashMap};
+use alloy_json_abi::Function;
+use alloy_primitives::{
+    Bytes, I256, Log,
+    map::{AddressHashMap, HashMap},
+};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
@@ -21,11 +25,13 @@ use std::sync::Arc;
 #[expect(clippy::too_many_arguments)]
 pub fn replay_run<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
+    target_invariant: &Function,
     mut executor: Executor<FEN>,
     known_contracts: &ContractsByArtifact,
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
+    debug_bytecodes: &mut AddressHashMap<Bytes>,
     line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
@@ -42,6 +48,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     for tx in inputs {
         let mut call_result = execute_tx(&mut executor, tx)?;
         logs.extend(call_result.logs.clone());
+        debug_bytecodes.extend(call_result.debug_bytecodes.clone());
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
         HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
 
@@ -69,8 +76,9 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     let (invariant_result, invariant_success) = call_invariant_function(
         &executor,
         invariant_contract.address,
-        invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
+        target_invariant.abi_encode_input(&[])?.into(),
     )?;
+    debug_bytecodes.extend(invariant_result.debug_bytecodes);
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
     logs.extend(invariant_result.logs);
     deprecated_cheatcodes.extend(
@@ -84,6 +92,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     if invariant_contract.call_after_invariant && invariant_success {
         let (after_invariant_result, _) =
             call_after_invariant_function(&executor, invariant_contract.address)?;
+        debug_bytecodes.extend(after_invariant_result.debug_bytecodes);
         traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
         logs.extend(after_invariant_result.logs);
     }
@@ -104,19 +113,28 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     expect_assertion_failure: bool,
     target_value: Option<I256>,
     invariant_contract: &InvariantContract<'_>,
+    target_invariant: &Function,
     known_contracts: &ContractsByArtifact,
     ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
+    debug_bytecodes: &mut AddressHashMap<Bytes>,
     line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
+    position: Option<(usize, usize)>,
 ) -> Result<Vec<BaseCounterExample>> {
+    // Reset progress bar for this invariant's shrink phase. Multi-invariant runs call this once
+    // per target so the bar's message reflects which invariant is currently being shrunk and
+    // (when more than one invariant needs shrinking) the `[i/N]` counter shows queue depth.
+    reset_shrink_progress(&config, progress, &target_invariant.name, position);
+
     let calls = if let Some(target) = target_value {
         shrink_sequence_value(
             &config,
             invariant_contract,
+            target_invariant,
             calls,
             &executor,
             target,
@@ -127,6 +145,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
         shrink_sequence(
             &config,
             invariant_contract,
+            target_invariant,
             calls,
             expect_assertion_failure,
             &executor,
@@ -141,11 +160,13 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
 
     replay_run(
         invariant_contract,
+        target_invariant,
         executor,
         known_contracts,
         ided_contracts,
         logs,
         traces,
+        debug_bytecodes,
         line_coverage,
         deprecated_cheatcodes,
         &calls,

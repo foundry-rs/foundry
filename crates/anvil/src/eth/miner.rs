@@ -10,11 +10,16 @@ use futures::{
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use std::{
     fmt,
+    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::time::{Interval, MissedTickBehavior};
+use tokio::time::{Interval, MissedTickBehavior, Sleep};
+
+/// Window for grouping concurrently-submitted transactions into one instant-mined block.
+/// Scoped to batch/in-process concurrency; not a guarantee for independent external clients.
+const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
 
 pub struct Miner<T> {
     /// The mode this miner currently operates in
@@ -163,6 +168,7 @@ impl MiningMode {
             max_transactions,
             has_pending_txs: None,
             rx: listener.fuse(),
+            coalesce: None,
         })
     }
 
@@ -172,7 +178,12 @@ impl MiningMode {
 
     pub fn mixed(max_transactions: usize, listener: Receiver<TxHash>, duration: Duration) -> Self {
         Self::Mixed(
-            ReadyTransactionMiner { max_transactions, has_pending_txs: None, rx: listener.fuse() },
+            ReadyTransactionMiner {
+                max_transactions,
+                has_pending_txs: None,
+                rx: listener.fuse(),
+                coalesce: None,
+            },
             FixedBlockTimeMiner::new(duration),
         )
     }
@@ -262,6 +273,8 @@ pub struct ReadyTransactionMiner {
     has_pending_txs: Option<bool>,
     /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
+    /// Active [`INSTANT_COALESCE_WINDOW`] timer; while pending, ready txs are accumulated.
+    coalesce: Option<Pin<Box<Sleep>>>,
 }
 
 impl ReadyTransactionMiner {
@@ -271,13 +284,30 @@ impl ReadyTransactionMiner {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         // always drain the notification stream so that we're woken up as soon as there's a new tx
+        let mut saw_new_ready = false;
         while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
+            saw_new_ready = true;
+        }
+
+        // Arm the coalescing window only on fresh notifications to avoid delaying
+        // consecutive chunks when draining a backlog larger than `max_transactions`.
+        if saw_new_ready {
             self.has_pending_txs = Some(true);
+            if self.coalesce.is_none() {
+                self.coalesce = Some(Box::pin(tokio::time::sleep(INSTANT_COALESCE_WINDOW)));
+            }
         }
 
         if self.has_pending_txs == Some(false) {
             return Poll::Pending;
         }
+
+        if let Some(sleep) = self.coalesce.as_mut()
+            && sleep.as_mut().poll(cx).is_pending()
+        {
+            return Poll::Pending;
+        }
+        self.coalesce = None;
 
         let transactions =
             pool.ready_transactions().take(self.max_transactions).collect::<Vec<_>>();
@@ -286,6 +316,7 @@ impl ReadyTransactionMiner {
         self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
 
         if transactions.is_empty() {
+            self.has_pending_txs = Some(false);
             return Poll::Pending;
         }
 

@@ -1,3 +1,5 @@
+//@compile-flags: --only-lint missing-zero-check
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
@@ -239,5 +241,30 @@ contract MissingZeroCheck {
             if (a == address(0)) revert();
             owner = a;
         }
+    }
+
+    // then-branch aborts via `require(false)`; else-branch guards `a`.
+    function setOwnerRequireFalseInThen(address a, bool flag) external {
+        if (flag) require(false, "unreachable");
+        else require(a != address(0));
+        owner = a;
+    }
+
+    // Same shape with `assert(false)` as the exit.
+    function setOwnerAssertFalseInThen(address a, bool flag) external {
+        if (flag) assert(false);
+        else require(a != address(0));
+        owner = a;
+    }
+
+    // then-branch block exits via `return` followed by dead code.
+    function setOwnerReturnThenDeadCode(address a, bool flag) external {
+        if (flag) {
+            return;
+            owner = address(0);
+        } else {
+            require(a != address(0));
+        }
+        owner = a;
     }
 }

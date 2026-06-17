@@ -172,7 +172,7 @@ impl UpdateArgs {
         // Print updates from => to
         for (path, prev) in prev_dep_ids {
             let curr = foundry_lock.get(&path).unwrap();
-            sh_println!(
+            sh_status!(
                 "Updated dep at '{}', (from: {prev}, to: {curr})",
                 path.display().green(),
                 prev = prev,

@@ -1,12 +1,56 @@
 //! Debugger context and event handler implementation.
 
-use crate::{DebugNode, ExitReason, debugger::DebuggerContext};
+use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use foundry_evm_core::buffer::BufferKind;
+use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
+use foundry_tui::TuiApp;
+use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StatusKind {
+    Info,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StatusMessage {
+    pub(crate) kind: StatusKind,
+    pub(crate) text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveInternalCallLocation {
+    pub(crate) trace_node_idx: usize,
+    pub(crate) marker_node_idx: usize,
+    pub(crate) marker_step_idx: usize,
+    pub(crate) entry_step: usize,
+    pub(crate) end_step: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveInternalCallCache {
+    pub(crate) current_node_idx: usize,
+    pub(crate) trace_node_idx: usize,
+    pub(crate) absolute_step: usize,
+    pub(crate) location: Option<ActiveInternalCallLocation>,
+}
+
+impl ActiveInternalCallCache {
+    pub(crate) const fn matches(
+        self,
+        current_node_idx: usize,
+        trace_node_idx: usize,
+        absolute_step: usize,
+    ) -> bool {
+        self.current_node_idx == current_node_idx
+            && self.trace_node_idx == trace_node_idx
+            && self.absolute_step == absolute_step
+    }
+}
 
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
 #[derive(Default)]
@@ -14,6 +58,7 @@ pub(crate) struct DrawMemory {
     pub(crate) inner_call_index: usize,
     pub(crate) current_buf_startline: usize,
     pub(crate) current_stack_startline: usize,
+    pub(crate) active_internal_call: Option<ActiveInternalCallCache>,
 }
 
 pub(crate) struct TUIContext<'a> {
@@ -21,6 +66,10 @@ pub(crate) struct TUIContext<'a> {
 
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations.
     pub(crate) key_buffer: String,
+    /// Current goto program counter prompt contents, if the prompt is active.
+    pub(crate) pc_input: Option<String>,
+    /// Last status or error message to show in the footer.
+    pub(crate) status: Option<StatusMessage>,
     /// Current step in the debug steps.
     pub(crate) current_step: usize,
     pub(crate) draw_memory: DrawMemory,
@@ -41,6 +90,8 @@ impl<'a> TUIContext<'a> {
             debugger_context,
 
             key_buffer: String::with_capacity(64),
+            pc_input: None,
+            status: None,
             current_step: 0,
             draw_memory: DrawMemory::default(),
             opcode_list: Vec::new(),
@@ -59,6 +110,10 @@ impl<'a> TUIContext<'a> {
 
     pub(crate) fn debug_arena(&self) -> &[DebugNode] {
         &self.debugger_context.debug_arena
+    }
+
+    pub(crate) const fn layout(&self) -> DebuggerLayout {
+        self.debugger_context.layout
     }
 
     pub(crate) fn debug_call(&self) -> &DebugNode {
@@ -123,6 +178,11 @@ impl TUIContext<'_> {
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
+        if self.pc_input.is_some() {
+            self.handle_pc_input_key_event(event);
+            return ControlFlow::Continue(());
+        }
+
         // Breakpoints
         if let KeyCode::Char(c) = event.code
             && c.is_alphabetic()
@@ -176,16 +236,21 @@ impl TUIContext<'_> {
                 self.draw_memory.current_buf_startline = 0;
             }
 
+            // Cycle layout
+            KeyCode::Char('l') => self.cycle_layout(),
+
             // Go to top of file
             KeyCode::Char('g') => {
                 self.draw_memory.inner_call_index = 0;
                 self.current_step = 0;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to bottom of file
             KeyCode::Char('G') => {
                 self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
                 self.current_step = self.n_steps() - 1;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to previous call
@@ -193,6 +258,7 @@ impl TUIContext<'_> {
                 self.draw_memory.inner_call_index =
                     self.draw_memory.inner_call_index.saturating_sub(1);
                 self.current_step = self.n_steps() - 1;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to next call
@@ -201,6 +267,7 @@ impl TUIContext<'_> {
             {
                 self.draw_memory.inner_call_index += 1;
                 self.current_step = 0;
+                self.scroll_memory_to_current_write();
             }
 
             // Step forward
@@ -212,7 +279,8 @@ impl TUIContext<'_> {
                         is_jump(step, prev)
                     })
                 {
-                    this.current_step += i
+                    this.current_step += i;
+                    this.scroll_memory_to_current_write();
                 }
             }),
 
@@ -230,6 +298,7 @@ impl TUIContext<'_> {
                     })
                     .map(|(i, _)| i)
                     .unwrap_or_default();
+                this.scroll_memory_to_current_write();
             }),
 
             // Toggle stack labels
@@ -237,6 +306,13 @@ impl TUIContext<'_> {
 
             // Toggle memory UTF-8 decoding
             KeyCode::Char('m') => self.buf_utf = !self.buf_utf,
+
+            // Go to program counter
+            KeyCode::Char('p') => {
+                self.key_buffer.clear();
+                self.status = None;
+                self.pc_input = Some(String::new());
+            }
 
             // Toggle help notice
             KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
@@ -258,6 +334,113 @@ impl TUIContext<'_> {
         ControlFlow::Continue(())
     }
 
+    fn handle_pc_input_key_event(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => {
+                self.pc_input = None;
+            }
+            KeyCode::Enter => {
+                let input = self.pc_input.take().unwrap_or_default();
+                self.goto_pc_from_input(&input);
+            }
+            KeyCode::Backspace => {
+                if let Some(input) = &mut self.pc_input {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(c)
+                if !event.modifiers.contains(KeyModifiers::CONTROL) && is_pc_input_char(c) =>
+            {
+                if let Some(input) = &mut self.pc_input {
+                    input.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn goto_pc_from_input(&mut self, input: &str) {
+        let candidates = match parse_pc_candidates(input) {
+            Ok(candidates) => candidates,
+            Err(err) => {
+                self.set_error(err);
+                return;
+            }
+        };
+
+        let mut found = Vec::new();
+        for &candidate in &candidates {
+            if let Some(target) = find_pc_target(
+                self.debug_arena(),
+                self.draw_memory.inner_call_index,
+                self.current_step,
+                candidate.pc,
+            ) {
+                found.push((candidate, target));
+            }
+        }
+
+        match found.as_slice() {
+            [] => {
+                let current = self.debug_call();
+                let outside = candidates.iter().any(|candidate| {
+                    pc_exists_outside_code_context(self.debug_arena(), current, candidate.pc)
+                });
+                let pc = if let [candidate] = candidates.as_slice() {
+                    let pc = candidate.pc;
+                    format!("PC 0x{pc:x} ({pc})")
+                } else {
+                    format!("PC `{}`", input.trim())
+                };
+                let mut msg = format!("{pc} not found in current contract");
+                if outside {
+                    msg.push_str("; it exists in another contract, switch calls first");
+                }
+                self.set_error(msg);
+            }
+            [(candidate, target)] => self.apply_pc_target(*candidate, *target),
+            _ => {
+                let input = input.trim();
+                let options = found
+                    .iter()
+                    .map(|(candidate, _)| candidate.describe())
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                self.set_error(format!(
+                    "Ambiguous PC `{input}`: {options} both exist; use d:<pc> or 0x<pc>"
+                ));
+            }
+        }
+    }
+
+    fn apply_pc_target(&mut self, candidate: PcCandidate, target: PcTarget) {
+        let already_at_target = self.draw_memory.inner_call_index == target.node_index
+            && self.current_step == target.step_index;
+
+        self.draw_memory.inner_call_index = target.node_index;
+        self.current_step = target.step_index;
+        self.draw_memory.current_buf_startline = 0;
+        self.draw_memory.current_stack_startline = 0;
+        self.scroll_memory_to_current_write();
+        self.key_buffer.clear();
+
+        let pc = candidate.pc;
+        let scope = match target.scope {
+            PcTargetScope::CurrentNode => "current trace",
+            PcTargetScope::SameCodeContext => "same contract",
+        };
+        let action = if already_at_target { "Already at" } else { "Jumped to" };
+        self.set_info(format!("{action} PC 0x{pc:x} ({pc}) in {scope}"));
+    }
+
+    fn set_info(&mut self, text: String) {
+        self.status = Some(StatusMessage { kind: StatusKind::Info, text });
+    }
+
+    fn set_error(&mut self, text: String) {
+        self.status = Some(StatusMessage { kind: StatusKind::Error, text });
+    }
+
     fn handle_breakpoint(&mut self, c: char) {
         // Find the location of the called breakpoint in the whole debug arena (at this address with
         // this pc)
@@ -268,6 +451,7 @@ impl TUIContext<'_> {
                 {
                     self.draw_memory.inner_call_index = i;
                     self.current_step = step;
+                    self.scroll_memory_to_current_write();
                     break;
                 }
             }
@@ -276,6 +460,10 @@ impl TUIContext<'_> {
     }
 
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
+        if self.pc_input.is_some() {
+            return ControlFlow::Continue(());
+        }
+
         match event.kind {
             MouseEventKind::ScrollUp => self.step_back(),
             MouseEventKind::ScrollDown => self.step(),
@@ -292,6 +480,7 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index -= 1;
             self.current_step = self.n_steps() - 1;
         }
+        self.scroll_memory_to_current_write();
     }
 
     fn step(&mut self) {
@@ -301,6 +490,30 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index += 1;
             self.current_step = 0;
         }
+        self.scroll_memory_to_current_write();
+    }
+
+    fn scroll_memory_to_current_write(&mut self) {
+        if self.active_buffer != BufferKind::Memory {
+            return;
+        }
+
+        if let Some(line) = self.current_memory_write_line() {
+            self.draw_memory.current_buf_startline = line;
+        }
+    }
+
+    fn current_memory_write_line(&self) -> Option<usize> {
+        let memory_len = self.current_step().memory.as_ref()?.len();
+
+        if self.current_step > 0 {
+            let prev_step = &self.debug_steps()[self.current_step - 1];
+            if let Some(line) = bounded_memory_write_start_line(prev_step, memory_len) {
+                return Some(line);
+            }
+        }
+
+        bounded_memory_write_start_line(self.current_step(), memory_len)
     }
 
     /// Calls a closure `f` the number of times specified in the key buffer, and at least once.
@@ -313,6 +526,27 @@ impl TUIContext<'_> {
     fn n_steps(&self) -> usize {
         self.debug_steps().len()
     }
+
+    fn cycle_layout(&mut self) {
+        let layout = self.debugger_context.layout.next();
+        self.debugger_context.layout = layout;
+        self.status = Some(StatusMessage {
+            kind: StatusKind::Info,
+            text: format!("Debugger layout: {}", layout.as_str()),
+        });
+    }
+}
+
+impl TuiApp for TUIContext<'_> {
+    type Exit = ExitReason;
+
+    fn draw(&mut self, frame: &mut Frame<'_>) {
+        self.draw_layout(frame);
+    }
+
+    fn handle_event(&mut self, event: Event) -> ControlFlow<Self::Exit> {
+        TUIContext::handle_event(self, event)
+    }
 }
 
 /// Grab number from buffer. Used for something like '10k' to move up 10 operations
@@ -320,6 +554,170 @@ fn buffer_as_number(s: &str) -> usize {
     const MIN: usize = 1;
     const MAX: usize = 100_000;
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
+}
+
+const fn is_pc_input_char(c: char) -> bool {
+    c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PcBase {
+    Hex,
+    Decimal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PcCandidate {
+    pc: usize,
+    base: PcBase,
+}
+
+impl PcCandidate {
+    fn describe(self) -> String {
+        match self.base {
+            PcBase::Hex => format!("hex 0x{:x}", self.pc),
+            PcBase::Decimal => format!("decimal {}", self.pc),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PcTargetScope {
+    CurrentNode,
+    SameCodeContext,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PcTarget {
+    node_index: usize,
+    step_index: usize,
+    scope: PcTargetScope,
+}
+
+fn parse_pc_candidates(input: &str) -> Result<Vec<PcCandidate>, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("Enter a program counter".to_string());
+    }
+
+    if let Some(rest) = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")) {
+        return parse_pc_candidate(rest, 16, PcBase::Hex, input);
+    }
+
+    if let Some(rest) = input.strip_prefix("d:").or_else(|| input.strip_prefix("dec:")) {
+        return parse_pc_candidate(rest, 10, PcBase::Decimal, input);
+    }
+
+    if input.chars().any(|c| c.is_ascii_hexdigit() && c.is_ascii_alphabetic()) {
+        return parse_pc_candidate(input, 16, PcBase::Hex, input);
+    }
+
+    if input.chars().all(|c| c.is_ascii_digit()) {
+        let decimal = parse_pc(input, 10, input)?;
+        let hex = parse_pc(input, 16, input)?;
+        if decimal == hex {
+            return Ok(vec![PcCandidate { pc: decimal, base: PcBase::Decimal }]);
+        }
+        return Ok(vec![
+            PcCandidate { pc: decimal, base: PcBase::Decimal },
+            PcCandidate { pc: hex, base: PcBase::Hex },
+        ]);
+    }
+
+    Err(format!("Invalid PC `{input}`; use 0x2a, 2a, or d:42"))
+}
+
+fn parse_pc_candidate(
+    input: &str,
+    radix: u32,
+    base: PcBase,
+    original: &str,
+) -> Result<Vec<PcCandidate>, String> {
+    Ok(vec![PcCandidate { pc: parse_pc(input, radix, original)?, base }])
+}
+
+fn parse_pc(input: &str, radix: u32, original: &str) -> Result<usize, String> {
+    if input.is_empty() {
+        return Err(format!("Invalid PC `{original}`; use 0x2a, 2a, or d:42"));
+    }
+    usize::from_str_radix(input, radix)
+        .map_err(|_| format!("Invalid PC `{original}`; use 0x2a, 2a, or d:42"))
+}
+
+fn find_pc_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    pc: usize,
+) -> Option<PcTarget> {
+    let current_node = arena.get(current_node_index)?;
+
+    if let Some(step_index) = find_pc_in_current_node(&current_node.steps, current_step, pc) {
+        return Some(PcTarget {
+            node_index: current_node_index,
+            step_index,
+            scope: PcTargetScope::CurrentNode,
+        });
+    }
+
+    for (node_index, node) in arena.iter().enumerate().skip(current_node_index + 1) {
+        if same_code_context(current_node, node)
+            && let Some(step_index) = node.steps.iter().position(|step| step.pc == pc)
+        {
+            return Some(PcTarget {
+                node_index,
+                step_index,
+                scope: PcTargetScope::SameCodeContext,
+            });
+        }
+    }
+
+    for (node_index, node) in arena.iter().enumerate().take(current_node_index).rev() {
+        if same_code_context(current_node, node)
+            && let Some(step_index) = node.steps.iter().rposition(|step| step.pc == pc)
+        {
+            return Some(PcTarget {
+                node_index,
+                step_index,
+                scope: PcTargetScope::SameCodeContext,
+            });
+        }
+    }
+
+    None
+}
+
+fn find_pc_in_current_node(
+    steps: &[CallTraceStep],
+    current_step: usize,
+    pc: usize,
+) -> Option<usize> {
+    if steps.get(current_step).is_some_and(|step| step.pc == pc) {
+        return Some(current_step);
+    }
+
+    steps
+        .iter()
+        .enumerate()
+        .skip(current_step.saturating_add(1))
+        .find_map(|(i, step)| (step.pc == pc).then_some(i))
+        .or_else(|| {
+            steps[..current_step.min(steps.len())]
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(i, step)| (step.pc == pc).then_some(i))
+        })
+}
+
+fn same_code_context(a: &DebugNode, b: &DebugNode) -> bool {
+    a.address == b.address && a.kind.is_any_create() == b.kind.is_any_create()
+}
+
+fn pc_exists_outside_code_context(arena: &[DebugNode], current: &DebugNode, pc: usize) -> bool {
+    arena.iter().any(|node| {
+        !same_code_context(current, node) && node.steps.iter().any(|step| step.pc == pc)
+    })
 }
 
 fn pretty_opcode(step: &CallTraceStep) -> String {
@@ -330,6 +728,20 @@ fn pretty_opcode(step: &CallTraceStep) -> String {
     }
 }
 
+fn memory_write_start_line(step: &CallTraceStep) -> Option<usize> {
+    let stack = step.stack.as_ref()?;
+    let access = get_buffer_accesses(step.op.get(), stack)?.write?;
+    if access.len == 0 {
+        return None;
+    }
+    Some(access.offset / 32)
+}
+
+fn bounded_memory_write_start_line(step: &CallTraceStep, memory_len: usize) -> Option<usize> {
+    let line = memory_write_start_line(step)?;
+    (line < memory_len.div_ceil(32)).then_some(line)
+}
+
 fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
     if !matches!(prev.op, OpCode::JUMP | OpCode::JUMPI) {
         return false;
@@ -338,4 +750,358 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
     let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());
 
     step.pc != prev.pc + 1 + immediate_len
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{Bytes, U256};
+    use foundry_evm_core::Breakpoints;
+    use foundry_evm_traces::debug::ContractSources;
+    use revm::interpreter::InstructionResult;
+
+    fn step(pc: usize) -> CallTraceStep {
+        step_with_stack(pc, OpCode::STOP, &[])
+    }
+
+    fn step_with_stack(pc: usize, op: OpCode, stack: &[usize]) -> CallTraceStep {
+        CallTraceStep {
+            pc,
+            op,
+            stack: (!stack.is_empty()).then(|| {
+                stack.iter().copied().map(U256::from).collect::<Vec<_>>().into_boxed_slice()
+            }),
+            push_stack: None,
+            memory: None,
+            returndata: Bytes::new(),
+            gas_remaining: 0,
+            gas_refund_counter: 0,
+            gas_used: 0,
+            gas_cost: 0,
+            storage_change: None,
+            status: Some(InstructionResult::Stop),
+            immediate_bytes: None,
+            decoded: None,
+        }
+    }
+
+    fn node(address: Address, kind: CallKind, pcs: &[usize]) -> DebugNode {
+        DebugNode::new(
+            address,
+            kind,
+            pcs.iter().copied().map(step).collect(),
+            Bytes::new(),
+            0,
+            None,
+        )
+    }
+
+    fn context_with_arena(arena: Vec<DebugNode>) -> DebuggerContext {
+        DebuggerContext {
+            debug_arena: arena,
+            stats: None,
+            identified_contracts: Default::default(),
+            contracts_sources: ContractSources::default(),
+            breakpoints: Breakpoints::default(),
+            layout: Default::default(),
+        }
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    #[test]
+    fn layout_shortcut_cycles_only_concrete_layouts() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Auto);
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Vertical);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: vertical");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+    }
+
+    #[test]
+    fn parses_prefixed_hex_pc() {
+        assert_eq!(
+            parse_pc_candidates("0x2a").unwrap(),
+            vec![PcCandidate { pc: 42, base: PcBase::Hex }]
+        );
+        assert_eq!(
+            parse_pc_candidates("0X2A").unwrap(),
+            vec![PcCandidate { pc: 42, base: PcBase::Hex }]
+        );
+    }
+
+    #[test]
+    fn parses_bare_hex_pc_with_letters() {
+        assert_eq!(
+            parse_pc_candidates("2a").unwrap(),
+            vec![PcCandidate { pc: 42, base: PcBase::Hex }]
+        );
+    }
+
+    #[test]
+    fn parses_explicit_decimal_pc() {
+        assert_eq!(
+            parse_pc_candidates("d:42").unwrap(),
+            vec![PcCandidate { pc: 42, base: PcBase::Decimal }]
+        );
+        assert_eq!(
+            parse_pc_candidates("dec:42").unwrap(),
+            vec![PcCandidate { pc: 42, base: PcBase::Decimal }]
+        );
+    }
+
+    #[test]
+    fn parses_bare_digits_as_decimal_and_hex_candidates() {
+        assert_eq!(
+            parse_pc_candidates("10").unwrap(),
+            vec![
+                PcCandidate { pc: 10, base: PcBase::Decimal },
+                PcCandidate { pc: 16, base: PcBase::Hex },
+            ]
+        );
+        assert_eq!(
+            parse_pc_candidates("9").unwrap(),
+            vec![PcCandidate { pc: 9, base: PcBase::Decimal }]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_pc_input() {
+        assert!(parse_pc_candidates("").is_err());
+        assert!(parse_pc_candidates("0x").is_err());
+        assert!(parse_pc_candidates("xyz").is_err());
+        assert!(parse_pc_candidates("184467440737095516160").is_err());
+    }
+
+    #[test]
+    fn finds_pc_in_current_node() {
+        let address = Address::repeat_byte(1);
+        let arena = vec![node(address, CallKind::Call, &[1, 2, 3])];
+
+        assert_eq!(
+            find_pc_target(&arena, 0, 0, 3),
+            Some(PcTarget { node_index: 0, step_index: 2, scope: PcTargetScope::CurrentNode })
+        );
+    }
+
+    #[test]
+    fn repeated_pc_stays_current_then_prefers_next_then_previous() {
+        let address = Address::repeat_byte(1);
+        let arena = vec![node(address, CallKind::Call, &[1, 2, 3, 2])];
+
+        assert_eq!(find_pc_target(&arena, 0, 1, 2).unwrap().step_index, 1);
+        assert_eq!(find_pc_target(&arena, 0, 0, 2).unwrap().step_index, 1);
+        assert_eq!(find_pc_target(&arena, 0, 3, 2).unwrap().step_index, 3);
+        assert_eq!(find_pc_target(&arena, 0, 2, 2).unwrap().step_index, 3);
+    }
+
+    #[test]
+    fn searches_later_then_earlier_same_code_context() {
+        let address = Address::repeat_byte(1);
+        let arena = vec![
+            node(address, CallKind::Call, &[1]),
+            node(address, CallKind::Call, &[2]),
+            node(address, CallKind::Call, &[3]),
+        ];
+
+        assert_eq!(find_pc_target(&arena, 1, 0, 3).unwrap().node_index, 2);
+        assert_eq!(find_pc_target(&arena, 1, 0, 1).unwrap().node_index, 0);
+    }
+
+    #[test]
+    fn does_not_search_different_address_or_creation_context() {
+        let address = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let arena = vec![
+            node(address, CallKind::Call, &[1]),
+            node(other, CallKind::Call, &[2]),
+            node(address, CallKind::Create, &[3]),
+        ];
+
+        assert!(find_pc_target(&arena, 0, 0, 2).is_none());
+        assert!(find_pc_target(&arena, 0, 0, 3).is_none());
+        assert!(pc_exists_outside_code_context(&arena, &arena[0], 2));
+        assert!(pc_exists_outside_code_context(&arena, &arena[0], 3));
+    }
+
+    #[test]
+    fn goto_resolves_unambiguous_bare_digits_and_reports_ambiguity() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[10, 16, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.goto_pc_from_input("2a");
+        assert_eq!(tui.current_step, 2);
+        assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
+
+        tui.current_step = 0;
+        tui.goto_pc_from_input("10");
+        assert_eq!(tui.current_step, 0);
+        assert!(tui.status.as_ref().unwrap().text.contains("Ambiguous PC"));
+
+        tui.goto_pc_from_input("d:10");
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
+    }
+
+    #[test]
+    fn goto_reports_pc_in_other_contract_without_moving() {
+        let address = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let mut context = context_with_arena(vec![
+            node(address, CallKind::Call, &[1]),
+            node(other, CallKind::Call, &[42]),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.goto_pc_from_input("2a");
+        assert_eq!(tui.draw_memory.inner_call_index, 0);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert!(status.text.contains("exists in another contract"));
+    }
+
+    #[test]
+    fn goto_reports_ambiguous_input_in_other_contract_without_choosing_first_candidate() {
+        let address = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let mut context = context_with_arena(vec![
+            node(address, CallKind::Call, &[1]),
+            node(other, CallKind::Call, &[16]),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.goto_pc_from_input("10");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert!(status.text.starts_with("PC `10` not found"));
+        assert!(status.text.contains("exists in another contract"));
+    }
+
+    #[test]
+    fn pc_input_mode_handles_keys_and_blocks_normal_commands() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert!(matches!(tui.handle_key_event(key(KeyCode::Char('p'))), ControlFlow::Continue(())));
+        assert_eq!(tui.pc_input.as_deref(), Some(""));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('q')));
+        assert_eq!(tui.pc_input.as_deref(), Some(""));
+        assert_eq!(tui.current_step, 0);
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('2')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        assert_eq!(tui.pc_input.as_deref(), Some("2a"));
+
+        let _ = tui.handle_key_event(key(KeyCode::Backspace));
+        assert_eq!(tui.pc_input.as_deref(), Some("2"));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.pc_input, None);
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
+    }
+
+    #[test]
+    fn pc_input_escape_cancels_without_moving() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('p')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('2')));
+        let _ = tui.handle_key_event(key(KeyCode::Esc));
+
+        assert_eq!(tui.pc_input, None);
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn memory_write_start_line_uses_write_offset() {
+        assert_eq!(memory_write_start_line(&step_with_stack(0, OpCode::MSTORE, &[0, 96])), Some(3));
+        assert_eq!(
+            memory_write_start_line(&step_with_stack(0, OpCode::MSTORE8, &[0, 33])),
+            Some(1)
+        );
+        assert_eq!(memory_write_start_line(&step(0)), None);
+    }
+
+    #[test]
+    fn bounded_memory_write_start_line_requires_visible_non_empty_write() {
+        let write_at_128 = step_with_stack(0, OpCode::MSTORE, &[0, 128]);
+        assert_eq!(bounded_memory_write_start_line(&write_at_128, 160), Some(4));
+        assert_eq!(bounded_memory_write_start_line(&write_at_128, 128), None);
+
+        let zero_len_copy = step_with_stack(0, OpCode::CALLDATACOPY, &[0, 0, 1_000_000]);
+        assert_eq!(memory_write_start_line(&zero_len_copy), None);
+        assert_eq!(bounded_memory_write_start_line(&zero_len_copy, 32), None);
+    }
+
+    #[test]
+    fn stepping_past_memory_write_without_memory_snapshot_keeps_scroll_position() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.draw_memory.current_buf_startline = 99;
+
+        tui.step();
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 99);
+    }
+
+    #[test]
+    fn memory_write_autoscroll_only_applies_to_memory_buffer() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+        tui.draw_memory.current_buf_startline = 7;
+
+        tui.step();
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 7);
+    }
 }

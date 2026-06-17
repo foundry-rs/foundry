@@ -220,10 +220,10 @@ impl<N: Network> ProviderBuilder<N> {
     /// Defaults to `http://localhost:8545` and `Mainnet`.
     pub fn from_config(config: &Config) -> Result<Self> {
         let url = config.get_rpc_url_or_localhost_http()?;
-        let mut builder = Self::new(url.as_ref());
-
-        builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
-        builder = builder.curl_mode(config.eth_rpc_curl);
+        let mut builder = Self::new(url.as_ref())
+            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
+            .no_proxy(config.eth_rpc_no_proxy)
+            .curl_mode(config.eth_rpc_curl);
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
             builder = builder.chain(chain);
@@ -383,6 +383,7 @@ impl<N: Network> ProviderBuilder<N> {
             ..
         } = self;
         let url = url?;
+        let no_proxy = no_proxy || is_local;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
@@ -459,13 +460,14 @@ impl<N: Network> ProviderBuilder<N> {
             .map(|url_str| {
                 let builder = Self::new(url_str);
                 let url = builder.url?;
+                let transport_no_proxy = no_proxy || builder.is_local;
                 parsed_urls.push(url.clone());
                 Ok(RuntimeTransportBuilder::new(url)
                     .with_timeout(timeout)
                     .with_headers(headers.clone())
                     .with_jwt(jwt.clone())
                     .accept_invalid_certs(accept_invalid_certs)
-                    .no_proxy(no_proxy)
+                    .no_proxy(transport_no_proxy)
                     .build())
             })
             .collect::<Result<Vec<_>>>()?;
@@ -518,6 +520,7 @@ impl<N: Network> ProviderBuilder<N> {
             ..
         } = self;
         let url = url?;
+        let no_proxy = no_proxy || is_local;
 
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
@@ -600,5 +603,22 @@ mod tests {
 
         let url = builder.url.unwrap();
         assert_eq!(url, Url::parse("http://localhost:8545").unwrap());
+    }
+
+    #[test]
+    fn from_config_applies_rpc_transport_options() {
+        let config = Config {
+            eth_rpc_url: Some("http://example.com".to_string()),
+            eth_rpc_accept_invalid_certs: true,
+            eth_rpc_no_proxy: true,
+            eth_rpc_timeout: Some(7),
+            ..Default::default()
+        };
+
+        let builder = ProviderBuilder::<AnyNetwork>::from_config(&config).unwrap();
+
+        assert!(builder.accept_invalid_certs);
+        assert!(builder.no_proxy);
+        assert_eq!(builder.timeout, Duration::from_secs(7));
     }
 }

@@ -77,7 +77,7 @@ impl LintArgs {
         };
 
         if input.is_empty() {
-            sh_println!("nothing to lint")?;
+            sh_status!("nothing to lint")?;
             return Ok(());
         }
 
@@ -116,8 +116,10 @@ impl LintArgs {
 
         // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
         // compiler, we should reuse the parser from the project output.
+        let mut opts = solar::interface::config::Opts::default();
+        opts.unstable.typeck = true;
         let mut compiler = solar::sema::Compiler::new(
-            solar::interface::Session::builder().with_stderr_emitter().build(),
+            solar::interface::Session::builder().opts(opts).with_stderr_emitter().build(),
         );
 
         // Load the solar-compatible sources to the pcx before linting

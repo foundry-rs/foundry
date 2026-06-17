@@ -16,10 +16,14 @@ workspace = true
 [dependencies]
 alloy-chains.workspace = true
 alloy-hardforks = { workspace = true, features = ["serde"] }
-alloy-op-hardforks = { workspace = true, features = ["serde"] }
+alloy-op-hardforks = { workspace = true, features = ["serde"], optional = true }
 alloy-rpc-types.workspace = true
-op-revm.workspace = true
+op-revm = { workspace = true, optional = true }
 revm.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tempo-chainspec.workspace = true
 foundry-compilers.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["dep:alloy-op-hardforks", "dep:op-revm"]

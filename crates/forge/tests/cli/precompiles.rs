@@ -1,7 +1,7 @@
 //! Contains various tests for `forge test` with precompiles.
 
 use foundry_evm_networks::NetworkConfigs;
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 
 forgetest_init!(precompile_trace_decoding, |prj, cmd| {
     prj.add_test(
@@ -173,6 +173,58 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest_init!(tempo_t5_hardfork_precompile_smoke, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T5".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoT5PrecompileSmoke.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+
+interface IAddressRegistry {
+    function isImplicitlyApproved(address precompile) external view returns (bool);
+}
+
+interface ITIP20ChannelReserve {
+    function domainSeparator() external view returns (bytes32);
+}
+
+contract TempoT5PrecompileSmokeTest is Test {
+    address constant ADDRESS_REGISTRY = address(bytes20(hex"FDC0000000000000000000000000000000000000"));
+    address constant FEE_MANAGER = address(bytes20(hex"feec000000000000000000000000000000000000"));
+    address constant STABLECOIN_DEX = address(bytes20(hex"dec0000000000000000000000000000000000000"));
+    address constant TIP20_CHANNEL_RESERVE = address(bytes20(hex"4D50500000000000000000000000000000000000"));
+
+    function test_t5_hardfork_precompile_smoke() public {
+        assertGt(TIP20_CHANNEL_RESERVE.code.length, 0);
+
+        IAddressRegistry registry = IAddressRegistry(ADDRESS_REGISTRY);
+        assertTrue(registry.isImplicitlyApproved(FEE_MANAGER));
+        assertTrue(registry.isImplicitlyApproved(STABLECOIN_DEX));
+        assertTrue(registry.isImplicitlyApproved(TIP20_CHANNEL_RESERVE));
+
+        bytes32 separator = ITIP20ChannelReserve(TIP20_CHANNEL_RESERVE).domainSeparator();
+        assertTrue(separator != bytes32(0));
+    }
+}
+   "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mt", "test_t5_hardfork_precompile_smoke", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("AddressRegistry::isImplicitlyApproved"), "{stdout}");
+    assert!(stdout.contains("TIP20ChannelReserve::domainSeparator"), "{stdout}");
 });
 
 // tests transfer using celo precompile.

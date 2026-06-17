@@ -13,7 +13,7 @@ use revm::{
     state::Bytecode,
 };
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
-use tempo_precompiles::storage::StorageCtx;
+use tempo_precompiles::{extend_tempo_precompiles, storage::StorageCtx};
 use tempo_revm::{
     TempoInvalidTransaction, TempoTxEnv, evm::TempoContext, gas_params::tempo_gas_params,
     handler::TempoEvmHandler,
@@ -24,7 +24,7 @@ use crate::{
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
     evm::{FoundryEvmFactory, NestedEvm},
-    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_genesis_inner},
+    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
 // Will be removed when the next revm release includes bluealloy/revm#3518.
@@ -51,13 +51,15 @@ pub(crate) fn initialize_tempo_evm<
             // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
             let mut sctx = StorageCtx;
             let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-            for addr in TEMPO_PRECOMPILE_ADDRESSES.iter().chain(TEMPO_TIP20_TOKENS.iter()) {
-                sctx.set_code(*addr, sentinel.clone())
+            for addr in
+                TEMPO_PRECOMPILE_ADDRESSES.iter().copied().chain(TEMPO_TIP20_TOKENS.iter().copied())
+            {
+                sctx.set_code(addr, sentinel.clone())
                     .expect("failed to warm tempo precompile address");
             }
         } else {
             // In non-fork mode, run full genesis initialization.
-            initialize_tempo_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
+            initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
                 .expect("tempo genesis initialization failed");
         }
     });
@@ -86,6 +88,8 @@ impl FoundryEvmFactory for TempoEvmFactory {
 
         let networks = tempo_evm.inspector().get_networks();
         networks.inject_precompiles(tempo_evm.precompiles_mut());
+        let cfg = tempo_evm.cfg.clone();
+        extend_tempo_precompiles(tempo_evm.precompiles_mut(), &cfg);
 
         initialize_tempo_evm(&mut tempo_evm, is_forked);
         tempo_evm
@@ -134,6 +138,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = TempoEvmHandler::new();
+        let reservoir = frame.reservoir();
 
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
@@ -142,7 +147,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
         let mut frame_result =
             handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_tempo_error)?;
 
-        handler.last_frame_result(self, &mut frame_result).map_err(map_tempo_error)?;
+        handler.last_frame_result(self, reservoir, &mut frame_result).map_err(map_tempo_error)?;
 
         Ok(frame_result)
     }

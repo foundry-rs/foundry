@@ -1,13 +1,20 @@
 use crate::{
-    ScriptArgs, ScriptConfig, broadcast::BundledState, execute::LinkedState,
-    multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind,
+    ScriptArgs, ScriptConfig,
+    broadcast::{BundledState, remaining_unsigned_transactions},
+    execute::LinkedState,
+    multi_sequence::MultiChainSequence,
+    sequence::ScriptSequenceKind,
+    session::{
+        RemainingScriptTransaction, SignerScope, script_session_expected_sender_if_configured,
+    },
 };
 use alloy_network::AnyNetwork;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
+use foundry_cli::opts::TempoOpts;
 use foundry_common::{
     ContractData, ContractsByArtifact, compile::ProjectCompiler, provider::ProviderBuilder,
 };
@@ -20,8 +27,34 @@ use foundry_compilers::{
 };
 use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
-use foundry_wallets::wallet_browser::signer::BrowserSigner;
+use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
+
+/// Returns whether every scoped signer needed for resume is already available.
+///
+/// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
+/// session signer lives in the session registry instead, so resume needs to treat the session
+/// root account as available only on the chain covered by the session.
+fn has_available_script_signers(
+    tempo: &TempoOpts,
+    wallets: &MultiWalletOpts,
+    script_wallets: &Wallets,
+    expected_sender: Option<Address>,
+    remaining: &[RemainingScriptTransaction],
+) -> Result<bool> {
+    let signers = script_wallets
+        .signers()
+        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+    if remaining.is_empty() {
+        return Ok(true);
+    }
+
+    let session_scope = tempo
+        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
+        .map(|s| SignerScope::new(s.session.chain_id, s.access_key.wallet_address));
+
+    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || session_scope == Some(tx.scope())))
+}
 
 /// Container for the compiled contracts.
 #[derive(Debug)]
@@ -194,7 +227,10 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         )
         .chain([target_path.clone()]);
 
-        let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
+        let output = ProjectCompiler::new()
+            .files(sources_to_compile)
+            .dynamic_test_linking(script_config.config.dynamic_test_linking)
+            .compile(&project)?;
 
         let mut target_id: Option<ArtifactId> = None;
 
@@ -301,19 +337,23 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_config,
                 )
             } else {
-                let mut froms = sequence.sequences().iter().flat_map(|s| {
-                    s.transactions
-                        .iter()
-                        .skip(s.receipts.len())
-                        .map(|t| t.transaction.from().expect("from is missing in script artifact"))
-                });
+                let remaining_transactions =
+                    remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
+                let remaining_froms =
+                    remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
+                let expected_session_sender = script_session_expected_sender_if_configured(
+                    &self.script_config.tempo,
+                    &remaining_froms,
+                )?;
+                let has_available_signers = has_available_script_signers(
+                    &self.script_config.tempo,
+                    &self.args.wallets,
+                    &self.script_wallets,
+                    expected_session_sender,
+                    &remaining_transactions,
+                )?;
 
-                let available_signers = self
-                    .script_wallets
-                    .signers()
-                    .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
-
-                if froms.all(|from| available_signers.contains(&from)) {
+                if has_available_signers {
                     (
                         self.args,
                         self.build_data,
@@ -324,7 +364,12 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 } else {
                     // IF we are missing required signers, execute script as we might need to
                     // collect private keys from the execution.
-                    let executed = self.link().await?.prepare_execution().await?.execute().await?;
+                    let mut state = self;
+                    state
+                        .script_config
+                        .update_tempo_session_sender(&state.args.wallets, state.args.evm.sender)
+                        .await?;
+                    let executed = state.link().await?.prepare_execution().await?.execute().await?;
                     (
                         executed.args,
                         executed.build_data.build_data,
@@ -377,5 +422,24 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             )?;
             Ok(ScriptSequenceKind::Multi(sequence))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
+        let has_available = has_available_script_signers(
+            &TempoOpts { session: Some(B256::repeat_byte(0x99)), ..Default::default() },
+            &MultiWalletOpts::default(),
+            &Wallets::new(Default::default(), None),
+            None,
+            &[],
+        )
+        .unwrap();
+
+        assert!(has_available);
     }
 }

@@ -26,6 +26,7 @@ use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
+    hardforks::TempoHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
@@ -167,6 +168,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.logs.extend(script_result.logs);
             setup_result.traces.extend(script_result.traces);
             setup_result.labeled_addresses.extend(script_result.labeled_addresses);
+            setup_result.debug_bytecodes.extend(script_result.debug_bytecodes);
             setup_result.returned = script_result.returned;
             setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
@@ -341,6 +343,8 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
         known_contracts: &ContractsByArtifact,
     ) -> Result<CallTraceDecoder> {
         let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
+        let is_tempo = self.script_config.evm_opts.networks.is_tempo()
+            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
 
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(self.execution_result.labeled_addresses.clone())
@@ -351,11 +355,20 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
             )?)
             .with_label_disabled(self.args.disable_labels)
             .with_chain_id(chain_id.map(|c| c.id()))
+            .with_tempo_hardfork(
+                is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
+            )
             .build();
 
-        let mut identifier = TraceIdentifiers::new()
-            .with_local(known_contracts)
-            .with_external(&self.script_config.config, chain_id)?;
+        let use_debug_bytecodes =
+            self.args.debug && !self.execution_result.debug_bytecodes.is_empty();
+        let mut identifier = if use_debug_bytecodes {
+            TraceIdentifiers::new()
+                .with_local_and_bytecodes(known_contracts, &self.execution_result.debug_bytecodes)
+        } else {
+            TraceIdentifiers::new().with_local(known_contracts)
+        }
+        .with_external(&self.script_config.config, chain_id)?;
 
         for (_, trace) in &self.execution_result.traces {
             decoder.identify(trace, &mut identifier);
@@ -543,6 +556,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             .decoder(&self.execution_artifacts.decoder)
             .sources(self.build_data.sources)
             .breakpoints(self.execution_result.breakpoints)
+            .layout(self.args.debug_layout.unwrap_or_default())
             .build()
     }
 }

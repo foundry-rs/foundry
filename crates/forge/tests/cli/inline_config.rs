@@ -425,3 +425,107 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+// Checks that tests annotated with `forge-config: default.networks.network` run on the correct
+// EVM network, and that unannotated tests run on the globally configured network.
+//
+// Each test makes a real call to the Tempo `TipFeeManager` precompile at
+// `0xfeec000000000000000000000000000000000000` (a Tempo-only contract that exists on the
+// Moderato testnet and is auto-injected by the in-memory Tempo EVM):
+//
+// * The default-network test asserts the precompile has no code (it does not exist on Ethereum).
+// * The Tempo-network test asserts the precompile has code and `userTokens(address)` returns the
+//   unset zero-address sentinel, proving the Tempo network was actually selected for that test and
+//   the Tempo genesis state was loaded.
+forgetest!(per_test_network_routing, |prj, cmd| {
+    prj.add_test(
+        "inline.sol",
+        r#"
+        address constant TIP_FEE_MANAGER = 0xfeEC000000000000000000000000000000000000;
+
+        contract DefaultNetwork {
+            // No annotation -> runs on the globally selected network (Ethereum by default).
+            // The Tempo FeeManager precompile must NOT exist here.
+            function test_fee_manager_absent_on_ethereum() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length == 0,
+                    "TipFeeManager should not exist on Ethereum"
+                );
+            }
+        }
+
+        contract TempoNetwork {
+            /// forge-config: default.networks.network = "tempo"
+            function test_fee_manager_callable_on_tempo() public view {
+                // Sentinel bytecode (0xef) is injected at every Tempo precompile address.
+                require(
+                    TIP_FEE_MANAGER.code.length > 0,
+                    "TipFeeManager must be deployed on Tempo"
+                );
+
+                // Call a Tempo-only method: `userTokens(address)` returns the user's preferred
+                // fee token, or the zero address when none is set.
+                (bool ok, bytes memory ret) = TIP_FEE_MANAGER.staticcall(
+                    abi.encodeWithSignature("userTokens(address)", address(0))
+                );
+                require(ok, "userTokens call to TipFeeManager failed");
+                require(ret.length == 32, "unexpected return data length");
+                address token = abi.decode(ret, (address));
+                require(token == address(0), "expected unset user fee token");
+            }
+        }
+
+        // Mixed contract: one function annotated with Tempo, one unannotated (runs on Ethereum).
+        contract MixedNetwork {
+            // No annotation -> runs on Ethereum; precompile must be absent.
+            function test_fee_manager_absent_on_ethereum() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length == 0,
+                    "TipFeeManager should not exist on Ethereum"
+                );
+            }
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_fee_manager_callable_on_tempo() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length > 0,
+                    "TipFeeManager must be deployed on Tempo"
+                );
+
+                (bool ok, bytes memory ret) = TIP_FEE_MANAGER.staticcall(
+                    abi.encodeWithSignature("userTokens(address)", address(0))
+                );
+                require(ok, "userTokens call to TipFeeManager failed");
+                require(ret.length == 32, "unexpected return data length");
+                address token = abi.decode(ret, (address));
+                require(token == address(0), "expected unset user fee token");
+            }
+        }
+        "#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_absent_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_absent_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_callable_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_callable_on_[..]() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+});

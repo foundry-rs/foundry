@@ -7,6 +7,7 @@
 
 use crate::tempo::{TEMPO_PRIVATE_KEY_ENV, WalletType, read_tempo_keys_file};
 use alloy_primitives::Address;
+use std::env;
 use tracing::debug;
 
 /// Options for MPP key discovery filtering.
@@ -55,7 +56,7 @@ pub fn discover_mpp_key() -> Option<String> {
 /// target chain and the required currency.
 pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
     // 1. Check TEMPO_PRIVATE_KEY env var (no keychain metadata available)
-    if let Ok(key) = std::env::var(TEMPO_PRIVATE_KEY_ENV) {
+    if let Ok(key) = env::var(TEMPO_PRIVATE_KEY_ENV) {
         let key = key.trim().to_string();
         if !key.is_empty() {
             debug!("using MPP key from {TEMPO_PRIVATE_KEY_ENV} env var");
@@ -73,11 +74,17 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
     // 2. Read $TEMPO_HOME/wallet/keys.toml (default: ~/.tempo/wallet/keys.toml)
     let keys_file = read_tempo_keys_file()?;
 
+    // `expiry == 0` means "no expiry" on the wire.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
     // Pick primary key using the same deterministic order as
     // `Keystore::primary_key()` in tempo-common:
     //   passkey > first entry with inline key > first entry
     // Only entries with a usable inline key can provide a signing key.
-    // Filter by chain_id and currency when provided.
+    // Filter by chain_id, currency, and freshness when provided.
     let candidates: Vec<_> = keys_file
         .keys
         .iter()
@@ -86,6 +93,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
             opts.currency
                 .is_none_or(|cur| k.limits.is_empty() || k.limits.iter().any(|l| l.currency == cur))
         })
+        .filter(|k| k.expiry.is_none_or(|e| e == 0 || e > now))
         .collect();
 
     let primary = candidates
@@ -135,6 +143,7 @@ mod tests {
 
     #[test]
     fn discover_from_tempo_home_keys_toml() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
         let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let toml_content = format!(
             r#"
@@ -160,6 +169,7 @@ chain_id = 4217
 
     #[test]
     fn discover_env_var_takes_priority_over_keys_toml() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
         let file_key = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
         let env_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let toml_content = format!(
@@ -187,6 +197,7 @@ key = "{file_key}"
 
     #[test]
     fn discover_returns_none_when_no_keys() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
         let (dir, _) = setup_keys_toml("");
 
         unsafe {
@@ -202,6 +213,7 @@ key = "{file_key}"
 
     #[test]
     fn discover_skips_entries_without_inline_key() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
         let key = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
         let toml_content = format!(
             r#"
@@ -344,6 +356,7 @@ key = "0xthe_key"
 
     #[test]
     fn discover_filters_by_chain_id() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
         let mainnet_key = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let testnet_key = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let toml_content = format!(
@@ -412,6 +425,62 @@ chain_id = 4217
             testnet_key,
             "passkey should win over local within the same chain_id"
         );
+
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
+
+    #[test]
+    fn discover_filters_expired_entries() {
+        // Expired entries must not be selected, so the next 402 re-triggers
+        // the device-code flow instead of returning a stale key.
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
+        let expired_key = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let fresh_key = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let toml_content = format!(
+            r#"
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "0x0000000000000000000000000000000000000001"
+key = "{expired_key}"
+chain_id = 4217
+expiry = 1
+
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "0x0000000000000000000000000000000000000002"
+key = "{fresh_key}"
+chain_id = 4217
+expiry = 0
+"#
+        );
+        let (dir, _) = setup_keys_toml(&toml_content);
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+
+        // Even though the expired entry comes first, discovery skips it.
+        let config =
+            discover_mpp_config(DiscoverOptions { chain_id: Some(4217), ..Default::default() });
+        assert_eq!(config.as_ref().unwrap().key, fresh_key);
+
+        // With only the expired entry present, discovery returns None so the
+        // 402 path can run `ensure_access_key` again.
+        let only_expired = format!(
+            r#"
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "0x0000000000000000000000000000000000000001"
+key = "{expired_key}"
+chain_id = 4217
+expiry = 1
+"#
+        );
+        let (dir2, _) = setup_keys_toml(&only_expired);
+        unsafe { std::env::set_var("TEMPO_HOME", dir2.path()) };
+        let config =
+            discover_mpp_config(DiscoverOptions { chain_id: Some(4217), ..Default::default() });
+        assert!(config.is_none(), "expired-only keys.toml must not yield a usable key");
 
         unsafe { std::env::remove_var("TEMPO_HOME") };
     }

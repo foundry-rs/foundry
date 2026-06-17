@@ -5,8 +5,10 @@
 
 use alloy_primitives::{Address, hex};
 use alloy_rlp::Decodable;
-use serde::Deserialize;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::{env, fmt, path::PathBuf};
+
+use super::registry::{read_toml_file, write_toml_file_atomic};
 
 /// Environment variable for an ephemeral Tempo private key.
 pub const TEMPO_PRIVATE_KEY_ENV: &str = "TEMPO_PRIVATE_KEY";
@@ -21,7 +23,7 @@ pub const DEFAULT_TEMPO_HOME: &str = ".tempo";
 pub const WALLET_KEYS_PATH: &str = "wallet/keys.toml";
 
 /// Wallet type matching `tempo-common`'s `WalletType` enum.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WalletType {
     #[default]
@@ -30,7 +32,7 @@ pub enum WalletType {
 }
 
 /// Cryptographic key type.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyType {
     #[default]
@@ -40,7 +42,7 @@ pub enum KeyType {
 }
 
 /// Per-token spending limit stored in `keys.toml`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct StoredTokenLimit {
     pub currency: Address,
     pub limit: String,
@@ -50,7 +52,7 @@ pub struct StoredTokenLimit {
 ///
 /// Mirrors the fields from `tempo-common::keys::model::KeyEntry`.
 /// Unknown fields are ignored by serde.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct KeyEntry {
     /// Wallet type: "local" or "passkey".
     #[serde(default)]
@@ -65,21 +67,41 @@ pub struct KeyEntry {
     #[serde(default)]
     pub key_type: KeyType,
     /// Key address (the EOA derived from the private key).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_address: Option<Address>,
     /// Key private key, stored inline in keys.toml.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// RLP-encoded signed key authorization (hex string).
     /// Used in keychain mode to atomically provision the access key on-chain.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_authorization: Option<String>,
     /// Expiry timestamp.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expiry: Option<u64>,
     /// Per-token spending limits.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limits: Vec<StoredTokenLimit>,
+}
+
+// Manual `Debug` redacts the persistent key material; propagates to `KeysFile`.
+impl fmt::Debug for KeyEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeyEntry")
+            .field("wallet_type", &self.wallet_type)
+            .field("wallet_address", &self.wallet_address)
+            .field("chain_id", &self.chain_id)
+            .field("key_type", &self.key_type)
+            .field("key_address", &self.key_address)
+            .field("key", &self.key.as_deref().map(super::redacted_debug))
+            .field(
+                "key_authorization",
+                &self.key_authorization.as_deref().map(super::redacted_debug),
+            )
+            .field("expiry", &self.expiry)
+            .field("limits", &self.limits)
+            .finish()
+    }
 }
 
 impl KeyEntry {
@@ -90,7 +112,7 @@ impl KeyEntry {
 }
 
 /// The top-level structure of `keys.toml`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct KeysFile {
     #[serde(default)]
     pub keys: Vec<KeyEntry>,
@@ -100,7 +122,7 @@ pub struct KeysFile {
 ///
 /// Uses `TEMPO_HOME` env var if set, otherwise `~/.tempo`.
 pub fn tempo_home() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var(TEMPO_HOME_ENV) {
+    if let Ok(home) = env::var(TEMPO_HOME_ENV) {
         return Some(PathBuf::from(home));
     }
     dirs::home_dir().map(|h| h.join(DEFAULT_TEMPO_HOME))
@@ -117,23 +139,10 @@ pub fn tempo_keys_path() -> Option<PathBuf> {
 /// Errors are logged as warnings.
 pub fn read_tempo_keys_file() -> Option<KeysFile> {
     let keys_path = tempo_keys_path()?;
-    if !keys_path.exists() {
-        tracing::trace!(?keys_path, "tempo keys file not found");
-        return None;
-    }
-
-    let contents = match std::fs::read_to_string(&keys_path) {
-        Ok(c) => c,
+    match read_toml_file(&keys_path, "tempo keys") {
+        Ok(value) => value,
         Err(e) => {
-            tracing::warn!(?keys_path, %e, "failed to read tempo keys file");
-            return None;
-        }
-    };
-
-    match toml::from_str(&contents) {
-        Ok(f) => Some(f),
-        Err(e) => {
-            tracing::warn!(?keys_path, %e, "failed to parse tempo keys file");
+            tracing::warn!(?keys_path, %e, "failed to load tempo keys file");
             None
         }
     }
@@ -147,4 +156,145 @@ pub fn decode_key_authorization<T: Decodable>(hex_str: &str) -> eyre::Result<T> 
     let bytes = hex::decode(hex_str)?;
     let auth = T::decode(&mut bytes.as_slice())?;
     Ok(auth)
+}
+
+/// Atomically upsert a [`KeyEntry`] into `keys.toml`.
+///
+/// Replaces any existing entry for the same `(wallet_address, chain_id)`.
+/// Each Tempo wallet has at most one active access key per chain, so a fresh
+/// login always supersedes the previous entry regardless of the new key
+/// address. Creates the file (and parent directories) if missing. Writes via
+/// temp file + rename so a crash mid-write cannot corrupt the file.
+pub(crate) fn upsert_key_entry(entry: KeyEntry) -> eyre::Result<()> {
+    let path = tempo_keys_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
+    let mut file = read_toml_file::<KeysFile>(&path, "tempo keys")?.unwrap_or_default();
+    file.keys
+        .retain(|k| !(k.wallet_address == entry.wallet_address && k.chain_id == entry.chain_id));
+    file.keys.push(entry);
+
+    write_toml_file_atomic(
+        &path,
+        &file,
+        "# Tempo wallet keys — managed by Foundry / Tempo CLI.\n# Do not edit manually.",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tempo::with_tempo_home;
+    use std::{fs, str::FromStr};
+
+    #[test]
+    fn debug_redacts_key_entry_secrets() {
+        let entry = KeyEntry {
+            key: Some("0xPRIVATE_KEY_MUST_NOT_LEAK".to_string()),
+            key_authorization: Some("0xKEY_AUTH_MUST_NOT_LEAK".to_string()),
+            ..Default::default()
+        };
+
+        let entry_dbg = format!("{entry:?}");
+        let file_dbg = format!("{:?}", KeysFile { keys: vec![entry] });
+
+        for rendered in [&entry_dbg, &file_dbg] {
+            assert!(!rendered.contains("PRIVATE_KEY_MUST_NOT_LEAK"), "key leaked in: {rendered}");
+            assert!(!rendered.contains("KEY_AUTH_MUST_NOT_LEAK"), "auth leaked in: {rendered}");
+        }
+        assert!(entry_dbg.contains("key: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        assert!(entry_dbg.contains("key_authorization: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        // Non-secret metadata stays visible.
+        assert!(entry_dbg.contains("wallet_type"));
+    }
+
+    #[test]
+    fn upsert_replaces_matching_entry_atomically() {
+        with_tempo_home(|| {
+            let wallet = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
+            let key = Address::from_str("0x0000000000000000000000000000000000000abc").unwrap();
+
+            let mk = |expiry: u64| KeyEntry {
+                wallet_type: WalletType::Passkey,
+                wallet_address: wallet,
+                chain_id: 4217,
+                key_type: KeyType::Secp256k1,
+                key_address: Some(key),
+                key: Some("0xdead".to_string()),
+                key_authorization: Some("0xbeef".to_string()),
+                expiry: Some(expiry),
+                limits: vec![],
+            };
+
+            upsert_key_entry(mk(100)).unwrap();
+            upsert_key_entry(mk(200)).unwrap();
+
+            let file = read_tempo_keys_file().unwrap();
+            assert_eq!(file.keys.len(), 1);
+            assert_eq!(file.keys[0].expiry, Some(200));
+
+            // Different chain_id => separate entry.
+            let mut other = mk(300);
+            other.chain_id = 42431;
+            upsert_key_entry(other).unwrap();
+            let file = read_tempo_keys_file().unwrap();
+            assert_eq!(file.keys.len(), 2);
+        });
+    }
+
+    #[test]
+    fn upsert_replaces_when_key_address_changes() {
+        // Re-login produces a fresh random key address; the new entry must
+        // supersede the old one for the same (wallet, chain), not coexist.
+        with_tempo_home(|| {
+            let wallet = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
+            let old_key = Address::from_str("0x000000000000000000000000000000000000aaaa").unwrap();
+            let new_key = Address::from_str("0x000000000000000000000000000000000000bbbb").unwrap();
+
+            let mk = |key_addr: Address| KeyEntry {
+                wallet_type: WalletType::Passkey,
+                wallet_address: wallet,
+                chain_id: 4217,
+                key_type: KeyType::Secp256k1,
+                key_address: Some(key_addr),
+                key: Some("0xdead".to_string()),
+                key_authorization: Some("0xbeef".to_string()),
+                expiry: Some(100),
+                limits: vec![],
+            };
+
+            upsert_key_entry(mk(old_key)).unwrap();
+            upsert_key_entry(mk(new_key)).unwrap();
+
+            let file = read_tempo_keys_file().unwrap();
+            assert_eq!(file.keys.len(), 1, "old entry must be replaced, not duplicated");
+            assert_eq!(file.keys[0].key_address, Some(new_key));
+        });
+    }
+
+    #[test]
+    fn upsert_fails_closed_when_keys_file_is_corrupt() {
+        with_tempo_home(|| {
+            let path = tempo_keys_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "keys = [").unwrap();
+            let original = fs::read_to_string(&path).unwrap();
+
+            let wallet = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
+            let key = Address::from_str("0x0000000000000000000000000000000000000abc").unwrap();
+            let entry = KeyEntry {
+                wallet_type: WalletType::Passkey,
+                wallet_address: wallet,
+                chain_id: 4217,
+                key_type: KeyType::Secp256k1,
+                key_address: Some(key),
+                key: Some("0xdead".to_string()),
+                key_authorization: Some("0xbeef".to_string()),
+                expiry: Some(100),
+                limits: vec![],
+            };
+
+            assert!(read_tempo_keys_file().is_none());
+            assert!(upsert_key_entry(entry).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        });
+    }
 }

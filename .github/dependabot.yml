@@ -1,39 +1,29 @@
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
     cooldown:
       default-days: 7
     groups:
-      actions-weekly:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
-  - package-ecosystem: "cargo"
-    directory: "/"
+      ci-weekly:
+        patterns:
+          - '*'
+  - package-ecosystem: cargo
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
     groups:
       cargo-weekly:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
-  - package-ecosystem: "npm"
-    directory: "/npm"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 5
-    groups:
-      npm-weekly:
-        applies-to: "version-updates"
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+        patterns:
+          - '*'

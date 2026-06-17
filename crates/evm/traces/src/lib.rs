@@ -23,11 +23,12 @@ use revm_inspectors::tracing::{
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{U256, map::HashMap};
+use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 pub use revm_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
@@ -207,13 +208,85 @@ pub fn render_trace_arena_inner(
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
+    let resolved = arena.resolve_arena();
     let mut w = TraceWriter::new(Vec::<u8>::new())
         .color_cheatcodes(true)
         .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
-    w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
-    String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
+    w.write_arena(&resolved).expect("Failed to write traces");
+    let mut rendered =
+        String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
+    if with_storage_changes {
+        append_tempo_channel_storage_decodes(&mut rendered, &resolved);
+    }
+    rendered
+}
+
+fn append_tempo_channel_storage_decodes(rendered: &mut String, arena: &CallTraceArena) {
+    let decoded_changes = arena
+        .nodes()
+        .iter()
+        .filter(|node| node.trace.address == TIP20_CHANNEL_RESERVE_ADDRESS)
+        .flat_map(compact_channel_storage_changes)
+        .collect::<Vec<_>>();
+
+    if decoded_changes.is_empty() {
+        return;
+    }
+
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    rendered.push_str("Decoded TIP20ChannelReserve storage:\n");
+    for (slot, before, after) in decoded_changes {
+        rendered.push_str(&format!(
+            "  @ {}: {} -> {}\n",
+            format_storage_word(slot),
+            format_channel_state(before),
+            format_channel_state(after),
+        ));
+    }
+}
+
+fn compact_channel_storage_changes(node: &CallTraceNode) -> Vec<(U256, U256, U256)> {
+    let mut changes_map = BTreeMap::new();
+    for step in &node.trace.steps {
+        if let Some(change) = &step.storage_change
+            && change.had_value.is_some()
+        {
+            let (_first, last) = changes_map.entry(change.key).or_insert((&**change, &**change));
+            *last = &**change;
+        }
+    }
+
+    changes_map
+        .into_iter()
+        .filter_map(|(key, (first, last))| {
+            let before = first.had_value.unwrap_or_default();
+            let after = last.value;
+            (before != after).then_some((key, before, after))
+        })
+        .collect()
+}
+
+fn format_channel_state(value: U256) -> String {
+    let (settled, deposit, close_requested_at) = decode_channel_state(value);
+    format!("{{settled: {settled}, deposit: {deposit}, closeRequestedAt: {close_requested_at}}}")
+}
+
+fn decode_channel_state(value: U256) -> (U256, U256, u32) {
+    let mask96 = (U256::from(1) << 96) - U256::from(1);
+    let mask32 = (U256::from(1) << 32) - U256::from(1);
+    let settled: U256 = value & mask96;
+    let deposit: U256 = (value >> 96usize) & mask96;
+    let close_requested_at_word: U256 = (value >> 192usize) & mask32;
+    let close_requested_at = close_requested_at_word.to::<u32>();
+    (settled, deposit, close_requested_at)
+}
+
+fn format_storage_word(value: U256) -> String {
+    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
 }
 
 const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
@@ -419,6 +492,20 @@ impl TraceMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_tip1034_packed_channel_state() {
+        let settled = U256::from(123u64);
+        let deposit = U256::from(456u64);
+        let close_requested_at = U256::from(1_780_495_200u64);
+        let packed = settled | (deposit << 96usize) | (close_requested_at << 192usize);
+
+        assert_eq!(decode_channel_state(packed), (settled, deposit, 1_780_495_200));
+        assert_eq!(
+            format_channel_state(packed),
+            "{settled: 123, deposit: 456, closeRequestedAt: 1780495200}"
+        );
+    }
 
     // -- TraceMode::with_verbosity level tests --
 

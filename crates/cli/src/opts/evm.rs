@@ -308,6 +308,17 @@ mod tests {
     }
 
     #[test]
+    fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        use clap::CommandFactory;
+
+        let command = EvmArgs::command();
+        let rpc_url =
+            command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");
+
+        assert!(rpc_url.get_env().is_none());
+    }
+
+    #[test]
     fn can_parse_chain_id() {
         let args = EvmArgs {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },

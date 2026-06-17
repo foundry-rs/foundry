@@ -5,7 +5,7 @@ use crate::{
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, PrecompilesFor, SpecFor, TxEnvFor,
+        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
@@ -17,12 +17,11 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
+use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, uint};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta};
-use itertools::Itertools;
 use revm::{
     Database, DatabaseCommit, JournalEntry,
     bytecode::Bytecode,
@@ -30,7 +29,7 @@ use revm::{
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{CacheDB, DatabaseRef, EmptyDB},
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log},
-    state::{Account, AccountInfo, EvmState, EvmStorageSlot},
+    state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -832,7 +831,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns true if the address is a precompile
     pub fn is_existing_precompile(&self, addr: &Address) -> bool {
-        self.inner.precompiles().addresses().contains(addr)
+        self.inner.precompile_addresses().contains(addr)
     }
 
     /// Sets the initial journaled state to use when initializing forks
@@ -1229,8 +1228,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         self.active_fork_ids = Some((id, idx));
         // Update current environment with environment of newly selected fork.
+        // Preserve the configured spec (evm_version) from the current environment — the fork's
+        // evm_env is built with SPEC::default() and must not override the user's hardfork setting.
+        let preserved_spec = evm_env.cfg_env.spec;
         tx_env.set_chain_id(Some(fork_evm_env.cfg_env.chain_id));
         *evm_env = fork_evm_env;
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
 
         Ok(())
     }
@@ -1256,7 +1259,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             if active_id == id {
                 // need to update the block's env settings right away, which is otherwise set when
                 // forks are selected `select_fork`
+                let preserved_spec = evm_env.cfg_env.spec;
                 *evm_env = fork_env;
+                evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
 
                 // we also need to update the journaled_state right away, this has essentially the
                 // same effect as selecting (`select_fork`) by discarding
@@ -1517,7 +1522,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                         EvmStorageSlot::new_changed(
                             acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
                             U256::from_be_bytes(value.0),
-                            0,
+                            TransactionId::ZERO,
                         ),
                     );
                 }
@@ -1952,12 +1957,12 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.is_empty()
     }
 
-    pub fn precompiles(&self) -> PrecompilesFor<FEN> {
+    pub fn precompile_addresses(&self) -> AddressSet {
         let evm = FEN::EvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(self.spec_id), Default::default()),
         );
-        evm.precompiles().clone()
+        evm.precompiles().addresses().copied().collect()
     }
 
     /// Returns a new, empty, `JournaledState` with set precompiles
@@ -1967,9 +1972,8 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
             journal_inner.set_spec_id(self.spec_id.into());
             journal_inner
         };
-        journal
-            .warm_addresses
-            .set_precompile_addresses(self.precompiles().addresses().copied().collect());
+        let precompile_addresses = self.precompile_addresses();
+        journal.warm_addresses.set_precompile_addresses(&precompile_addresses);
         journal
     }
 }
@@ -2133,7 +2137,7 @@ pub fn update_state<DB: Database>(
     persistent_accounts: Option<&HashSet<Address>>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
+        if persistent_accounts.is_none_or(|accounts| !accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
             for (key, val) in &mut acc.storage {
                 val.present_value = db.storage(*addr, *key)?;

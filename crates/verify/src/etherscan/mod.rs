@@ -1,7 +1,6 @@
 use crate::{
     VerifierArgs,
-    provider::{VerificationContext, VerificationProvider},
-    retry::RETRY_CHECK_ON_VERIFY,
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
@@ -51,6 +50,10 @@ trait EtherscanSourceProvider: Send + Sync + Debug {
 
 #[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
+    fn provider_type(&self) -> VerificationProviderType {
+        VerificationProviderType::Etherscan
+    }
+
     async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
@@ -66,8 +69,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
         if !args.skip_is_verified_check
             && self.is_contract_verified(&etherscan, &verify_args).await?
         {
-            sh_println!(
-                "\nContract [{}] {:?} is already verified. Skipping verification.",
+            sh_status!(
+                "Contract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
                 verify_args.address.to_checksum(None)
             )?;
@@ -81,8 +84,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .retry
             .into_retry()
             .run_async(|| async {
-                sh_println!(
-                    "\nSubmitting verification for [{}] {}.",
+                sh_status!(
+                    "Submitting verification for [{}] {}.",
                     verify_args.contract_name,
                     verify_args.address
                 )?;
@@ -128,24 +131,26 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            sh_println!(
+            let url = etherscan.address_url(args.address);
+            sh_status!(
                 "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
-                etherscan.address_url(args.address)
+                url
             )?;
+            sh_println!("{}\t{}", resp.result, url)?;
 
             if args.watch {
                 let check_args = VerifyCheckArgs {
                     id: resp.result,
                     etherscan: args.etherscan,
-                    retry: RETRY_CHECK_ON_VERIFY,
+                    retry: args.retry,
                     verifier: args.verifier,
                 };
                 return self.check(check_args).await;
             }
         } else {
-            sh_println!("Contract source code already verified")?;
+            sh_status!("Contract source code already verified")?;
         }
 
         Ok(())
@@ -166,7 +171,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                 trace!(?resp, "Received verification response");
 
-                let _ = sh_println!(
+                let _ = sh_status!(
                     "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
                     resp.message,
                     resp.result
@@ -183,7 +188,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.result == "Already Verified" {
-                    let _ = sh_println!("Contract source code already verified");
+                    let _ = sh_status!("Contract source code already verified");
                     return Ok(());
                 }
 
@@ -196,7 +201,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.result == "Pass - Verified" {
-                    let _ = sh_println!("Contract successfully verified");
+                    let _ = sh_status!("Contract successfully verified");
                 }
 
                 Ok(())
@@ -258,7 +263,7 @@ impl EtherscanVerificationProvider {
     ) -> Result<Client> {
         let chain = etherscan_opts.chain.unwrap_or_default();
         let etherscan_key = etherscan_opts.key();
-        let verifier_type = &verifier_args.verifier;
+        let verifier_type = verifier_args.effective_type();
         let verifier_url = verifier_args.verifier_url.as_deref();
 
         // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
@@ -337,6 +342,8 @@ impl EtherscanVerificationProvider {
             // unclear how Etherscan interprets this field in standard-json mode
             verify_args = verify_args.via_ir(true);
         }
+
+        apply_license_type(&mut verify_args, args.license_type.as_deref());
 
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = args.num_of_optimizations {
@@ -445,7 +452,7 @@ impl EtherscanVerificationProvider {
         if maybe_creation_code.starts_with(bytecode) {
             let constructor_args = &maybe_creation_code[bytecode.len()..];
             let constructor_args = hex::encode(constructor_args);
-            sh_println!("Identified constructor arguments: {constructor_args}")?;
+            sh_status!("Identified constructor arguments: {constructor_args}")?;
             Ok(constructor_args)
         } else {
             eyre::bail!("Local bytecode doesn't match on-chain bytecode")
@@ -453,14 +460,33 @@ impl EtherscanVerificationProvider {
     }
 }
 
+fn apply_license_type(verify_args: &mut VerifyContract, license_type: Option<&str>) {
+    if let Some(license_type) = license_type {
+        verify_args.other.insert("licenseType".to_string(), license_type.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::VerificationProviderType;
     use clap::Parser;
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
     use tempfile::tempdir;
+
+    #[test]
+    fn applies_license_type_to_verify_request() {
+        let mut verify_args = VerifyContract::new(
+            Default::default(),
+            "Counter".to_string(),
+            "contract Counter {}".to_string(),
+            "v0.8.23+commit.f704f362".to_string(),
+        );
+
+        apply_license_type(&mut verify_args, Some("13"));
+
+        assert_eq!(verify_args.other.get("licenseType").map(String::as_str), Some("13"));
+    }
 
     #[test]
     fn can_extract_etherscan_verify_config() {
@@ -569,7 +595,7 @@ mod tests {
 
         let config = args.load_config().unwrap();
 
-        assert_eq!(args.verifier.verifier, VerificationProviderType::Etherscan);
+        assert_eq!(args.verifier.effective_type(), VerificationProviderType::Etherscan);
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();

@@ -7,6 +7,7 @@ use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    json::print_scalar,
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
@@ -130,9 +131,9 @@ impl EstimateArgs {
             let gas_price_wei = provider.get_gas_price().await?;
             let cost = gas_price_wei * gas as u128;
             let cost_eth = cost as f64 / 1e18;
-            sh_println!("{cost_eth}")?;
+            print_scalar(cost_eth)?;
         } else {
-            sh_println!("{gas}")?;
+            print_scalar(gas)?;
         }
         Ok(())
     }

@@ -2,9 +2,14 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{
+    cell::{Ref, RefCell},
+    collections::BTreeMap,
+    fmt,
+    rc::Rc,
+    sync::Arc,
+};
 
 mod call_override;
 pub use call_override::RandomCallGenerator;
@@ -28,7 +33,7 @@ pub fn is_optimization_invariant(func: &Function) -> bool {
 #[derive(Clone, Debug)]
 pub struct FuzzRunIdentifiedContracts {
     /// Contracts identified as targets during a fuzz run.
-    pub targets: Arc<Mutex<TargetedContracts>>,
+    pub targets: Rc<RefCell<TargetedContracts>>,
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
 }
@@ -36,7 +41,12 @@ pub struct FuzzRunIdentifiedContracts {
 impl FuzzRunIdentifiedContracts {
     /// Creates a new `FuzzRunIdentifiedContracts` instance.
     pub fn new(targets: TargetedContracts, is_updatable: bool) -> Self {
-        Self { targets: Arc::new(Mutex::new(targets)), is_updatable }
+        Self { targets: Rc::new(RefCell::new(targets)), is_updatable }
+    }
+
+    /// Borrows the current targeted contracts.
+    pub fn targets(&self) -> Ref<'_, TargetedContracts> {
+        self.targets.borrow()
     }
 
     /// If targets are updatable, collect all contracts created during an invariant run (which
@@ -53,7 +63,7 @@ impl FuzzRunIdentifiedContracts {
             return Ok(());
         }
 
-        let mut targets = self.targets.lock();
+        let mut targets = self.targets.borrow_mut();
         for (address, account) in state_changeset {
             if setup_contracts.contains_key(address) {
                 continue;
@@ -93,7 +103,7 @@ impl FuzzRunIdentifiedContracts {
     /// Clears targeted contracts created during an invariant run.
     pub fn clear_created_contracts(&self, created_contracts: Vec<Address>) {
         if !created_contracts.is_empty() {
-            let mut targets = self.targets.lock();
+            let mut targets = self.targets.borrow_mut();
             for addr in &created_contracts {
                 targets.remove(addr);
             }
@@ -266,8 +276,14 @@ pub struct InvariantContract<'a> {
     pub address: Address,
     /// Name of the test contract.
     pub name: &'a str,
-    /// Invariant function present in the test contract.
-    pub invariant_function: &'a Function,
+    /// Invariant functions to assert against, paired with their `fail_on_revert` config.
+    /// Stored in **source declaration order** so failure-event attribution and report
+    /// rendering match user expectations.
+    pub invariant_fns: Vec<(&'a Function, bool)>,
+    /// Index into [`Self::invariant_fns`] of the stable campaign anchor. Boolean invariant
+    /// suites use a deterministic contract-local anchor so test filters do not affect
+    /// corpus/failure namespaces.
+    pub anchor_idx: usize,
     /// If true, `afterInvariant` function is called after each invariant run.
     pub call_after_invariant: bool,
     /// ABI of the test contract.
@@ -276,19 +292,27 @@ pub struct InvariantContract<'a> {
 
 impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
+    ///
+    /// Caller must ensure `invariant_fns` is non-empty and `anchor_idx < invariant_fns.len()`.
     pub const fn new(
         address: Address,
         name: &'a str,
-        invariant_function: &'a Function,
+        invariant_fns: Vec<(&'a Function, bool)>,
+        anchor_idx: usize,
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        Self { address, name, invariant_function, call_after_invariant, abi }
+        Self { address, name, invariant_fns, anchor_idx, call_after_invariant, abi }
+    }
+
+    /// Returns the stable campaign anchor.
+    pub fn anchor(&self) -> &'a Function {
+        self.invariant_fns[self.anchor_idx].0
     }
 
     /// Returns true if this is an optimization mode invariant (returns int256).
     pub fn is_optimization(&self) -> bool {
-        is_optimization_invariant(self.invariant_function)
+        is_optimization_invariant(self.anchor())
     }
 }
 

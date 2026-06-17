@@ -25,9 +25,9 @@ impl TestSummaryReport {
 impl Display for TestSummaryReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         if shell::is_json() {
-            writeln!(f, "{}", &self.format_json_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "{}", self.format_json_output(&self.is_detailed, &self.outcome))?;
         } else {
-            writeln!(f, "\n{}", &self.format_table_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "\n{}", self.format_table_output(&self.is_detailed, &self.outcome))?;
         }
         Ok(())
     }
