@@ -209,7 +209,7 @@ forgetest!(flaky_expect_emit_tests_should_fail, |prj, cmd| {
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
 ...
 [FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
-[FAIL: log != expected SomethingElse] testShouldFailDifferentIndexedParameters() ([GAS])
+[FAIL: SomethingElse indexed topic count mismatch: expected 1, got 0] testShouldFailDifferentIndexedParameters() ([GAS])
 [FAIL: log != expected log] testShouldFailEmitOnlyAppliesToNextCall() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailEmitWindowWithRevertDisallowed() ([GAS])
 [FAIL: E != expected A] testShouldFailEventsOnTwoCalls() ([GAS])
@@ -235,7 +235,7 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
-[FAIL: log != expected Something] testShouldFailEmitSomethingElse() ([GAS])
+[FAIL: SomethingElse != expected Something] testShouldFailEmitSomethingElse() ([GAS])
 [FAIL: log emitted but expected 0 times] testShouldFailNoEmit() ([GAS])
 [FAIL: log emitted but expected 0 times] testShouldFailNoEmitFromAddress() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]

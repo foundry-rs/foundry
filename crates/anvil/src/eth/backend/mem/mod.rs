@@ -75,9 +75,9 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
-            TraceResult,
+            CallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
+            GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+            NoopFrame, TraceResult,
         },
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
@@ -184,7 +184,7 @@ use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
-    storage::StorageCtx,
+    storage::{StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
 };
@@ -215,6 +215,20 @@ impl DatabaseRef for dyn crate::eth::backend::db::Db {}
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: u128 = 53000;
+
+fn call_config_from_tracer_config(
+    tracer_config: GethDebugTracerConfig,
+) -> Result<CallConfig, serde_json::Error> {
+    let mut tracer_config = tracer_config.into_json();
+    if let Some(config) = tracer_config.as_object_mut()
+        && !config.contains_key("onlyTopCall")
+        && let Some(only_top_level_call) = config.remove("onlyTopLevelCall")
+    {
+        config.insert("onlyTopCall".to_string(), only_top_level_call);
+    }
+
+    GethDebugTracerConfig(tracer_config).into_call_config()
+}
 
 pub type State = foundry_evm::utils::StateChangeset;
 
@@ -1177,7 +1191,7 @@ impl<N: Network> Backend<N> {
         cfg_env: &CfgEnv<TempoHardfork>,
     ) {
         self.inject_precompiles(precompiles);
-        extend_tempo_precompiles(precompiles, cfg_env);
+        extend_tempo_precompiles(precompiles, cfg_env, StorageActions::disabled());
     }
 
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
@@ -2975,8 +2989,7 @@ where
                 return match tracer {
                     GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
                         GethDebugBuiltInTracerType::CallTracer => {
-                            let call_config = tracer_config
-                                .into_call_config()
+                            let call_config = call_config_from_tracer_config(tracer_config)
                                 .map_err(|e| RpcError::invalid_params(e.to_string()))?;
 
                             let mut inspector = self.build_inspector().with_tracing_config(
@@ -3640,7 +3653,7 @@ where
                         return Ok(res);
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
-                        return match tracer_config.into_call_config() {
+                        return match call_config_from_tracer_config(tracer_config) {
                             Ok(call_config) => {
                                 let inspector = TracingInspector::new(
                                     TracingInspectorConfig::from_geth_call_config(&call_config),

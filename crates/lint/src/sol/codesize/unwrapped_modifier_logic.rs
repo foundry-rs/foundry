@@ -1,7 +1,7 @@
 use super::UnwrappedModifierLogic;
 use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, low::incorrect_modifier},
 };
 use solar::{
     ast,
@@ -29,12 +29,27 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
             _ => return,
         };
 
+        if incorrect_modifier::block_outcome(*body).can_skip_placeholder() {
+            return;
+        }
+
+        // Only handle modifiers with exactly one placeholder, *and* require it to be top-level.
+        // Counting recursively (rather than just top-level statements) ensures a placeholder nested
+        // inside an `if`/loop/etc. is never extracted into a helper function, which would produce
+        // an invalid, behavior-changing rewrite.
+        if count_placeholders(body.stmts) != 1 {
+            return;
+        }
+        let Some(idx) =
+            body.stmts.iter().position(|s| matches!(s.kind, hir::StmtKind::Placeholder))
+        else {
+            // The single placeholder is nested; splitting it out would be unsafe.
+            return;
+        };
+
         // Split statements into before and after the placeholder `_`.
         let stmts = body.stmts[..].as_ref();
-        let (before, after) = stmts
-            .iter()
-            .position(|s| matches!(s.kind, hir::StmtKind::Placeholder))
-            .map_or((stmts, &[][..]), |idx| (&stmts[..idx], &stmts[idx + 1..]));
+        let (before, after) = (&stmts[..idx], &stmts[idx + 1..]);
 
         // Generate a fix suggestion if the modifier logic should be wrapped.
         if let Some(suggestion) = self.get_snippet(ctx, hir, func, before, after) {
@@ -179,5 +194,32 @@ impl UnwrappedModifierLogic {
             )
             .with_desc("wrap modifier logic to reduce code size"),
         )
+    }
+}
+
+/// Recursively counts placeholder (`_`) statements within a list of statements, descending into
+/// nested blocks, conditionals, loops, `try`/`catch`, and Yul `switch` cases.
+fn count_placeholders(stmts: &[hir::Stmt<'_>]) -> usize {
+    stmts.iter().map(count_placeholders_in_stmt).sum()
+}
+
+fn count_placeholders_in_stmt(stmt: &hir::Stmt<'_>) -> usize {
+    match &stmt.kind {
+        hir::StmtKind::Placeholder => 1,
+        hir::StmtKind::Block(block)
+        | hir::StmtKind::UncheckedBlock(block)
+        | hir::StmtKind::AssemblyBlock(block)
+        | hir::StmtKind::Loop(block, _) => count_placeholders(block.stmts),
+        hir::StmtKind::If(_, then_stmt, else_stmt) => {
+            count_placeholders_in_stmt(then_stmt)
+                + else_stmt.map_or(0, |s| count_placeholders_in_stmt(s))
+        }
+        hir::StmtKind::Try(try_stmt) => {
+            try_stmt.clauses.iter().map(|clause| count_placeholders(clause.block.stmts)).sum()
+        }
+        hir::StmtKind::Switch(switch) => {
+            switch.cases.iter().map(|case| count_placeholders(case.body.stmts)).sum()
+        }
+        _ => 0,
     }
 }
