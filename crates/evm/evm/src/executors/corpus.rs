@@ -199,17 +199,6 @@ pub(crate) struct SharedCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
-impl SharedCorpusEntry {
-    #[cfg(test)]
-    pub(crate) fn new_for_test(tx_seq: Vec<BasicTxDetails>) -> Self {
-        Self {
-            tx_seq: tx_seq.into(),
-            cmp_seq: Vec::<Vec<CmpOperands>>::new().into(),
-            dedupe_by_coverage: true,
-        }
-    }
-}
-
 /// Summary of campaign-local corpus imports accepted by one worker.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CorpusImportStats {
