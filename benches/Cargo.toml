@@ -17,6 +17,10 @@ workspace = true
 name = "foundry-bench"
 path = "src/main.rs"
 
+[[bin]]
+name = "foundry-scfuzzbench"
+path = "src/scfuzzbench.rs"
+
 [dependencies]
 foundry-test-utils.workspace = true
 foundry-common.workspace = true

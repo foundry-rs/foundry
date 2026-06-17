@@ -83,6 +83,49 @@ foundry-bench --verbose
 foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
 ```
 
+## Running scfuzzbench Campaigns
+
+`foundry-scfuzzbench` runs a local scfuzzbench Foundry campaign, invokes the scfuzzbench
+analysis/reporting pipeline, and copies stable artifacts into `<output-dir>/artifacts` for review by
+humans or LLMs.
+
+```bash
+cargo run -p foundry-bench --bin foundry-scfuzzbench -- \
+  --target-repo https://github.com/Recon-Fuzz/aave-v4-scfuzzbench.git \
+  --target-ref v0.5.6-recon \
+  --benchmark-type property \
+  --timeout-seconds 60 \
+  --workers 1 \
+  --output-dir /tmp/foundry-scfuzzbench-aave \
+  --foundry-bin "$(command -v forge)"
+```
+
+By default the runner pins `https://github.com/tempoxyz/scfuzzbench.git@main`. Override that with
+`--scfuzzbench-repo` and `--scfuzzbench-ref` while the scfuzzbench changes are being upstreamed.
+Use `--foundry-bin` to benchmark an existing `forge`, `--foundry-ref` to build and benchmark a
+Foundry ref, or neither to use `forge` from `PATH`. The runner uses an isolated `HOME` so a selected
+`--foundry-bin` is not shadowed by `~/.foundry/bin`. `--foundry-bin` must point to a file named
+`forge`; the runner resolves `command -v forge` under the same campaign environment, verifies it is
+the selected binary, and records the canonical path in `manifest.json`.
+
+Optimization campaigns require `--properties-path`, which is passed to scfuzzbench as
+`SCFUZZBENCH_PROPERTIES_PATH`. If GNU `timeout` is unavailable, the runner installs a local
+`timeout` shim in the work directory and prepends it to the campaign `PATH`. On platforms where
+`date -Is` is unavailable, it also installs a local `date` shim for scfuzzbench log timestamps.
+
+The artifact bundle exposes:
+
+- `REPORT.md`
+- `events.csv`, `summary.csv`, `cumulative.csv`
+- throughput/progress CSVs
+- `showmap_campaign_manifest.json` and `showmap_campaigns/`
+- `differential_coverage_relscores.csv`
+- `differential_coverage_relcov.csv`
+- runner resource and broken invariant reports
+- optional `lcov-diff/` outputs when scfuzzbench produces coverage-diff files
+- `llm_summary.md` and `manifest.json`, including the selected canonical `forge` path and optional
+  `properties_path`
+
 #### Command-line Options
 
 - `--versions <VERSIONS>` - Comma-separated list of Foundry versions (default: stable,nightly)
