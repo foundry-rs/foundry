@@ -113,10 +113,21 @@ where
     N: Network,
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
 {
-    let fee_token = if let Some(provider) = provider {
-        resolve_fee_token(provider, chain, Some(tx), fee_payer).await?
+    if let Some(fee_token) = tx.fee_token() {
+        return Ok(Some(fee_token));
+    }
+    if !chain.is_some_and(Chain::is_tempo) {
+        return Ok(None);
+    }
+    let Some(provider) = provider else {
+        return Ok(None);
+    };
+
+    let fee_payer = fee_payer.or_else(|| tx.from());
+    let fee_token = if let Some(fee_payer) = fee_payer {
+        stored_user_fee_token(provider, fee_payer).await?
     } else {
-        tx.fee_token().or_else(|| chain.is_some_and(Chain::is_tempo).then_some(DEFAULT_FEE_TOKEN))
+        None
     };
     let Some(fee_token) = fee_token else {
         return Ok(None);

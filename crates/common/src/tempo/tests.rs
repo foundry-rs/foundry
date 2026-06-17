@@ -277,7 +277,7 @@ async fn fee_token_lookup_decode_error_is_propagated() {
 }
 
 #[tokio::test]
-async fn default_fee_token_resolution_applies_known_print_sponsor_hash_token() -> eyre::Result<()> {
+async fn default_fee_token_resolution_leaves_transaction_fee_token_unset() -> eyre::Result<()> {
     let explicit = Address::repeat_byte(0x42);
     let mut tx = TempoTransactionRequest { fee_token: Some(explicit), ..Default::default() };
 
@@ -299,8 +299,8 @@ async fn default_fee_token_resolution_applies_known_print_sponsor_hash_token() -
         None,
     )
     .await?;
-    assert_eq!(resolved, Some(DEFAULT_FEE_TOKEN));
-    assert_eq!(tx.fee_token, Some(DEFAULT_FEE_TOKEN));
+    assert_eq!(resolved, None);
+    assert_eq!(tx.fee_token, None);
 
     let mut tx = TempoTransactionRequest::default();
     let resolved = resolve_and_set_fee_token::<TempoNetwork>(
@@ -345,9 +345,34 @@ async fn send_fee_token_resolution_can_skip_lookup_for_curl_mode() -> eyre::Resu
             Some(fee_payer),
         )
         .await?,
-        Some(DEFAULT_FEE_TOKEN)
+        None
     );
-    assert_eq!(tx.fee_token, Some(DEFAULT_FEE_TOKEN));
+    assert_eq!(tx.fee_token, None);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn unset_user_token_does_not_stamp_default_fee_token() -> eyre::Result<()> {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
+    let fee_payer = Address::repeat_byte(0x11);
+    let mut tx = TempoTransactionRequest::default();
+
+    asserter.push_success(&Address::ZERO.abi_encode());
+
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            Some(&provider),
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            Some(fee_payer),
+        )
+        .await?,
+        None
+    );
+    assert_eq!(tx.fee_token, None);
 
     Ok(())
 }
