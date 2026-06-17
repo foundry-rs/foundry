@@ -364,6 +364,23 @@ pub(crate) fn validate_signed_session_authorization(
         auth.key_type,
         expected_key_type
     );
+    // A session uses a limited access key; T6 admin keys must never be used as a session key.
+    ensure!(
+        !auth.is_admin(),
+        "session {} key_authorization is an admin key, expected a limited access key",
+        session.session_id
+    );
+    // A T6 account-bound authorization must target this session's root account (no cross-account
+    // replay).
+    if let Some(account) = auth.account {
+        ensure!(
+            account == session.root_account,
+            "session {} key_authorization is bound to account {}, expected {}",
+            session.session_id,
+            account,
+            session.root_account
+        );
+    }
     // `session_id` is local metadata; the signed binding lives in the authorization witness.
     ensure!(
         auth.witness == Some(session.session_id),
@@ -1117,6 +1134,62 @@ mod tests {
             let error = resolve_live_session_signer(session_id, 100).unwrap_err();
 
             assert!(error.to_string().contains("witness"));
+        });
+    }
+
+    #[test]
+    fn resolve_rejects_admin_key_authorization() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x17; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            // A session must use a limited access key, never a T6 admin key.
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |mut auth| {
+                    auth.is_admin = true;
+                    auth
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("admin key"), "got: {error}");
+        });
+    }
+
+    #[test]
+    fn resolve_rejects_account_bound_to_other_account() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x18; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            // An account-bound authorization minted for another account must not be replayable.
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |auth| {
+                    auth.with_account(
+                        Address::from_str("0x000000000000000000000000000000000000dead").unwrap(),
+                    )
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("bound to account"), "got: {error}");
+        });
+    }
+
+    #[test]
+    fn resolve_accepts_account_bound_to_root() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x19; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            let root_account = entry.root_account;
+            // An account binding that targets the session root is valid (backward compatible).
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |auth| {
+                    auth.with_account(root_account)
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            assert!(resolve_live_session_signer(session_id, 100).is_ok());
         });
     }
 

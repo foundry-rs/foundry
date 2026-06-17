@@ -25,6 +25,7 @@ pub mod keychain;
 pub mod logs;
 pub(crate) mod miner;
 pub mod mktx;
+pub mod receive_policy;
 pub mod rpc;
 pub mod run;
 pub mod send;
