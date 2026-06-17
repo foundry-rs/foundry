@@ -64,6 +64,9 @@ use campaign::{
     InvariantWorkerOutput, InvariantWorkerPlan,
 };
 
+mod corpus_exchange;
+use corpus_exchange::{InvariantCorpusExchange, InvariantCorpusSyncState};
+
 mod replay;
 pub use replay::{replay_error, replay_run};
 
@@ -678,6 +681,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let base_executor = self.executor.clone();
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
+        let corpus_exchange = (self.config.corpus_sync.is_enabled()
+            && corpus_persistence.is_deferred())
+        .then(|| Arc::new(InvariantCorpusExchange::new(actual_worker_count)));
 
         let worker_outputs = if corpus_persistence.is_deferred() {
             let worker_jobs = worker_plans
@@ -711,6 +717,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         fuzz_state.fork(),
                         progress,
                         &campaign_state,
+                        corpus_exchange.as_deref(),
                         campaign_seed.clone(),
                         corpus_seed
                             .clone_for_worker(worker_plan.worker_id as usize, actual_worker_count),
@@ -738,6 +745,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 fuzz_state,
                 progress,
                 &campaign_state,
+                corpus_exchange.as_deref(),
                 campaign_seed,
                 corpus_seed.clone(),
                 corpus_persistence,
@@ -787,6 +795,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         campaign_state: &InvariantCampaignState,
+        corpus_exchange: Option<&InvariantCorpusExchange>,
         campaign_seed: InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
         corpus_persistence: InvariantCorpusPersistence,
@@ -810,6 +819,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut corpus_entries = Vec::new();
 
         let mut runs = 0;
+        let mut corpus_sync_state = InvariantCorpusSyncState::new(Instant::now());
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
@@ -1115,6 +1125,30 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     optimization,
                 );
             }
+            let run_new_coverage = current_run.new_coverage;
+
+            if let Some(corpus_exchange) = corpus_exchange
+                && config.corpus_sync.is_enabled()
+            {
+                Self::sync_invariant_worker_corpus(
+                    &mut corpus_manager,
+                    corpus_exchange,
+                    &mut corpus_sync_state,
+                    &executor,
+                    ReplayTarget {
+                        fuzzed_function: None,
+                        fuzzed_contracts: Some(&invariant_test.targeted_contracts),
+                        dynamic: Some(&DynamicTargetCtx {
+                            project_contracts,
+                            setup_contracts,
+                            artifact_filters: &campaign_seed.artifact_filters,
+                        }),
+                    },
+                    plan.worker_id,
+                    run_new_coverage,
+                    &config,
+                )?;
+            }
 
             // Call `afterInvariant` only if declared and the current run produced no new
             // failure. Multi-predicate campaigns keep running after earlier failures, but the
@@ -1255,6 +1289,47 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             plan
         };
         Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result, corpus_entries })
+    }
+
+    fn sync_invariant_worker_corpus(
+        corpus_manager: &mut WorkerCorpus,
+        corpus_exchange: &InvariantCorpusExchange,
+        sync_state: &mut InvariantCorpusSyncState,
+        executor: &Executor<FEN>,
+        target: ReplayTarget<'_>,
+        worker_id: u32,
+        new_coverage: bool,
+        config: &InvariantConfig,
+    ) -> Result<()> {
+        let published = corpus_manager.export_for_exchange();
+        corpus_exchange.publish(worker_id, published);
+
+        let now = Instant::now();
+        sync_state.record_completed_run(new_coverage, now);
+        if !sync_state.should_sync(&config.corpus_sync, now) {
+            return Ok(());
+        }
+
+        let (entries, newest_epoch) = corpus_exchange.import_since(
+            worker_id,
+            sync_state.last_seen_epoch(),
+            config.corpus_sync.max_imports_per_sync,
+        );
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let stats = corpus_manager.import_shared_entries(entries, executor, target)?;
+        sync_state.set_last_seen_epoch(newest_epoch);
+        trace!(
+            target: "corpus",
+            worker_id,
+            accepted = stats.accepted,
+            rejected = stats.rejected,
+            newest_epoch,
+            "synced invariant worker corpus"
+        );
+        Ok(())
     }
 
     fn shrink_handler_failures(

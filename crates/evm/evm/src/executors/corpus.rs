@@ -191,6 +191,32 @@ pub(crate) struct CampaignCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
+/// Campaign-local corpus candidate exchanged between invariant workers.
+#[derive(Debug, Clone)]
+pub(crate) struct SharedCorpusEntry {
+    tx_seq: Arc<[BasicTxDetails]>,
+    cmp_seq: Arc<[Vec<CmpOperands>]>,
+    dedupe_by_coverage: bool,
+}
+
+impl SharedCorpusEntry {
+    #[cfg(test)]
+    pub(crate) fn new_for_test(tx_seq: Vec<BasicTxDetails>) -> Self {
+        Self {
+            tx_seq: tx_seq.into(),
+            cmp_seq: Vec::<Vec<CmpOperands>>::new().into(),
+            dedupe_by_coverage: true,
+        }
+    }
+}
+
+/// Summary of campaign-local corpus imports accepted by one worker.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CorpusImportStats {
+    pub(crate) accepted: usize,
+    pub(crate) rejected: usize,
+}
+
 struct ReplayOutcome {
     keep_entry: bool,
     new_coverage: bool,
@@ -1374,25 +1400,16 @@ impl WorkerCorpus {
 
         let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
-            let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic };
-            let coverage = ReplayCoverage {
-                history_map: &mut self.history_map,
-                edge_indices: &mut self.edge_indices,
-                sancov_history_map: &mut self.sancov_history_map,
-                metrics: Some(&mut self.metrics),
-            };
-            let ReplayOutcome { keep_entry, new_coverage, cmp_seq, .. } =
-                replay_corpus_sequence_with_executor(
-                    &tx_seq,
-                    &mut executor,
-                    target,
-                    coverage,
-                    true,
-                    false,
-                )?;
-
             let sync_path = &entry.path;
-            if keep_entry && new_coverage {
+            if let Some(corpus_entry) = self.try_import_sequence(
+                &tx_seq,
+                None,
+                &mut executor,
+                ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic },
+                entry.uuid,
+                true,
+                false,
+            )? {
                 // Move file from sync/ to corpus/ directory.
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
                 if let Err(err) = std::fs::rename(sync_path, &corpus_path) {
@@ -1406,7 +1423,6 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_with_cmp(tx_seq.clone(), cmp_seq, entry.uuid);
                 self.in_memory_corpus.push(corpus_entry);
             } else {
                 // Remove the file as it did not generate new coverage.
@@ -1419,6 +1435,102 @@ impl WorkerCorpus {
         }
 
         Ok(())
+    }
+
+    fn try_import_sequence<FEN: FoundryEvmNetwork>(
+        &mut self,
+        tx_seq: &[BasicTxDetails],
+        cmp_seq_hint: Option<&[Vec<CmpOperands>]>,
+        executor: &mut Executor<FEN>,
+        target: ReplayTarget<'_>,
+        uuid: Uuid,
+        trace_sync: bool,
+        reject_unmatched_function: bool,
+    ) -> Result<Option<CorpusEntry>> {
+        let coverage = ReplayCoverage {
+            history_map: &mut self.history_map,
+            edge_indices: &mut self.edge_indices,
+            sancov_history_map: &mut self.sancov_history_map,
+            metrics: Some(&mut self.metrics),
+        };
+        let ReplayOutcome { keep_entry, new_coverage, cmp_seq, .. } =
+            replay_corpus_sequence_with_executor(
+                tx_seq,
+                executor,
+                target,
+                coverage,
+                trace_sync,
+                reject_unmatched_function,
+            )?;
+
+        if !keep_entry || !new_coverage {
+            return Ok(None);
+        }
+
+        self.metrics.corpus_count += 1;
+        let cmp_seq = cmp_seq_hint
+            .filter(|hint| hint.len() == tx_seq.len())
+            .map_or(cmp_seq, ToOwned::to_owned);
+        Ok(Some(CorpusEntry::new_with_cmp(tx_seq.to_vec(), cmp_seq, uuid)))
+    }
+
+    /// Returns new worker-local corpus entries as immutable candidates for campaign-local exchange.
+    pub(crate) fn export_for_exchange(&mut self) -> Vec<SharedCorpusEntry> {
+        if self.new_entry_indices.is_empty() {
+            return Vec::new();
+        }
+
+        let mut entries = Vec::with_capacity(self.new_entry_indices.len());
+        for &index in &self.new_entry_indices {
+            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
+            entries.push(SharedCorpusEntry {
+                tx_seq: corpus.tx_seq.clone().into(),
+                cmp_seq: corpus.cmp_seq.clone().into(),
+                dedupe_by_coverage: true,
+            });
+        }
+        self.new_entry_indices.clear();
+        entries
+    }
+
+    /// Replays shared corpus candidates and keeps only entries that add worker-local coverage.
+    pub(crate) fn import_shared_entries<FEN: FoundryEvmNetwork>(
+        &mut self,
+        entries: impl IntoIterator<Item = SharedCorpusEntry>,
+        executor: &Executor<FEN>,
+        target: ReplayTarget<'_>,
+    ) -> Result<CorpusImportStats> {
+        let mut stats = CorpusImportStats::default();
+        let mut executor = executor.clone();
+        for entry in entries {
+            if !entry.dedupe_by_coverage {
+                let cmp_seq = entry.cmp_seq.as_ref().to_vec();
+                self.metrics.corpus_count += 1;
+                self.in_memory_corpus.push(CorpusEntry::new_with_cmp(
+                    entry.tx_seq.as_ref().to_vec(),
+                    cmp_seq,
+                    Uuid::new_v4(),
+                ));
+                stats.accepted += 1;
+                continue;
+            }
+
+            if let Some(corpus_entry) = self.try_import_sequence(
+                entry.tx_seq.as_ref(),
+                Some(entry.cmp_seq.as_ref()),
+                &mut executor,
+                target,
+                Uuid::new_v4(),
+                false,
+                false,
+            )? {
+                self.in_memory_corpus.push(corpus_entry);
+                stats.accepted += 1;
+            } else {
+                stats.rejected += 1;
+            }
+        }
+        Ok(stats)
     }
 
     /// Exports the new corpus entries to the master worker's sync dir.

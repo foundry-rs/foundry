@@ -97,6 +97,62 @@ fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
         .ok_or_else(|| "invariant workers must be greater than 0".to_string())
 }
 
+/// Corpus synchronization strategy for parallel invariant campaigns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InvariantCorpusSyncMode {
+    /// Do not exchange newly discovered corpus entries between workers during a campaign.
+    #[default]
+    Off,
+    /// Exchange corpus entries only after a worker has stopped finding new coverage.
+    Plateau,
+}
+
+impl FromStr for InvariantCorpusSyncMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "false" => Ok(Self::Off),
+            "plateau" => Ok(Self::Plateau),
+            other => Err(format!(
+                "invalid invariant corpus sync mode `{other}`; expected `off` or `plateau`"
+            )),
+        }
+    }
+}
+
+/// Configuration for campaign-local corpus exchange between invariant workers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InvariantCorpusSyncConfig {
+    /// Sync strategy.
+    pub mode: InvariantCorpusSyncMode,
+    /// Number of completed runs without new coverage before a plateau sync is attempted.
+    pub plateau_runs: u32,
+    /// Optional number of seconds without new coverage before a plateau sync is attempted.
+    pub plateau_seconds: Option<u32>,
+    /// Maximum candidate entries imported by one worker during a single sync.
+    pub max_imports_per_sync: usize,
+}
+
+impl Default for InvariantCorpusSyncConfig {
+    fn default() -> Self {
+        Self {
+            mode: InvariantCorpusSyncMode::Off,
+            plateau_runs: 10_000,
+            plateau_seconds: None,
+            max_imports_per_sync: 64,
+        }
+    }
+}
+
+impl InvariantCorpusSyncConfig {
+    pub const fn is_enabled(&self) -> bool {
+        matches!(self.mode, InvariantCorpusSyncMode::Plateau)
+    }
+}
+
 /// Contains for invariant testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
@@ -147,6 +203,9 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Campaign-local corpus exchange configuration for parallel invariant workers.
+    #[serde(default)]
+    pub corpus_sync: InvariantCorpusSyncConfig,
 }
 
 impl Default for InvariantConfig {
@@ -169,6 +228,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            corpus_sync: InvariantCorpusSyncConfig::default(),
         }
     }
 }
@@ -216,5 +276,21 @@ mod tests {
     fn invariant_workers_reject_zero() {
         let err = serde_json::from_str::<InvariantWorkers>(r#"0"#).unwrap_err();
         assert!(err.to_string().contains("greater than 0"));
+    }
+
+    #[test]
+    fn invariant_corpus_sync_modes_parse() {
+        assert_eq!("off".parse::<InvariantCorpusSyncMode>().unwrap(), InvariantCorpusSyncMode::Off);
+        assert_eq!(
+            "plateau".parse::<InvariantCorpusSyncMode>().unwrap(),
+            InvariantCorpusSyncMode::Plateau
+        );
+        assert!("live".parse::<InvariantCorpusSyncMode>().is_err());
+    }
+
+    #[test]
+    fn invariant_corpus_sync_defaults_off() {
+        assert_eq!(InvariantConfig::default().corpus_sync, InvariantCorpusSyncConfig::default());
+        assert!(!InvariantConfig::default().corpus_sync.is_enabled());
     }
 }

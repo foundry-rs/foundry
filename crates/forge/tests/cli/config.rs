@@ -249,6 +249,11 @@ show_metrics = true
 show_solidity = false
 check_interval = 1
 
+[invariant.corpus_sync]
+mode = "off"
+plateau_runs = 10000
+max_imports_per_sync = 64
+
 [coverage]
 report = ["summary"]
 lcov_version = "1.0.0"
@@ -1476,7 +1481,13 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1
+    "check_interval": 1,
+    "corpus_sync": {
+      "mode": "off",
+      "plateau_runs": 10000,
+      "plateau_seconds": null,
+      "max_imports_per_sync": 64
+    }
   },
   "symbolic": {
     "enabled": false,

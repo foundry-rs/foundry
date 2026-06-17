@@ -37,7 +37,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantWorkers, figment,
+    Config, InlineConfig, InvariantCorpusSyncMode, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -207,6 +207,22 @@ pub struct TestArgs {
     /// Number of workers to use for invariant test campaigns, or `auto` to derive from `--jobs`.
     #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
     pub invariant_workers: Option<InvariantWorkers>,
+
+    /// Corpus synchronization mode for parallel invariant campaigns.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC", value_name = "MODE")]
+    pub invariant_corpus_sync: Option<InvariantCorpusSyncMode>,
+
+    /// Runs without new coverage before plateau corpus sync is attempted.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_RUNS", value_name = "RUNS")]
+    pub invariant_corpus_sync_runs: Option<u32>,
+
+    /// Seconds without new coverage before plateau corpus sync is attempted.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_SECONDS", value_name = "SECONDS")]
+    pub invariant_corpus_sync_seconds: Option<u32>,
+
+    /// Maximum corpus entries imported by one worker during one sync.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_MAX_IMPORTS", value_name = "ENTRIES")]
+    pub invariant_corpus_sync_max_imports: Option<usize>,
 
     /// Run only the fuzz case at the given 1-based run index.
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
@@ -1920,11 +1936,29 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
+        let mut invariant_dict = Dict::default();
         if let Some(invariant_workers) = self.invariant_workers {
-            dict.insert(
-                "invariant".to_string(),
-                Dict::from([("workers".to_string(), Value::serialize(invariant_workers)?)]).into(),
-            );
+            invariant_dict.insert("workers".to_string(), Value::serialize(invariant_workers)?);
+        }
+        let mut invariant_corpus_sync_dict = Dict::default();
+        if let Some(mode) = self.invariant_corpus_sync {
+            invariant_corpus_sync_dict.insert("mode".to_string(), Value::serialize(mode)?);
+        }
+        if let Some(runs) = self.invariant_corpus_sync_runs {
+            invariant_corpus_sync_dict.insert("plateau_runs".to_string(), runs.into());
+        }
+        if let Some(seconds) = self.invariant_corpus_sync_seconds {
+            invariant_corpus_sync_dict.insert("plateau_seconds".to_string(), seconds.into());
+        }
+        if let Some(max_imports) = self.invariant_corpus_sync_max_imports {
+            invariant_corpus_sync_dict
+                .insert("max_imports_per_sync".to_string(), max_imports.into());
+        }
+        if !invariant_corpus_sync_dict.is_empty() {
+            invariant_dict.insert("corpus_sync".to_string(), invariant_corpus_sync_dict.into());
+        }
+        if !invariant_dict.is_empty() {
+            dict.insert("invariant".to_string(), invariant_dict.into());
         }
 
         let mut symbolic_dict = Dict::default();
@@ -2379,6 +2413,40 @@ mod tests {
         assert_eq!(
             figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
             InvariantWorkers::Auto
+        );
+    }
+
+    #[test]
+    fn invariant_corpus_sync_args() {
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--invariant-corpus-sync",
+            "plateau",
+            "--invariant-corpus-sync-runs",
+            "25",
+            "--invariant-corpus-sync-seconds",
+            "60",
+            "--invariant-corpus-sync-max-imports",
+            "7",
+        ]);
+        assert_eq!(args.invariant_corpus_sync, Some(InvariantCorpusSyncMode::Plateau));
+        assert_eq!(args.invariant_corpus_sync_runs, Some(25));
+        assert_eq!(args.invariant_corpus_sync_seconds, Some(60));
+        assert_eq!(args.invariant_corpus_sync_max_imports, Some(7));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(
+            figment.extract_inner::<InvariantCorpusSyncMode>("invariant.corpus_sync.mode").unwrap(),
+            InvariantCorpusSyncMode::Plateau
+        );
+        assert_eq!(figment.extract_inner::<u32>("invariant.corpus_sync.plateau_runs").unwrap(), 25);
+        assert_eq!(
+            figment.extract_inner::<u32>("invariant.corpus_sync.plateau_seconds").unwrap(),
+            60
+        );
+        assert_eq!(
+            figment.extract_inner::<usize>("invariant.corpus_sync.max_imports_per_sync").unwrap(),
+            7
         );
     }
 
