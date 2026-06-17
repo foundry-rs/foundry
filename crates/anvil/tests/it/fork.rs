@@ -241,6 +241,33 @@ async fn test_fork_eth_fee_history() {
         provider.get_fee_history(count, BlockNumberOrTag::Latest, &[]).await.unwrap();
 }
 
+// Regression test for a fork-range bug in `eth_feeHistory`: when the requested range straddles
+// the fork boundary (newest block post-fork, oldest block pre-fork), the cache fallback must not
+// call `backend.get_block` on the pre-fork blocks — local storage has none, which made the call
+// hard-error. The pre-fork portion is served by the fork provider and merged with the locally
+// computed post-fork portion. The earlier guard only covers fully pre-fork ranges, so this needs
+// local blocks mined above the fork block to be exercised.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_fee_history_across_fork_boundary() {
+    let (api, _handle) = spawn(fork_config()).await;
+
+    // Mine local blocks so `latest` sits above the fork block.
+    api.anvil_mine(Some(U256::from(3)), None).await.unwrap();
+
+    // latest = fork + 3, count = 10 => oldest = fork - 6 (pre-fork), newest = fork + 3 (post-fork).
+    let count = 10u64;
+    let history =
+        api.fee_history(U256::from(count), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+
+    // Full range covered: per-block arrays have `count` entries; base_fee_per_gas has one more.
+    assert_eq!(history.gas_used_ratio.len(), count as usize, "incomplete gas_used_ratio");
+    assert_eq!(
+        history.base_fee_per_gas.len(),
+        count as usize + 1,
+        "incomplete base_fee_per_gas across the fork boundary"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_reset() {
     let (api, handle) = spawn(fork_config()).await;

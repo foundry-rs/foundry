@@ -1149,6 +1149,33 @@ impl<N: Network> EthApi<N> {
         };
         let mut rewards = Vec::new();
 
+        // The early return above only delegates when the *newest* block predates the fork, but a
+        // range can dip below the fork block while its newest block is post-fork. Local storage
+        // has no pre-fork blocks, so resolving them via `backend.get_block` below would fail.
+        // Serve the pre-fork portion from the fork provider and compute only post-fork locally.
+        let mut local_lowest = lowest;
+        if let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(lowest)
+        {
+            let fork_block = fork.block_number();
+            let count_pre = fork_block - lowest + 1;
+            let pre = fork
+                .fee_history(count_pre, BlockNumber::Number(fork_block), &reward_percentiles)
+                .await
+                .map_err(BlockchainError::AlloyForkProvider)?;
+            // These per-block arrays cover [lowest..=fork_block]; drop the trailing next-block
+            // base-fee entry from each since the first post-fork block is computed locally below.
+            let take = count_pre as usize;
+            response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(take));
+            response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(take));
+            response.gas_used_ratio.extend(pre.gas_used_ratio);
+            response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio);
+            if let Some(reward) = pre.reward {
+                rewards.extend(reward);
+            }
+            local_lowest = fork_block + 1;
+        }
+
         {
             let storage_info = self.storage_info();
             let blob_params = self.backend.blob_params();
@@ -1158,7 +1185,7 @@ impl<N: Network> EthApi<N> {
             // so some entries may still be missing here.
             let cached: Vec<Option<FeeHistoryCacheItem>> = {
                 let cache = self.fee_history_cache.lock();
-                (lowest..=highest).map(|n| cache.get(&n).cloned()).collect()
+                (local_lowest..=highest).map(|n| cache.get(&n).cloned()).collect()
             };
 
             // Resolve the whole range into concrete items: take each cache hit, or compute the
@@ -1167,7 +1194,7 @@ impl<N: Network> EthApi<N> {
             // `items` always holds exactly one entry per requested block.
             let mut warmed: Vec<(u64, FeeHistoryCacheItem)> = Vec::new();
             let mut items: Vec<FeeHistoryCacheItem> = Vec::with_capacity(cached.len());
-            for (cached_item, n) in cached.into_iter().zip(lowest..=highest) {
+            for (cached_item, n) in cached.into_iter().zip(local_lowest..=highest) {
                 let item = match cached_item {
                     Some(item) => item,
                     None => {
