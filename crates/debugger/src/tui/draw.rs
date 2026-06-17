@@ -195,7 +195,9 @@ impl TUIContext<'_> {
     }
 
     fn footer_height(&self) -> u16 {
-        let status_or_input = u16::from(self.pc_input.is_some() || self.status.is_some());
+        let status_or_input = u16::from(
+            self.pc_input.is_some() || self.opcode_search_input.is_some() || self.status.is_some(),
+        );
         let shortcuts = if self.show_shortcuts { 2 } else { 0 };
         status_or_input + shortcuts
     }
@@ -216,6 +218,19 @@ impl TUIContext<'_> {
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
+        } else if let Some(input) = &self.opcode_search_input {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Search opcodes: /",
+                    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(input.as_str()),
+                Span::styled("█", Style::new().fg(Color::Cyan)),
+                Span::styled(
+                    "  Enter: jump | Esc: cancel | after search: n/N repeat",
+                    Style::new().add_modifier(Modifier::DIM),
+                ),
+            ]));
         } else if let Some(status) = &self.status {
             let style = match status.kind {
                 StatusKind::Info => Style::new().fg(Color::Green),
@@ -224,8 +239,8 @@ impl TUIContext<'_> {
             lines.push(Line::from(Span::styled(status.text.as_str(), style)));
         }
 
-        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [b]: cycle memory/calldata/returndata buffers";
-        let l2 = "[l]: layout | [t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
+        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [/]: search opcodes | [n/N]: next/prev search";
+        let l2 = "[l]: layout | [b]: cycle buffer | [t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
             lines.push(Line::from(Span::styled(l1, dimmed)));
