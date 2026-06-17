@@ -1,0 +1,24 @@
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+   ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
+   │
+LL │         a = 10 ^ 18;
+   │             ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
+
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+   ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
+   │
+LL │         b = 2 ^ 64;
+   │             ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
+
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+   ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
+   │
+LL │         c = (3) ^ (4);
+   │             ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
+
