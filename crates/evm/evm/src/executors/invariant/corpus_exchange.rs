@@ -92,15 +92,38 @@ impl InvariantCorpusSyncState {
     }
 
     pub(super) fn should_sync(&self, config: &InvariantCorpusSyncConfig, now: Instant) -> bool {
+        self.should_sync_inner(config, None, now)
+    }
+
+    pub(super) fn should_sync_for_run_budget(
+        &self,
+        config: &InvariantCorpusSyncConfig,
+        run_budget: u32,
+        now: Instant,
+    ) -> bool {
+        self.should_sync_inner(config, Some(run_budget), now)
+    }
+
+    fn should_sync_inner(
+        &self,
+        config: &InvariantCorpusSyncConfig,
+        run_budget: Option<u32>,
+        now: Instant,
+    ) -> bool {
         if !matches!(config.mode, InvariantCorpusSyncMode::Plateau) {
             return false;
         }
 
-        self.runs_since_new_coverage >= config.plateau_runs
+        self.runs_since_new_coverage >= effective_plateau_runs(config.plateau_runs, run_budget)
             || config.plateau_seconds.is_some_and(|seconds| {
                 now.duration_since(self.last_new_coverage_at) >= Duration::from_secs(seconds.into())
             })
     }
+}
+
+fn effective_plateau_runs(configured_runs: u32, run_budget: Option<u32>) -> u32 {
+    let Some(run_budget) = run_budget else { return configured_runs };
+    configured_runs.min((run_budget / 2).max(1))
 }
 
 #[cfg(test)]
@@ -177,5 +200,33 @@ mod tests {
         assert!(state.should_sync(&config, Instant::now()));
         state.record_completed_run(true, Instant::now());
         assert!(!state.should_sync(&config, Instant::now()));
+    }
+
+    #[test]
+    fn fixed_run_plateau_sync_leaves_runs_to_use_imported_entries() {
+        let mut state = InvariantCorpusSyncState::new(Instant::now());
+        let config = InvariantCorpusSyncConfig::default();
+
+        for _ in 0..31 {
+            state.record_completed_run(false, Instant::now());
+            assert!(!state.should_sync_for_run_budget(&config, 64, Instant::now()));
+        }
+
+        state.record_completed_run(false, Instant::now());
+        assert!(state.should_sync_for_run_budget(&config, 64, Instant::now()));
+    }
+
+    #[test]
+    fn fixed_run_plateau_sync_keeps_configured_threshold_for_long_shards() {
+        let mut state = InvariantCorpusSyncState::new(Instant::now());
+        let config = InvariantCorpusSyncConfig::default();
+
+        for _ in 0..63 {
+            state.record_completed_run(false, Instant::now());
+            assert!(!state.should_sync_for_run_budget(&config, 256, Instant::now()));
+        }
+
+        state.record_completed_run(false, Instant::now());
+        assert!(state.should_sync_for_run_budget(&config, 256, Instant::now()));
     }
 }

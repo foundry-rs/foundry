@@ -70,6 +70,7 @@ use corpus_exchange::{InvariantCorpusExchange, InvariantCorpusSyncState};
 struct InvariantCorpusSyncMeta<'a> {
     worker_id: u32,
     new_coverage: bool,
+    run_budget: Option<u32>,
     sync_config: &'a InvariantCorpusSyncConfig,
 }
 
@@ -1149,6 +1150,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     InvariantCorpusSyncMeta {
                         worker_id: plan.worker_id,
                         new_coverage: current_run.new_coverage,
+                        run_budget: (!campaign_state.is_timed_campaign()).then_some(plan.runs),
                         sync_config: &config.corpus_sync,
                     },
                 )?;
@@ -1307,7 +1309,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let now = Instant::now();
         sync_state.record_completed_run(meta.new_coverage, now);
-        if !sync_state.should_sync(meta.sync_config, now) {
+        let should_sync = meta.run_budget.map_or_else(
+            || sync_state.should_sync(meta.sync_config, now),
+            |run_budget| sync_state.should_sync_for_run_budget(meta.sync_config, run_budget, now),
+        );
+        if !should_sync {
             return Ok(());
         }
 
