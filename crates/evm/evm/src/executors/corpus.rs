@@ -199,6 +199,12 @@ pub(crate) struct SharedCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PendingCorpusEntry {
+    index: usize,
+    dedupe_by_coverage: bool,
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
@@ -517,8 +523,8 @@ pub struct WorkerCorpus {
     current_mutated: Option<Uuid>,
     /// Config
     config: Arc<FuzzCorpusConfig>,
-    /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
-    new_entry_indices: Vec<usize>,
+    /// New entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
+    new_entries: Vec<PendingCorpusEntry>,
     /// Last sync timestamp in seconds.
     last_sync_timestamp: u64,
     /// Worker Dir
@@ -752,7 +758,7 @@ impl WorkerCorpus {
             mutation_generator,
             current_mutated: None,
             config: config.into(),
-            new_entry_indices: Default::default(),
+            new_entries: Default::default(),
             last_sync_timestamp: 0,
             worker_dir,
             last_sync_metrics: Default::default(),
@@ -879,7 +885,8 @@ impl WorkerCorpus {
 
         // Track in-memory corpus changes to update MasterWorker on sync.
         let new_index = self.in_memory_corpus.len();
-        self.new_entry_indices.push(new_index);
+        self.new_entries
+            .push(PendingCorpusEntry { index: new_index, dedupe_by_coverage: new_coverage });
 
         // This includes reverting txs in the corpus and `can_continue` removes
         // them. We want this as it is new coverage and may help reach the other branch.
@@ -1203,12 +1210,12 @@ impl WorkerCorpus {
             self.in_memory_corpus.remove(index);
 
             // Adjust the tracked indices.
-            self.new_entry_indices.retain_mut(|i| {
-                if *i > index {
-                    *i -= 1; // Shift indices down.
+            self.new_entries.retain_mut(|entry| {
+                if entry.index > index {
+                    entry.index -= 1; // Shift indices down.
                     true // Keep this index.
                 } else {
-                    *i != index // Remove if it's the deleted index, keep otherwise.
+                    entry.index != index // Remove if it's the deleted index, keep otherwise.
                 }
             });
         }
@@ -1484,20 +1491,20 @@ impl WorkerCorpus {
 
     /// Returns new worker-local corpus entries as immutable candidates for campaign-local exchange.
     pub(crate) fn export_for_exchange(&mut self) -> Vec<SharedCorpusEntry> {
-        if self.new_entry_indices.is_empty() {
+        if self.new_entries.is_empty() {
             return Vec::new();
         }
 
-        let mut entries = Vec::with_capacity(self.new_entry_indices.len());
-        for &index in &self.new_entry_indices {
-            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
+        let mut entries = Vec::with_capacity(self.new_entries.len());
+        for pending in &self.new_entries {
+            let Some(corpus) = self.in_memory_corpus.get(pending.index) else { continue };
             entries.push(SharedCorpusEntry {
                 tx_seq: corpus.tx_seq.clone().into(),
                 cmp_seq: corpus.cmp_seq.clone().into(),
-                dedupe_by_coverage: true,
+                dedupe_by_coverage: pending.dedupe_by_coverage,
             });
         }
-        self.new_entry_indices.clear();
+        self.new_entries.clear();
         entries
     }
 
@@ -1550,7 +1557,7 @@ impl WorkerCorpus {
         assert_ne!(self.id, 0, "non-master only");
 
         // Early return if no new entries or corpus dir not configured.
-        if self.new_entry_indices.is_empty() || self.worker_dir.is_none() {
+        if self.new_entries.is_empty() || self.worker_dir.is_none() {
             return Ok(());
         }
 
@@ -1567,8 +1574,8 @@ impl WorkerCorpus {
         let mut exported = 0;
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-        for &index in &self.new_entry_indices {
-            let Some(corpus) = self.in_memory_corpus.get(index) else { continue };
+        for entry in &self.new_entries {
+            let Some(corpus) = self.in_memory_corpus.get(entry.index) else { continue };
             let file_name = corpus.file_name(self.config.corpus_gzip);
             let file_path = corpus_dir.join(&file_name);
             let sync_path = master_sync_dir.join(&file_name);
@@ -1706,7 +1713,7 @@ impl WorkerCorpus {
         let last_sync = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         self.last_sync_timestamp = last_sync;
 
-        self.new_entry_indices.clear();
+        self.new_entries.clear();
 
         debug!(target: "corpus", last_sync, "synced");
 
@@ -1919,6 +1926,28 @@ mod tests {
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.metrics.corpus_count, 1);
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+    }
+
+    #[test]
+    fn exchange_export_preserves_optimization_only_dedupe_policy() {
+        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
+        let coverage_sequence = vec![basic_tx()];
+        let optimization_sequence = vec![basic_tx()];
+
+        manager.process_inputs_for_campaign(&coverage_sequence, &[], true, None).unwrap();
+        manager
+            .process_inputs_for_campaign(
+                &optimization_sequence,
+                &[],
+                false,
+                Some((I256::try_from(7).unwrap(), optimization_sequence.clone())),
+            )
+            .unwrap();
+
+        let entries = manager.export_for_exchange();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].dedupe_by_coverage);
+        assert!(!entries[1].dedupe_by_coverage);
     }
 
     #[test]
