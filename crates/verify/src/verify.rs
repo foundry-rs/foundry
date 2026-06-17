@@ -625,9 +625,10 @@ impl VerifyArgs {
             required: true,
         });
 
-        // Skip the auxiliary Sourcify submission when the user is clearly using a
-        // non-public setup: an explicit `--verifier custom` or a local/dev chain.
-        let is_private_setup = resolved.is_custom() || is_dev_chain(chain);
+        // Skip the auxiliary Sourcify submission when the user appears to be using a
+        // non-public setup: an explicit `--verifier-url`, `--verifier custom`, or a
+        // local/dev chain.
+        let is_private_setup = had_user_verifier_url || resolved.is_custom() || is_dev_chain(chain);
         if !primary_is_sourcify && !is_private_setup {
             let mut args = self.clone();
             args.verifier.verifier = Some(VerificationProviderType::Sourcify);
@@ -1147,5 +1148,22 @@ mod tests {
         let runs = args.collect_runs(anvil, Some("k"), resolved, false).unwrap();
         assert_eq!(runs.len(), 1);
         assert!(runs[0].required);
+    }
+
+    #[test]
+    fn collect_runs_skips_secondary_with_user_verifier_url() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--verifier",
+            "blockscout",
+            "--verifier-url",
+            "https://internal-blockscout.example.com/api",
+        ]);
+        let resolved = args.verifier.resolve(None, Some(Chain::mainnet()));
+        let runs = args.collect_runs(Chain::mainnet(), None, resolved, true).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].label, VerificationProviderType::Blockscout);
     }
 }
