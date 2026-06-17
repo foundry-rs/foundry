@@ -180,7 +180,7 @@ impl Tip20Subcommand {
     }
 }
 
-pub(super) async fn resolve_tip20_signer(
+pub(crate) async fn resolve_tip20_signer(
     send_tx: &SendTxOpts,
     tx_params: &TxParams,
 ) -> eyre::Result<(Option<WalletSigner>, Option<TempoAccessKeyConfig>)> {
@@ -196,7 +196,7 @@ pub(super) async fn resolve_tip20_signer(
     tempo::resolve_session_or_wallet_signer(&tx_params.tempo, &send_tx.eth.wallet, chain.id()).await
 }
 
-pub(super) async fn send_tip20_transaction(
+pub(crate) async fn send_tip20_transaction(
     to: NameOrAddress,
     sig: &'static str,
     args: Vec<String>,
