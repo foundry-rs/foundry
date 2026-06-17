@@ -184,7 +184,7 @@ use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
-    storage::StorageCtx,
+    storage::{StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
 };
@@ -1177,7 +1177,7 @@ impl<N: Network> Backend<N> {
         cfg_env: &CfgEnv<TempoHardfork>,
     ) {
         self.inject_precompiles(precompiles);
-        extend_tempo_precompiles(precompiles, cfg_env);
+        extend_tempo_precompiles(precompiles, cfg_env, StorageActions::enabled());
     }
 
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
