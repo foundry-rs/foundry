@@ -19,6 +19,9 @@ struct ExchangeEntry {
 /// The exchange does not own executor state and never decides coverage usefulness. Workers publish
 /// snapshots here and sibling workers replay imported candidates against their own local coverage.
 pub(super) struct InvariantCorpusExchange {
+    /// Serializes epoch assignment, outbox commits, and import snapshots so importers never
+    /// advance past an epoch that has been assigned but is not visible in an outbox yet.
+    visibility: Mutex<()>,
     next_epoch: AtomicU64,
     outboxes: Vec<Mutex<Vec<ExchangeEntry>>>,
 }
@@ -26,7 +29,7 @@ pub(super) struct InvariantCorpusExchange {
 impl InvariantCorpusExchange {
     pub(super) fn new(workers: usize) -> Self {
         let outboxes = (0..workers).map(|_| Mutex::new(Vec::new())).collect();
-        Self { next_epoch: AtomicU64::new(1), outboxes }
+        Self { visibility: Mutex::new(()), next_epoch: AtomicU64::new(1), outboxes }
     }
 
     pub(super) fn publish(&self, worker_id: u32, entries: Vec<SharedCorpusEntry>) {
@@ -37,6 +40,7 @@ impl InvariantCorpusExchange {
             return;
         };
 
+        let _visibility = self.visibility.lock().expect("invariant corpus exchange lock poisoned");
         let base_epoch = self.next_epoch.fetch_add(entries.len() as u64, Ordering::Relaxed);
         let mut outbox = outbox.lock().expect("invariant corpus exchange lock poisoned");
         outbox.reserve(entries.len());
@@ -58,6 +62,7 @@ impl InvariantCorpusExchange {
             return (Vec::new(), last_seen_epoch);
         }
 
+        let _visibility = self.visibility.lock().expect("invariant corpus exchange lock poisoned");
         let mut candidates = Vec::new();
         for (source_worker, outbox) in self.outboxes.iter().enumerate() {
             if source_worker == worker_id as usize {
