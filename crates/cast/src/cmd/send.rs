@@ -379,18 +379,15 @@ impl SendTxArgs {
                     .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             } else {
-                resolve_and_set_fee_token(
+                let fee_token = resolve_and_set_fee_token(
                     (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx_request,
                     Some(browser.address()),
                 )
                 .await?;
-                maybe_print_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    tx_request.fee_token(),
-                )
-                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
             }
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
@@ -548,15 +545,14 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    resolve_and_set_fee_token(
+    let fee_token = resolve_and_set_fee_token(
         resolve_unknown_fee_token_symbol.then_some(&provider),
         chain,
         &mut tx,
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), tx.fee_token())
-        .await?;
+    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token).await?;
     let cast = CastTxSender::new(provider);
 
     if sync {
@@ -598,15 +594,14 @@ where
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
-    resolve_and_set_fee_token(
+    let fee_token = resolve_and_set_fee_token(
         resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
         &mut tx,
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(provider), tx.fee_token())
-        .await?;
+    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(provider), fee_token).await?;
     let raw_tx = tx
         .sign_with_access_key(
             provider,

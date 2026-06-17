@@ -497,7 +497,7 @@ impl Erc20Subcommand {
                             .await?;
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     } else {
-                        resolve_and_set_fee_token(
+                        let fee_token = resolve_and_set_fee_token(
                             (!config.eth_rpc_curl).then_some(&$provider),
                             Some(chain),
                             &mut tx,
@@ -506,7 +506,7 @@ impl Erc20Subcommand {
                         .await?;
                         maybe_print_fee_token(
                             (!config.eth_rpc_curl).then_some(&$provider),
-                            tx.fee_token(),
+                            fee_token,
                         )
                         .await?;
                     }

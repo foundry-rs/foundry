@@ -584,18 +584,15 @@ impl CreateArgs {
                 .await?;
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         } else {
-            resolve_and_set_fee_token(
+            let fee_token = resolve_and_set_fee_token(
                 resolve_unknown_fee_token_symbol.then_some(&provider),
                 Some(chain),
                 &mut deployer.tx,
                 Some(deployer_address),
             )
             .await?;
-            maybe_print_fee_token(
-                resolve_unknown_fee_token_symbol.then_some(&provider),
-                deployer.tx.fee_token(),
-            )
-            .await?;
+            maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token)
+                .await?;
         }
 
         // Deploy the actual contract

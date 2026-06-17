@@ -175,11 +175,12 @@ where
             .await?;
         }
 
-        if let Some(sponsor) = tempo_sponsor {
+        let fee_token = if let Some(sponsor) = tempo_sponsor {
             sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+            None
         } else {
-            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?;
-        }
+            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
+        };
 
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
@@ -191,7 +192,7 @@ where
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
         } else {
-            maybe_print_fee_token(Some(provider), tx.fee_token()).await?;
+            maybe_print_fee_token(Some(provider), fee_token).await?;
         }
 
         Ok(())
@@ -1252,7 +1253,7 @@ impl BundledState<TempoEvmNetwork> {
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
-        if let Some(sponsor) = &tempo_sponsor {
+        let fee_token = if let Some(sponsor) = &tempo_sponsor {
             sponsor
                 .resolve_and_set_fee_token(
                     Some(provider.as_ref()),
@@ -1260,6 +1261,7 @@ impl BundledState<TempoEvmNetwork> {
                     &mut batch_tx,
                 )
                 .await?;
+            None
         } else {
             resolve_and_set_fee_token(
                 Some(provider.as_ref()),
@@ -1267,8 +1269,8 @@ impl BundledState<TempoEvmNetwork> {
                 &mut batch_tx,
                 Some(sender),
             )
-            .await?;
-        }
+            .await?
+        };
 
         if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
             batch_tx.key_id = Some(ak.key_address);
@@ -1290,7 +1292,7 @@ impl BundledState<TempoEvmNetwork> {
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
         } else {
-            maybe_print_fee_token(Some(provider.as_ref()), batch_tx.fee_token()).await?;
+            maybe_print_fee_token(Some(provider.as_ref()), fee_token).await?;
         }
 
         // Sign and send.

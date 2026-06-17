@@ -200,14 +200,14 @@ impl MakeTxArgs {
                     .await?;
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             } else {
-                resolve_and_set_fee_token(
+                let fee_token = resolve_and_set_fee_token(
                     (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(from),
                 )
                 .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
                     .await?;
             }
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
@@ -231,14 +231,14 @@ impl MakeTxArgs {
                     .await?;
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             } else {
-                resolve_and_set_fee_token(
+                let fee_token = resolve_and_set_fee_token(
                     (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(config.sender),
                 )
                 .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
                     .await?;
             }
             let signed_tx = provider.sign_transaction(tx).await?;
@@ -266,15 +266,14 @@ impl MakeTxArgs {
                 .await?;
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         } else {
-            resolve_and_set_fee_token(
+            let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
                 Some(from),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
-                .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
         }
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;

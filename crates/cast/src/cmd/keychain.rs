@@ -3206,14 +3206,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                     .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
             } else {
-                resolve_and_set_fee_token(
+                let fee_token = resolve_and_set_fee_token(
                     (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(browser.address()),
                 )
                 .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
                     .await?;
             }
 
@@ -3238,14 +3238,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                     .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
             } else {
-                resolve_and_set_fee_token(
+                let fee_token = resolve_and_set_fee_token(
                     (!config.eth_rpc_curl).then_some(&provider),
                     Some(chain),
                     &mut tx,
                     Some(from),
                 )
                 .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
                     .await?;
             }
 

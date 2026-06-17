@@ -137,15 +137,14 @@ impl BatchMakeTxArgs {
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            resolve_and_set_fee_token(
+            let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
                 Some(from),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
-                .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx =
                 alloy_primitives::hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
@@ -155,15 +154,14 @@ impl BatchMakeTxArgs {
         if ethsign {
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            resolve_and_set_fee_token(
+            let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
                 Some(config.sender),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
-                .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -179,15 +177,14 @@ impl BatchMakeTxArgs {
             let (mut tx, _) =
                 tx_builder.build_with_access_key(access_key.wallet_address, access_key).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            resolve_and_set_fee_token(
+            let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
                 Some(access_key.wallet_address),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
-                .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -202,15 +199,14 @@ impl BatchMakeTxArgs {
             tx::validate_from_address(eth.wallet.from, Signer::address(&signer))?;
             let (mut tx, _) = tx_builder.build(&signer).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            resolve_and_set_fee_token(
+            let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
                 Some(Signer::address(&signer)),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
-                .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;
             alloy_primitives::hex::encode(envelope.encoded_2718())
         };

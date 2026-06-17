@@ -294,15 +294,14 @@ pub(super) async fn send_tip20_transaction(
                 .await?;
             sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         } else {
-            resolve_and_set_fee_token(
+            let fee_token = resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
                 Some(browser.address()),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
-                .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
         }
         let tx_hash = browser.send_transaction_via_browser(tx).await?;
         CastTxSender::new(&provider)
