@@ -16,7 +16,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     sh_eprintln, sh_println,
 };
-use foundry_config::{InvariantConfig, InvariantWorkers};
+use foundry_config::{InvariantConfig, InvariantCorpusSyncConfig, InvariantWorkers};
 use foundry_evm_core::{
     FoundryBlock,
     constants::{
@@ -70,7 +70,7 @@ use corpus_exchange::{InvariantCorpusExchange, InvariantCorpusSyncState};
 struct InvariantCorpusSyncMeta<'a> {
     worker_id: u32,
     new_coverage: bool,
-    config: &'a InvariantConfig,
+    sync_config: &'a InvariantCorpusSyncConfig,
 }
 
 mod replay;
@@ -1131,11 +1131,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     optimization,
                 );
             }
-            let run_new_coverage = current_run.new_coverage;
-
-            if let Some(corpus_exchange) = corpus_exchange
-                && config.corpus_sync.is_enabled()
-            {
+            if let Some(corpus_exchange) = corpus_exchange {
                 Self::sync_invariant_worker_corpus(
                     &mut corpus_manager,
                     corpus_exchange,
@@ -1152,8 +1148,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     },
                     InvariantCorpusSyncMeta {
                         worker_id: plan.worker_id,
-                        new_coverage: run_new_coverage,
-                        config: &config,
+                        new_coverage: current_run.new_coverage,
+                        sync_config: &config.corpus_sync,
                     },
                 )?;
             }
@@ -1307,19 +1303,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         target: ReplayTarget<'_>,
         meta: InvariantCorpusSyncMeta<'_>,
     ) -> Result<()> {
-        let published = corpus_manager.export_for_exchange();
-        corpus_exchange.publish(meta.worker_id, published);
+        corpus_exchange.publish(meta.worker_id, corpus_manager.export_for_exchange());
 
         let now = Instant::now();
         sync_state.record_completed_run(meta.new_coverage, now);
-        if !sync_state.should_sync(&meta.config.corpus_sync, now) {
+        if !sync_state.should_sync(meta.sync_config, now) {
             return Ok(());
         }
 
         let (entries, newest_epoch) = corpus_exchange.import_since(
             meta.worker_id,
             sync_state.last_seen_epoch(),
-            meta.config.corpus_sync.max_imports_per_sync,
+            meta.sync_config.max_imports_per_sync,
         );
         sync_state.set_last_seen_epoch(newest_epoch);
         if entries.is_empty() {

@@ -5,7 +5,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone)]
 struct ExchangeEntry {
     source_worker: u32,
     entry: SharedCorpusEntry,
@@ -31,7 +30,6 @@ impl InvariantCorpusExchange {
         }
 
         let mut exchange_entries = self.entries.lock().expect("invariant corpus exchange poisoned");
-        exchange_entries.reserve(entries.len());
         exchange_entries.extend(
             entries.into_iter().map(|entry| ExchangeEntry { source_worker: worker_id, entry }),
         );
