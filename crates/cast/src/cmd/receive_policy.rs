@@ -471,7 +471,7 @@ fn receipt_payload(
         "originator": format!("{}", decoded.originator),
         "recipient": format!("{}", decoded.recipient),
         "recipient_is_virtual": decoded.recipient.is_virtual(),
-        "claim_target": if decoded.recipient.is_virtual() {
+        "claim_target": if decoded.recipient.is_virtual() || decoded.recoveryAuthority == Address::ZERO {
             Value::Null
         } else {
             json!(format!("{}", decoded.recipient))
@@ -524,6 +524,10 @@ fn print_claim_hint(payload: &Value) -> Result<()> {
     if payload["recipient_is_virtual"].as_bool().unwrap_or_default() {
         sh_println!(
             "\nClaim target: recipient is a virtual address; resolve it first with:\n  cast vaddr resolve {recipient}\nThen claim to the registered master address:\n  cast receive-policy claim <master-address> {receipt}"
+        )
+    } else if payload["recovery_mode"].as_str() == Some("originator") {
+        sh_println!(
+            "\nClaim target: originator recovery reroutes funds, so do not default to the blocked recipient. Claim to an address that can receive the token:\n  cast receive-policy claim <target-address> {receipt}"
         )
     } else {
         sh_println!("\nClaim path: cast receive-policy claim {recipient} {receipt}")
@@ -681,6 +685,18 @@ mod tests {
         let payload = receipt_payload(&receipt, &decoded, None);
         assert_eq!(payload["recipient"], format!("{}", decoded.recipient));
         assert_eq!(payload["recipient_is_virtual"], true);
+        assert_eq!(payload["claim_target"], Value::Null);
+    }
+
+    #[test]
+    fn originator_recovery_receipt_requires_explicit_claim_target() {
+        let receipt = sample_receipt();
+        let mut decoded = decode_claim_receipt(&receipt).unwrap();
+        decoded.recoveryAuthority = Address::ZERO;
+
+        let payload = receipt_payload(&receipt, &decoded, None);
+        assert_eq!(payload["recovery_mode"], "originator");
+        assert_eq!(payload["recipient_is_virtual"], false);
         assert_eq!(payload["claim_target"], Value::Null);
     }
 
