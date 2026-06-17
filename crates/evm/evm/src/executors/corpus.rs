@@ -226,6 +226,12 @@ struct ReplayOutcome {
     failed_replays: usize,
 }
 
+struct CorpusImportOptions {
+    uuid: Uuid,
+    trace_sync: bool,
+    reject_unmatched_function: bool,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ReplayTarget<'a> {
     pub(crate) fuzzed_function: Option<&'a Function>,
@@ -1408,9 +1414,11 @@ impl WorkerCorpus {
                 None,
                 &mut executor,
                 ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic },
-                entry.uuid,
-                true,
-                false,
+                CorpusImportOptions {
+                    uuid: entry.uuid,
+                    trace_sync: true,
+                    reject_unmatched_function: false,
+                },
             )? {
                 // Move file from sync/ to corpus/ directory.
                 let corpus_path = corpus_dir.join(sync_path.components().next_back().unwrap());
@@ -1445,9 +1453,7 @@ impl WorkerCorpus {
         cmp_seq_hint: Option<&[Vec<CmpOperands>]>,
         executor: &mut Executor<FEN>,
         target: ReplayTarget<'_>,
-        uuid: Uuid,
-        trace_sync: bool,
-        reject_unmatched_function: bool,
+        options: CorpusImportOptions,
     ) -> Result<Option<CorpusEntry>> {
         let coverage = ReplayCoverage {
             history_map: &mut self.history_map,
@@ -1461,8 +1467,8 @@ impl WorkerCorpus {
                 executor,
                 target,
                 coverage,
-                trace_sync,
-                reject_unmatched_function,
+                options.trace_sync,
+                options.reject_unmatched_function,
             )?;
 
         if !keep_entry || !new_coverage {
@@ -1473,7 +1479,7 @@ impl WorkerCorpus {
         let cmp_seq = cmp_seq_hint
             .filter(|hint| hint.len() == tx_seq.len())
             .map_or(cmp_seq, ToOwned::to_owned);
-        Ok(Some(CorpusEntry::new_with_cmp(tx_seq.to_vec(), cmp_seq, uuid)))
+        Ok(Some(CorpusEntry::new_with_cmp(tx_seq.to_vec(), cmp_seq, options.uuid)))
     }
 
     /// Returns new worker-local corpus entries as immutable candidates for campaign-local exchange.
@@ -1522,9 +1528,11 @@ impl WorkerCorpus {
                 Some(entry.cmp_seq.as_ref()),
                 &mut executor,
                 target,
-                Uuid::new_v4(),
-                false,
-                false,
+                CorpusImportOptions {
+                    uuid: Uuid::new_v4(),
+                    trace_sync: false,
+                    reject_unmatched_function: false,
+                },
             )? {
                 self.in_memory_corpus.push(corpus_entry);
                 stats.accepted += 1;

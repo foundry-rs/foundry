@@ -67,6 +67,12 @@ use campaign::{
 mod corpus_exchange;
 use corpus_exchange::{InvariantCorpusExchange, InvariantCorpusSyncState};
 
+struct InvariantCorpusSyncMeta<'a> {
+    worker_id: u32,
+    new_coverage: bool,
+    config: &'a InvariantConfig,
+}
+
 mod replay;
 pub use replay::{replay_error, replay_run};
 
@@ -1144,9 +1150,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             artifact_filters: &campaign_seed.artifact_filters,
                         }),
                     },
-                    plan.worker_id,
-                    run_new_coverage,
-                    &config,
+                    InvariantCorpusSyncMeta {
+                        worker_id: plan.worker_id,
+                        new_coverage: run_new_coverage,
+                        config: &config,
+                    },
                 )?;
             }
 
@@ -1297,23 +1305,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         sync_state: &mut InvariantCorpusSyncState,
         executor: &Executor<FEN>,
         target: ReplayTarget<'_>,
-        worker_id: u32,
-        new_coverage: bool,
-        config: &InvariantConfig,
+        meta: InvariantCorpusSyncMeta<'_>,
     ) -> Result<()> {
         let published = corpus_manager.export_for_exchange();
-        corpus_exchange.publish(worker_id, published);
+        corpus_exchange.publish(meta.worker_id, published);
 
         let now = Instant::now();
-        sync_state.record_completed_run(new_coverage, now);
-        if !sync_state.should_sync(&config.corpus_sync, now) {
+        sync_state.record_completed_run(meta.new_coverage, now);
+        if !sync_state.should_sync(&meta.config.corpus_sync, now) {
             return Ok(());
         }
 
         let (entries, newest_epoch) = corpus_exchange.import_since(
-            worker_id,
+            meta.worker_id,
             sync_state.last_seen_epoch(),
-            config.corpus_sync.max_imports_per_sync,
+            meta.config.corpus_sync.max_imports_per_sync,
         );
         if entries.is_empty() {
             return Ok(());
@@ -1323,7 +1329,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         sync_state.set_last_seen_epoch(newest_epoch);
         trace!(
             target: "corpus",
-            worker_id,
+            worker_id = meta.worker_id,
             accepted = stats.accepted,
             rejected = stats.rejected,
             newest_epoch,

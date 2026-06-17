@@ -82,7 +82,7 @@ pub(super) struct InvariantCorpusSyncState {
 }
 
 impl InvariantCorpusSyncState {
-    pub(super) fn new(now: Instant) -> Self {
+    pub(super) const fn new(now: Instant) -> Self {
         Self { runs_since_new_coverage: 0, last_new_coverage_at: now, last_seen_epoch: 0 }
     }
 
@@ -90,11 +90,11 @@ impl InvariantCorpusSyncState {
         self.last_seen_epoch
     }
 
-    pub(super) fn set_last_seen_epoch(&mut self, epoch: u64) {
+    pub(super) const fn set_last_seen_epoch(&mut self, epoch: u64) {
         self.last_seen_epoch = epoch;
     }
 
-    pub(super) fn record_completed_run(&mut self, new_coverage: bool, now: Instant) {
+    pub(super) const fn record_completed_run(&mut self, new_coverage: bool, now: Instant) {
         if new_coverage {
             self.runs_since_new_coverage = 0;
             self.last_new_coverage_at = now;
