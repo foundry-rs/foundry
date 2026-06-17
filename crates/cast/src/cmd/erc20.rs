@@ -506,9 +506,7 @@ impl Erc20Subcommand {
                         .await?;
                         maybe_print_fee_token(
                             (!config.eth_rpc_curl).then_some(&$provider),
-                            Some(chain),
-                            Some(&tx),
-                            None,
+                            tx.fee_token(),
                         )
                         .await?;
                     }

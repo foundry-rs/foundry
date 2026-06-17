@@ -593,9 +593,7 @@ impl CreateArgs {
             .await?;
             maybe_print_fee_token(
                 resolve_unknown_fee_token_symbol.then_some(&provider),
-                Some(chain),
-                Some(&deployer.tx),
-                None,
+                deployer.tx.fee_token(),
             )
             .await?;
         }

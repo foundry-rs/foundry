@@ -301,13 +301,8 @@ pub(super) async fn send_tip20_transaction(
                 Some(browser.address()),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
         }
         let tx_hash = browser.send_transaction_via_browser(tx).await?;
         CastTxSender::new(&provider)

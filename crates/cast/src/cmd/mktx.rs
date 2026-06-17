@@ -207,13 +207,8 @@ impl MakeTxArgs {
                     Some(from),
                 )
                 .await?;
-                maybe_print_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    Some(&tx),
-                    None,
-                )
-                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                    .await?;
             }
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
@@ -243,13 +238,8 @@ impl MakeTxArgs {
                     Some(config.sender),
                 )
                 .await?;
-                maybe_print_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    Some(&tx),
-                    None,
-                )
-                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                    .await?;
             }
             let signed_tx = provider.sign_transaction(tx).await?;
 
@@ -283,13 +273,8 @@ impl MakeTxArgs {
                 Some(from),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
         }
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;

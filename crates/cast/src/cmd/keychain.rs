@@ -3213,13 +3213,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                     Some(browser.address()),
                 )
                 .await?;
-                maybe_print_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    Some(&tx),
-                    None,
-                )
-                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                    .await?;
             }
 
             before_submit()?;
@@ -3250,13 +3245,8 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                     Some(from),
                 )
                 .await?;
-                maybe_print_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    Some(&tx),
-                    None,
-                )
-                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                    .await?;
             }
 
             before_submit()?;

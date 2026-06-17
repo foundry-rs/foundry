@@ -196,13 +196,8 @@ async fn register(
                 Some(access_key.wallet_address),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -248,13 +243,8 @@ async fn register(
                 Some(sender),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
             let cast = CastTxSender::new(&provider);
             if send_tx.sync {
                 cast.send_sync(tx).await.map(|(tx_hash, _)| tx_hash)

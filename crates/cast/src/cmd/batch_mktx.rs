@@ -144,13 +144,8 @@ impl BatchMakeTxArgs {
                 Some(from),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
             let raw_tx =
                 alloy_primitives::hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
@@ -167,13 +162,8 @@ impl BatchMakeTxArgs {
                 Some(config.sender),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -196,13 +186,8 @@ impl BatchMakeTxArgs {
                 Some(access_key.wallet_address),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -224,13 +209,8 @@ impl BatchMakeTxArgs {
                 Some(Signer::address(&signer)),
             )
             .await?;
-            maybe_print_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                Some(&tx),
-                None,
-            )
-            .await?;
+            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), tx.fee_token())
+                .await?;
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;
             alloy_primitives::hex::encode(envelope.encoded_2718())
         };

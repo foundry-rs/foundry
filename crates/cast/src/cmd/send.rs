@@ -388,9 +388,7 @@ impl SendTxArgs {
                 .await?;
                 maybe_print_fee_token(
                     (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    Some(&tx_request),
-                    None,
+                    tx_request.fee_token(),
                 )
                 .await?;
             }
@@ -557,13 +555,8 @@ where
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(
-        resolve_unknown_fee_token_symbol.then_some(&provider),
-        chain,
-        Some(&tx),
-        fee_payer,
-    )
-    .await?;
+    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), tx.fee_token())
+        .await?;
     let cast = CastTxSender::new(provider);
 
     if sync {
@@ -612,13 +605,8 @@ where
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(
-        resolve_unknown_fee_token_symbol.then_some(provider),
-        chain,
-        Some(&tx),
-        fee_payer,
-    )
-    .await?;
+    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(provider), tx.fee_token())
+        .await?;
     let raw_tx = tx
         .sign_with_access_key(
             provider,
