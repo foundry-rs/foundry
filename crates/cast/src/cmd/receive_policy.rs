@@ -521,13 +521,13 @@ fn print_decoded_receipt(payload: &Value) -> Result<()> {
 fn print_claim_hint(payload: &Value) -> Result<()> {
     let recipient = payload["recipient"].as_str().unwrap_or_default();
     let receipt = payload["receipt"].as_str().unwrap_or_default();
-    if payload["recipient_is_virtual"].as_bool().unwrap_or_default() {
-        sh_println!(
-            "\nClaim target: recipient is a virtual address; resolve it first with:\n  cast vaddr resolve {recipient}\nThen claim to the registered master address:\n  cast receive-policy claim <master-address> {receipt}"
-        )
-    } else if payload["recovery_mode"].as_str() == Some("originator") {
+    if payload["recovery_mode"].as_str() == Some("originator") {
         sh_println!(
             "\nClaim target: originator recovery reroutes funds, so do not default to the blocked recipient. Claim to an address that can receive the token:\n  cast receive-policy claim <target-address> {receipt}"
+        )
+    } else if payload["recipient_is_virtual"].as_bool().unwrap_or_default() {
+        sh_println!(
+            "\nClaim target: recipient is a virtual address; resolve it first with:\n  cast vaddr resolve {recipient}\nThen claim to the registered master address:\n  cast receive-policy claim <master-address> {receipt}"
         )
     } else {
         sh_println!("\nClaim path: cast receive-policy claim {recipient} {receipt}")
@@ -697,6 +697,22 @@ mod tests {
         let payload = receipt_payload(&receipt, &decoded, None);
         assert_eq!(payload["recovery_mode"], "originator");
         assert_eq!(payload["recipient_is_virtual"], false);
+        assert_eq!(payload["claim_target"], Value::Null);
+    }
+
+    #[test]
+    fn originator_recovery_takes_precedence_over_virtual_recipient() {
+        let receipt = sample_receipt();
+        let mut decoded = decode_claim_receipt(&receipt).unwrap();
+        decoded.recoveryAuthority = Address::ZERO;
+        decoded.recipient = Address::new_virtual(
+            MasterId::from([0x12, 0x34, 0x56, 0x78]),
+            UserTag::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]),
+        );
+
+        let payload = receipt_payload(&receipt, &decoded, None);
+        assert_eq!(payload["recovery_mode"], "originator");
+        assert_eq!(payload["recipient_is_virtual"], true);
         assert_eq!(payload["claim_target"], Value::Null);
     }
 
