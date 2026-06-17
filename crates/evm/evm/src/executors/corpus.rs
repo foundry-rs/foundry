@@ -1413,9 +1413,9 @@ impl WorkerCorpus {
         };
         let corpus_dir = worker_dir.join(CORPUS_DIR);
 
-        let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
             let sync_path = &entry.path;
+            let mut executor = executor.clone();
             if let Some(corpus_entry) = self.try_import_sequence(
                 &tx_seq,
                 None,
@@ -1468,6 +1468,8 @@ impl WorkerCorpus {
             sancov_history_map: &mut self.sancov_history_map,
             metrics: Some(&mut self.metrics),
         };
+        // `executor` is candidate-local scratch state. Coverage maps above are the worker-local
+        // cumulative state used to decide whether this candidate contributes new coverage.
         let ReplayOutcome { keep_entry, new_coverage, cmp_seq, .. } =
             replay_corpus_sequence_with_executor(
                 tx_seq,
@@ -1516,7 +1518,6 @@ impl WorkerCorpus {
         target: ReplayTarget<'_>,
     ) -> Result<CorpusImportStats> {
         let mut stats = CorpusImportStats::default();
-        let mut executor = executor.clone();
         for entry in entries {
             if !entry.dedupe_by_coverage {
                 let cmp_seq = entry.cmp_seq.as_ref().to_vec();
@@ -1530,6 +1531,7 @@ impl WorkerCorpus {
                 continue;
             }
 
+            let mut executor = executor.clone();
             if let Some(corpus_entry) = self.try_import_sequence(
                 entry.tx_seq.as_ref(),
                 Some(entry.cmp_seq.as_ref()),
