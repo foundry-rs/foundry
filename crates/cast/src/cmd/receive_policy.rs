@@ -18,7 +18,8 @@ use serde_json::{Value, json};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{
-    IReceivePolicyGuard, ITIP403Registry, RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IReceivePolicyGuard, ITIP403Registry,
+    RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 use tempo_primitives::TempoAddressExt;
 
@@ -299,33 +300,61 @@ async fn validate(
     let token = token.resolve(&provider).await?;
     let sender = sender.resolve(&provider).await?;
     let receiver = receiver.resolve(&provider).await?;
+    let effective_receiver = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
+        .resolveRecipient(receiver)
+        .call()
+        .await?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
-    let result = registry.validateReceivePolicy(token, sender, receiver).call().await?;
+    let result = registry.validateReceivePolicy(token, sender, effective_receiver).call().await?;
     let delivery_state = if result.authorized { "credited" } else { "held" };
 
-    let payload = json!({
-        "token": format!("{token}"),
-        "sender": format!("{sender}"),
-        "receiver": format!("{receiver}"),
-        "authorized": result.authorized,
-        "blocked_reason": blocked_reason(result.blockedReason),
-        "delivery_state": delivery_state,
-    });
+    let payload = validate_payload(
+        token,
+        sender,
+        receiver,
+        effective_receiver,
+        result.authorized,
+        result.blockedReason,
+        delivery_state,
+    );
     print_payload(payload, |payload| {
         sh_println!(
             "Token:          {}\n\
              Sender:         {}\n\
              Receiver:       {}\n\
+             Effective recv: {}\n\
              Authorized:     {}\n\
              Blocked reason: {}\n\
              Delivery state: {}",
             payload["token"].as_str().unwrap_or_default(),
             payload["sender"].as_str().unwrap_or_default(),
             payload["receiver"].as_str().unwrap_or_default(),
+            payload["effective_receiver"].as_str().unwrap_or_default(),
             payload["authorized"].as_bool().unwrap_or_default(),
             payload["blocked_reason"].as_str().unwrap_or_default(),
             payload["delivery_state"].as_str().unwrap_or_default(),
         )
+    })
+}
+
+fn validate_payload(
+    token: Address,
+    sender: Address,
+    receiver: Address,
+    effective_receiver: Address,
+    authorized: bool,
+    blocked_reason_value: ITIP403Registry::BlockedReason,
+    delivery_state: &str,
+) -> Value {
+    json!({
+        "token": format!("{token}"),
+        "sender": format!("{sender}"),
+        "receiver": format!("{receiver}"),
+        "effective_receiver": format!("{effective_receiver}"),
+        "receiver_was_resolved": receiver != effective_receiver,
+        "authorized": authorized,
+        "blocked_reason": blocked_reason(blocked_reason_value),
+        "delivery_state": delivery_state,
     })
 }
 
@@ -650,6 +679,32 @@ mod tests {
         bad_reason.blockedReason = ITIP403Registry::BlockedReason::NONE as u8;
         let err = decode_claim_receipt(&bad_reason.abi_encode().into()).unwrap_err();
         assert!(err.to_string().contains("blocked reason is not claimable"));
+    }
+
+    #[test]
+    fn validate_payload_records_effective_receiver() {
+        let receiver = Address::new_virtual(
+            MasterId::from([0x12, 0x34, 0x56, 0x78]),
+            UserTag::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]),
+        );
+        let effective_receiver = address!("0000000000000000000000000000000000000040");
+
+        let payload = validate_payload(
+            address!("0000000000000000000000000000000000000010"),
+            address!("0000000000000000000000000000000000000030"),
+            receiver,
+            effective_receiver,
+            false,
+            ITIP403Registry::BlockedReason::RECEIVE_POLICY,
+            "held",
+        );
+
+        assert_eq!(payload["receiver"], format!("{receiver}"));
+        assert_eq!(payload["effective_receiver"], format!("{effective_receiver}"));
+        assert_eq!(payload["receiver_was_resolved"], true);
+        assert_eq!(payload["authorized"], false);
+        assert_eq!(payload["blocked_reason"], "receive_policy");
+        assert_eq!(payload["delivery_state"], "held");
     }
 
     #[test]
