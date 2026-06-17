@@ -689,7 +689,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
         let corpus_exchange = (self.config.corpus_sync.is_enabled()
             && corpus_persistence.is_deferred())
-        .then(|| Arc::new(InvariantCorpusExchange::new(actual_worker_count)));
+        .then(|| Arc::new(InvariantCorpusExchange::new()));
 
         let worker_outputs = if corpus_persistence.is_deferred() {
             let worker_jobs = worker_plans
@@ -1321,12 +1321,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             sync_state.last_seen_epoch(),
             meta.config.corpus_sync.max_imports_per_sync,
         );
+        sync_state.set_last_seen_epoch(newest_epoch);
         if entries.is_empty() {
             return Ok(());
         }
 
         let stats = corpus_manager.import_shared_entries(entries, executor, target)?;
-        sync_state.set_last_seen_epoch(newest_epoch);
         trace!(
             target: "corpus",
             worker_id = meta.worker_id,

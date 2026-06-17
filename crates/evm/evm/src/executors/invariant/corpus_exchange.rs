@@ -1,16 +1,13 @@
 use crate::executors::corpus::SharedCorpusEntry;
 use foundry_config::{InvariantCorpusSyncConfig, InvariantCorpusSyncMode};
 use std::{
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
 #[derive(Clone)]
 struct ExchangeEntry {
-    epoch: u64,
+    source_worker: u32,
     entry: SharedCorpusEntry,
 }
 
@@ -19,36 +16,24 @@ struct ExchangeEntry {
 /// The exchange does not own executor state and never decides coverage usefulness. Workers publish
 /// snapshots here and sibling workers replay imported candidates against their own local coverage.
 pub(super) struct InvariantCorpusExchange {
-    /// Serializes epoch assignment, outbox commits, and import snapshots so importers never
-    /// advance past an epoch that has been assigned but is not visible in an outbox yet.
-    visibility: Mutex<()>,
-    next_epoch: AtomicU64,
-    outboxes: Vec<Mutex<Vec<ExchangeEntry>>>,
+    /// Append-only campaign log. Entry index + 1 is the exchange epoch.
+    entries: Mutex<Vec<ExchangeEntry>>,
 }
 
 impl InvariantCorpusExchange {
-    pub(super) fn new(workers: usize) -> Self {
-        let outboxes = (0..workers).map(|_| Mutex::new(Vec::new())).collect();
-        Self { visibility: Mutex::new(()), next_epoch: AtomicU64::new(1), outboxes }
+    pub(super) const fn new() -> Self {
+        Self { entries: Mutex::new(Vec::new()) }
     }
 
     pub(super) fn publish(&self, worker_id: u32, entries: Vec<SharedCorpusEntry>) {
         if entries.is_empty() {
             return;
         }
-        let Some(outbox) = self.outboxes.get(worker_id as usize) else {
-            return;
-        };
 
-        let _visibility = self.visibility.lock().expect("invariant corpus exchange lock poisoned");
-        let base_epoch = self.next_epoch.fetch_add(entries.len() as u64, Ordering::Relaxed);
-        let mut outbox = outbox.lock().expect("invariant corpus exchange lock poisoned");
-        outbox.reserve(entries.len());
-        outbox.extend(
-            entries
-                .into_iter()
-                .enumerate()
-                .map(|(idx, entry)| ExchangeEntry { epoch: base_epoch + idx as u64, entry }),
+        let mut exchange_entries = self.entries.lock().expect("invariant corpus exchange poisoned");
+        exchange_entries.reserve(entries.len());
+        exchange_entries.extend(
+            entries.into_iter().map(|entry| ExchangeEntry { source_worker: worker_id, entry }),
         );
     }
 
@@ -62,21 +47,21 @@ impl InvariantCorpusExchange {
             return (Vec::new(), last_seen_epoch);
         }
 
-        let _visibility = self.visibility.lock().expect("invariant corpus exchange lock poisoned");
-        let mut candidates = Vec::new();
-        for (source_worker, outbox) in self.outboxes.iter().enumerate() {
-            if source_worker == worker_id as usize {
+        let exchange_entries = self.entries.lock().expect("invariant corpus exchange poisoned");
+        let mut entries = Vec::new();
+        let mut newest_epoch = last_seen_epoch;
+        for (idx, entry) in exchange_entries.iter().enumerate().skip(last_seen_epoch as usize) {
+            newest_epoch = idx as u64 + 1;
+            if entry.source_worker == worker_id {
                 continue;
             }
-            let outbox = outbox.lock().expect("invariant corpus exchange lock poisoned");
-            candidates.extend(outbox.iter().filter(|entry| entry.epoch > last_seen_epoch).cloned());
+
+            entries.push(entry.entry.clone());
+            if entries.len() == limit {
+                break;
+            }
         }
-
-        candidates.sort_by_key(|entry| entry.epoch);
-        candidates.truncate(limit);
-
-        let newest_epoch = candidates.last().map_or(last_seen_epoch, |entry| entry.epoch);
-        (candidates.into_iter().map(|entry| entry.entry).collect(), newest_epoch)
+        (entries, newest_epoch)
     }
 }
 
@@ -141,7 +126,7 @@ mod tests {
 
     #[test]
     fn exchange_imports_from_other_workers_in_epoch_order() {
-        let exchange = InvariantCorpusExchange::new(3);
+        let exchange = InvariantCorpusExchange::new();
         exchange.publish(1, vec![entry(1)]);
         exchange.publish(2, vec![entry(2)]);
 
@@ -156,11 +141,26 @@ mod tests {
 
     #[test]
     fn exchange_does_not_import_own_entries() {
-        let exchange = InvariantCorpusExchange::new(2);
+        let exchange = InvariantCorpusExchange::new();
         exchange.publish(0, vec![entry(1)]);
         let (entries, epoch) = exchange.import_since(0, 0, 8);
         assert!(entries.is_empty());
-        assert_eq!(epoch, 0);
+        assert_eq!(epoch, 1);
+    }
+
+    #[test]
+    fn exchange_advances_past_own_entries() {
+        let exchange = InvariantCorpusExchange::new();
+        exchange.publish(0, vec![entry(1), entry(2)]);
+
+        let (entries, epoch) = exchange.import_since(0, 0, 8);
+        assert!(entries.is_empty());
+        assert_eq!(epoch, 2);
+
+        exchange.publish(1, vec![entry(3)]);
+        let (entries, epoch) = exchange.import_since(0, epoch, 8);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(epoch, 3);
     }
 
     #[test]
