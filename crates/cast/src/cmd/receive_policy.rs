@@ -20,6 +20,7 @@ use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{
     IReceivePolicyGuard, ITIP403Registry, RECEIVE_POLICY_GUARD_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
+use tempo_primitives::TempoAddressExt;
 
 /// Account-level receive policy operations (Tempo).
 #[derive(Debug, Parser, Clone)]
@@ -333,11 +334,7 @@ fn decode_receipt(receipt: Bytes) -> Result<()> {
     let payload = receipt_payload(&receipt, &decoded, None);
     print_payload(payload, |payload| {
         print_decoded_receipt(payload)?;
-        sh_println!(
-            "\nClaim path: cast receive-policy claim {} {}",
-            payload["recipient"].as_str().unwrap_or_default(),
-            payload["receipt"].as_str().unwrap_or_default(),
-        )
+        print_claim_hint(payload)
     })
 }
 
@@ -473,6 +470,12 @@ fn receipt_payload(
         "recovery_mode": recovery_mode(decoded.recoveryAuthority),
         "originator": format!("{}", decoded.originator),
         "recipient": format!("{}", decoded.recipient),
+        "recipient_is_virtual": decoded.recipient.is_virtual(),
+        "claim_target": if decoded.recipient.is_virtual() {
+            Value::Null
+        } else {
+            json!(format!("{}", decoded.recipient))
+        },
         "blocked_at": decoded.blockedAt,
         "blocked_nonce": decoded.blockedNonce,
         "blocked_reason": blocked_reason_u8(decoded.blockedReason),
@@ -513,6 +516,18 @@ fn print_decoded_receipt(payload: &Value) -> Result<()> {
         payload["memo"].as_str().unwrap_or_default(),
         payload["delivery_state"].as_str().unwrap_or_default(),
     )
+}
+
+fn print_claim_hint(payload: &Value) -> Result<()> {
+    let recipient = payload["recipient"].as_str().unwrap_or_default();
+    let receipt = payload["receipt"].as_str().unwrap_or_default();
+    if payload["recipient_is_virtual"].as_bool().unwrap_or_default() {
+        sh_println!(
+            "\nClaim target: recipient is a virtual address; resolve it first with:\n  cast vaddr resolve {recipient}\nThen claim to the registered master address:\n  cast receive-policy claim <master-address> {receipt}"
+        )
+    } else {
+        sh_println!("\nClaim path: cast receive-policy claim {recipient} {receipt}")
+    }
 }
 
 fn print_payload<F>(payload: Value, human: F) -> Result<()>
@@ -570,6 +585,7 @@ const fn inbound_kind(kind: IReceivePolicyGuard::InboundKind) -> &'static str {
 mod tests {
     use super::*;
     use alloy_primitives::{address, b256};
+    use tempo_primitives::{MasterId, UserTag};
 
     fn sample_receipt() -> Bytes {
         IReceivePolicyGuard::ClaimReceiptV1::new(
@@ -645,10 +661,27 @@ mod tests {
         assert_eq!(held["blocked_reason"], "receive_policy");
         assert_eq!(held["kind"], "transfer");
         assert_eq!(held["held_balance"], "1");
+        assert_eq!(held["recipient_is_virtual"], false);
+        assert_eq!(held["claim_target"], format!("{}", decoded.recipient));
 
         let not_held = receipt_payload(&receipt, &decoded, Some(U256::ZERO));
         assert_eq!(not_held["delivery_state"], "not_held");
         assert_eq!(not_held["held_balance"], "0");
+    }
+
+    #[test]
+    fn virtual_receipt_recipient_requires_resolved_claim_target() {
+        let receipt = sample_receipt();
+        let mut decoded = decode_claim_receipt(&receipt).unwrap();
+        decoded.recipient = Address::new_virtual(
+            MasterId::from([0x12, 0x34, 0x56, 0x78]),
+            UserTag::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]),
+        );
+
+        let payload = receipt_payload(&receipt, &decoded, None);
+        assert_eq!(payload["recipient"], format!("{}", decoded.recipient));
+        assert_eq!(payload["recipient_is_virtual"], true);
+        assert_eq!(payload["claim_target"], Value::Null);
     }
 
     #[test]
