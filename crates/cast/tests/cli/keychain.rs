@@ -507,6 +507,92 @@ casttest!(keychain_authorize_admin_rejects_limits, async |_prj, cmd| {
     assert!(stderr.contains("spending limits"), "unexpected stderr:\n{stderr}");
 });
 
+// An access-key signer is rejected for admin-gated keychain mutators even when it is an active
+// admin key, because submitting the mutator as access-key-signed calldata reverts on-chain with
+// `UnauthorizedCaller()` on the pinned Tempo build.
+casttest!(keychain_access_key_cannot_submit_admin_mutator, async |_prj, cmd| {
+    use tempo_chainspec::hardfork::TempoHardfork;
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+
+    // Root ADDR1 (PK1) authorizes ADDR2 (PK2) as an admin key.
+    cmd.cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR2,
+            "--admin",
+            "--private-key",
+            accounts::PK1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    // ADDR2 is an active admin key, but the access-key mutator is still rejected locally.
+    let stderr = cmd
+        .cast_fuse()
+        .args([
+            "keychain",
+            "authorize",
+            accounts::ADDR3,
+            "--tempo.access-key",
+            accounts::PK2,
+            "--tempo.root-account",
+            accounts::ADDR1,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("currently reverts on-chain with UnauthorizedCaller()"),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
+// Offline (T6): an admin access key signing a child authorization binds the authorization to the
+// root account it manages, not to the signing admin key. This covers the delegated admin-signing
+// path in `run_key_auth_sign`.
+casttest!(key_authorization_sign_admin_access_key_binds_root_account, |_prj, cmd| {
+    let output = cmd
+        .args([
+            "key-authorization",
+            "sign",
+            accounts::ADDR3, // the child key being authorized
+            "--chain-id",
+            "31337",
+            "--admin",
+            "--tempo.access-key",
+            accounts::PK2, // admin key ADDR2 signs
+            "--tempo.root-account",
+            accounts::ADDR1, // on behalf of root ADDR1
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast key-authorization sign --json should emit valid JSON");
+    assert_eq!(parsed["is_admin"], serde_json::Value::Bool(true), "got: {output}");
+    // The signer is the admin key (ADDR2)...
+    assert_eq!(
+        parsed["signer"].as_str().map(str::to_lowercase),
+        Some(accounts::ADDR2.to_lowercase()),
+        "got: {output}"
+    );
+    // ...but the bound account is the root account being modified (ADDR1), not the signer.
+    assert_eq!(
+        parsed["account"].as_str().map(str::to_lowercase),
+        Some(accounts::ADDR1.to_lowercase()),
+        "got: {output}"
+    );
+});
+
 casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
     let output = cmd
         .args([

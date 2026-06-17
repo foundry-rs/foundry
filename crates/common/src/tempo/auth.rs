@@ -366,6 +366,15 @@ mod tests {
         Address::from_public_key(&vk)
     }
 
+    /// Shape of the `keyAuthorization` the mock `/poll` returns.
+    #[derive(Clone, Copy, Default)]
+    struct MockAuthShape {
+        /// Return a T6 admin key authorization.
+        admin: bool,
+        /// Bind the authorization to this account.
+        account: Option<Address>,
+    }
+
     #[derive(Clone)]
     struct MockState {
         wallet: Arc<Mutex<Option<Address>>>,
@@ -374,6 +383,8 @@ mod tests {
         key_id: Arc<Mutex<Option<Address>>>,
         /// Chain ID the mock `/poll` returns in `keyAuthorization`.
         poll_chain_id: u64,
+        /// Shape of the returned authorization, for exercising rejection paths.
+        shape: MockAuthShape,
     }
 
     async fn create_code_handler(
@@ -400,11 +411,25 @@ mod tests {
 
     /// Build the RLP-hex `SignedKeyAuthorization` blob the live server returns
     /// in the `key_authorization` field.
-    fn signed_key_auth_hex(chain_id: u64, key_id: Address, expiry: u64) -> String {
+    fn signed_key_auth_hex(
+        chain_id: u64,
+        key_id: Address,
+        expiry: u64,
+        shape: MockAuthShape,
+    ) -> String {
         use alloy_rlp::Encodable;
         use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
-        let auth = KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, key_id)
-            .with_expiry(expiry);
+        let mut auth = KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, key_id);
+        if shape.admin {
+            // An admin authorization carries no expiry; bind it to its account (or zero, which the
+            // `is_admin` check rejects before the account is even inspected).
+            auth = auth.into_admin(shape.account.unwrap_or(Address::ZERO));
+        } else {
+            auth = auth.with_expiry(expiry);
+            if let Some(account) = shape.account {
+                auth = auth.with_account(account);
+            }
+        }
         let sig: PrimitiveSignature = serde_json::from_value(serde_json::json!({
             "type": "secp256k1", "r": "0x0", "s": "0x0", "yParity": 0
         }))
@@ -421,12 +446,21 @@ mod tests {
         Json(serde_json::json!({
             "status": "authorized",
             "account_address": wallet,
-            "key_authorization": signed_key_auth_hex(state.poll_chain_id, key_id, 9_999_999_999),
+            "key_authorization":
+                signed_key_auth_hex(state.poll_chain_id, key_id, 9_999_999_999, state.shape),
         }))
     }
 
     /// Spawn a mock wallet.tempo server whose `/poll` echoes `poll_chain_id`.
     async fn spawn_mock_wallet(poll_chain_id: u64) -> (String, tokio::task::JoinHandle<()>) {
+        spawn_mock_wallet_with(poll_chain_id, MockAuthShape::default()).await
+    }
+
+    /// Spawn a mock wallet.tempo server with a custom authorization shape.
+    async fn spawn_mock_wallet_with(
+        poll_chain_id: u64,
+        shape: MockAuthShape,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         let app = Router::new()
             .route("/code", post(create_code_handler))
             .route("/poll/{code}", post(poll_handler))
@@ -434,6 +468,7 @@ mod tests {
                 wallet: Arc::default(),
                 key_id: Arc::default(),
                 poll_chain_id,
+                shape,
             });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -501,6 +536,60 @@ mod tests {
             "expected chain mismatch error, got: {err}"
         );
         assert!(read_tempo_keys_file().is_none_or(|f| f.keys.is_empty()));
+
+        server.abort();
+        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ensure_access_key_rejects_admin_authorization() {
+        // An admin key authorization from the wallet must be rejected before keys.toml is written.
+        let _g = test_env_mutex().lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
+
+        // Bind the admin auth to the mock wallet account (0x..42) so it is rejected purely for
+        // being an admin key, not for an account mismatch.
+        let account: Address = "0x0000000000000000000000000000000000000042".parse().unwrap();
+        let shape = MockAuthShape { admin: true, account: Some(account) };
+        let (service_url, server) = spawn_mock_wallet_with(4217, shape).await;
+
+        let err = ensure_access_key(test_cfg(service_url)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("admin key authorization"),
+            "expected admin-key rejection, got: {err}"
+        );
+        assert!(
+            read_tempo_keys_file().is_none_or(|f| f.keys.is_empty()),
+            "an admin authorization must not be persisted to keys.toml"
+        );
+
+        server.abort();
+        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ensure_access_key_rejects_cross_account_binding() {
+        // An authorization bound to an account other than the authorizing one must be rejected
+        // before keys.toml is written.
+        let _g = test_env_mutex().lock().await;
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
+
+        // The mock authorizes account 0x..42 but binds the authorization to 0x..dead.
+        let other: Address = "0x000000000000000000000000000000000000dead".parse().unwrap();
+        let shape = MockAuthShape { admin: false, account: Some(other) };
+        let (service_url, server) = spawn_mock_wallet_with(4217, shape).await;
+
+        let err = ensure_access_key(test_cfg(service_url)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("wallet authorized account"),
+            "expected cross-account rejection, got: {err}"
+        );
+        assert!(
+            read_tempo_keys_file().is_none_or(|f| f.keys.is_empty()),
+            "a cross-account authorization must not be persisted to keys.toml"
+        );
 
         server.abort();
         unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
