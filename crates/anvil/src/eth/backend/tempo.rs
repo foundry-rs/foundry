@@ -46,6 +46,7 @@ pub struct AnvilStorageProvider<'a> {
     gas_used: u64,
     gas_refunded: i64,
     reservoir: u64,
+    tip1060_storage_credits_enabled: bool,
     transient: HashMap<(Address, U256), U256>,
     hardfork: TempoHardfork,
 }
@@ -66,6 +67,7 @@ impl<'a> AnvilStorageProvider<'a> {
             gas_used: 0,
             gas_refunded: 0,
             reservoir: 0,
+            tip1060_storage_credits_enabled: hardfork.is_t7(),
             transient: HashMap::new(),
             hardfork,
         }
@@ -204,6 +206,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
 
     fn amsterdam_eip8037_enabled(&self) -> bool {
         false
+    }
+
+    fn set_tip1060_storage_credits(&mut self, enabled: bool) {
+        self.tip1060_storage_credits_enabled = enabled && self.hardfork.is_t7();
     }
 }
 
