@@ -14,7 +14,7 @@ use alloy_sol_types::SolValue;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 
 use super::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS, TempoSponsor,
     known_fee_token_symbol, resolve_and_set_fee_token, resolve_fee_token, resolve_fee_token_symbol,
 };
 
@@ -349,6 +349,57 @@ async fn send_fee_token_resolution_can_skip_lookup_for_curl_mode() -> eyre::Resu
     );
     assert_eq!(tx.fee_token, Some(DEFAULT_FEE_TOKEN));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn sponsor_fee_token_resolution_uses_sponsor_address() -> eyre::Result<()> {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
+    let sponsor = TempoSponsor::new(Address::repeat_byte(0x22), None, None);
+    let sender = Address::repeat_byte(0x11);
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest::default().with_from(sender),
+        ..Default::default()
+    };
+
+    asserter.push_success(&BETA_USD_ADDRESS.abi_encode());
+
+    assert_eq!(
+        sponsor
+            .resolve_and_set_fee_token::<TempoNetwork>(
+                Some(&provider),
+                Some(Chain::from_named(NamedChain::Tempo)),
+                &mut tx,
+            )
+            .await?,
+        Some(BETA_USD_ADDRESS)
+    );
+    assert_eq!(tx.fee_token, Some(BETA_USD_ADDRESS));
+    Ok(())
+}
+
+#[tokio::test]
+async fn sponsor_fee_token_resolution_preserves_explicit_token() -> eyre::Result<()> {
+    let asserter = Asserter::new();
+    let provider =
+        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter);
+    let explicit = Address::repeat_byte(0x42);
+    let sponsor = TempoSponsor::new(Address::repeat_byte(0x22), None, None);
+    let mut tx = TempoTransactionRequest { fee_token: Some(explicit), ..Default::default() };
+
+    assert_eq!(
+        sponsor
+            .resolve_and_set_fee_token::<TempoNetwork>(
+                Some(&provider),
+                Some(Chain::from_named(NamedChain::Tempo)),
+                &mut tx,
+            )
+            .await?,
+        Some(explicit)
+    );
+    assert_eq!(tx.fee_token, Some(explicit));
     Ok(())
 }
 

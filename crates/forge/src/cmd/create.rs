@@ -575,6 +575,13 @@ impl CreateArgs {
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
         if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    resolve_unknown_fee_token_symbol.then_some(&provider),
+                    Some(chain),
+                    &mut deployer.tx,
+                )
+                .await?;
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         } else {
             resolve_and_set_fee_token(

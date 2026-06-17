@@ -105,6 +105,7 @@ impl MakeTxArgs {
             self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
+        let sponsor_fee_payer = tx.tempo.sponsor;
         let expires_at = tx.tempo.resolve_expires();
         let tempo_sponsor =
             if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
@@ -148,7 +149,16 @@ impl MakeTxArgs {
             // sponsor hash commits to the sender.
             let signer = eth.wallet.signer().await?;
             let from = signer.address();
-            let (tx, _) = tx_builder.build(from).await?;
+            let (mut tx, _) = tx_builder.build(from).await?;
+            if let Some(fee_payer) = sponsor_fee_payer {
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(fee_payer),
+                )
+                .await?;
+            }
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")
             })?;
@@ -181,6 +191,13 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx, from).await?;
             } else {
                 resolve_and_set_fee_token(
@@ -210,6 +227,13 @@ impl MakeTxArgs {
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
             } else {
                 resolve_and_set_fee_token(
@@ -243,6 +267,13 @@ impl MakeTxArgs {
         let (mut tx, _) = tx_builder.build(&signer).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                )
+                .await?;
             sponsor.attach_and_print::<N>(&mut tx, from).await?;
         } else {
             resolve_and_set_fee_token(

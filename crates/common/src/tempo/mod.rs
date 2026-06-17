@@ -234,6 +234,23 @@ impl TempoSponsor {
         self.sponsor
     }
 
+    /// Resolves the fee token paid by this sponsor and applies it to the transaction request.
+    ///
+    /// This must happen before computing a sponsor digest, because Tempo sponsor signatures commit
+    /// to the fee token.
+    pub async fn resolve_and_set_fee_token<N>(
+        &self,
+        provider: Option<&dyn Provider<N>>,
+        chain: Option<Chain>,
+        tx: &mut N::TransactionRequest,
+    ) -> Result<Option<Address>>
+    where
+        N: Network,
+        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    {
+        resolve_and_set_fee_token(provider, chain, tx, Some(self.sponsor)).await
+    }
+
     pub async fn attach_and_print<N: Network>(
         &self,
         tx: &mut N::TransactionRequest,

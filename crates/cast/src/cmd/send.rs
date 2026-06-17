@@ -142,6 +142,7 @@ impl SendTxArgs {
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_url = tx.tempo.sponsor_url.clone();
+        let sponsor_fee_payer = tx.tempo.sponsor;
         let expires_at = tx.tempo.resolve_expires();
         let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
             None
@@ -242,7 +243,8 @@ impl SendTxArgs {
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
-            let (tx, from) = if let Some(ref ak) = access_key {
+            let chain = builder.chain();
+            let (mut tx, from) = if let Some(ref ak) = access_key {
                 let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
                 (tx, ak.wallet_address)
             } else {
@@ -255,6 +257,15 @@ impl SendTxArgs {
                 let (tx, _) = builder.build(from).await?;
                 (tx, from)
             };
+            if let Some(fee_payer) = sponsor_fee_payer {
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(fee_payer),
+                )
+                .await?;
+            }
             let hash = tx
                 .compute_sponsor_hash(from)
                 .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
@@ -317,6 +328,13 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, config.sender).await?;
             }
 
@@ -352,6 +370,13 @@ impl SendTxArgs {
                 tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
             } else {
                 resolve_and_set_fee_token(
@@ -390,6 +415,13 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
             }
             cast_send_with_access_key(
@@ -469,6 +501,13 @@ impl SendTxArgs {
             )?;
 
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
             }
 

@@ -175,7 +175,9 @@ where
             .await?;
         }
 
-        if tempo_sponsor.is_none() {
+        if let Some(sponsor) = tempo_sponsor {
+            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+        } else {
             resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?;
         }
 
@@ -1250,14 +1252,21 @@ impl BundledState<TempoEvmNetwork> {
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
-        if tempo_sponsor.is_none()
-            && let Some(fee_token) = resolve_fee_token(
-                provider.as_ref(),
-                Some(Chain::from_named(NamedChain::Tempo)),
-                Some(&batch_tx),
-                Some(sender),
-            )
-            .await?
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    Some(provider.as_ref()),
+                    Some(Chain::from_named(NamedChain::Tempo)),
+                    &mut batch_tx,
+                )
+                .await?;
+        } else if let Some(fee_token) = resolve_fee_token(
+            provider.as_ref(),
+            Some(Chain::from_named(NamedChain::Tempo)),
+            Some(&batch_tx),
+            Some(sender),
+        )
+        .await?
         {
             batch_tx.set_fee_token(fee_token);
         }

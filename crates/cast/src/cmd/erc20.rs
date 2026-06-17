@@ -389,6 +389,7 @@ impl Erc20Subcommand {
                     (pre_resolved_signer, tempo_keychain)
                 };
                 let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+                let sponsor_fee_payer = tx_opts.tempo.sponsor;
                 let expires_at = tx_opts.tempo.resolve_expires();
                 let tempo_sponsor =
                     if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
@@ -412,6 +413,15 @@ impl Erc20Subcommand {
                         .await?;
                     if needs_sponsor_payload {
                         if print_sponsor_hash {
+                            if let Some(fee_payer) = sponsor_fee_payer {
+                                resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                    Some(fee_payer),
+                                )
+                                .await?;
+                            }
                             let hash = tx
                                 .compute_sponsor_hash(access_key.wallet_address)
                                 .ok_or_else(|| {
@@ -423,6 +433,13 @@ impl Erc20Subcommand {
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
+                            sponsor
+                                .resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                )
+                                .await?;
                             sponsor
                                 .attach_and_print::<TempoNetwork>(
                                     &mut tx,
@@ -455,6 +472,15 @@ impl Erc20Subcommand {
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
                     fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
                     if print_sponsor_hash {
+                        if let Some(fee_payer) = sponsor_fee_payer {
+                            resolve_and_set_fee_token(
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                                Some(fee_payer),
+                            )
+                            .await?;
+                        }
                         let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
                             eyre::eyre!("This network does not support sponsored transactions")
                         })?;
@@ -462,6 +488,13 @@ impl Erc20Subcommand {
                         return Ok(());
                     }
                     if let Some(sponsor) = &tempo_sponsor {
+                        sponsor
+                            .resolve_and_set_fee_token(
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                            )
+                            .await?;
                         sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
                     } else {
                         resolve_and_set_fee_token(
@@ -499,6 +532,15 @@ impl Erc20Subcommand {
                     if needs_sponsor_payload {
                         fill_tx(&$provider, &mut tx, from, chain, false).await?;
                         if print_sponsor_hash {
+                            if let Some(fee_payer) = sponsor_fee_payer {
+                                resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                    Some(fee_payer),
+                                )
+                                .await?;
+                            }
                             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                                 eyre::eyre!("This network does not support sponsored transactions")
                             })?;
@@ -506,6 +548,13 @@ impl Erc20Subcommand {
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
+                            sponsor
+                                .resolve_and_set_fee_token(
+                                    (!config.eth_rpc_curl).then_some(&$provider),
+                                    Some(chain),
+                                    &mut tx,
+                                )
+                                .await?;
                             sponsor.attach_and_print::<N>(&mut tx, from).await?;
                         }
                     }
