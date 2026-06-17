@@ -139,7 +139,7 @@ impl Default for InvariantCorpusSyncConfig {
     fn default() -> Self {
         Self {
             mode: InvariantCorpusSyncMode::Plateau,
-            plateau_runs: 10_000,
+            plateau_runs: 3_000,
             plateau_seconds: None,
             max_imports_per_sync: 64,
         }
