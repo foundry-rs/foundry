@@ -974,6 +974,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         'stop: while should_continue_invariant_worker(campaign_state, runs, plan) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
+            let mut sync_imported_new_coverage = false;
             let mut stop_after_run = false;
 
             if let Some(sync) = &mut corpus_sync {
@@ -994,6 +995,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         imported,
                         "imported campaign-local corpus entries"
                     );
+                    sync_imported_new_coverage = imported > 0;
                 }
             }
 
@@ -1320,7 +1322,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
-            let run_found_new_coverage = current_run.new_coverage;
+            let run_found_new_coverage = current_run.new_coverage || sync_imported_new_coverage;
             current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
             if let Some(sync) = &mut corpus_sync {
