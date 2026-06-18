@@ -103,15 +103,18 @@ cargo run -p foundry-bench --bin foundry-scfuzzbench -- \
 By default the runner pins `https://github.com/tempoxyz/scfuzzbench.git@main`. Override that with
 `--scfuzzbench-repo` and `--scfuzzbench-ref` while the scfuzzbench changes are being upstreamed.
 Use `--foundry-bin` to benchmark an existing `forge`, `--foundry-ref` to build and benchmark a
-Foundry ref, or neither to use `forge` from `PATH`. The runner uses an isolated `HOME` so a selected
-`--foundry-bin` is not shadowed by `~/.foundry/bin`. `--foundry-bin` must point to a file named
-`forge`; the runner resolves `command -v forge` under the same campaign environment, verifies it is
-the selected binary, and records the canonical path in `manifest.json`.
+Foundry ref from `--foundry-repo` (default `https://github.com/foundry-rs/foundry.git`), or neither
+to use `forge` from `PATH`. The runner uses an isolated `HOME` so a selected `--foundry-bin` is not
+shadowed by `~/.foundry/bin`. `--foundry-bin` must point to a file named `forge`; the runner resolves
+`command -v forge` under the same campaign environment, verifies it is the selected binary, and
+records the canonical path in `manifest.json`.
 
 Optimization campaigns require `--properties-path`, which is passed to scfuzzbench as
-`SCFUZZBENCH_PROPERTIES_PATH`. If GNU `timeout` is unavailable, the runner installs a local
-`timeout` shim in the work directory and prepends it to the campaign `PATH`. On platforms where
-`date -Is` is unavailable, it also installs a local `date` shim for scfuzzbench log timestamps.
+`SCFUZZBENCH_PROPERTIES_PATH` and must be relative to the target repository. If GNU `timeout` is
+unavailable, the runner installs a local `timeout` shim in the work directory and prepends it to the
+campaign `PATH`. On platforms where `date -Is` is unavailable, it also installs a local `date` shim
+for scfuzzbench log timestamps. If `local-run.sh` exits non-zero, the runner stops before analysis so
+a failed setup or campaign cannot be reported as a successful artifact bundle.
 
 The artifact bundle exposes:
 
@@ -123,8 +126,8 @@ The artifact bundle exposes:
 - `differential_coverage_relcov.csv`
 - runner resource and broken invariant reports
 - optional `lcov-diff/` outputs when scfuzzbench produces coverage-diff files
-- `llm_summary.md` and `manifest.json`, including the selected canonical `forge` path and optional
-  `properties_path`
+- `llm_summary.md` and `manifest.json`, including the selected canonical `forge` path, optional
+  Foundry repo/ref metadata, and optional `properties_path`
 
 #### Command-line Options
 

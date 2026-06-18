@@ -5,25 +5,33 @@ use eyre::{Context, Result};
 use foundry_common::sh_println;
 use once_cell::sync::Lazy;
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+#[cfg(unix)]
+use std::time::Duration;
 use std::{
     collections::HashSet,
     env,
     ffi::{OsStr, OsString},
-    fs, io,
-    os::unix::{fs::PermissionsExt, process::CommandExt},
+    fs,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
     sync::Mutex,
-    thread,
-    time::Duration,
 };
 
 const DEFAULT_SCFUZZBENCH_REPO: &str = "https://github.com/tempoxyz/scfuzzbench.git";
 const DEFAULT_SCFUZZBENCH_REF: &str = "main";
+const DEFAULT_FOUNDRY_REPO: &str = "https://github.com/foundry-rs/foundry.git";
 const OUTPUT_MARKER: &str = ".foundry-scfuzzbench-output";
+#[cfg(unix)]
 const PROCESS_GROUP_GRACE: Duration = Duration::from_secs(2);
 
-static ACTIVE_PROCESS_GROUPS: Lazy<Mutex<HashSet<libc::pid_t>>> =
+#[cfg(unix)]
+type ProcessGroupId = libc::pid_t;
+#[cfg(not(unix))]
+type ProcessGroupId = u32;
+
+static ACTIVE_PROCESS_GROUPS: Lazy<Mutex<HashSet<ProcessGroupId>>> =
     Lazy::new(|| Mutex::new(HashSet::new()));
 
 const REQUIRED_DATA_ARTIFACTS: &[&str] = &[
@@ -93,11 +101,16 @@ struct Cli {
     #[clap(long, conflicts_with = "foundry_bin")]
     foundry_ref: Option<String>,
 
+    /// Foundry repository to clone when --foundry-ref is used.
+    #[clap(long, default_value = DEFAULT_FOUNDRY_REPO)]
+    foundry_repo: String,
+
     /// Extra arguments passed to scfuzzbench as --foundry-test-args.
     #[clap(long)]
     foundry_test_args: Option<String>,
 
-    /// Properties path passed as SCFUZZBENCH_PROPERTIES_PATH. Required for optimization mode.
+    /// Target-repository-relative properties path passed as SCFUZZBENCH_PROPERTIES_PATH.
+    /// Required for optimization mode.
     #[clap(long)]
     properties_path: Option<PathBuf>,
 
@@ -196,6 +209,7 @@ struct FoundrySelection {
     mode: &'static str,
     label: String,
     bin: PathBuf,
+    repo: Option<String>,
     ref_name: Option<String>,
     commit: Option<String>,
     version_output: String,
@@ -211,6 +225,7 @@ struct RunMetadata<'a> {
 
 fn main() -> Result<()> {
     color_eyre::install()?;
+    ensure_supported_platform()?;
     install_termination_handler()?;
     let cli = Cli::parse();
 
@@ -237,6 +252,7 @@ fn main() -> Result<()> {
     let run_id = format!("foundry-scfuzzbench-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"));
     let campaign_status = run_campaign(&cli, &dirs, &foundry, &target_commit, &run_id)
         .wrap_err("failed to run scfuzzbench campaign")?;
+    ensure_campaign_success(&campaign_status)?;
 
     validate_campaign_logs(&dirs)?;
 
@@ -268,9 +284,45 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn ensure_supported_platform() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_supported_platform() -> Result<()> {
+    eyre::bail!("foundry-scfuzzbench requires a Unix-like platform with bash process groups");
+}
+
+fn ensure_campaign_success(status: &ExitStatus) -> Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+    eyre::bail!(
+        "scfuzzbench campaign failed ({status}); refusing to analyze incomplete campaign logs"
+    );
+}
+
 fn validate_options(cli: &Cli) -> Result<()> {
     if matches!(cli.benchmark_type, BenchmarkType::Optimization) && cli.properties_path.is_none() {
         eyre::bail!("--properties-path is required for --benchmark-type optimization");
+    }
+    if let Some(properties_path) = &cli.properties_path {
+        if properties_path.is_absolute() {
+            eyre::bail!(
+                "--properties-path must be relative to the target repository: {}",
+                properties_path.display()
+            );
+        }
+        if properties_path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            eyre::bail!(
+                "--properties-path must not escape the target repository: {}",
+                properties_path.display()
+            );
+        }
     }
     Ok(())
 }
@@ -334,6 +386,23 @@ fn command_exists(name: &str) -> Result<bool> {
     Ok(status.success())
 }
 
+fn make_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)
+            .wrap_err_with(|| format!("failed to chmod {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 fn install_termination_handler() -> Result<()> {
     ctrlc::set_handler(|| {
         terminate_active_process_groups();
@@ -365,10 +434,7 @@ exec /bin/date "$@"
 "#;
 
     fs::write(&shim, content).wrap_err_with(|| format!("failed to write {}", shim.display()))?;
-    let mut permissions = fs::metadata(&shim)?.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&shim, permissions)
-        .wrap_err_with(|| format!("failed to chmod {}", shim.display()))?;
+    make_executable(&shim)?;
     Ok(())
 }
 
@@ -460,10 +526,7 @@ if __name__ == "__main__":
     };
 
     fs::write(&shim, content).wrap_err_with(|| format!("failed to write {}", shim.display()))?;
-    let mut permissions = fs::metadata(&shim)?.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&shim, permissions)
-        .wrap_err_with(|| format!("failed to chmod {}", shim.display()))?;
+    make_executable(&shim)?;
     Ok(())
 }
 
@@ -519,6 +582,7 @@ fn select_foundry(cli: &Cli, dirs: &Dirs) -> Result<FoundrySelection> {
             mode: "bin",
             label: "foundry-bin".to_string(),
             bin,
+            repo: None,
             ref_name: None,
             commit: None,
             version_output,
@@ -527,12 +591,8 @@ fn select_foundry(cli: &Cli, dirs: &Dirs) -> Result<FoundrySelection> {
     }
 
     if let Some(foundry_ref) = &cli.foundry_ref {
-        let mut rev_parse = Command::new("git");
-        rev_parse.args(["rev-parse", "--show-toplevel"]);
-        let current_repo = output_text(&mut rev_parse)?;
-        let current_repo = current_repo.trim();
         let foundry_checkout = dirs.work.join("foundry");
-        let foundry_commit = clone_at(current_repo, foundry_ref, &foundry_checkout)?;
+        let foundry_commit = clone_at(&cli.foundry_repo, foundry_ref, &foundry_checkout)?;
 
         let mut build = Command::new("cargo");
         build.current_dir(&foundry_checkout).args([
@@ -562,6 +622,7 @@ fn select_foundry(cli: &Cli, dirs: &Dirs) -> Result<FoundrySelection> {
             mode: "ref",
             label,
             bin: bin.canonicalize().unwrap_or(bin),
+            repo: Some(cli.foundry_repo.clone()),
             ref_name: Some(foundry_ref.clone()),
             commit: Some(foundry_commit),
             version_output,
@@ -583,6 +644,7 @@ fn select_foundry(cli: &Cli, dirs: &Dirs) -> Result<FoundrySelection> {
         mode: "path",
         label: "foundry-path".to_string(),
         bin,
+        repo: None,
         ref_name: None,
         commit: None,
         version_output,
@@ -663,9 +725,6 @@ fn run_campaign(
         command.args(["--foundry-test-args", foundry_test_args]);
     }
     if let Some(properties_path) = &cli.properties_path {
-        let properties_path = properties_path
-            .canonicalize()
-            .wrap_err_with(|| format!("failed to canonicalize {}", properties_path.display()))?;
         command.env("SCFUZZBENCH_PROPERTIES_PATH", properties_path);
     }
 
@@ -945,6 +1004,7 @@ fn write_manifest(
             "mode": foundry.mode,
             "label": &foundry.label,
             "bin": foundry.bin.display().to_string(),
+            "repo": foundry.repo.as_deref(),
             "ref": foundry.ref_name.as_deref(),
             "commit": foundry.commit.as_deref(),
             "version_output": foundry.version_output.trim(),
@@ -1074,19 +1134,27 @@ fn guarded_output(command: &mut Command, display: &str) -> Result<Output> {
 }
 
 fn spawn_guarded(command: &mut Command, display: &str) -> Result<(Child, ActiveProcessGroup)> {
-    command.process_group(0);
+    configure_process_group(command);
     let child = command.spawn().wrap_err_with(|| format!("failed to execute {display}"))?;
-    let guard = ActiveProcessGroup::new(child.id() as libc::pid_t);
+    let guard = ActiveProcessGroup::new(child.id() as ProcessGroupId);
     Ok((child, guard))
 }
 
+#[cfg(unix)]
+fn configure_process_group(command: &mut Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_command: &mut Command) {}
+
 struct ActiveProcessGroup {
-    pgid: libc::pid_t,
+    pgid: ProcessGroupId,
     finished: bool,
 }
 
 impl ActiveProcessGroup {
-    fn new(pgid: libc::pid_t) -> Self {
+    fn new(pgid: ProcessGroupId) -> Self {
         ACTIVE_PROCESS_GROUPS.lock().expect("active process group lock poisoned").insert(pgid);
         Self { pgid, finished: false }
     }
@@ -1107,7 +1175,7 @@ impl Drop for ActiveProcessGroup {
     }
 }
 
-fn unregister_active_process_group(pgid: libc::pid_t) {
+fn unregister_active_process_group(pgid: ProcessGroupId) {
     ACTIVE_PROCESS_GROUPS.lock().expect("active process group lock poisoned").remove(&pgid);
 }
 
@@ -1123,20 +1191,25 @@ fn terminate_active_process_groups() {
     }
 }
 
-fn terminate_process_group(pgid: libc::pid_t) {
+#[cfg(unix)]
+fn terminate_process_group(pgid: ProcessGroupId) {
     if matches!(signal_process_group(pgid, libc::SIGINT), Ok(true)) {
-        thread::sleep(PROCESS_GROUP_GRACE);
+        std::thread::sleep(PROCESS_GROUP_GRACE);
         let _ = signal_process_group(pgid, libc::SIGKILL);
     }
 }
 
-fn signal_process_group(pgid: libc::pid_t, signal: libc::c_int) -> io::Result<bool> {
+#[cfg(not(unix))]
+fn terminate_process_group(_pgid: ProcessGroupId) {}
+
+#[cfg(unix)]
+fn signal_process_group(pgid: ProcessGroupId, signal: libc::c_int) -> std::io::Result<bool> {
     // SAFETY: negative pid targets the process group created for the child process.
     let rc = unsafe { libc::kill(-pgid, signal) };
     if rc == 0 {
         Ok(true)
     } else {
-        let err = io::Error::last_os_error();
+        let err = std::io::Error::last_os_error();
         if err.raw_os_error() == Some(libc::ESRCH) { Ok(false) } else { Err(err) }
     }
 }
@@ -1295,4 +1368,61 @@ fn sanitize_label(value: &str) -> String {
         .collect::<String>()
         .trim_matches('-')
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_cli() -> Cli {
+        Cli {
+            scfuzzbench_repo: DEFAULT_SCFUZZBENCH_REPO.to_string(),
+            scfuzzbench_ref: DEFAULT_SCFUZZBENCH_REF.to_string(),
+            target_repo: "https://github.com/example/target.git".to_string(),
+            target_ref: "main".to_string(),
+            benchmark_type: BenchmarkType::Property,
+            timeout_seconds: 60,
+            workers: None,
+            output_dir: PathBuf::from("out"),
+            foundry_bin: None,
+            foundry_ref: None,
+            foundry_repo: DEFAULT_FOUNDRY_REPO.to_string(),
+            foundry_test_args: None,
+            properties_path: None,
+            force: false,
+        }
+    }
+
+    #[test]
+    fn validates_repo_relative_properties_path() {
+        let mut cli = base_cli();
+        cli.properties_path = Some(PathBuf::from("test/recon/Properties.sol"));
+        validate_options(&cli).expect("repo-relative properties path should be valid");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_absolute_properties_path() {
+        let mut cli = base_cli();
+        cli.properties_path = Some(PathBuf::from("/tmp/Properties.sol"));
+        let err = validate_options(&cli).expect_err("absolute properties path should fail");
+        assert!(err.to_string().contains("must be relative"));
+    }
+
+    #[test]
+    fn rejects_parent_dir_properties_path() {
+        let mut cli = base_cli();
+        cli.properties_path = Some(PathBuf::from("../Properties.sol"));
+        let err = validate_options(&cli).expect_err("escaping properties path should fail");
+        assert!(err.to_string().contains("must not escape"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_zero_campaign_status_is_an_error() {
+        let status =
+            Command::new("sh").arg("-c").arg("exit 7").status().expect("failed to execute shell");
+        let err = ensure_campaign_success(&status).expect_err("campaign failure should fail");
+        assert!(err.to_string().contains("campaign failed"));
+    }
 }
