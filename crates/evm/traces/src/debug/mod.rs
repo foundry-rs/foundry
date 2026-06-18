@@ -548,4 +548,19 @@ mod tests {
             Some(vec!["<unknown>".to_string()])
         );
     }
+
+    #[test]
+    fn decode_step_parameters_aligns_static_arg_after_unsupported_calldata_array() {
+        let params = Parameters::parse("(uint256[] calldata values, bytes32 digest)").unwrap();
+        let digest = U256::from(0x1234);
+        let step = trace_step(vec![U256::from(0x44), U256::from(2), digest]);
+
+        assert_eq!(
+            decode_step_parameters(&params, &step, Some(&[])),
+            Some(vec![
+                "<unknown>".to_string(),
+                "0x0000000000000000000000000000000000000000000000000000000000001234".to_string(),
+            ])
+        );
+    }
 }

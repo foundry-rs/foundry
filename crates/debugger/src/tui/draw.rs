@@ -1249,6 +1249,37 @@ mod tests {
     }
 
     #[test]
+    fn decode_internal_parameter_values_passes_calldata_to_fallback_decoder() {
+        let digest = U256::from(0x1234);
+        let offset = 0x44;
+        let mut calldata = vec![0; offset];
+        calldata.extend_from_slice(&[0x11, 0x22, 0x33]);
+
+        let mut entry_node =
+            debug_node(0, 1, vec![trace_step(vec![digest, U256::from(offset), U256::from(3)])]);
+        entry_node.calldata = Bytes::from(calldata);
+
+        let mut context = context_with_arena(vec![
+            debug_node(0, 0, vec![internal_call_step_without_args(2)]),
+            debug_node(1, 0, vec![trace_step(Vec::new())]),
+            entry_node,
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.draw_memory.inner_call_index = 2;
+
+        assert_eq!(
+            tui.decode_internal_parameter_values(&scope(
+                "foo",
+                "(bytes32 digest, bytes calldata signature)"
+            )),
+            Some(vec![
+                "0x0000000000000000000000000000000000000000000000000000000000001234".to_string(),
+                "0x112233".to_string(),
+            ])
+        );
+    }
+
+    #[test]
     fn decode_internal_parameter_values_accepts_matching_overload_args() {
         let mut context = context_with_arena(vec![debug_node(
             0,
