@@ -1088,6 +1088,107 @@ args=[7]
     );
 });
 
+forgetest_init!(symbolic_artifact_replay_uses_stored_fail_on_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicArtifactFailOnRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactFailOnRevert is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external pure {
+        revert("boom");
+    }
+
+    function invariant_noop() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("fail-on-revert-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactFailOnRevert.t.sol:SymbolicArtifactFailOnRevert",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": "boom"
+        },
+        "replay_semantics": {
+            "fail_on_revert": true
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": null,
+            "roll": null,
+            "sender": "0x0000000000000000000000000000000000000000",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": "0xe25fe175",
+            "value": null,
+            "contract_name": "SymbolicArtifactFailOnRevert",
+            "function_name": "step",
+            "signature": "step()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure();
+});
+
 forgetest_init!(symbolic_invariant_respects_sequence_depth, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

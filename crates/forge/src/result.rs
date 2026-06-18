@@ -362,6 +362,7 @@ mod tests {
             "kind",
             "test",
             "replay",
+            "replay_semantics",
             "bounds",
             "solver",
             "assumptions",
@@ -373,6 +374,7 @@ mod tests {
         assert_eq!(value["schema_version"], 1);
         assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
         assert!(matches!(value["kind"].as_str(), Some("single_call" | "sequence")));
+        assert!(value["replay_semantics"].is_object());
         assert!(!value["calls"].as_array().expect("calls array").is_empty());
         for call in value["calls"].as_array().unwrap() {
             let call = call.as_object().expect("call object");
@@ -492,6 +494,7 @@ mod tests {
                 test: "invariant_counter()".to_string(),
             },
             &symbolic,
+            SymbolicCounterexampleReplaySemantics { fail_on_revert: false },
             vec![call.clone(), call],
         );
 
@@ -499,6 +502,7 @@ mod tests {
         assert_eq!(value["schema_version"], 1);
         assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
         assert_eq!(value["kind"], "sequence");
+        assert_eq!(value["replay_semantics"]["fail_on_revert"], false);
         assert_eq!(value["calls"].as_array().unwrap().len(), 2);
         assert_eq!(value["calls"][0]["calldata"], "0x12345678");
         assert_eq!(value["calls"][0]["warp"], "0xc");
@@ -1203,6 +1207,8 @@ pub struct SymbolicCounterexampleArtifact {
     pub test: SymbolicCounterexampleTestIdentity,
     /// Concrete replay metadata for the counterexample candidate.
     pub replay: SymbolicReplayMetadata,
+    /// Replay semantics that must remain stable when this artifact is replayed.
+    pub replay_semantics: SymbolicCounterexampleReplaySemantics,
     /// Effective bounds used by this symbolic run.
     pub bounds: SymbolicBounds,
     /// Solver identity and counters collected during this run.
@@ -1221,6 +1227,7 @@ impl SymbolicCounterexampleArtifact {
         kind: SymbolicCounterexampleArtifactKind,
         test: SymbolicCounterexampleTestIdentity,
         symbolic: &SymbolicResult,
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
         calls: Vec<SymbolicCounterexampleCall>,
     ) -> Self {
         Self {
@@ -1229,6 +1236,7 @@ impl SymbolicCounterexampleArtifact {
             kind,
             test,
             replay: symbolic.replay.clone(),
+            replay_semantics,
             bounds: symbolic.bounds.clone(),
             solver: symbolic.solver.clone(),
             assumptions: symbolic.assumptions.clone(),
@@ -1236,6 +1244,13 @@ impl SymbolicCounterexampleArtifact {
             calls,
         }
     }
+}
+
+/// Concrete replay semantics captured when a symbolic artifact is confirmed.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SymbolicCounterexampleReplaySemantics {
+    /// Whether an invariant sequence replay treats any target-call revert as a failure.
+    pub fail_on_revert: bool,
 }
 
 /// Symbolic counterexample artifact shape.

@@ -11,6 +11,7 @@
     "kind",
     "test",
     "replay",
+    "replay_semantics",
     "bounds",
     "solver",
     "assumptions",
@@ -41,6 +42,17 @@
     },
     "replay": {
       "$ref": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/replay"
+    },
+    "replay_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fail_on_revert"],
+      "properties": {
+        "fail_on_revert": {
+          "type": "boolean",
+          "description": "Whether invariant sequence replay treats target-call reverts as failures."
+        }
+      }
     },
     "bounds": {
       "$ref": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/bounds"

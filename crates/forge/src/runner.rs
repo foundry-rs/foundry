@@ -10,8 +10,9 @@ use crate::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
         SymbolicCallTrace, SymbolicCounterexample, SymbolicCounterexampleArtifact,
         SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
-        SymbolicCounterexampleTestIdentity, SymbolicReplayMetadata, SymbolicResult, TestResult,
-        TestSetup, TestStatus, invariant_campaign_display_name,
+        SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
+        SymbolicReplayMetadata, SymbolicResult, TestResult, TestSetup, TestStatus,
+        invariant_campaign_display_name,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -995,6 +996,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 test: test_name.to_string(),
             },
             symbolic,
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
             calls,
         );
 
@@ -1420,7 +1424,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         // warp/roll delta is applied directly. Accumulation is only needed when a
                         // shrink candidate skips calls and must fold removed delays forward.
                         accumulate_warp_roll: false,
-                        fail_on_revert: self.config.invariant.fail_on_revert,
+                        fail_on_revert: artifact.replay_semantics.fail_on_revert,
                         expect_assertion_failure: false,
                         call_after_invariant,
                         rd: Some(self.revert_decoder()),
