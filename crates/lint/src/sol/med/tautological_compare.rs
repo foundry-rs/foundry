@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::BinOpKind,
+    ast::{BinOpKind, Lit, LitKind},
     sema::{
         Gcx,
         hir::{self, Expr, ExprKind},
@@ -50,12 +50,24 @@ impl<'hir> LateLintPass<'hir> for TautologicalCompare {
 fn exprs_equal<'hir>(a: &Expr<'hir>, b: &Expr<'hir>) -> bool {
     match (&a.peel_parens().kind, &b.peel_parens().kind) {
         (ExprKind::Ident(ra), ExprKind::Ident(rb)) => ra == rb,
+        (ExprKind::Lit(la), ExprKind::Lit(lb)) => lits_equal(la, lb),
         (ExprKind::Member(ba, na), ExprKind::Member(bb, nb)) => {
             na.name == nb.name && exprs_equal(ba, bb)
         }
         (ExprKind::Index(ba, ia), ExprKind::Index(bb, ib)) => {
             exprs_equal(ba, bb) && opt_exprs_equal(*ia, *ib)
         }
+        _ => false,
+    }
+}
+
+fn lits_equal(a: &Lit<'_>, b: &Lit<'_>) -> bool {
+    match (&a.kind, &b.kind) {
+        (LitKind::Str(ak, av, _), LitKind::Str(bk, bv, _)) => ak == bk && av == bv,
+        (LitKind::Number(a), LitKind::Number(b)) => a == b,
+        (LitKind::Rational(a), LitKind::Rational(b)) => a == b,
+        (LitKind::Address(a), LitKind::Address(b)) => a == b,
+        (LitKind::Bool(a), LitKind::Bool(b)) => a == b,
         _ => false,
     }
 }

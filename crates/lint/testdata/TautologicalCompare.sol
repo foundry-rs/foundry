@@ -18,6 +18,8 @@ contract TautologicalCompare {
         if (m[x] != m[x]) {} //~WARN: comparing an expression with itself is always true or false
         if (msg.sender == msg.sender) {} //~WARN: comparing an expression with itself is always true or false
         require(x <= (x)); //~WARN: comparing an expression with itself is always true or false
+        if (arr[0] < arr[0]) {} //~WARN: comparing an expression with itself is always true or false
+        if (m[1] != m[1]) {} //~WARN: comparing an expression with itself is always true or false
     }
 
     function ok(uint256 x, uint256 y, uint256 i, uint256 j, uint256[] calldata arr) external view {

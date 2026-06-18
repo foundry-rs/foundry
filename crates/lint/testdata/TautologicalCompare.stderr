@@ -46,3 +46,19 @@ LL │         require(x <= (x));
    │
    ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
 
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         if (arr[0] < arr[0]) {}
+   │             ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
+warning[tautological-compare]: comparing an expression with itself is always true or false
+   ╭▸ ROOT/testdata/TautologicalCompare.sol:LL:CC
+   │
+LL │         if (m[1] != m[1]) {}
+   │             ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tautological-compare
+
