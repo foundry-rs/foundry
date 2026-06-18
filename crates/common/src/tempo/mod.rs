@@ -10,12 +10,15 @@ use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
+use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
+use serde::Deserialize;
 use std::sync::Arc;
 pub use tempo_alloy::contracts::precompiles::PATH_USD_ADDRESS;
 use tempo_alloy::contracts::precompiles::{
     IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
 };
+use tempo_primitives::TempoAddressExt;
 
 mod keystore;
 mod registry;
@@ -91,15 +94,27 @@ where
     }
     let fee_payer = fee_payer.or_else(|| tx.from());
 
-    let stored_fee_token = if let (Some(provider), Some(fee_payer)) = (provider, fee_payer) {
+    let immediate_user_token = infer_fee_token_from_set_user_token_call::<N>(tx, fee_payer);
+    let stored_fee_token = if immediate_user_token.is_none()
+        && let (Some(provider), Some(fee_payer)) = (provider, fee_payer)
+    {
         stored_user_fee_token(provider, fee_payer).await?
     } else {
         None
     };
-
-    let fee_token = stored_fee_token
-        .or_else(|| infer_fee_token_from_tip20_calls::<N>(tx, fee_payer))
-        .or_else(|| infer_fee_token_from_stablecoin_dex_calls::<N>(tx));
+    let inferred_fee_token = if immediate_user_token.is_none() && stored_fee_token.is_none() {
+        let hardfork =
+            active_tempo_hardfork(provider).await.unwrap_or_else(latest_active_tempo_hardfork);
+        infer_fee_token_from_tip20_calls::<N>(tx, fee_payer, hardfork)
+            .or_else(|| infer_fee_token_from_stablecoin_dex_calls::<N>(tx))
+    } else {
+        None
+    };
+    let inferred_fee_token = match inferred_fee_token {
+        Some(fee_token) if is_usd_tip20_fee_token(provider, fee_token).await => Some(fee_token),
+        _ => None,
+    };
+    let fee_token = immediate_user_token.or(stored_fee_token).or(inferred_fee_token);
 
     let Some(fee_token) = fee_token else { return Ok(None) };
     tx.set_fee_token(fee_token);
@@ -127,7 +142,70 @@ where
     Ok((!fee_token.is_zero()).then_some(fee_token))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TempoForkSchedule {
+    active: String,
+}
+
+async fn active_tempo_hardfork<N>(provider: Option<&dyn Provider<N>>) -> Option<TempoHardfork>
+where
+    N: Network,
+{
+    let provider = provider?;
+    let params = serde_json::value::to_raw_value(&()).ok()?;
+    let response = provider.raw_request_dyn("tempo_forkSchedule".into(), &params).await.ok()?;
+    serde_json::from_str::<TempoForkSchedule>(response.get()).ok()?.active.parse().ok()
+}
+
+async fn is_usd_tip20_fee_token<N>(provider: Option<&dyn Provider<N>>, fee_token: Address) -> bool
+where
+    N: Network,
+    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
+{
+    if !fee_token.is_tip20() {
+        return false;
+    }
+    if known_fee_token_symbol(fee_token).is_some() {
+        return true;
+    }
+
+    let Some(provider) = provider else {
+        return false;
+    };
+
+    let tx = N::TransactionRequest::default()
+        .with_to(fee_token)
+        .with_input(ITIP20::currencyCall.abi_encode());
+    let Ok(output) = provider.call(tx).await else {
+        return false;
+    };
+    ITIP20::currencyCall::abi_decode_returns(&output).is_ok_and(|currency| currency == "USD")
+}
+
 fn infer_fee_token_from_tip20_calls<N>(
+    tx: &N::TransactionRequest,
+    fee_payer: Option<Address>,
+    hardfork: TempoHardfork,
+) -> Option<Address>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let calls = tx.tempo_calls();
+    if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input, hardfork))
+    {
+        return None;
+    }
+
+    let target = common_call_target(&calls)?;
+    if fee_payer != tx.from() {
+        return None;
+    }
+    Some(target)
+}
+
+fn infer_fee_token_from_set_user_token_call<N>(
     tx: &N::TransactionRequest,
     fee_payer: Option<Address>,
 ) -> Option<Address>
@@ -135,20 +213,17 @@ where
     N: Network,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    let calls = tx.tempo_calls();
-    if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input)) {
+    if tx.has_tempo_call_list() || fee_payer != tx.from() {
         return None;
     }
 
-    let targets = call_targets(&calls)?;
-    if !tx.has_tempo_call_list() {
-        return (targets.len() == 1).then_some(targets[0]);
-    }
-
-    if fee_payer != tx.from() || targets.len() != 1 {
+    let (to, input) = tx.tempo_calls().into_iter().next()?;
+    if to != TxKind::Call(TIP_FEE_MANAGER_ADDRESS) {
         return None;
     }
-    Some(targets[0])
+
+    let call = IFeeManager::setUserTokenCall::abi_decode(input).ok()?;
+    call.token.is_tip20().then_some(call.token)
 }
 
 fn infer_fee_token_from_stablecoin_dex_calls<N>(tx: &N::TransactionRequest) -> Option<Address>
@@ -167,21 +242,20 @@ where
     decode_stablecoin_dex_fee_token(input)
 }
 
-fn call_targets(calls: &[(TxKind, &[u8])]) -> Option<Vec<Address>> {
-    calls
-        .iter()
-        .map(|(to, _)| match to {
-            TxKind::Call(target) => Some(*target),
-            TxKind::Create => None,
-        })
-        .collect()
+fn common_call_target(calls: &[(TxKind, &[u8])]) -> Option<Address> {
+    let mut targets = calls.iter().map(|(to, _)| match to {
+        TxKind::Call(target) => Some(*target),
+        TxKind::Create => None,
+    });
+    let target = targets.next()??;
+    targets.all(|next| next == Some(target)).then_some(target)
 }
 
-fn is_tip20_fee_token_call(input: &[u8]) -> bool {
+fn is_tip20_fee_token_call(input: &[u8], hardfork: TempoHardfork) -> bool {
     input_selector(input).is_some_and(|selector| {
         selector == ITIP20::transferCall::SELECTOR
             || selector == ITIP20::transferWithMemoCall::SELECTOR
-            || selector == ITIP20::distributeRewardCall::SELECTOR
+            || (!hardfork.is_t7() && selector == ITIP20::distributeRewardCall::SELECTOR)
     })
 }
 

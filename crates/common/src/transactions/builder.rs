@@ -418,14 +418,12 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
     }
 
     fn tempo_calls(&self) -> Vec<(TxKind, &[u8])> {
-        if !self.calls.is_empty() {
-            return self.calls.iter().map(|call| (call.to, call.input.as_ref())).collect();
-        }
-
-        self.inner
-            .to
-            .map(|to| (to, self.inner.input.input().map_or(&[] as &[u8], |input| input.as_ref())))
-            .into_iter()
+        self.calls
+            .iter()
+            .map(|call| (call.to, call.input.as_ref()))
+            .chain(self.inner.to.map(|to| {
+                (to, self.inner.input.input().map_or(&[] as &[u8], |input| input.as_ref()))
+            }))
             .collect()
     }
 
