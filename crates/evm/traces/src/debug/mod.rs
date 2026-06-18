@@ -336,7 +336,7 @@ pub fn decode_step_parameters(
     Some(decoded)
 }
 
-fn stack_slots(ty: &DynSolType, storage: Option<Storage>) -> usize {
+const fn stack_slots(ty: &DynSolType, storage: Option<Storage>) -> usize {
     match (ty, storage) {
         (
             DynSolType::String | DynSolType::Bytes | DynSolType::Array(_),
