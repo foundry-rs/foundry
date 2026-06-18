@@ -5,7 +5,7 @@ pub mod auth;
 use crate::FoundryTransactionBuilder;
 use alloy_chains::Chain;
 use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, address};
+use alloy_primitives::{Address, B256, Signature, TxKind, address};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -13,7 +13,9 @@ use eyre::{Context, Result};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
 pub use tempo_alloy::contracts::precompiles::PATH_USD_ADDRESS;
-use tempo_alloy::contracts::precompiles::{IFeeManager, ITIP20, TIP_FEE_MANAGER_ADDRESS};
+use tempo_alloy::contracts::precompiles::{
+    IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+};
 
 mod keystore;
 mod registry;
@@ -87,19 +89,19 @@ where
     if !chain.is_some_and(Chain::is_tempo) {
         return Ok(None);
     }
-    let Some(provider) = provider else {
-        return Ok(None);
-    };
-
     let fee_payer = fee_payer.or_else(|| tx.from());
-    let fee_token = if let Some(fee_payer) = fee_payer {
+
+    let stored_fee_token = if let (Some(provider), Some(fee_payer)) = (provider, fee_payer) {
         stored_user_fee_token(provider, fee_payer).await?
     } else {
         None
     };
-    let Some(fee_token) = fee_token else {
-        return Ok(None);
-    };
+
+    let fee_token = stored_fee_token
+        .or_else(|| infer_fee_token_from_tip20_calls::<N>(tx, fee_payer))
+        .or_else(|| infer_fee_token_from_stablecoin_dex_calls::<N>(tx));
+
+    let Some(fee_token) = fee_token else { return Ok(None) };
     tx.set_fee_token(fee_token);
     Ok(Some(fee_token))
 }
@@ -123,6 +125,79 @@ where
     let fee_token = IFeeManager::userTokensCall::abi_decode_returns(&output)
         .wrap_err("failed to decode Tempo fee token lookup")?;
     Ok((!fee_token.is_zero()).then_some(fee_token))
+}
+
+fn infer_fee_token_from_tip20_calls<N>(
+    tx: &N::TransactionRequest,
+    fee_payer: Option<Address>,
+) -> Option<Address>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let calls = tx.tempo_calls();
+    if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input)) {
+        return None;
+    }
+
+    let targets = call_targets(&calls)?;
+    if !tx.has_tempo_call_list() {
+        return (targets.len() == 1).then_some(targets[0]);
+    }
+
+    if fee_payer != tx.from() || targets.len() != 1 {
+        return None;
+    }
+    Some(targets[0])
+}
+
+fn infer_fee_token_from_stablecoin_dex_calls<N>(tx: &N::TransactionRequest) -> Option<Address>
+where
+    N: Network,
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let calls = tx.tempo_calls();
+    if tx.has_tempo_call_list() && calls.len() != 1 {
+        return None;
+    }
+    let (to, input) = calls.first()?;
+    if *to != TxKind::Call(STABLECOIN_DEX_ADDRESS) {
+        return None;
+    }
+    decode_stablecoin_dex_fee_token(input)
+}
+
+fn call_targets(calls: &[(TxKind, &[u8])]) -> Option<Vec<Address>> {
+    calls
+        .iter()
+        .map(|(to, _)| match to {
+            TxKind::Call(target) => Some(*target),
+            TxKind::Create => None,
+        })
+        .collect()
+}
+
+fn is_tip20_fee_token_call(input: &[u8]) -> bool {
+    input_selector(input).is_some_and(|selector| {
+        selector == ITIP20::transferCall::SELECTOR
+            || selector == ITIP20::transferWithMemoCall::SELECTOR
+            || selector == ITIP20::distributeRewardCall::SELECTOR
+    })
+}
+
+fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
+    let selector = input_selector(input)?;
+    if selector == IStablecoinDEX::swapExactAmountInCall::SELECTOR {
+        IStablecoinDEX::swapExactAmountInCall::abi_decode(input).ok().map(|call| call.tokenIn)
+    } else if selector == IStablecoinDEX::swapExactAmountOutCall::SELECTOR {
+        IStablecoinDEX::swapExactAmountOutCall::abi_decode(input).ok().map(|call| call.tokenIn)
+    } else {
+        None
+    }
+}
+
+fn input_selector(input: &[u8]) -> Option<&[u8]> {
+    input.get(..4)
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.

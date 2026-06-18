@@ -149,6 +149,16 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         None
     }
 
+    /// Gets top-level Tempo calls for local fee-token inference.
+    fn tempo_calls(&self) -> Vec<(TxKind, &[u8])> {
+        Vec::new()
+    }
+
+    /// Returns true when [`Self::tempo_calls`] came from a Tempo AA `calls` list.
+    fn has_tempo_call_list(&self) -> bool {
+        false
+    }
+
     /// Set the fee token for a Tempo transaction.
     fn set_fee_token(&mut self, _fee_token: Address) {}
 
@@ -405,6 +415,22 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn fee_token(&self) -> Option<Address> {
         self.fee_token
+    }
+
+    fn tempo_calls(&self) -> Vec<(TxKind, &[u8])> {
+        if !self.calls.is_empty() {
+            return self.calls.iter().map(|call| (call.to, call.input.as_ref())).collect();
+        }
+
+        self.inner
+            .to
+            .map(|to| (to, self.inner.input.input().map_or(&[] as &[u8], |input| input.as_ref())))
+            .into_iter()
+            .collect()
+    }
+
+    fn has_tempo_call_list(&self) -> bool {
+        !self.calls.is_empty()
     }
 
     fn set_fee_token(&mut self, fee_token: Address) {
