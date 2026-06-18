@@ -1207,7 +1207,7 @@ impl WorkerCorpus {
                 Err(_) => continue,
             };
 
-            let mut exec = executor.clone();
+            let exec = executor.clone();
 
             let raw = match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO)
             {
@@ -1218,12 +1218,7 @@ impl WorkerCorpus {
                 continue;
             }
 
-            let observed = exec
-                .inspector_mut()
-                .fuzzer
-                .as_mut()
-                .map(|fuzzer| fuzzer.take_observed_calls())
-                .unwrap_or_default();
+            let observed = raw.observed_calls;
             if observed.is_empty() {
                 continue;
             }
