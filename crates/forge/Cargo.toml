@@ -93,9 +93,6 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
-# doc server
-axum = { workspace = true, features = ["ws"] }
-tower-http = { workspace = true, features = ["fs"] }
 opener = "0.8"
 
 # soldeer

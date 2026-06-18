@@ -1,6 +1,9 @@
 //! Contains various tests related to `forge script`.
 
-use crate::{constants::TEMPLATE_CONTRACT, utils::generate_large_runtime_contract};
+use crate::{
+    constants::TEMPLATE_CONTRACT,
+    utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
+};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, address, hex};
@@ -42,6 +45,83 @@ contract ContractScript is Script {
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
+
+forgetest_async!(script_debug_dump_identifies_contracts_loaded_from_fork, |prj, cmd| {
+    prj.add_source(
+        "ScriptForkDebugTarget.sol",
+        r#"
+contract ScriptForkDebugTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) public {
+        value = newValue;
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    let create_output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "./src/ScriptForkDebugTarget.sol:ScriptForkDebugTarget",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk,
+            "--broadcast",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let create_output: Value = serde_json::from_slice(&create_output).unwrap();
+    let deployed = create_output["deployedTo"].as_str().unwrap().to_owned();
+
+    prj.add_script(
+        "DebugRemote.s.sol",
+        &format!(
+            r#"
+interface IScriptForkDebugTarget {{
+    function set(uint256 newValue) external;
+    function value() external view returns (uint256);
+}}
+
+contract DebugRemote {{
+    IScriptForkDebugTarget private target = IScriptForkDebugTarget({deployed});
+
+    function setUp() public {{
+        target.set(7);
+        require(target.value() == 7, "setup value");
+    }}
+
+    function run() public {{
+        target.set(19);
+        require(target.value() == 19, "value");
+    }}
+}}
+"#
+        ),
+    );
+
+    let dump_path = prj.root().join("script_dump.json");
+    cmd.forge_fuse().args([
+        "script",
+        "script/DebugRemote.s.sol:DebugRemote",
+        "--fork-url",
+        rpc.as_str(),
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&dump_path, &deployed, "ScriptForkDebugTarget");
+});
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
@@ -3455,6 +3535,42 @@ contract SaltedSrcScript is Script {
     );
     assert_eq!(tx["contractName"], "Token");
     assert_eq!(tx["arguments"][0], "SaltedSrc");
+});
+
+// Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
+// The injected cheatcode is `view`, so using it in a `pure` script helper breaks compilation.
+forgetest_init!(can_build_script_creation_code_in_pure_function, |prj, cmd| {
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "CreationCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+
+contract CreationCodeScript is Script {
+    function run() public {
+        vm.broadcast();
+        (bool ok,) = address(0).call(_getCreationCode());
+        ok;
+    }
+
+    function _getCreationCode() internal pure returns (bytes memory) {
+        return type(Token).creationCode;
+    }
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
 });
 
 forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {

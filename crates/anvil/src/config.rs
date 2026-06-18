@@ -60,7 +60,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_chainspec::{
+    hardfork::TempoHardfork,
+    spec::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
+};
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
@@ -70,6 +73,7 @@ use foundry_evm::{
     utils::get_blob_params,
 };
 use foundry_evm_networks::NetworkConfigs;
+use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -523,6 +527,23 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
+    /// Applies Tempo's safe default beneficiary for forked nodes while preserving
+    /// explicit coinbase selections.
+    pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
+        if self.networks.is_tempo()
+            && !self.fork_urls.is_empty()
+            && evm_env.block_env.beneficiary.is_zero()
+        {
+            // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
+            // Forked transactions with the default zero beneficiary can therefore
+            // fail fee collection before producing a receipt. Use the same neutral
+            // fee-recipient sentinel as Tempo's simulation path so validator token
+            // lookup falls back to the default PathUSD token unless the user has
+            // explicitly supplied a non-zero coinbase.
+            evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+        }
+    }
+
     /// Returns the memory limit of the node
     #[must_use]
     pub const fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
@@ -535,7 +556,7 @@ impl NodeConfig {
     /// In Tempo mode, uses the hardfork-specific base fee (10 gwei pre-T1, 20 gwei T1+).
     pub fn get_base_fee(&self) -> u64 {
         let default = if self.networks.is_tempo() {
-            TempoHardfork::from(self.get_hardfork()).base_fee()
+            tempo_default_base_fee(TempoHardfork::from(self.get_hardfork()))
         } else {
             INITIAL_BASE_FEE
         };
@@ -549,7 +570,7 @@ impl NodeConfig {
     /// In Tempo mode, defaults to the hardfork-specific base fee.
     pub fn get_gas_price(&self) -> u128 {
         let default = if self.networks.is_tempo() {
-            TempoHardfork::from(self.get_hardfork()).base_fee() as u128
+            tempo_default_base_fee(TempoHardfork::from(self.get_hardfork())) as u128
         } else {
             INITIAL_GAS_PRICE
         };
@@ -1171,6 +1192,8 @@ impl NodeConfig {
             },
         );
 
+        self.apply_tempo_fork_beneficiary_default(&mut evm_env);
+
         let base_fee_params: BaseFeeParams =
             self.networks.base_fee_params(self.get_genesis_timestamp());
 
@@ -1207,6 +1230,8 @@ impl NodeConfig {
             }
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
+
+        self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let genesis = GenesisConfig {
             number: self.get_genesis_number(),
@@ -1547,6 +1572,10 @@ latest block number: {latest_block}"
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
     }
+}
+
+const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
+    if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE }
 }
 
 /// If the fork choice is a block number, simply return it with an empty list of transactions.

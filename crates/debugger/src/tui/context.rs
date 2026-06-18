@@ -1,9 +1,9 @@
 //! Debugger context and event handler implementation.
 
-use crate::{DebugNode, ExitReason, debugger::DebuggerContext};
+use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use foundry_evm_core::buffer::BufferKind;
+use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
@@ -22,12 +22,43 @@ pub(crate) struct StatusMessage {
     pub(crate) text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveInternalCallLocation {
+    pub(crate) trace_node_idx: usize,
+    pub(crate) marker_node_idx: usize,
+    pub(crate) marker_step_idx: usize,
+    pub(crate) entry_step: usize,
+    pub(crate) end_step: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ActiveInternalCallCache {
+    pub(crate) current_node_idx: usize,
+    pub(crate) trace_node_idx: usize,
+    pub(crate) absolute_step: usize,
+    pub(crate) location: Option<ActiveInternalCallLocation>,
+}
+
+impl ActiveInternalCallCache {
+    pub(crate) const fn matches(
+        self,
+        current_node_idx: usize,
+        trace_node_idx: usize,
+        absolute_step: usize,
+    ) -> bool {
+        self.current_node_idx == current_node_idx
+            && self.trace_node_idx == trace_node_idx
+            && self.absolute_step == absolute_step
+    }
+}
+
 /// This is currently used to remember last scroll position so screen doesn't wiggle as much.
 #[derive(Default)]
 pub(crate) struct DrawMemory {
     pub(crate) inner_call_index: usize,
     pub(crate) current_buf_startline: usize,
     pub(crate) current_stack_startline: usize,
+    pub(crate) active_internal_call: Option<ActiveInternalCallCache>,
 }
 
 pub(crate) struct TUIContext<'a> {
@@ -37,6 +68,10 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) key_buffer: String,
     /// Current goto program counter prompt contents, if the prompt is active.
     pub(crate) pc_input: Option<String>,
+    /// Current opcode search prompt contents, if the prompt is active.
+    pub(crate) opcode_search_input: Option<String>,
+    /// Last opcode search term, used by repeat-search shortcuts.
+    pub(crate) last_opcode_search: Option<String>,
     /// Last status or error message to show in the footer.
     pub(crate) status: Option<StatusMessage>,
     /// Current step in the debug steps.
@@ -60,6 +95,8 @@ impl<'a> TUIContext<'a> {
 
             key_buffer: String::with_capacity(64),
             pc_input: None,
+            opcode_search_input: None,
+            last_opcode_search: None,
             status: None,
             current_step: 0,
             draw_memory: DrawMemory::default(),
@@ -79,6 +116,10 @@ impl<'a> TUIContext<'a> {
 
     pub(crate) fn debug_arena(&self) -> &[DebugNode] {
         &self.debugger_context.debug_arena
+    }
+
+    pub(crate) const fn layout(&self) -> DebuggerLayout {
+        self.debugger_context.layout
     }
 
     pub(crate) fn debug_call(&self) -> &DebugNode {
@@ -143,6 +184,11 @@ impl TUIContext<'_> {
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
+        if self.opcode_search_input.is_some() {
+            self.handle_opcode_search_input_key_event(event);
+            return ControlFlow::Continue(());
+        }
+
         if self.pc_input.is_some() {
             self.handle_pc_input_key_event(event);
             return ControlFlow::Continue(());
@@ -201,16 +247,21 @@ impl TUIContext<'_> {
                 self.draw_memory.current_buf_startline = 0;
             }
 
+            // Cycle layout
+            KeyCode::Char('l') => self.cycle_layout(),
+
             // Go to top of file
             KeyCode::Char('g') => {
                 self.draw_memory.inner_call_index = 0;
                 self.current_step = 0;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to bottom of file
             KeyCode::Char('G') => {
                 self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
                 self.current_step = self.n_steps() - 1;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to previous call
@@ -218,6 +269,7 @@ impl TUIContext<'_> {
                 self.draw_memory.inner_call_index =
                     self.draw_memory.inner_call_index.saturating_sub(1);
                 self.current_step = self.n_steps() - 1;
+                self.scroll_memory_to_current_write();
             }
 
             // Go to next call
@@ -226,6 +278,7 @@ impl TUIContext<'_> {
             {
                 self.draw_memory.inner_call_index += 1;
                 self.current_step = 0;
+                self.scroll_memory_to_current_write();
             }
 
             // Step forward
@@ -237,7 +290,8 @@ impl TUIContext<'_> {
                         is_jump(step, prev)
                     })
                 {
-                    this.current_step += i
+                    this.current_step += i;
+                    this.scroll_memory_to_current_write();
                 }
             }),
 
@@ -255,6 +309,7 @@ impl TUIContext<'_> {
                     })
                     .map(|(i, _)| i)
                     .unwrap_or_default();
+                this.scroll_memory_to_current_write();
             }),
 
             // Toggle stack labels
@@ -269,6 +324,23 @@ impl TUIContext<'_> {
                 self.status = None;
                 self.pc_input = Some(String::new());
             }
+
+            // Search opcodes in the current call
+            KeyCode::Char('/') => {
+                self.key_buffer.clear();
+                self.status = None;
+                self.opcode_search_input = Some(String::new());
+            }
+
+            // Repeat opcode search forward
+            KeyCode::Char('n') => self.repeat(|this| {
+                this.repeat_opcode_search(SearchDirection::Forward);
+            }),
+
+            // Repeat opcode search backward
+            KeyCode::Char('N') => self.repeat(|this| {
+                this.repeat_opcode_search(SearchDirection::Backward);
+            }),
 
             // Toggle help notice
             KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
@@ -313,6 +385,65 @@ impl TUIContext<'_> {
             }
             _ => {}
         }
+    }
+
+    fn handle_opcode_search_input_key_event(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => {
+                self.opcode_search_input = None;
+            }
+            KeyCode::Enter => {
+                let input = self.opcode_search_input.take().unwrap_or_default();
+                self.search_opcode_from_input(&input);
+            }
+            KeyCode::Backspace => {
+                if let Some(input) = &mut self.opcode_search_input {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(c) if !event.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(input) = &mut self.opcode_search_input {
+                    input.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn search_opcode_from_input(&mut self, input: &str) {
+        let query = input.trim();
+        if query.is_empty() {
+            self.set_error("Enter an opcode search term".to_string());
+            return;
+        }
+
+        self.last_opcode_search = Some(query.to_string());
+        self.search_opcode(query, SearchDirection::Forward);
+    }
+
+    fn repeat_opcode_search(&mut self, direction: SearchDirection) {
+        let Some(query) = self.last_opcode_search.clone() else {
+            self.set_error("No previous opcode search".to_string());
+            return;
+        };
+
+        self.search_opcode(&query, direction);
+    }
+
+    fn search_opcode(&mut self, query: &str, direction: SearchDirection) {
+        let Some(step_index) =
+            find_opcode_match(&self.opcode_list, self.current_step, query, direction)
+        else {
+            self.set_error(format!("No opcode matching `{query}` in current call"));
+            return;
+        };
+
+        self.current_step = step_index;
+        self.scroll_memory_to_current_write();
+
+        let pc = self.current_step().pc;
+        let opcode = self.opcode_list.get(step_index).map(String::as_str).unwrap_or_default();
+        self.set_info(format!("Found `{query}` at PC 0x{pc:x} ({pc}): {opcode}"));
     }
 
     fn goto_pc_from_input(&mut self, input: &str) {
@@ -377,6 +508,7 @@ impl TUIContext<'_> {
         self.current_step = target.step_index;
         self.draw_memory.current_buf_startline = 0;
         self.draw_memory.current_stack_startline = 0;
+        self.scroll_memory_to_current_write();
         self.key_buffer.clear();
 
         let pc = candidate.pc;
@@ -406,6 +538,7 @@ impl TUIContext<'_> {
                 {
                     self.draw_memory.inner_call_index = i;
                     self.current_step = step;
+                    self.scroll_memory_to_current_write();
                     break;
                 }
             }
@@ -414,7 +547,7 @@ impl TUIContext<'_> {
     }
 
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
-        if self.pc_input.is_some() {
+        if self.pc_input.is_some() || self.opcode_search_input.is_some() {
             return ControlFlow::Continue(());
         }
 
@@ -434,6 +567,7 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index -= 1;
             self.current_step = self.n_steps() - 1;
         }
+        self.scroll_memory_to_current_write();
     }
 
     fn step(&mut self) {
@@ -443,6 +577,30 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index += 1;
             self.current_step = 0;
         }
+        self.scroll_memory_to_current_write();
+    }
+
+    fn scroll_memory_to_current_write(&mut self) {
+        if self.active_buffer != BufferKind::Memory {
+            return;
+        }
+
+        if let Some(line) = self.current_memory_write_line() {
+            self.draw_memory.current_buf_startline = line;
+        }
+    }
+
+    fn current_memory_write_line(&self) -> Option<usize> {
+        let memory_len = self.current_step().memory.as_ref()?.len();
+
+        if self.current_step > 0 {
+            let prev_step = &self.debug_steps()[self.current_step - 1];
+            if let Some(line) = bounded_memory_write_start_line(prev_step, memory_len) {
+                return Some(line);
+            }
+        }
+
+        bounded_memory_write_start_line(self.current_step(), memory_len)
     }
 
     /// Calls a closure `f` the number of times specified in the key buffer, and at least once.
@@ -454,6 +612,15 @@ impl TUIContext<'_> {
 
     fn n_steps(&self) -> usize {
         self.debug_steps().len()
+    }
+
+    fn cycle_layout(&mut self) {
+        let layout = self.debugger_context.layout.next();
+        self.debugger_context.layout = layout;
+        self.status = Some(StatusMessage {
+            kind: StatusKind::Info,
+            text: format!("Debugger layout: {}", layout.as_str()),
+        });
     }
 }
 
@@ -478,6 +645,12 @@ fn buffer_as_number(s: &str) -> usize {
 
 const fn is_pc_input_char(c: char) -> bool {
     c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchDirection {
+    Forward,
+    Backward,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -640,12 +813,54 @@ fn pc_exists_outside_code_context(arena: &[DebugNode], current: &DebugNode, pc: 
     })
 }
 
+fn find_opcode_match(
+    opcodes: &[String],
+    current_step: usize,
+    query: &str,
+    direction: SearchDirection,
+) -> Option<usize> {
+    if opcodes.is_empty() {
+        return None;
+    }
+
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+
+    let current = current_step.min(opcodes.len() - 1);
+    let matches = |i: usize| opcodes[i].to_ascii_lowercase().contains(&needle);
+
+    match direction {
+        SearchDirection::Forward => {
+            ((current + 1)..opcodes.len()).chain(0..=current).find(|&i| matches(i))
+        }
+        SearchDirection::Backward => {
+            (0..current).rev().chain((current..opcodes.len()).rev()).find(|&i| matches(i))
+        }
+    }
+}
+
 fn pretty_opcode(step: &CallTraceStep) -> String {
     if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
         format!("{}(0x{})", step.op, hex::encode(immediate))
     } else {
         step.op.to_string()
     }
+}
+
+fn memory_write_start_line(step: &CallTraceStep) -> Option<usize> {
+    let stack = step.stack.as_ref()?;
+    let access = get_buffer_accesses(step.op.get(), stack)?.write?;
+    if access.len == 0 {
+        return None;
+    }
+    Some(access.offset / 32)
+}
+
+fn bounded_memory_write_start_line(step: &CallTraceStep, memory_len: usize) -> Option<usize> {
+    let line = memory_write_start_line(step)?;
+    (line < memory_len.div_ceil(32)).then_some(line)
 }
 
 fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
@@ -661,16 +876,29 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{Bytes, U256};
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::ContractSources;
     use revm::interpreter::InstructionResult;
 
     fn step(pc: usize) -> CallTraceStep {
+        step_with_stack(pc, OpCode::STOP, &[])
+    }
+
+    fn step_with_immediate(pc: usize, op: OpCode, immediate: &'static [u8]) -> CallTraceStep {
+        CallTraceStep {
+            immediate_bytes: Some(Bytes::from_static(immediate)),
+            ..step_with_stack(pc, op, &[])
+        }
+    }
+
+    fn step_with_stack(pc: usize, op: OpCode, stack: &[usize]) -> CallTraceStep {
         CallTraceStep {
             pc,
-            op: OpCode::STOP,
-            stack: None,
+            op,
+            stack: (!stack.is_empty()).then(|| {
+                stack.iter().copied().map(U256::from).collect::<Vec<_>>().into_boxed_slice()
+            }),
             push_stack: None,
             memory: None,
             returndata: Bytes::new(),
@@ -686,20 +914,51 @@ mod tests {
     }
 
     fn node(address: Address, kind: CallKind, pcs: &[usize]) -> DebugNode {
-        DebugNode::new(address, kind, pcs.iter().copied().map(step).collect(), Bytes::new(), 0)
+        DebugNode::new(
+            address,
+            kind,
+            pcs.iter().copied().map(step).collect(),
+            Bytes::new(),
+            0,
+            None,
+        )
     }
 
     fn context_with_arena(arena: Vec<DebugNode>) -> DebuggerContext {
         DebuggerContext {
             debug_arena: arena,
+            stats: None,
             identified_contracts: Default::default(),
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
+            layout: Default::default(),
         }
     }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    #[test]
+    fn layout_shortcut_cycles_only_concrete_layouts() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Auto);
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Vertical);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: vertical");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('l')));
+        assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
     }
 
     #[test]
@@ -908,5 +1167,217 @@ mod tests {
         assert_eq!(tui.pc_input, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn opcode_search_wraps_and_is_case_insensitive() {
+        let opcodes =
+            vec!["STOP".to_string(), "PUSH4(0x95d89b41)".to_string(), "MSTORE".to_string()];
+
+        assert_eq!(find_opcode_match(&opcodes, 0, "push4", SearchDirection::Forward), Some(1));
+        assert_eq!(find_opcode_match(&opcodes, 0, "95D89B41", SearchDirection::Forward), Some(1));
+        assert_eq!(find_opcode_match(&opcodes, 0, "mstore", SearchDirection::Backward), Some(2));
+        assert_eq!(find_opcode_match(&opcodes, 0, "sload", SearchDirection::Forward), None);
+    }
+
+    #[test]
+    fn opcode_search_input_mode_handles_keys_and_blocks_normal_commands() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![
+                step(1),
+                step_with_immediate(2, OpCode::PUSH4, &[0x95, 0xd8, 0x9b, 0x41]),
+                step_with_stack(3, OpCode::MSTORE, &[]),
+            ],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert!(matches!(tui.handle_key_event(key(KeyCode::Char('/'))), ControlFlow::Continue(())));
+        assert_eq!(tui.opcode_search_input.as_deref(), Some(""));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('q')));
+        assert_eq!(tui.opcode_search_input.as_deref(), Some("q"));
+        assert_eq!(tui.current_step, 0);
+
+        let _ = tui.handle_key_event(key(KeyCode::Backspace));
+        let _ = tui.handle_key_event(key(KeyCode::Char('9')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('5')));
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.opcode_search_input, None);
+        assert_eq!(tui.last_opcode_search.as_deref(), Some("95"));
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
+    }
+
+    #[test]
+    fn opcode_search_repeats_forward_and_backward() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![
+                step_with_stack(1, OpCode::MSTORE, &[]),
+                step(2),
+                step_with_stack(3, OpCode::MSTORE, &[]),
+            ],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('/')));
+        for c in "mstore".chars() {
+            let _ = tui.handle_key_event(key(KeyCode::Char(c)));
+        }
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+        assert_eq!(tui.current_step, 2);
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('n')));
+        assert_eq!(tui.current_step, 0);
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('N')));
+        assert_eq!(tui.current_step, 2);
+    }
+
+    #[test]
+    fn opcode_search_escape_cancels_without_moving() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('/')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('s')));
+        let _ = tui.handle_key_event(key(KeyCode::Esc));
+
+        assert_eq!(tui.opcode_search_input, None);
+        assert_eq!(tui.last_opcode_search, None);
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn opcode_search_reports_empty_input_without_remembering_search() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('/')));
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(tui.last_opcode_search, None);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Enter an opcode search term");
+    }
+
+    #[test]
+    fn opcode_search_reports_repeat_without_previous_search() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('n')));
+
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "No previous opcode search");
+    }
+
+    #[test]
+    fn opcode_search_reports_no_match_without_moving() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('/')));
+        for c in "sload".chars() {
+            let _ = tui.handle_key_event(key(KeyCode::Char(c)));
+        }
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(tui.last_opcode_search.as_deref(), Some("sload"));
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "No opcode matching `sload` in current call");
+    }
+
+    #[test]
+    fn memory_write_start_line_uses_write_offset() {
+        assert_eq!(memory_write_start_line(&step_with_stack(0, OpCode::MSTORE, &[0, 96])), Some(3));
+        assert_eq!(
+            memory_write_start_line(&step_with_stack(0, OpCode::MSTORE8, &[0, 33])),
+            Some(1)
+        );
+        assert_eq!(memory_write_start_line(&step(0)), None);
+    }
+
+    #[test]
+    fn bounded_memory_write_start_line_requires_visible_non_empty_write() {
+        let write_at_128 = step_with_stack(0, OpCode::MSTORE, &[0, 128]);
+        assert_eq!(bounded_memory_write_start_line(&write_at_128, 160), Some(4));
+        assert_eq!(bounded_memory_write_start_line(&write_at_128, 128), None);
+
+        let zero_len_copy = step_with_stack(0, OpCode::CALLDATACOPY, &[0, 0, 1_000_000]);
+        assert_eq!(memory_write_start_line(&zero_len_copy), None);
+        assert_eq!(bounded_memory_write_start_line(&zero_len_copy, 32), None);
+    }
+
+    #[test]
+    fn stepping_past_memory_write_without_memory_snapshot_keeps_scroll_position() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.draw_memory.current_buf_startline = 99;
+
+        tui.step();
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 99);
+    }
+
+    #[test]
+    fn memory_write_autoscroll_only_applies_to_memory_buffer() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+        tui.draw_memory.current_buf_startline = 7;
+
+        tui.step();
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 7);
     }
 }

@@ -37,6 +37,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
+  - `incorrect-modifier`: Modifiers should not be able to finish without executing `_` or reverting.
   - `missing-events-access-control`: Access control changes should emit events.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
@@ -60,10 +61,10 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `redundant-base-constructor-call`: Flags explicit empty base-constructor arguments (e.g. `is A()`) when the base requires no arguments.
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
-  - `event-fields`: `address` and id-like (`uint256`/`bytes32` named `id`/`*Id`) event parameters should be `indexed` for efficient log filtering.
+  - `event-fields`: `address` event parameters should be `indexed` for efficient log filtering.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
-  - `cache-array-length`: Recommends caching dynamic array or `bytes` lengths used in `for` loop conditions.
+  - `cache-array-length`: Recommends caching storage dynamic array lengths used in `for` loop conditions.
   - `costly-loop`: Flags storage variable writes inside loops; accumulate into a local variable and write once after the loop instead.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.

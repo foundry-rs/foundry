@@ -22,7 +22,7 @@ use foundry_test_utils::{
     util::OutputExt,
 };
 use serde_json::json;
-use std::{fs, path::Path, str::FromStr};
+use std::{fs, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::TempoTxEnvelope;
 
@@ -1946,15 +1946,14 @@ Transaction successfully executed.
 
 // tests that `cast --to-base` commands are working correctly.
 casttest!(to_base, |_prj, cmd| {
+    // One value per distinct code path (small positive, u256 max in decimal and
+    // hex form, small negative, i256 min) to keep the number of spawned `cast`
+    // processes low and avoid timing out on slow Windows/macOS/ARM CI runners.
     let values = [
         "1",
-        "100",
-        "100000",
         "115792089237316195423570985008687907853269984665640564039457584007913129639935",
         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         "-1",
-        "-100",
-        "-100000",
         "-57896044618658097711785492504343953926634992332820282019728792003956564819968",
     ];
     for value in values {
@@ -2387,6 +2386,41 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
 
 "#
     ]]);
+});
+
+casttest!(mktx_raw_unsigned_curl_skips_unknown_fee_token_symbol_lookup, |_prj, cmd| {
+    let output = cmd
+        .args([
+            "mktx",
+            "0x0000000000000000000000000000000000001234",
+            "--chain",
+            "tempo",
+            "--rpc-url",
+            "https://example.invalid",
+            "--curl",
+            "--tempo.fee-token",
+            "0x20C00000000000000000000014f22CA97301EB73",
+            "--from",
+            "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "100000",
+            "--gas-price",
+            "1000000000",
+            "--priority-gas-price",
+            "1000000000",
+            "--value",
+            "0",
+            "--raw-unsigned",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.starts_with("0x"), "expected raw transaction hex, got:\n{output}");
+    assert!(!output.contains("eth_call"), "unexpected fee-token symbol lookup curl:\n{output}");
+    assert!(!output.contains("0x95d89b41"), "unexpected symbol() calldata:\n{output}");
 });
 
 casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
@@ -3745,6 +3779,138 @@ Executing previous transactions from the block.
 ...
 
 "#]]);
+});
+
+// Deploys the default Counter and sends a `setNumber(111)` tx, returning its hash.
+// Used by the `--prestate-tracer` tests below.
+async fn deploy_counter_and_set_number(
+    prj: &foundry_test_utils::TestProject,
+    cmd: &mut foundry_test_utils::TestCommand,
+    api: &anvil::eth::EthApi<foundry_primitives::FoundryNetwork>,
+    endpoint: &str,
+) -> alloy_primitives::TxHash {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    // Deploy counter contract.
+    let mut forge = Command::new(prj.ensure_foundry_bin("forge"));
+    forge.current_dir(prj.root());
+    forge.env("NO_COLOR", "1");
+    cmd.set_cmd(forge)
+        .args([
+            "script",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+            "--broadcast",
+            "CounterScript",
+        ])
+        .assert_success();
+
+    // Send tx to change counter storage value.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "setNumber(uint256)",
+            "111",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+        ])
+        .assert_success();
+
+    api.transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash()
+}
+
+// `cast run --prestate-tracer` uses the prestate tracer when the node exposes the debug API
+// (Anvil does), skipping the block replay while still producing correct traces. The block replay
+// message must be absent from stderr.
+forgetest_async!(cast_run_prestate_tracer, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    let assert = cmd
+        .cast_fuse()
+        .args(["run", "--prestate-tracer", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Stop]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+    assert!(
+        !assert
+            .get_output()
+            .stderr_lossy()
+            .contains("Executing previous transactions from the block."),
+        "prestate tracer path should not replay previous block transactions"
+    );
+});
+
+// `cast run` defaults to replaying the block (conservative default) even on a node that supports
+// the debug API. The prestate tracer must be explicitly opted into via `--prestate-tracer`, so the
+// block replay message is present on stderr.
+forgetest_async!(cast_run_default_uses_block_replay, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Stop]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
+
+"#]]);
+});
+
+// The prestate tracer path produces the same traces as the block replay path, proving the prestate
+// is applied correctly before execution.
+forgetest_async!(cast_run_prestate_tracer_matches_block_replay, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    let replay = cmd
+        .cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let prestate = cmd
+        .cast_fuse()
+        .args(["run", "--prestate-tracer", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_eq!(replay, prestate, "prestate tracer traces must match block replay traces");
 });
 
 // tests cast can decode traces when running with verbosity level > 4

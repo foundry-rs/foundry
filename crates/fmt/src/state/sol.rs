@@ -1024,6 +1024,9 @@ impl<'ast> State<'_, 'ast> {
 
             self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
+            if override_.is_some() {
+                self.end();
+            }
             self.end();
         }
         self.end();

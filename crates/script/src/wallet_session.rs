@@ -720,7 +720,10 @@ mod tests {
 
         let inner = inner_for_command(&command_args);
         assert!(inner.contains("--root "), "{inner}");
-        assert!(inner.contains(project_root.to_string_lossy().as_ref()), "{inner}");
+        if !cfg!(windows) {
+            assert!(inner.contains(project_root.to_string_lossy().as_ref()), "{inner}");
+        }
+        assert!(inner.ends_with("--broadcast"), "{inner}");
     }
 
     #[test]

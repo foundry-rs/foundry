@@ -24,7 +24,7 @@ use foundry_common::{
     fmt::parse_tokens,
     provider::ProviderBuilder,
     shell,
-    tempo::TEMPO_BROWSER_GAS_BUFFER,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -42,7 +42,7 @@ use foundry_wallets::{
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use tempo_alloy::{TempoNetwork, contracts::precompiles::DEFAULT_FEE_TOKEN};
+use tempo_alloy::TempoNetwork;
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -148,6 +148,7 @@ impl CreateArgs {
         N::ReceiptResponse: serde::Serialize,
     {
         let mut config = self.load_config()?;
+        let resolve_unknown_fee_token_symbol = !config.eth_rpc_curl;
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -240,6 +241,7 @@ impl CreateArgs {
                 Some(browser),
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         } else if self.unlocked {
@@ -258,6 +260,7 @@ impl CreateArgs {
                 None,
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -280,6 +283,7 @@ impl CreateArgs {
                 None,
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         } else {
@@ -305,6 +309,7 @@ impl CreateArgs {
                 None,
                 resolved_lane,
                 expires_at,
+                resolve_unknown_fee_token_symbol,
             )
             .await
         }
@@ -399,6 +404,7 @@ impl CreateArgs {
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,
+        resolve_unknown_fee_token_symbol: bool,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -431,15 +437,6 @@ impl CreateArgs {
         // `to` field must be set explicitly, cannot be None.
         if deployer.tx.to().is_none() {
             deployer.tx.set_create();
-        }
-
-        // If Tempo chain fee token must be set
-        if chain.is_tempo() {
-            if let Some(fee_token) = self.tx.tempo.fee_token {
-                deployer.tx.set_fee_token(fee_token);
-            } else {
-                deployer.tx.set_fee_token(DEFAULT_FEE_TOKEN);
-            }
         }
 
         // Apply user-provided gas, fee, nonce, and Tempo options.
@@ -578,7 +575,24 @@ impl CreateArgs {
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
         if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    resolve_unknown_fee_token_symbol.then_some(&provider),
+                    Some(chain),
+                    &mut deployer.tx,
+                )
+                .await?;
             sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
+        } else {
+            let fee_token = resolve_and_set_fee_token(
+                resolve_unknown_fee_token_symbol.then_some(&provider),
+                Some(chain),
+                &mut deployer.tx,
+                Some(deployer_address),
+            )
+            .await?;
+            maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token)
+                .await?;
         }
 
         // Deploy the actual contract

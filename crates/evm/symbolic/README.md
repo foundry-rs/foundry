@@ -78,6 +78,14 @@ Forge reports symbolic test outcomes as:
   search or validate a counterexample for this run. Treat this outcome as "not
   established".
 
+When `--json` is enabled, each symbolic test result includes a stable
+`symbolic` object in addition to the legacy test fields. The schema lives at
+`crates/evm/symbolic/assets/symbolic-result.schema.json` and records the
+normalized status (`pass`, `fail_counterexample`, or `incomplete`), incomplete
+reason kind, effective bounds, solver identity and counters, explicit
+assumptions, call-trace location metadata, replay status, and counterexample
+payload when one exists.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
@@ -91,6 +99,10 @@ dynamic calldata length settings, and `symbolic.invariant_depth`.
 `Incomplete` can occur when exploration reaches a configured bound, the solver
 times out or returns `unknown`, a test uses unsupported EVM or cheatcode
 semantics, a backend error occurs, or a solver model does not replay concretely.
+When a solver candidate does not replay, it can still be shown as a diagnostic
+legacy top-level `counterexample`; treat it as confirmed only when
+`symbolic.status` is `fail_counterexample` and `symbolic.replay.status` is
+`confirmed`.
 
 Current modeling notes:
 
@@ -98,6 +110,11 @@ Current modeling notes:
   incomplete results with an explanatory reason.
 - Symbolic `KECCAK256` supports common Solidity storage patterns; arbitrary
   symbolic hashing may require heuristics and can make a run incomplete.
+- `SELFDESTRUCT` follows the active fork. Before Cancun it deletes the account;
+  from Cancun onward it only deletes contracts created in the same top-level
+  symbolic transaction, otherwise it transfers balance and halts while
+  preserving code and storage. Cancun beneficiaries must resolve to concrete
+  addresses; unresolved symbolic beneficiaries report incomplete.
 - Counterexamples are shown only after successful concrete replay.
 
 ## Writing Symbolic Tests
@@ -464,7 +481,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Area | Current behavior |
 |---|---|
 | Gas-dependent behavior | The engine does not use gas to prove properties. A raw `GAS` / `gasleft()` value is tolerated only as the direct gas operand to a CALL-family opcode and is not used to model gas availability. Explicit CALL-family gas caps are not enforced. Branches, arithmetic, call targets/values, calldata/returndata, memory/log offsets or sizes, `expectCall` gas matching, or solver constraints derived from observed gas report incomplete. Non-observable gas metering helpers are accepted as no-ops; observable gas read/snapshot helpers such as `lastCallGas`, `snapshotGasLastCall`, and `stopSnapshotGas` report incomplete and should not be used as symbolic properties. |
-| Cancun+ `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 same-transaction creation/deletion and end-of-transaction finalization are not fully modeled, so Cancun+ `SELFDESTRUCT` reports incomplete. |
+| `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 is modeled for concrete beneficiaries: contracts created in the current top-level symbolic transaction are deleted, while existing contracts transfer balance and halt without deleting code or storage. Unresolved symbolic Cancun beneficiaries report incomplete. |
 | Symbolic account/code queries | `BALANCE`, `EXTCODESIZE`, `EXTCODEHASH`, and `EXTCODECOPY` on symbolic addresses are scoped to the engine's known symbolic/overlay/code-cache candidates plus the documented empty-account fallback. They do not prove quantified properties over every possible fork/backend account. |
 | Symbolic CALL targets | Concrete targets and symbolic targets constrained to known deployed-contract/precompile candidates are supported. By default, a feasible symbolic target outside the known candidate set reports incomplete. With `symbolic_call_targets = true`, the outside-candidate branch is modeled as an empty-account/no-code successful call, including value transfer for `CALL`; it does not model arbitrary unknown external code or custom/future precompiles. Symbolic cheatcode addresses/selectors still report incomplete. |
 | Symbolic CREATE / CREATE2 inputs | Concrete initcode and common bounded symbolic CREATE2 address expressions are supported. Symbolic runtime sizes and unsupported symbolic initcode shapes report incomplete. |
@@ -473,7 +490,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Concrete-required operands and bytecode | Symbolic data can flow through calldata, memory, storage, logs, and returndata, but some control/metadata values must resolve to concrete or solver-constrained values: `JUMP`/`JUMPI` destinations, `BLOBHASH` indices, cheatcode selectors, many cheatcode ABI decodes, fork IDs/block numbers, nonces, and created runtime bytecode opcodes. Symbolic bytecode opcodes, symbolic runtime sizes, or unconstrained control operands report incomplete. |
 | Symbolic hashing and `KECCAK256` | Concrete hashes are computed exactly. Symbolic `KECCAK256` is represented by deterministic opaque terms plus Solidity-storage-layout heuristics for common mapping and dynamic-array keys. Proof obligations that depend on cryptographic facts such as non-zero hashes, collision resistance, or preimage resistance are not proof-grade and may report incomplete or produce replay-filtered candidates. |
 | Symbolic storage base values | Writes and later reads through symbolic keys are modeled, with Solidity-layout heuristics for common mapping/dynamic-array keys. Reads of previously-unwritten symbolic keys are abstract storage variables by default, or zero under the zero-init storage layout; the engine does not enumerate arbitrary concrete backend storage slots for a symbolic key. Proofs involving unknown existing storage are scoped to the selected `symbolic.storage_layout`. |
-| Precompiles | Canonical precompiles `0x01..0x0a` are recognized. Concrete inputs for modeled precompiles execute the corresponding revm precompile with effectively unlimited gas. Symbolic identity is byte-precise; symbolic hash/ecrecover/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Validity-sensitive symbolic inputs, such as symbolic BN254 inputs and symbolic BLAKE2f final flags, report incomplete instead of fabricating success. The Cancun KZG point-evaluation precompile (`0x0a`) currently reports incomplete. Symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, future/custom precompiles, and precompile gas/OOG behavior are not fully modeled. |
+| Precompiles | Canonical precompiles are recognized according to the active EVM version; KZG `0x0a` is Cancun+ only and falls back to normal empty-account behavior on earlier hardforks. Concrete inputs for modeled precompiles execute the corresponding revm precompile with effectively unlimited gas. Symbolic identity is byte-precise; symbolic hash/ecrecover/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Symbolic BN254 inputs and symbolic BLAKE2f final flags report incomplete because precompile success depends on validity checks the symbolic model does not prove. KZG `0x0a` concrete inputs execute the revm KZG precompile exactly. Symbolic KZG calls model broad exact failures such as invalid input length and version/hash mismatches where known, plus selected replayable success/failure witnesses. Any remaining feasible symbolic KZG space reports incomplete rather than being treated as proved safe. Symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, future/custom precompiles, and precompile gas/OOG behavior are not fully modeled. |
 | Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Some expensive arithmetic has bounded helpers, but unsupported `EXP` base/exponent shapes and other solver-intractable forms can report incomplete or timeout. |
 | Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, and unsupported symbolic `assumeNoRevert` decodes/overlaps report incomplete. |
 | Approximate/no-op cheatcodes | Some recognized Foundry helpers are accepted but not semantically checked under symbolic execution, including non-observable gas metering helpers, access-list/warm/cool helpers, `allowCheatcodes`, `sleep`, and breakpoints. Observable EVM-version helpers, gas snapshot/read helpers, and safe-memory expectation helpers report incomplete instead of fabricating results or silently accepting assertions. |
@@ -482,8 +499,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Resource and scope bounds | `max_paths` / width, execution depth, calldata variant budget, solver query budget, and solver timeout can stop a run as incomplete. Dynamic ABI length settings, `invariant_depth`, and `symbolic.loop` define the explored input/sequence/loop scope; a `PASS` is only within those configured bounds, and skipped larger shapes, deeper sequences, or more loop iterations are not necessarily reported as incomplete. |
 
 Exact failure messages are preserved in the test output, for example
-`unsupported symbolic execution feature: GAS/gasleft() not modeled` or
-`unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled`.
+`unsupported symbolic execution feature: GAS/gasleft() not modeled`.
 
 For real-world bug-shaped examples that exercise the current modeled surface,
 see the community-maintained

@@ -3,6 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
+use std::path::Path;
 
 /// Returns the current millis since unix epoch.
 ///
@@ -180,6 +181,17 @@ pub fn parse_deployed_address(out: &str) -> Option<String> {
         }
     }
     None
+}
+
+pub fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
+    let target_identified = identified.iter().any(|(identified_address, name)| {
+        identified_address.eq_ignore_ascii_case(address)
+            && name.as_str().is_some_and(|name| name == contract_name)
+    });
+    assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
 }
 
 pub fn parse_verification_guid(out: &str) -> Option<String> {

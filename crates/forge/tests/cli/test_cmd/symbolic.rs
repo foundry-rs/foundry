@@ -1,11 +1,23 @@
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
+use serde_json::Value;
 use std::process::Command;
 
 use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
 
 fn z3_available() -> bool {
     Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
+}
+
+fn json_test_result(stdout: &[u8], signature: &str) -> Value {
+    let json: Value = serde_json::from_slice(stdout).expect("forge test --json output");
+    let suites = json.as_object().expect("top-level suites object");
+    for suite in suites.values() {
+        if let Some(result) = suite["test_results"].get(signature) {
+            return result.clone();
+        }
+    }
+    panic!("missing JSON test result for {signature}: {json}");
 }
 
 forgetest_init!(symbolic_tests_are_ignored_without_flag, |prj, cmd| {
@@ -67,6 +79,43 @@ contract SymbolicPass {
 (paths:
 "#]],
     );
+});
+
+forgetest_init!(symbolic_json_schema_reports_pass, |prj, cmd| {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_json_schema_reports_pass because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonPass.t.sol",
+        r#"
+contract SymbolicJsonPass {
+    function checkNoop(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNoop"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkNoop(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["schema_version"], 1);
+    assert_eq!(symbolic["status"], "pass");
+    assert!(symbolic["incomplete"].is_null());
+    assert_eq!(symbolic["replay"]["required"], false);
+    assert_eq!(symbolic["replay"]["status"], "not_required");
+    assert!(symbolic["counterexample"].is_null());
+    assert_eq!(symbolic["bounds"]["max_paths"], 1024);
+    assert_eq!(symbolic["solver"]["name"], "z3");
+    assert!(symbolic["solver"]["stats"]["paths"].as_u64().unwrap() >= 1);
+    assert_eq!(symbolic["assumptions"][0]["kind"], "bounded_exploration");
 });
 
 forgetest_init!(symbolic_loop_bound_limits_symbolic_unrolling, |prj, cmd| {
@@ -157,6 +206,138 @@ checkRejectsFortyTwo(uint256)
 args=[42]
 "#]],
     );
+});
+
+forgetest_init!(symbolic_json_schema_reports_replayed_counterexample, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_schema_reports_replayed_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256 x) public pure {
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkRejectsFortyTwo"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkRejectsFortyTwo(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert!(symbolic["incomplete"].is_null());
+    assert_eq!(symbolic["replay"]["required"], true);
+    assert_eq!(symbolic["replay"]["status"], "confirmed");
+    assert!(symbolic["counterexample"]["calldata"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(symbolic["counterexample"]["args"], "42");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "42");
+    assert!(symbolic["solver"]["stats"]["model_queries"].as_u64().unwrap() >= 1);
+});
+
+forgetest_init!(symbolic_json_schema_reports_replay_skip, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_schema_reports_replay_skip because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonReplaySkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicJsonReplaySkip is Test {
+    function checkReplaySkip(uint256 x) public {
+        uint256 startedAt = vm.unixTime();
+        vm.sleep(500);
+        vm.skip(vm.unixTime() >= startedAt + 250, "replay slept");
+        assert(x != 42);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkReplaySkip"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkReplaySkip(uint256)");
+    assert_eq!(result["status"], "Skipped");
+    assert_eq!(result["reason"], "replay slept");
+    assert!(result["counterexample"].is_null());
+
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "incomplete");
+    assert_eq!(symbolic["incomplete"]["kind"], "error");
+    assert_eq!(symbolic["replay"]["required"], true);
+    assert_eq!(symbolic["replay"]["status"], "skipped");
+    assert!(
+        symbolic["replay"]["reason"].as_str().unwrap().contains("vm.skip during concrete replay")
+    );
+    assert_eq!(symbolic["counterexample"]["args"], "42");
+});
+
+forgetest_init!(symbolic_json_schema_reports_incomplete, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_schema_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicJsonIncomplete.t.sol",
+        r#"
+contract SymbolicJsonIncomplete {
+    function checkWidth(uint8 x) public pure {
+        uint256 acc;
+        if ((x & 0x01) != 0) acc += 1; else acc += 2;
+        if ((x & 0x02) != 0) acc += 4; else acc += 8;
+        assert(acc != 0);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--symbolic-width",
+            "1",
+            "--match-test",
+            "checkWidth",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkWidth(uint8)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "incomplete");
+    assert_eq!(symbolic["incomplete"]["kind"], "stuck");
+    assert!(symbolic["incomplete"]["reason"].as_str().unwrap().contains("path limit"));
+    assert_eq!(symbolic["bounds"]["max_paths"], 1);
+    assert_eq!(symbolic["replay"]["status"], "not_required");
+    assert!(symbolic["counterexample"].is_null());
 });
 
 forgetest_init!(symbolic_finds_wrapping_arithmetic_riddle_counterexample, |prj, cmd| {
@@ -588,10 +769,10 @@ invalid length `nope`
     );
 });
 
-forgetest_init!(symbolic_selfdestruct_cancun_reports_incomplete, |prj, cmd| {
+forgetest_init!(symbolic_selfdestruct_cancun_self_beneficiary_halts, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_selfdestruct_cancun_reports_incomplete because z3 is not available"
+            "skipping symbolic_selfdestruct_cancun_self_beneficiary_halts because z3 is not available"
         );
         return;
     }
@@ -604,8 +785,10 @@ import "forge-std/Test.sol";
 /// forge-config: default.evm_version = "cancun"
 
 contract SymbolicSelfdestructCancun is Test {
-    function checkSelfdestructCancun(address payable beneficiary) public {
-        selfdestruct(beneficiary);
+    function checkSelfdestructCancun(uint256) public {
+        selfdestruct(payable(address(this)));
+
+        assert(false);
     }
 }
 "#,
@@ -613,16 +796,17 @@ contract SymbolicSelfdestructCancun is Test {
 
     let stdout = cmd
         .args(["test", "--symbolic", "--match-test", "checkSelfdestructCancun"])
-        .assert_failure()
+        .assert_success()
         .get_output()
         .stdout_lossy();
 
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-SELFDESTRUCT/EIP-6780 not modeled
+[PASS] checkSelfdestructCancun(uint256)
 "#]],
     );
+    assert!(!stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
 });
 forgetest_init!(symbolic_invariant_finds_single_step_counterexample, |prj, cmd| {
     if !z3_available() {

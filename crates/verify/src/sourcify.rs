@@ -104,7 +104,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            let job_url = Self::get_job_status_url(
+            let job_url = Self::get_job_ui_url(
                 args.verifier.verifier_url.as_deref(),
                 resp.verification_id.clone(),
             );
@@ -206,6 +206,11 @@ impl SourcifyVerificationProvider {
     fn get_job_status_url(verifier_url: Option<&str>, job_id: String) -> String {
         let base_url = Self::get_base_url(verifier_url);
         format!("{base_url}v2/verify/{job_id}")
+    }
+
+    fn get_job_ui_url(verifier_url: Option<&str>, job_id: String) -> String {
+        let base_url = Self::get_base_url(verifier_url);
+        format!("{base_url}verify-ui/jobs/{job_id}")
     }
 
     fn get_lookup_url(

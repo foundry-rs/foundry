@@ -191,7 +191,7 @@ impl From<FoundryHardfork> for SpecId {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
             #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(hardfork) => eth_spec_id_from_optimism_hardfork(hardfork),
-            FoundryHardfork::Tempo(hardfork) => hardfork.into(),
+            FoundryHardfork::Tempo(hardfork) => spec_id_from_tempo_hardfork(hardfork),
         }
     }
 }
@@ -269,6 +269,11 @@ pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
         OpHardfork::Karst => SpecId::OSAKA,
         f => unreachable!("unimplemented {}", f),
     }
+}
+
+/// Map a `TempoHardfork` enum into its corresponding Ethereum `SpecId`.
+pub const fn spec_id_from_tempo_hardfork(_: TempoHardfork) -> SpecId {
+    SpecId::OSAKA
 }
 
 /// Trait for converting an [`EvmVersion`] into a network-specific spec type.
@@ -464,7 +469,8 @@ mod tests {
 
     #[test]
     fn test_tempo_spec_id_mapping() {
-        assert_eq!(SpecId::from(TempoHardfork::Genesis), SpecId::OSAKA);
+        assert_eq!(spec_id_from_tempo_hardfork(TempoHardfork::Genesis), SpecId::OSAKA);
+        assert_eq!(spec_id_from_tempo_hardfork(TempoHardfork::T8), SpecId::OSAKA);
     }
 
     #[test]
@@ -477,11 +483,11 @@ mod tests {
     fn test_tempo_hardfork_from_chain_and_timestamp() {
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T5))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
-            Some(FoundryHardfork::Tempo(TempoHardfork::T5))
+            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
         );
     }
 
@@ -490,6 +496,7 @@ mod tests {
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T3"), Some(TempoHardfork::T3));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T2"), Some(TempoHardfork::T2));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T7"), Some(TempoHardfork::T7));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T8"), Some(TempoHardfork::T8));
         assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
     }
 
