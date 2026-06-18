@@ -255,29 +255,59 @@ async fn sponsor_fee_token_resolution_preserves_explicit_token() -> eyre::Result
 
 #[tokio::test]
 async fn distribute_reward_inference_respects_reported_hardfork() -> eyre::Result<()> {
+    fn distribute_reward_tx() -> TempoTransactionRequest {
+        TempoTransactionRequest {
+            inner: TransactionRequest::default()
+                .with_to(ALPHA_USD_ADDRESS)
+                .with_input(ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode()),
+            ..Default::default()
+        }
+    }
+
     let asserter = Asserter::new();
     let provider =
         ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
-    let mut tx = TempoTransactionRequest {
-        inner: TransactionRequest::default()
-            .with_to(ALPHA_USD_ADDRESS)
-            .with_input(ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode()),
-        ..Default::default()
-    };
-
+    asserter.push_success(&serde_json::json!({ "active": "T6" }));
     asserter.push_success(&serde_json::json!({ "active": "T7" }));
 
+    let mut pre_t7_tx = distribute_reward_tx();
     assert_eq!(
         resolve_and_set_fee_token::<TempoNetwork>(
             Some(&provider),
             Some(Chain::from_named(NamedChain::Tempo)),
-            &mut tx,
+            &mut pre_t7_tx,
+            None,
+        )
+        .await?,
+        Some(ALPHA_USD_ADDRESS)
+    );
+    assert_eq!(pre_t7_tx.fee_token, Some(ALPHA_USD_ADDRESS));
+
+    let mut t7_tx = distribute_reward_tx();
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            Some(&provider),
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut t7_tx,
             None,
         )
         .await?,
         None
     );
-    assert_eq!(tx.fee_token, None);
+    assert_eq!(t7_tx.fee_token, None);
+
+    let mut unknown_hardfork_tx = distribute_reward_tx();
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            None,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut unknown_hardfork_tx,
+            None,
+        )
+        .await?,
+        None
+    );
+    assert_eq!(unknown_hardfork_tx.fee_token, None);
     Ok(())
 }
 
@@ -291,7 +321,6 @@ async fn tip20_transfer_calls_infer_called_token() -> eyre::Result<()> {
             memo: Default::default(),
         }
         .abi_encode(),
-        ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode(),
     ] {
         let mut tx = TempoTransactionRequest {
             inner: TransactionRequest::default().with_to(ALPHA_USD_ADDRESS).with_input(input),
@@ -399,13 +428,18 @@ async fn tip20_batch_infers_only_when_calls_match_sender_and_token() -> eyre::Re
     let sender = Address::repeat_byte(0x11);
     let transfer =
         ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }.abi_encode();
-    let reward = ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode();
+    let transfer_with_memo = ITIP20::transferWithMemoCall {
+        to: Address::repeat_byte(0x01),
+        amount: U256::from(1),
+        memo: Default::default(),
+    }
+    .abi_encode();
 
     let mut tx = TempoTransactionRequest {
         inner: TransactionRequest::default().with_from(sender),
         calls: vec![
             tempo_call(ALPHA_USD_ADDRESS, transfer.clone()),
-            tempo_call(ALPHA_USD_ADDRESS, reward.clone()),
+            tempo_call(ALPHA_USD_ADDRESS, transfer_with_memo.clone()),
         ],
         ..Default::default()
     };
@@ -425,7 +459,7 @@ async fn tip20_batch_infers_only_when_calls_match_sender_and_token() -> eyre::Re
         inner: TransactionRequest::default().with_from(sender),
         calls: vec![
             tempo_call(ALPHA_USD_ADDRESS, transfer.clone()),
-            tempo_call(BETA_USD_ADDRESS, reward.clone()),
+            tempo_call(BETA_USD_ADDRESS, transfer_with_memo.clone()),
         ],
         ..Default::default()
     };
@@ -461,7 +495,7 @@ async fn tip20_batch_infers_only_when_calls_match_sender_and_token() -> eyre::Re
 
     let mut tx = TempoTransactionRequest {
         inner: TransactionRequest::default().with_from(sender),
-        calls: vec![tempo_call(ALPHA_USD_ADDRESS, reward)],
+        calls: vec![tempo_call(ALPHA_USD_ADDRESS, transfer_with_memo)],
         ..Default::default()
     };
     assert_eq!(
@@ -481,10 +515,15 @@ async fn tip20_batch_infers_only_when_calls_match_sender_and_token() -> eyre::Re
 async fn tempo_call_inspection_matches_built_aa_call_list() -> eyre::Result<()> {
     let transfer =
         ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }.abi_encode();
-    let reward = ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode();
+    let transfer_with_memo = ITIP20::transferWithMemoCall {
+        to: Address::repeat_byte(0x01),
+        amount: U256::from(1),
+        memo: Default::default(),
+    }
+    .abi_encode();
     let mut tx = TempoTransactionRequest {
-        inner: TransactionRequest::default().with_to(ALPHA_USD_ADDRESS).with_input(reward),
-        calls: vec![tempo_call(ALPHA_USD_ADDRESS, transfer)],
+        inner: TransactionRequest::default().with_to(ALPHA_USD_ADDRESS).with_input(transfer),
+        calls: vec![tempo_call(ALPHA_USD_ADDRESS, transfer_with_memo)],
         ..Default::default()
     };
 

@@ -10,7 +10,7 @@ use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
-use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
+use foundry_evm_hardforks::TempoHardfork;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -108,8 +108,7 @@ where
     };
     let inferred_fee_token =
         if immediate_user_token.is_none() && stored_fee_token.is_none() && !calls.is_empty() {
-            let hardfork =
-                active_tempo_hardfork(provider).await.unwrap_or_else(latest_active_tempo_hardfork);
+            let hardfork = active_tempo_hardfork(provider).await;
             infer_fee_token_from_tip20_calls(&calls, tx_from, fee_payer, hardfork)
                 .or_else(|| infer_fee_token_from_stablecoin_dex_calls(&calls, has_call_list))
         } else {
@@ -192,7 +191,7 @@ fn infer_fee_token_from_tip20_calls(
     calls: &[(TxKind, &[u8])],
     tx_from: Option<Address>,
     fee_payer: Option<Address>,
-    hardfork: TempoHardfork,
+    hardfork: Option<TempoHardfork>,
 ) -> Option<Address> {
     if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input, hardfork))
     {
@@ -248,11 +247,12 @@ fn common_call_target(calls: &[(TxKind, &[u8])]) -> Option<Address> {
     targets.all(|next| next == Some(target)).then_some(target)
 }
 
-fn is_tip20_fee_token_call(input: &[u8], hardfork: TempoHardfork) -> bool {
+fn is_tip20_fee_token_call(input: &[u8], hardfork: Option<TempoHardfork>) -> bool {
     input_selector(input).is_some_and(|selector| {
         selector == ITIP20::transferCall::SELECTOR
             || selector == ITIP20::transferWithMemoCall::SELECTOR
-            || (!hardfork.is_t7() && selector == ITIP20::distributeRewardCall::SELECTOR)
+            || (hardfork.is_some_and(|hardfork| !hardfork.is_t7())
+                && selector == ITIP20::distributeRewardCall::SELECTOR)
     })
 }
 
