@@ -831,14 +831,28 @@ impl WorkerCorpus {
         };
         let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
-        let campaign_entry = (!persist_now).then(|| CampaignCorpusEntry {
-            tx_seq: corpus_inputs.clone(),
-            dedupe_by_coverage: new_coverage,
-        });
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
-        if persist_now && let Some(worker_corpus) = &self.worker_dir {
-            let worker_corpus = worker_corpus.join(CORPUS_DIR);
+        self.insert_corpus_entry(
+            corpus,
+            if persist_now { CorpusInsertionMode::Live } else { CorpusInsertionMode::Deferred },
+            new_coverage,
+        )
+    }
+
+    fn insert_corpus_entry(
+        &mut self,
+        corpus: CorpusEntry,
+        insertion_mode: CorpusInsertionMode,
+        dedupe_by_coverage: bool,
+    ) -> Option<CampaignCorpusEntry> {
+        let campaign_entry = matches!(insertion_mode, CorpusInsertionMode::Deferred)
+            .then(|| CampaignCorpusEntry { tx_seq: corpus.tx_seq.clone(), dedupe_by_coverage });
+
+        if matches!(insertion_mode, CorpusInsertionMode::Live)
+            && let Some(worker_dir) = &self.worker_dir
+        {
+            let worker_corpus = worker_dir.join(CORPUS_DIR);
             let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
             if let Err(err) = write_result {
                 debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
@@ -853,7 +867,6 @@ impl WorkerCorpus {
         }
 
         self.push_corpus_entry(corpus);
-
         campaign_entry
     }
 
@@ -1148,26 +1161,15 @@ impl WorkerCorpus {
             return None;
         }
 
-        let targets = targeted_contracts.targets();
-        let mut tx_seq = Vec::with_capacity(observed.len());
-        let mut first_delay = Some((parent_tx.warp, parent_tx.roll));
-        for call in observed {
-            let (warp, roll) = first_delay.take().unwrap_or((None, None));
-            let tx = BasicTxDetails {
-                warp,
-                roll,
-                sender: call.caller,
-                call_details: CallDetails {
-                    target: call.target,
-                    calldata: call.calldata.clone(),
-                    value: call.value,
-                },
-            };
-            if targets.can_replay(&tx) {
-                tx_seq.push(tx);
-            }
-        }
-        drop(targets);
+        let tx_seq = {
+            let targets = targeted_contracts.targets();
+            sequence_from_observed(
+                observed,
+                &targets,
+                ObservedCallDepth::All,
+                Some((parent_tx.warp, parent_tx.roll)),
+            )
+        };
 
         self.push_observed_sequence(tx_seq, insertion_mode)
     }
@@ -1206,10 +1208,6 @@ impl WorkerCorpus {
             };
 
             let mut exec = executor.clone();
-            if let Some(fuzzer) = exec.inspector_mut().fuzzer.as_mut() {
-                fuzzer.set_call_recording(true);
-                let _ = fuzzer.take_observed_calls();
-            }
 
             let raw = match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO)
             {
@@ -1232,7 +1230,7 @@ impl WorkerCorpus {
 
             let seq = {
                 let targets = targeted_contracts.targets();
-                sequence_from_observed(&observed, &targets)
+                sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
             };
 
             let insertion_mode = if self.id == 0 {
@@ -1260,21 +1258,9 @@ impl WorkerCorpus {
             return None;
         }
 
-        let campaign_entry = matches!(insertion_mode, CorpusInsertionMode::Deferred)
-            .then(|| CampaignCorpusEntry { tx_seq: tx_seq.clone(), dedupe_by_coverage: false });
         let corpus = CorpusEntry::new(tx_seq);
 
-        if matches!(insertion_mode, CorpusInsertionMode::Live)
-            && let Some(worker_dir) = &self.worker_dir
-        {
-            let worker_corpus = worker_dir.join(CORPUS_DIR);
-            if let Err(err) = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip) {
-                debug!(target: "corpus", %err, "failed to persist corpus seed");
-            }
-        }
-
-        self.push_corpus_entry(corpus);
-        campaign_entry
+        self.insert_corpus_entry(corpus, insertion_mode, false)
     }
 
     /// Returns the next call to be used in call sequence.
@@ -1760,17 +1746,27 @@ impl WorkerCorpus {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ObservedCallDepth {
+    DirectOnly,
+    All,
+}
+
 fn sequence_from_observed(
     observed: &[ObservedCall],
     targets: &TargetedContracts,
+    depth: ObservedCallDepth,
+    first_delay: Option<(Option<U256>, Option<U256>)>,
 ) -> Vec<BasicTxDetails> {
+    let mut first_delay = first_delay;
     observed
         .iter()
-        .filter(|call| call.depth == 1)
+        .filter(|call| matches!(depth, ObservedCallDepth::All) || call.depth == 1)
         .filter_map(|call| {
+            let (warp, roll) = first_delay.take().unwrap_or((None, None));
             let tx = BasicTxDetails {
-                warp: None,
-                roll: None,
+                warp,
+                roll,
                 sender: call.caller,
                 call_details: CallDetails {
                     target: call.target,
@@ -2430,7 +2426,7 @@ mod tests {
             },
         ];
 
-        let seq = sequence_from_observed(&observed, &targets);
+        let seq = sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None);
 
         assert_eq!(seq.len(), 1);
         assert_eq!(seq[0].sender, sender);
