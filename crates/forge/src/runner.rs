@@ -1430,9 +1430,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         rd: Some(self.revert_decoder()),
                     },
                 ) {
-                    Ok((success, replayed_entirely, reason)) => {
+                    Ok((success, replayed_entirely, reason, reverts)) => {
                         if success {
-                            self.result.invariant_replay_success(txes.len());
+                            self.result.invariant_replay_success(txes.len(), reverts);
                         } else {
                             self.result.invariant_replay_fail(
                                 replayed_entirely,
@@ -1801,7 +1801,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &mut call_sequence,
                 assertion_failure,
             );
-            if let Ok((success, replayed_entirely, replay_reason)) = replay
+            if let Ok((success, replayed_entirely, replay_reason, _)) = replay
                 && !success
             {
                 let warn =
@@ -2587,8 +2587,9 @@ struct InvariantPersistedFailure {
     assertion_failure: bool,
 }
 
-/// Mirrors `check_sequence`'s return: `(success, replayed_entirely, optional_reason)`.
-type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>)>;
+/// Mirrors `check_sequence`'s return:
+/// `(success, replayed_entirely, optional_reason, reverts)`.
+type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>, usize)>;
 
 /// Borrowed context shared by primary-invariant and handler-side replay helpers.
 struct ReplayContext<'a> {

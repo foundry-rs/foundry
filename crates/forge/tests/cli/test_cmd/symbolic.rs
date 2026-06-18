@@ -1211,6 +1211,7 @@ contract SymbolicArtifactFailOnRevert is Test {
     assert!(result["kind"].get("Invariant").is_some(), "{result}");
     assert_eq!(result["kind"]["Invariant"]["runs"], 1);
     assert_eq!(result["kind"]["Invariant"]["calls"], 1);
+    assert_eq!(result["kind"]["Invariant"]["reverts"], 1);
     assert!(result["kind"].get("Unit").is_none(), "{result}");
 });
 

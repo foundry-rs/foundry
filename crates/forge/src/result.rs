@@ -1939,11 +1939,11 @@ impl TestResult {
     }
 
     /// Returns the success result for a replayed invariant test.
-    pub fn invariant_replay_success(&mut self, call_count: usize) {
+    pub fn invariant_replay_success(&mut self, call_count: usize, reverts: usize) {
         self.kind = TestKind::Invariant {
             runs: 1,
             calls: call_count,
-            reverts: 0,
+            reverts,
             workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
