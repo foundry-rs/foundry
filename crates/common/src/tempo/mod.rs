@@ -111,10 +111,6 @@ where
         } else {
             None
         };
-    let inferred_fee_token = match inferred_fee_token {
-        Some(fee_token) if is_usd_tip20_fee_token(provider, fee_token).await => Some(fee_token),
-        _ => None,
-    };
     let fee_token = immediate_user_token.or(stored_fee_token).or(inferred_fee_token);
 
     let Some(fee_token) = fee_token else { return Ok(None) };
@@ -141,31 +137,6 @@ where
     let fee_token = IFeeManager::userTokensCall::abi_decode_returns(&output)
         .wrap_err("failed to decode Tempo fee token lookup")?;
     Ok((!fee_token.is_zero()).then_some(fee_token))
-}
-
-async fn is_usd_tip20_fee_token<N>(provider: Option<&dyn Provider<N>>, fee_token: Address) -> bool
-where
-    N: Network,
-    N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
-{
-    if !fee_token.is_tip20() {
-        return false;
-    }
-    if known_fee_token_symbol(fee_token).is_some() {
-        return true;
-    }
-
-    let Some(provider) = provider else {
-        return false;
-    };
-
-    let tx = N::TransactionRequest::default()
-        .with_to(fee_token)
-        .with_input(ITIP20::currencyCall.abi_encode());
-    let Ok(output) = provider.call(tx).await else {
-        return false;
-    };
-    ITIP20::currencyCall::abi_decode_returns(&output).is_ok_and(|currency| currency == "USD")
 }
 
 fn infer_fee_token_from_tip20_calls(
