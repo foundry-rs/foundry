@@ -104,6 +104,14 @@ impl From<ShowmapDomainArg> for ShowmapDomain {
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
 pub struct TestArgs {
+    /// Internal mode used by `forge fuzz`.
+    #[arg(skip)]
+    pub(crate) fuzz_only: bool,
+
+    /// Internal showmap/replay override used by `forge fuzz replay`.
+    #[arg(skip)]
+    pub(crate) showmap_override: Option<ShowmapConfig>,
+
     // Include global options for users of this struct.
     #[command(flatten)]
     pub global: GlobalArgs,
@@ -439,6 +447,10 @@ impl TestArgs {
 
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Option<ShowmapConfig> {
+        if let Some(showmap) = self.showmap_override.clone() {
+            return Some(showmap);
+        }
+
         // Default trial id uses nanosecond precision so back-to-back invocations
         // don't collide and overwrite each other's output files.
         let trial = self.showmap_trial.clone().unwrap_or_else(|| {
@@ -455,7 +467,19 @@ impl TestArgs {
             per_input: self.showmap_per_input,
             domain: self.showmap_domain.into(),
             corpus_dir: self.showmap_corpus_dir.clone(),
+            emit_files: true,
         })
+    }
+
+    /// Restricts this test invocation to fuzz and invariant tests.
+    pub(crate) const fn enable_fuzz_only(&mut self) {
+        self.fuzz_only = true;
+    }
+
+    /// Overrides showmap config for callers that reuse replay mode without the
+    /// `forge test --showmap-*` CLI flags.
+    pub(crate) fn set_showmap_override(&mut self, showmap: ShowmapConfig) {
+        self.showmap_override = Some(showmap);
     }
 
     /// Reject flags whose stdout shape conflicts with the NDJSON stream
@@ -1166,6 +1190,7 @@ impl TestArgs {
             .set_coverage(coverage)
             .with_multi_network(multi_network)
             .with_showmap(showmap)
+            .with_fuzz_only(self.fuzz_only)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();

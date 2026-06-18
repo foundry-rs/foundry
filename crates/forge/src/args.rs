@@ -42,7 +42,7 @@ pub fn setup() -> Result<()> {
 pub fn run_command(args: Forge) -> Result<()> {
     // Set the execution context based on the subcommand.
     let context = match &args.cmd {
-        ForgeSubcommand::Test(_) => ForgeContext::Test,
+        ForgeSubcommand::Test(_) | ForgeSubcommand::Fuzz(_) => ForgeContext::Test,
         ForgeSubcommand::Coverage(_) => ForgeContext::Coverage,
         ForgeSubcommand::Snapshot(_) => ForgeContext::Snapshot,
         ForgeSubcommand::Script(cmd) => {
@@ -66,7 +66,10 @@ pub fn run_command(args: Forge) -> Result<()> {
     // process-global `is_machine()` flag without ever emitting a terminal
     // envelope — spoofing `command_id` and leaving the stream unterminated.
     if foundry_cli::is_machine() {
-        let adopted = matches!(args.cmd, ForgeSubcommand::Build(_) | ForgeSubcommand::Test(_));
+        let adopted = matches!(
+            args.cmd,
+            ForgeSubcommand::Build(_) | ForgeSubcommand::Test(_) | ForgeSubcommand::Fuzz(_)
+        );
         if !adopted {
             let name = subcommand_name(&args.cmd);
             foundry_cli::machine::bail_machine_usage_with_details(
@@ -97,6 +100,18 @@ pub fn run_command(args: Forge) -> Result<()> {
                 }
                 outcome.ensure_ok(silent)
             }
+        }
+        ForgeSubcommand::Fuzz(cmd) => {
+            let machine_mode = foundry_cli::is_machine();
+            let started = std::time::Instant::now();
+            if machine_mode {
+                if let Some(outcome) = global.block_on(cmd.run_machine())? {
+                    return finalize_test_machine_mode(outcome, started.elapsed());
+                }
+                return Ok(());
+            }
+            let outcome = global.block_on(cmd.run())?;
+            outcome.ensure_ok(shell::is_json())
         }
         ForgeSubcommand::Script(cmd) => global.block_on(cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {
@@ -183,6 +198,7 @@ pub fn run_command(args: Forge) -> Result<()> {
 const fn subcommand_name(cmd: &ForgeSubcommand) -> &'static str {
     match cmd {
         ForgeSubcommand::Test(_) => "test",
+        ForgeSubcommand::Fuzz(_) => "fuzz",
         ForgeSubcommand::Script(_) => "script",
         ForgeSubcommand::Coverage(_) => "coverage",
         ForgeSubcommand::Bind(_) => "bind",

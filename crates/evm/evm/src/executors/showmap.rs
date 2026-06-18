@@ -75,6 +75,8 @@ pub struct ShowmapOpts {
     pub per_input: bool,
     /// Which bitmap(s) to dump.
     pub domain: ShowmapDomain,
+    /// Whether to write showmap files. Disabled by `forge fuzz replay`.
+    pub emit_files: bool,
 }
 
 /// Stats returned from a single trial replay.
@@ -114,7 +116,9 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     }
 
     let approach_dir = opts.out_dir.join(&opts.approach);
-    foundry_common::fs::create_dir_all(&approach_dir)?;
+    if opts.emit_files {
+        foundry_common::fs::create_dir_all(&approach_dir)?;
+    }
 
     let mut stats =
         ShowmapStats { sancov_requested: opts.domain.includes_sancov(), ..Default::default() };
@@ -188,7 +192,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             stats.sancov_observed = true;
         }
 
-        if opts.per_input {
+        if opts.emit_files && opts.per_input {
             // <trial>__<uuid>-<ts>.txt
             let stem = format!("{}__{}-{}", opts.trial, entry.uuid, entry.timestamp);
             stats.showmap_files +=
@@ -199,7 +203,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         }
     }
 
-    if !opts.per_input {
+    if opts.emit_files && !opts.per_input {
         // <trial>.txt
         stats.showmap_files += write_showmap_file(
             &approach_dir.join(format!("{}.txt", opts.trial)),

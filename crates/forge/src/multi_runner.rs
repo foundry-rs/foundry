@@ -361,6 +361,8 @@ pub struct ShowmapConfig {
     /// Optional override for the corpus directory to replay from.
     /// When unset, the per-test corpus dir derived from config is used.
     pub corpus_dir: Option<PathBuf>,
+    /// Whether replay should emit showmap files.
+    pub emit_files: bool,
 }
 
 /// Configuration for the test runner.
@@ -401,6 +403,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     /// When set, fuzz/invariant tests run in corpus replay mode and emit
     /// AFL-`afl-showmap`-style files instead of running a campaign.
     pub showmap: Option<ShowmapConfig>,
+    /// Run only fuzz and invariant tests.
+    pub fuzz_only: bool,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -518,6 +522,8 @@ pub struct MultiContractRunnerBuilder {
     pub multi_network: MultiNetworkConfig,
     /// Showmap replay mode (CLI-only, off by default).
     pub showmap: Option<ShowmapConfig>,
+    /// Run only fuzz and invariant tests.
+    pub fuzz_only: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -534,11 +540,17 @@ impl MultiContractRunnerBuilder {
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
+            fuzz_only: false,
         }
     }
 
     pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
         self.showmap = showmap;
+        self
+    }
+
+    pub const fn with_fuzz_only(mut self, fuzz_only: bool) -> Self {
+        self.fuzz_only = fuzz_only;
         self
     }
 
@@ -706,6 +718,7 @@ impl MultiContractRunnerBuilder {
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
                 showmap: self.showmap,
+                fuzz_only: self.fuzz_only,
                 config: self.config,
             },
 

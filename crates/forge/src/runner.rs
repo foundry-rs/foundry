@@ -913,11 +913,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
-        // In showmap replay mode, only fuzz/invariant tests are runnable.
-        if self.cr.mcr.tcfg.showmap.is_some()
-            && matches!(kind, TestFunctionKind::UnitTest { .. } | TestFunctionKind::TableTest)
+        // In showmap replay mode and `forge fuzz`, only fuzz/invariant tests are runnable.
+        if (self.cr.mcr.tcfg.showmap.is_some() || self.cr.mcr.tcfg.fuzz_only)
+            && matches!(
+                kind,
+                TestFunctionKind::UnitTest { .. }
+                    | TestFunctionKind::TableTest
+                    | TestFunctionKind::SymbolicTest
+            )
         {
-            self.result.replay_skip("not runnable in showmap mode");
+            let mode = self
+                .cr
+                .mcr
+                .tcfg
+                .showmap
+                .as_ref()
+                .map(|showmap| if showmap.emit_files { "showmap" } else { "replay" })
+                .unwrap_or("fuzz");
+            self.result.replay_skip(format!("not runnable in {mode} mode"));
             return self.result;
         }
 
@@ -2139,6 +2152,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             trial: showmap.trial.clone(),
             per_input: showmap.per_input,
             domain,
+            emit_files: showmap.emit_files,
         };
 
         let start = std::time::Instant::now();

@@ -2,6 +2,7 @@ use alloy_primitives::U256;
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
+use serde_json::Value;
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
     prj.update_config(|config| config.optimizer = Some(true));
@@ -55,6 +56,232 @@ contract FuzzerDictTest is Test {
     cmd.forge_fuse()
         .args(["test", "--fuzz-seed", "119", "--mt", "testStorageOwner"])
         .assert_failure();
+});
+
+forgetest_init!(forge_fuzz_run_skips_unit_tests, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRun.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunTest is Test {
+    function test_unit() public pure {}
+
+    /// forge-config: default.fuzz.runs = 2
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzRunTest"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/ForgeFuzzRun.t.sol:ForgeFuzzRunTest
+[PASS] testFuzz_value(uint256) (runs: 2, [AVG_GAS])
+[SKIP: not runnable in fuzz mode] test_unit() (replay: 0 entries, 0 files)
+Suite result: ok. 1 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 1 skipped (2 total tests)
+
+"#]]);
+});
+
+forgetest_init!(forge_fuzz_replay_reports_missing_corpus, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplayTest is Test {
+    function test_unit() public pure {}
+
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "replay", "--mc", "ForgeFuzzReplayTest"]).assert_success().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/ForgeFuzzReplay.t.sol:ForgeFuzzReplayTest
+[SKIP: no corpus_dir configured for this test] testFuzz_value(uint256) (replay: 0 entries, 0 files)
+[SKIP: not runnable in replay mode] test_unit() (replay: 0 entries, 0 files)
+Suite result: ok. 0 passed; 0 failed; 2 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
+
+"#
+    ]]);
+});
+
+forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
+    prj.add_test(
+        "ForgeShowmapSymbolic.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeShowmapSymbolicTest is Test {
+    function check_symbolic(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let assert = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--showmap-out",
+            "showmap",
+            "--mc",
+            "ForgeShowmapSymbolicTest",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("[SKIP: not runnable in showmap mode] check_symbolic(uint256)"),
+        "{stdout}"
+    );
+});
+
+forgetest_init!(forge_fuzz_show_cmin_tmin_corpus_files, |prj, cmd| {
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x0000000000000000000000000000000000000002",
+  "calldata":"0x12345678",
+  "value":"0x0"
+}]"#;
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry).unwrap();
+
+    cmd.args(["fuzz", "show", "corpus"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+corpus/00000000-0000-0000-0000-000000000001-1.json (1 txs)
+  0: target=0x0000000000000000000000000000000000000002 sender=0x0000000000000000000000000000000000000001 calldata=0x12345678 value=0
+corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
+  0: target=0x0000000000000000000000000000000000000002 sender=0x0000000000000000000000000000000000000001 calldata=0x12345678 value=0
+
+"#]]);
+
+    cmd.forge_fuse().args(["fuzz", "cmin", "corpus", "--out", "cmin"]).assert_success().stdout_eq(
+        str![[r#"
+minimized corpus: kept 1/2 entries in cmin
+
+"#]],
+    );
+    let cmin_entries = std::fs::read_dir(prj.root().join("cmin")).unwrap().count();
+    assert_eq!(cmin_entries, 1);
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--out",
+            "min.json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+minimized entry: 1 txs -> min.json
+
+"#]]);
+    assert!(prj.root().join("min.json").is_file());
+});
+
+forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
+    let worker0 = prj.root().join("corpus/worker0/corpus");
+    let worker1 = prj.root().join("corpus/worker1/corpus");
+    std::fs::create_dir_all(&worker0).unwrap();
+    std::fs::create_dir_all(&worker1).unwrap();
+    let entry = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x0000000000000000000000000000000000000002",
+  "calldata":"0x12345678"
+}]"#;
+    let name = "00000000-0000-0000-0000-000000000001-1.json";
+    std::fs::write(worker0.join(name), entry).unwrap();
+    std::fs::write(worker1.join(name), entry).unwrap();
+
+    let show = cmd.args(["--machine", "fuzz", "show", "corpus"]).assert_success();
+    let show: Value = serde_json::from_slice(&show.get_output().stdout).unwrap();
+    assert_eq!(show["success"], true);
+    assert_eq!(show["data"]["entries"].as_array().unwrap().len(), 1);
+
+    let cmin = cmd
+        .forge_fuse()
+        .args(["--machine", "fuzz", "cmin", "corpus", "--out", "cmin-workers"])
+        .assert_success();
+    let cmin: Value = serde_json::from_slice(&cmin.get_output().stdout).unwrap();
+    assert_eq!(cmin["success"], true);
+    assert_eq!(cmin["data"]["total"], 1);
+    assert_eq!(cmin["data"]["kept"], 1);
+    assert_eq!(cmin["data"]["removed"], 0);
+    assert_eq!(std::fs::read_dir(prj.root().join("cmin-workers")).unwrap().count(), 1);
+});
+
+forgetest_init!(forge_fuzz_corpus_subcommands_support_machine, |prj, cmd| {
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x0000000000000000000000000000000000000002",
+  "calldata":"0x12345678",
+  "value":"0x0"
+}]"#;
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry).unwrap();
+
+    let show = cmd.args(["--machine", "fuzz", "show", "corpus"]).assert_success();
+    let show: Value = serde_json::from_slice(&show.get_output().stdout).unwrap();
+    assert_eq!(show["success"], true);
+    assert_eq!(show["data"]["entries"].as_array().unwrap().len(), 2);
+    assert_eq!(show["data"]["entries"][0]["sequence"].as_array().unwrap().len(), 1);
+
+    let cmin = cmd
+        .forge_fuse()
+        .args(["--machine", "fuzz", "cmin", "corpus", "--out", "cmin"])
+        .assert_success();
+    let cmin: Value = serde_json::from_slice(&cmin.get_output().stdout).unwrap();
+    assert_eq!(cmin["success"], true);
+    assert_eq!(cmin["data"]["input"], "corpus");
+    assert_eq!(cmin["data"]["output"], "cmin");
+    assert_eq!(cmin["data"]["total"], 2);
+    assert_eq!(cmin["data"]["kept"], 1);
+    assert_eq!(cmin["data"]["removed"], 1);
+    assert_eq!(std::fs::read_dir(prj.root().join("cmin")).unwrap().count(), 1);
+
+    let tmin = cmd
+        .forge_fuse()
+        .args([
+            "--machine",
+            "fuzz",
+            "tmin",
+            "corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--out",
+            "min-machine.json",
+        ])
+        .assert_success();
+    let tmin: Value = serde_json::from_slice(&tmin.get_output().stdout).unwrap();
+    assert_eq!(tmin["success"], true);
+    assert_eq!(tmin["data"]["input"], "corpus/00000000-0000-0000-0000-000000000001-1.json");
+    assert_eq!(tmin["data"]["output"], "min-machine.json");
+    assert_eq!(tmin["data"]["before_txs"], 1);
+    assert_eq!(tmin["data"]["after_txs"], 1);
+    assert_eq!(tmin["data"]["removed_txs"], 0);
+    assert!(prj.root().join("min-machine.json").is_file());
 });
 
 // tests that inline max-test-rejects config is properly applied
