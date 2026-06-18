@@ -161,9 +161,13 @@ impl<'a> DebugStepsWalker<'a> {
 
                 Some((
                     inputs.and_then(|t| {
-                        decode_step_parameters(&t, &self.node.trace.steps[start_idx + 1])
+                        decode_step_parameters(
+                            &t,
+                            &self.node.trace.steps[start_idx + 1],
+                            Some(self.node.trace.data.as_ref()),
+                        )
                     }),
-                    outputs.and_then(|t| decode_step_parameters(&t, self.current_step())),
+                    outputs.and_then(|t| decode_step_parameters(&t, self.current_step(), None)),
                 ))
             })
             .unwrap_or_default();
@@ -276,54 +280,118 @@ fn parse_types(source: &str) -> (Option<Parameters<'_>>, Option<Parameters<'_>>)
     (inputs, outputs)
 }
 
-/// Given [Parameters] and [CallTraceStep], tries to decode parameters by using stack and memory.
-pub fn decode_step_parameters(args: &Parameters<'_>, step: &CallTraceStep) -> Option<Vec<String>> {
+/// Given [Parameters] and [CallTraceStep], tries to decode parameters by using stack, memory, and
+/// call data.
+pub fn decode_step_parameters(
+    args: &Parameters<'_>,
+    step: &CallTraceStep,
+    calldata: Option<&[u8]>,
+) -> Option<Vec<String>> {
     let params = &args.params;
 
     if params.is_empty() {
         return Some(vec![]);
     }
 
-    let types = params.iter().map(|p| p.resolve().ok().map(|t| (t, p.storage))).collect::<Vec<_>>();
+    let types = params
+        .iter()
+        .map(|p| {
+            p.resolve().ok().map(|t| {
+                let slots = stack_slots(&t, p.storage);
+                (t, p.storage, slots)
+            })
+        })
+        .collect::<Vec<_>>();
 
     let stack = step.stack.as_ref()?;
+    let stack_slots =
+        types.iter().map(|type_| type_.as_ref().map_or(1, |(_, _, slots)| *slots)).sum::<usize>();
 
-    if stack.len() < types.len() {
+    if stack.len() < stack_slots {
         return None;
     }
 
-    let inputs = &stack[stack.len() - types.len()..];
+    let inputs = &stack[stack.len() - stack_slots..];
+    let memory = step.memory.as_ref().map(|memory| memory.as_bytes().as_ref());
+    let mut input_idx = 0;
+    let mut decoded = Vec::with_capacity(types.len());
 
-    let decoded = inputs
-        .iter()
-        .zip(types.iter())
-        .map(|(input, type_and_storage)| {
-            type_and_storage
-                .as_ref()
-                .and_then(|(type_, storage)| {
-                    match (type_, storage) {
-                        // HACK: alloy parser treats user-defined types as uint8: https://github.com/alloy-rs/core/pull/386
-                        //
-                        // filter out `uint8` params which are marked as storage or memory as this
-                        // is not possible in Solidity and means that type is user-defined
-                        (DynSolType::Uint(8), Some(Storage::Memory | Storage::Storage)) => None,
-                        (_, Some(Storage::Storage)) => None,
-                        (_, Some(Storage::Memory)) => decode_from_memory(
-                            type_,
-                            step.memory.as_ref()?.as_bytes(),
-                            input.try_into().ok()?,
-                        ),
-                        // Read other types from stack
-                        _ => type_.abi_decode(&input.to_be_bytes::<32>()).ok(),
-                    }
-                })
+    for type_and_storage in &types {
+        let Some((type_, storage, slots)) = type_and_storage.as_ref() else {
+            input_idx += 1;
+            decoded.push("<unknown>".to_string());
+            continue;
+        };
+        let input = &inputs[input_idx..input_idx + *slots];
+        input_idx += *slots;
+
+        decoded.push(
+            decode_parameter(type_, *storage, input, memory, calldata)
                 .as_ref()
                 .map(format_token)
-                .unwrap_or_else(|| "<unknown>".to_string())
-        })
-        .collect();
+                .unwrap_or_else(|| "<unknown>".to_string()),
+        );
+    }
 
     Some(decoded)
+}
+
+fn stack_slots(ty: &DynSolType, storage: Option<Storage>) -> usize {
+    match (ty, storage) {
+        (
+            DynSolType::String | DynSolType::Bytes | DynSolType::Array(_),
+            Some(Storage::Calldata),
+        ) => 2,
+        _ => 1,
+    }
+}
+
+fn decode_parameter(
+    ty: &DynSolType,
+    storage: Option<Storage>,
+    stack_words: &[U256],
+    memory: Option<&[u8]>,
+    calldata: Option<&[u8]>,
+) -> Option<DynSolValue> {
+    let input = stack_words.first()?;
+
+    match (ty, storage) {
+        // HACK: alloy parser treats user-defined types as uint8: https://github.com/alloy-rs/core/pull/386
+        //
+        // filter out `uint8` params which are marked as storage, memory, or calldata as this
+        // is not possible in Solidity and means that type is user-defined
+        (DynSolType::Uint(8), Some(Storage::Memory | Storage::Storage | Storage::Calldata)) => None,
+        (_, Some(Storage::Storage)) => None,
+        (_, Some(Storage::Memory)) => decode_from_memory(ty, memory?, input.try_into().ok()?),
+        (_, Some(Storage::Calldata)) => decode_from_calldata(ty, calldata?, stack_words),
+        // Read other types from stack
+        _ => ty.abi_decode(&input.to_be_bytes::<32>()).ok(),
+    }
+}
+
+fn decode_from_calldata(
+    ty: &DynSolType,
+    calldata: &[u8],
+    stack_words: &[U256],
+) -> Option<DynSolValue> {
+    let offset: usize = stack_words.first()?.try_into().ok()?;
+
+    match ty {
+        // For calldata `string` and `bytes`, Solidity keeps the byte offset and length on stack.
+        DynSolType::String | DynSolType::Bytes => {
+            let length: usize = stack_words.get(1)?.try_into().ok()?;
+            let data = memory_range(calldata, offset, length)?;
+
+            match ty {
+                DynSolType::Bytes => Some(DynSolValue::Bytes(data.to_vec())),
+                DynSolType::String => {
+                    Some(DynSolValue::String(String::from_utf8_lossy(data).to_string()))
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Decodes given [DynSolType] from memory.
@@ -446,6 +514,38 @@ mod tests {
         let params = Parameters::parse("(uint256[] storage values)").unwrap();
         let step = trace_step(vec![U256::from(5)]);
 
-        assert_eq!(decode_step_parameters(&params, &step), Some(vec!["<unknown>".to_string()]));
+        assert_eq!(
+            decode_step_parameters(&params, &step, None),
+            Some(vec!["<unknown>".to_string()])
+        );
+    }
+
+    #[test]
+    fn decode_step_parameters_aligns_static_arg_before_calldata_bytes() {
+        let params = Parameters::parse("(bytes32 digest, bytes calldata signature)").unwrap();
+        let digest = U256::from(0x1234);
+        let offset = 0x44;
+        let mut calldata = vec![0; offset];
+        calldata.extend_from_slice(&[0x11, 0x22, 0x33]);
+        let step = trace_step(vec![digest, U256::from(offset), U256::from(3)]);
+
+        assert_eq!(
+            decode_step_parameters(&params, &step, Some(&calldata)),
+            Some(vec![
+                "0x0000000000000000000000000000000000000000000000000000000000001234".to_string(),
+                "0x112233".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn decode_step_parameters_marks_calldata_bytes_unknown_without_calldata() {
+        let params = Parameters::parse("(bytes calldata signature)").unwrap();
+        let step = trace_step(vec![U256::from(0x44), U256::from(3)]);
+
+        assert_eq!(
+            decode_step_parameters(&params, &step, None),
+            Some(vec!["<unknown>".to_string()])
+        );
     }
 }

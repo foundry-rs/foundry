@@ -17,9 +17,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm_inspectors::tracing::types::{
-    CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep,
-};
+use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -764,8 +762,13 @@ impl TUIContext<'_> {
         }
 
         let parameters = Parameters::parse(&scope.parameters_src).ok()?;
-        let step = self.step_by_absolute_index(trace_node_idx, entry_step)?;
-        decode_step_parameters(&parameters, step)
+        let node = self.debug_arena().iter().find(|node| {
+            node.trace_node_idx == trace_node_idx
+                && entry_step >= node.step_offset
+                && entry_step < node.step_offset.saturating_add(node.steps.len())
+        })?;
+        let step = node.steps.get(entry_step.checked_sub(node.step_offset)?)?;
+        decode_step_parameters(&parameters, step, Some(node.calldata.as_ref()))
     }
 
     fn active_internal_call(&mut self) -> Option<ActiveInternalCall<'_>> {
@@ -847,17 +850,6 @@ impl TUIContext<'_> {
             end_step: location.end_step,
             decoded,
         })
-    }
-
-    fn step_by_absolute_index(
-        &self,
-        trace_node_idx: usize,
-        absolute_step: usize,
-    ) -> Option<&CallTraceStep> {
-        self.debug_arena()
-            .iter()
-            .filter(|node| node.trace_node_idx == trace_node_idx)
-            .find_map(|node| node.steps.get(absolute_step.checked_sub(node.step_offset)?))
     }
 
     fn absolute_current_step(&self) -> usize {
@@ -1235,7 +1227,7 @@ mod tests {
     fn decode_step_parameters_reads_static_values_from_stack() {
         let step = trace_step(vec![U256::from(42), U256::from(1)]);
         let parameters = Parameters::parse("(uint256 amount, bool ok)").unwrap();
-        let values = super::decode_step_parameters(&parameters, &step).unwrap();
+        let values = super::decode_step_parameters(&parameters, &step, None).unwrap();
 
         assert_eq!(values, ["42", "true"]);
     }
