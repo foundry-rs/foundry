@@ -741,6 +741,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 .collect::<Vec<_>>();
 
             if replay_functions.is_empty() {
+                if !self.mcr.tcfg.multi_network.all_override_networks.is_empty() {
+                    return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
+                }
                 return SuiteResult::new(
                     start.elapsed(),
                     [(
@@ -1413,6 +1416,51 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     .iter()
                     .map(SymbolicCounterexampleCall::to_basic_tx_details)
                     .collect::<Vec<_>>();
+                let setup_contracts = load_contracts(
+                    self.setup.traces.iter().map(|(_, trace)| &trace.arena),
+                    &self.cr.mcr.known_contracts,
+                );
+                let mut evm = InvariantExecutor::new_with_fuzz_seed(
+                    self.clone_executor(),
+                    self.invariant_runner(),
+                    self.config.fuzz.seed,
+                    self.config.invariant.clone(),
+                    &setup_contracts,
+                    &self.cr.mcr.known_contracts,
+                    self.cr.num_invariant_campaign_anchors,
+                );
+                if let Err(err) = evm.select_contract_artifacts(self.address) {
+                    self.result.invariant_setup_fail(err);
+                    return self.result;
+                }
+                let targeted = match evm.select_contracts_and_senders(self.address) {
+                    Ok((_, targeted)) => targeted,
+                    Err(err) => {
+                        self.result.invariant_setup_fail(err);
+                        return self.result;
+                    }
+                };
+                {
+                    let targets = targeted.targets();
+                    for (idx, tx) in txes.iter().enumerate() {
+                        let Some(selector) = tx.call_details.calldata.get(..4) else {
+                            self.result.single_fail(Some(format!(
+                                "sequence symbolic artifact call {} has calldata shorter than a selector",
+                                idx + 1
+                            )));
+                            return self.result;
+                        };
+                        if !targets.can_replay(tx) {
+                            self.result.single_fail(Some(format!(
+                                "sequence symbolic artifact call {} targets unknown function {} on {}",
+                                idx + 1,
+                                hex::encode_prefixed(selector),
+                                tx.call_details.target
+                            )));
+                            return self.result;
+                        }
+                    }
+                }
                 match check_sequence(
                     self.clone_executor(),
                     &txes,

@@ -365,14 +365,14 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         &sequence,
         options.accumulate_warp_roll,
         |_idx, call_result| {
-            if call_result.reverted {
-                reverts += 1;
-            }
             // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed
             // scenarios that are replayed with a modified version of test driver (that use
             // new `vm.assume` cheatcodes).
             if call_result.result.as_ref() == MAGIC_ASSUME {
                 return Ok(ReplayDecision::Continue(call_result));
+            }
+            if call_result.reverted {
+                reverts += 1;
             }
             if did_fail_on_assert(&call_result, &call_result.state_changeset) {
                 return Ok(ReplayDecision::Stop((
