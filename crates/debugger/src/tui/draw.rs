@@ -18,7 +18,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use revm_inspectors::tracing::types::{
-    CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep,
+    CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep, StorageChange,
+    StorageChangeReason,
 };
 use std::{collections::VecDeque, fmt::Write};
 
@@ -486,25 +487,37 @@ impl TUIContext<'_> {
 
     fn draw_variables(&mut self, f: &mut Frame<'_>, area: Rect) {
         let variables = self.scope_variables();
+        let storage_access = self.current_storage_access_line();
         let known = variables.iter().filter(|variable| variable.value.is_some()).count();
-        let title = if variables.is_empty() {
+        let title = if variables.is_empty() && storage_access.is_none() {
             "Variables".to_string()
         } else {
-            format!("Variables: {known}/{}", variables.len())
+            let storage_suffix = if storage_access.is_some() { " | Storage" } else { "" };
+            format!("Variables: {known}/{}{storage_suffix}", variables.len())
         };
 
-        let text = if variables.is_empty() {
-            vec![Line::from(Span::styled(
+        let mut text = variables.into_iter().map(scope_variable_line).collect::<Vec<_>>();
+        if let Some(storage_access) = storage_access {
+            if !text.is_empty() {
+                text.push(Line::from(""));
+            }
+            text.push(storage_access);
+        }
+
+        if text.is_empty() {
+            text.push(Line::from(Span::styled(
                 "No variables in current scope",
                 Style::new().add_modifier(Modifier::DIM),
-            ))]
-        } else {
-            variables.into_iter().map(scope_variable_line).collect()
-        };
+            )));
+        }
 
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
+    }
+
+    fn current_storage_access_line(&self) -> Option<Line<'static>> {
+        self.current_step().storage_change.as_deref().map(storage_access_line)
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -880,6 +893,29 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
+fn storage_access_line(change: &StorageChange) -> Line<'static> {
+    let op = match change.reason {
+        StorageChangeReason::SLOAD => "SLOAD",
+        StorageChangeReason::SSTORE => "SSTORE",
+    };
+
+    let text = match (change.reason, change.had_value) {
+        (StorageChangeReason::SSTORE, Some(previous)) => format!(
+            "storage {op} slot {}: {} -> {}",
+            hex_u256(change.key),
+            hex_u256(previous),
+            hex_u256(change.value)
+        ),
+        _ => format!("storage {op} slot {} = {}", hex_u256(change.key), hex_u256(change.value)),
+    };
+
+    Line::from(Span::styled(text, Style::new().fg(Color::Yellow)))
+}
+
+fn hex_u256(value: U256) -> String {
+    format!("{value:#x}")
+}
+
 fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) -> String {
     variable
         .name
@@ -1084,7 +1120,7 @@ mod tests {
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
     use revm_inspectors::tracing::types::{
         CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
-        DecodedTraceStep,
+        DecodedTraceStep, StorageChange, StorageChangeReason,
     };
 
     fn line_text(line: &Line<'_>) -> String {
@@ -1388,6 +1424,36 @@ mod tests {
         };
 
         assert_eq!(line_text(&super::scope_variable_line(variable)), "local sum = <unavailable>");
+    }
+
+    #[test]
+    fn storage_access_line_formats_sload() {
+        let change = StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: None,
+            reason: StorageChangeReason::SLOAD,
+        };
+
+        assert_eq!(
+            line_text(&super::storage_access_line(&change)),
+            "storage SLOAD slot 0x1 = 0x2a"
+        );
+    }
+
+    #[test]
+    fn storage_access_line_formats_sstore_with_previous_value() {
+        let change = StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: Some(U256::from(7)),
+            reason: StorageChangeReason::SSTORE,
+        };
+
+        assert_eq!(
+            line_text(&super::storage_access_line(&change)),
+            "storage SSTORE slot 0x1: 0x7 -> 0x2a"
+        );
     }
 
     #[test]

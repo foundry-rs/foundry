@@ -81,6 +81,30 @@ fn collect_debug_dump_internal_calls<'a>(
     }
 }
 
+fn collect_debug_dump_storage_changes<'a>(
+    value: &'a serde_json::Value,
+    changes: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_debug_dump_storage_changes(value, changes);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if let Some(change) = map.get("storage_change")
+                && !change.is_null()
+            {
+                changes.push(change);
+            }
+            for value in map.values() {
+                collect_debug_dump_storage_changes(value, changes);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
 /// These are run separately by the `flaky_testdata` test below.
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
@@ -2754,6 +2778,45 @@ contract DebugVarsTest {
     assert_eq!(
         address_call["return_data"],
         serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
+});
+
+// Progresses <https://github.com/foundry-rs/foundry/issues/927>: debugger storage view.
+forgetest!(debug_dump_includes_storage_changes, |prj, cmd| {
+    prj.add_source(
+        "DebugStorage",
+        r"
+contract DebugStorageTest {
+    uint256 value;
+    uint256 untouched;
+
+    function testStorage() public {
+        value = 42;
+        uint256 loaded = value;
+        uint256 coldLoaded = untouched;
+        require(loaded == 42 && coldLoaded == 0);
+    }
+}
+",
+    );
+
+    let dump_path = prj.root().join("storage_dump.json");
+
+    cmd.args(["test", "--mt", "testStorage", "--debug", "--dump", dump_path.to_str().unwrap()]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut storage_changes = Vec::new();
+    collect_debug_dump_storage_changes(&dump, &mut storage_changes);
+
+    assert!(
+        storage_changes.iter().any(|change| change["reason"] == "SSTORE"),
+        "debugger dump should include an SSTORE storage change: {storage_changes:#?}"
+    );
+    assert!(
+        storage_changes.iter().any(|change| change["reason"] == "SLOAD"),
+        "debugger dump should include an SLOAD storage access: {storage_changes:#?}"
     );
 });
 
