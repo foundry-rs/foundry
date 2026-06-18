@@ -13,7 +13,6 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner};
-use alloy_chains::{Chain, NamedChain};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -37,7 +36,6 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
     shell,
-    tempo::resolve_fee_token,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
@@ -323,10 +321,6 @@ impl ScriptArgs {
         }
 
         tempo.resolve_expires();
-
-        // Resolve the fee token: default only when the active EVM network is Tempo.
-        let chain = evm_opts.networks.is_tempo().then(|| Chain::from_named(NamedChain::Tempo));
-        tempo.fee_token = resolve_fee_token(chain, tempo.fee_token);
 
         let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
@@ -701,6 +695,8 @@ pub struct ScriptResult<N: Network> {
     pub gas_used: u64,
     pub labeled_addresses: AddressHashMap<String>,
     #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
+    #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
     #[serde(skip)]
@@ -718,6 +714,7 @@ impl<N: Network> Default for ScriptResult<N> {
             traces: Default::default(),
             gas_used: Default::default(),
             labeled_addresses: Default::default(),
+            debug_bytecodes: Default::default(),
             transactions: Default::default(),
             returned: Default::default(),
             exit_reason: Default::default(),
@@ -894,13 +891,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
+        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
+            .with_debug_bytecodes(debug))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
