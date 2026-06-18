@@ -18,6 +18,7 @@ use crate::cmd::{
     keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
     logs::LogsArgs,
     mktx::MakeTxArgs,
+    receive_policy::ReceivePolicySubcommand,
     rpc::RpcArgs,
     run::RunArgs,
     send::SendTxArgs,
@@ -1255,6 +1256,13 @@ pub enum CastSubcommand {
     Tip20Token {
         #[command(subcommand)]
         command: Tip20Subcommand,
+    },
+
+    /// Account-level receive policy operations (Tempo).
+    #[command(name = "receive-policy")]
+    ReceivePolicy {
+        #[command(subcommand)]
+        command: ReceivePolicySubcommand,
     },
 
     /// Tempo keychain (access key) management.

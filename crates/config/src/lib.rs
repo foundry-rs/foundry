@@ -121,6 +121,9 @@ pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayo
 mod coverage;
 pub use coverage::{CoverageConfig, CoverageReportKind, parse_lcov_version};
 
+mod fee;
+pub use fee::Eip1559FeeEstimatePreset;
+
 pub mod mutation;
 pub use mutation::{MutationConfig, MutatorType};
 
@@ -386,6 +389,11 @@ pub struct Config {
     pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
+    /// Controls how EIP-1559 fees are estimated for `forge script` broadcasts
+    /// (`low` / `market` / `aggressive`). Defaults to `market`, which preserves
+    /// the historical behavior (`base_fee * 2 + 20th-percentile priority fee`).
+    #[serde(default)]
+    pub eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     /// Sets a timeout in seconds for vm.prompt cheatcodes
     pub prompt_timeout: u64,
     /// The address which will be executing all tests
@@ -2723,6 +2731,7 @@ impl Default for Config {
             coverage: CoverageConfig::default(),
             mutation: MutationConfig::default(),
             always_use_create_2_factory: false,
+            eip1559_fee_estimate: Eip1559FeeEstimatePreset::default(),
             ffi: false,
             live_logs: false,
             allow_internal_expect_revert: false,
