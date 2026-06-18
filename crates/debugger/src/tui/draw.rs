@@ -17,9 +17,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
-use revm_inspectors::tracing::types::{
-    CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep,
-};
+use revm_inspectors::tracing::types::{CallKind, DecodedInternalCall, DecodedTraceStep};
 use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
@@ -764,8 +762,13 @@ impl TUIContext<'_> {
         }
 
         let parameters = Parameters::parse(&scope.parameters_src).ok()?;
-        let step = self.step_by_absolute_index(trace_node_idx, entry_step)?;
-        decode_step_parameters(&parameters, step)
+        let node = self.debug_arena().iter().find(|node| {
+            node.trace_node_idx == trace_node_idx
+                && entry_step >= node.step_offset
+                && entry_step < node.step_offset.saturating_add(node.steps.len())
+        })?;
+        let step = node.steps.get(entry_step.checked_sub(node.step_offset)?)?;
+        decode_step_parameters(&parameters, step, Some(node.calldata.as_ref()))
     }
 
     fn active_internal_call(&mut self) -> Option<ActiveInternalCall<'_>> {
@@ -847,17 +850,6 @@ impl TUIContext<'_> {
             end_step: location.end_step,
             decoded,
         })
-    }
-
-    fn step_by_absolute_index(
-        &self,
-        trace_node_idx: usize,
-        absolute_step: usize,
-    ) -> Option<&CallTraceStep> {
-        self.debug_arena()
-            .iter()
-            .filter(|node| node.trace_node_idx == trace_node_idx)
-            .find_map(|node| node.steps.get(absolute_step.checked_sub(node.step_offset)?))
     }
 
     fn absolute_current_step(&self) -> usize {
@@ -1235,7 +1227,7 @@ mod tests {
     fn decode_step_parameters_reads_static_values_from_stack() {
         let step = trace_step(vec![U256::from(42), U256::from(1)]);
         let parameters = Parameters::parse("(uint256 amount, bool ok)").unwrap();
-        let values = super::decode_step_parameters(&parameters, &step).unwrap();
+        let values = super::decode_step_parameters(&parameters, &step, None).unwrap();
 
         assert_eq!(values, ["42", "true"]);
     }
@@ -1253,6 +1245,37 @@ mod tests {
         assert_eq!(
             tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")),
             Some(vec!["42".to_string()])
+        );
+    }
+
+    #[test]
+    fn decode_internal_parameter_values_passes_calldata_to_fallback_decoder() {
+        let digest = U256::from(0x1234);
+        let offset = 0x44;
+        let mut calldata = vec![0; offset];
+        calldata.extend_from_slice(&[0x11, 0x22, 0x33]);
+
+        let mut entry_node =
+            debug_node(0, 1, vec![trace_step(vec![digest, U256::from(offset), U256::from(3)])]);
+        entry_node.calldata = Bytes::from(calldata);
+
+        let mut context = context_with_arena(vec![
+            debug_node(0, 0, vec![internal_call_step_without_args(2)]),
+            debug_node(1, 0, vec![trace_step(Vec::new())]),
+            entry_node,
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.draw_memory.inner_call_index = 2;
+
+        assert_eq!(
+            tui.decode_internal_parameter_values(&scope(
+                "foo",
+                "(bytes32 digest, bytes calldata signature)"
+            )),
+            Some(vec![
+                "0x0000000000000000000000000000000000000000000000000000000000001234".to_string(),
+                "0x112233".to_string(),
+            ])
         );
     }
 
