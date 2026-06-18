@@ -17,8 +17,32 @@ LL │         b = 2 ^ 64;
 warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
    ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
    │
-LL │         c = (3) ^ (4);
-   │             ━━━━━━━━━
+LL │         c = 2 ^ 256;
+   │             ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
+
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+   ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
+   │
+LL │         d = uint256(10) ^ 18;
+   │             ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
+
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+   ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
+   │
+LL │         e = 2 ^ uint256(64);
+   │             ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
+
+warning[incorrect-exp]: `^` is bitwise xor, not exponentiation; use `**`
+   ╭▸ ROOT/testdata/IncorrectExp.sol:LL:CC
+   │
+LL │         f = uint256(uint8(2)) ^ 64;
+   │             ━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-exp
 
