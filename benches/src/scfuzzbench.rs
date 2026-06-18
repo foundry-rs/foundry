@@ -1,3 +1,5 @@
+//! Run local Foundry scfuzzbench campaigns and collect deterministic artifacts.
+
 use clap::{Parser, ValueEnum};
 use eyre::{Context, Result};
 use foundry_common::sh_println;
@@ -77,7 +79,8 @@ struct Cli {
     #[clap(long, conflicts_with = "foundry_ref")]
     foundry_bin: Option<PathBuf>,
 
-    /// Foundry branch, tag, or commit to build and benchmark. Mutually exclusive with --foundry-bin.
+    /// Foundry branch, tag, or commit to build and benchmark. Mutually exclusive with
+    /// --foundry-bin.
     #[clap(long, conflicts_with = "foundry_bin")]
     foundry_ref: Option<String>,
 
@@ -101,7 +104,7 @@ enum BenchmarkType {
 }
 
 impl BenchmarkType {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Property => "property",
             Self::Optimization => "optimization",
@@ -190,6 +193,13 @@ struct FoundrySelection {
     env: RunEnv,
 }
 
+struct RunMetadata<'a> {
+    scfuzzbench_commit: &'a str,
+    target_commit: &'a str,
+    run_id: &'a str,
+    campaign_exit_code: Option<i32>,
+}
+
 fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
@@ -223,26 +233,15 @@ fn main() -> Result<()> {
     run_analysis(&cli, &dirs, &foundry, &run_id).wrap_err("failed to analyze campaign logs")?;
     validate_differential_coverage(&dirs)?;
 
+    let run_metadata = RunMetadata {
+        scfuzzbench_commit: &scfuzzbench_commit,
+        target_commit: &target_commit,
+        run_id: &run_id,
+        campaign_exit_code: campaign_status.code(),
+    };
     let mut missing = collect_artifacts(&dirs).wrap_err("failed to collect artifacts")?;
-    let summary_path = write_llm_summary(
-        &cli,
-        &dirs,
-        &foundry,
-        &scfuzzbench_commit,
-        &target_commit,
-        &run_id,
-        campaign_status.code(),
-        &missing,
-    )?;
-    let manifest_path = write_manifest(
-        &cli,
-        &dirs,
-        &foundry,
-        &scfuzzbench_commit,
-        &target_commit,
-        &run_id,
-        campaign_status.code(),
-    )?;
+    let summary_path = write_llm_summary(&cli, &dirs, &foundry, &run_metadata, &missing)?;
+    let manifest_path = write_manifest(&cli, &dirs, &foundry, &run_metadata)?;
     missing.retain(|path| path != "manifest.json" && path != "llm_summary.md");
 
     if !missing.is_empty() {
@@ -911,22 +910,19 @@ fn write_manifest(
     cli: &Cli,
     dirs: &Dirs,
     foundry: &FoundrySelection,
-    scfuzzbench_commit: &str,
-    target_commit: &str,
-    run_id: &str,
-    campaign_exit_code: Option<i32>,
+    metadata: &RunMetadata<'_>,
 ) -> Result<PathBuf> {
     let artifacts = list_relative_files(&dirs.artifacts)?;
     let manifest = json!({
         "scfuzzbench": {
             "repo": &cli.scfuzzbench_repo,
             "ref": &cli.scfuzzbench_ref,
-            "commit": scfuzzbench_commit,
+            "commit": metadata.scfuzzbench_commit,
         },
         "target": {
             "repo": &cli.target_repo,
             "ref": &cli.target_ref,
-            "commit": target_commit,
+            "commit": metadata.target_commit,
         },
         "foundry": {
             "mode": foundry.mode,
@@ -940,8 +936,8 @@ fn write_manifest(
             "benchmark_type": cli.benchmark_type.as_str(),
             "timeout_seconds": cli.timeout_seconds,
             "workers": cli.workers,
-            "run_id": run_id,
-            "exit_code": campaign_exit_code,
+            "run_id": metadata.run_id,
+            "exit_code": metadata.campaign_exit_code,
             "foundry_test_args": cli.foundry_test_args.as_deref(),
             "properties_path": cli.properties_path.as_ref().map(|path| path.display().to_string()),
         },
@@ -956,10 +952,7 @@ fn write_llm_summary(
     cli: &Cli,
     dirs: &Dirs,
     foundry: &FoundrySelection,
-    scfuzzbench_commit: &str,
-    target_commit: &str,
-    run_id: &str,
-    campaign_exit_code: Option<i32>,
+    metadata: &RunMetadata<'_>,
     missing: &[String],
 ) -> Result<PathBuf> {
     let mut lines = vec![
@@ -967,9 +960,12 @@ fn write_llm_summary(
         String::new(),
         format!(
             "- scfuzzbench: `{}` @ `{}` (`{}`)",
-            cli.scfuzzbench_repo, cli.scfuzzbench_ref, scfuzzbench_commit
+            cli.scfuzzbench_repo, cli.scfuzzbench_ref, metadata.scfuzzbench_commit
         ),
-        format!("- target: `{}` @ `{}` (`{}`)", cli.target_repo, cli.target_ref, target_commit),
+        format!(
+            "- target: `{}` @ `{}` (`{}`)",
+            cli.target_repo, cli.target_ref, metadata.target_commit
+        ),
         format!("- foundry: `{}` ({})", foundry.version_output.trim(), foundry.mode),
         format!("- benchmark type: `{}`", cli.benchmark_type.as_str()),
         format!("- timeout seconds: `{}`", cli.timeout_seconds),
@@ -977,10 +973,11 @@ fn write_llm_summary(
             "- workers: `{}`",
             cli.workers.map(|w| w.to_string()).unwrap_or_else(|| "default".to_string())
         ),
-        format!("- run id: `{run_id}`"),
+        format!("- run id: `{}`", metadata.run_id),
         format!(
             "- campaign exit code: `{}`",
-            campaign_exit_code
+            metadata
+                .campaign_exit_code
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "signal/unknown".to_string())
         ),
