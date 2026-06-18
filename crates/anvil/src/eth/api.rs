@@ -1163,15 +1163,21 @@ impl<N: Network> EthApi<N> {
                 .await
                 .map_err(BlockchainError::AlloyForkProvider)?;
             // These per-block arrays cover [lowest..=fork_block]; drop the trailing next-block
-            // base-fee entry from each since the first post-fork block is computed locally below.
+            // base-fee entry since the first post-fork block is computed locally below.
             let take = count_pre as usize;
             response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(take));
-            response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(take));
             response.gas_used_ratio.extend(pre.gas_used_ratio);
-            response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio);
             if let Some(reward) = pre.reward {
                 rewards.extend(reward);
             }
+            // The blob-fee arrays are EIP-4844 fields a fork provider may omit (return empty) for
+            // pre-Cancun blocks. These response arrays are still empty here, so extend then pad to
+            // `count_pre` to keep the pre-fork segment aligned with the gas arrays; otherwise the
+            // merged response would come back short and misaligned, the exact failure this fixes.
+            response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(take));
+            response.base_fee_per_blob_gas.resize(take, 0);
+            response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(take));
+            response.blob_gas_used_ratio.resize(take, 0.0);
             // Compute only post-fork blocks locally; the pre-fork portion is served above.
             fork_block + 1
         } else {

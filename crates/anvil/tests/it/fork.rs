@@ -266,6 +266,20 @@ async fn test_fork_fee_history_across_fork_boundary() {
         count as usize + 1,
         "incomplete base_fee_per_gas across the fork boundary"
     );
+
+    // The pre-fork segment here is pre-Cancun, so the fork provider may return empty blob-fee
+    // arrays. They must still be padded to stay aligned with the gas arrays, otherwise the merged
+    // response is short and misaligned.
+    assert_eq!(
+        history.blob_gas_used_ratio.len(),
+        count as usize,
+        "incomplete blob_gas_used_ratio across the fork boundary"
+    );
+    assert_eq!(
+        history.base_fee_per_blob_gas.len(),
+        count as usize + 1,
+        "incomplete base_fee_per_blob_gas across the fork boundary"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
