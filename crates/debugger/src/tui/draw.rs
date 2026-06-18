@@ -524,11 +524,17 @@ impl TUIContext<'_> {
         }
 
         // `revm-inspectors` records `storage_change` from journal entries, so warm `SLOAD`s do not
-        // get one. Debug traces already include the stack before execution and pushed stack values
-        // after execution, which is enough to display the accessed slot and loaded value.
+        // get one. Debug mode records full stack snapshots before each opcode; the following step's
+        // stack contains the loaded value after this `SLOAD` executes.
         if step.op.get() == opcode::SLOAD {
             let key = step.stack.as_deref()?.last().copied()?;
-            let value = step.push_stack.as_deref()?.last().copied()?;
+            let value = self
+                .debug_steps()
+                .get(self.current_step.checked_add(1)?)?
+                .stack
+                .as_deref()?
+                .last()
+                .copied()?;
             return Some(sload_storage_access_line(key, value));
         }
 
@@ -1479,12 +1485,12 @@ mod tests {
     }
 
     #[test]
-    fn current_storage_access_line_falls_back_for_warm_sload() {
+    fn current_storage_access_line_uses_next_stack_snapshot_for_warm_sload() {
         let mut step = trace_step(vec![U256::from(1)]);
         step.op = OpCode::SLOAD;
-        step.push_stack = Some(vec![U256::from(42)].into_boxed_slice());
         step.storage_change = None;
-        let mut context = context_with_arena(vec![debug_node(0, 0, vec![step])]);
+        let next_step = trace_step(vec![U256::from(42)]);
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![step, next_step])]);
         let tui = TUIContext::new(&mut context);
 
         assert_eq!(

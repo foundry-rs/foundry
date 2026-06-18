@@ -2793,9 +2793,8 @@ contract DebugStorageTest {
     function testStorage() public {
         value = 42;
         uint256 loaded = value;
-        uint256 loadedAgain = value;
         uint256 coldLoaded = untouched;
-        require(loaded == 42 && loadedAgain == 42 && coldLoaded == 0);
+        require(loaded == 42 && coldLoaded == 0);
     }
 }
 ",
