@@ -1878,7 +1878,7 @@ pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
 
 /// Executes a fuzz call and returns the result.
 /// Applies any block timestamp (warp) and block number (roll) adjustments before the call.
-pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
+pub fn execute_tx<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
     tx: &BasicTxDetails,
 ) -> Result<RawCallResult<FEN>> {

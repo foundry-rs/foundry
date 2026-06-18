@@ -1,7 +1,7 @@
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use serde_json::Value;
-use std::process::Command;
+use std::{path::PathBuf, process::Command};
 
 use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
 
@@ -18,6 +18,18 @@ fn json_test_result(stdout: &[u8], signature: &str) -> Value {
         }
     }
     panic!("missing JSON test result for {signature}: {json}");
+}
+
+fn read_artifact_ref(artifact_ref: &Value) -> Value {
+    let artifact_path = artifact_ref["path"].as_str().expect("symbolic artifact path");
+    let artifact_path = PathBuf::from(artifact_path);
+    let artifact = std::fs::read_to_string(&artifact_path)
+        .unwrap_or_else(|err| panic!("failed to read artifact {}: {err}", artifact_path.display()));
+    serde_json::from_str(&artifact).expect("symbolic counterexample artifact")
+}
+
+fn read_artifact(symbolic: &Value) -> Value {
+    read_artifact_ref(&symbolic["artifact"])
 }
 
 forgetest_init!(symbolic_tests_are_ignored_without_flag, |prj, cmd| {
@@ -176,11 +188,13 @@ contract SymbolicAssert {
 "#,
     );
 
-    let stdout = cmd
+    let output = cmd
         .args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"])
         .assert_failure()
         .get_output()
-        .stdout_lossy();
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
 
     assert_relevant_lines(
         &stdout,
@@ -206,6 +220,8 @@ checkRejectsFortyTwo(uint256)
 args=[42]
 "#]],
     );
+    assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
+    assert!(stderr.contains("cache/symbolic/"), "{stderr}");
 });
 
 forgetest_init!(symbolic_json_schema_reports_replayed_counterexample, |prj, cmd| {
@@ -226,9 +242,25 @@ contract SymbolicJsonCounterexample {
 }
 "#,
     );
+    prj.add_test(
+        "SymbolicJsonCounterexampleDuplicate.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256) public pure {}
+}
+"#,
+    );
 
     let output = cmd
-        .args(["test", "--symbolic", "--json", "--match-test", "checkRejectsFortyTwo"])
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "checkRejectsFortyTwo",
+            "--match-path",
+            "test/SymbolicJsonCounterexample.t.sol",
+        ])
         .assert_failure()
         .get_output()
         .stdout
@@ -243,7 +275,90 @@ contract SymbolicJsonCounterexample {
     assert!(symbolic["counterexample"]["calldata"].as_str().unwrap().starts_with("0x"));
     assert_eq!(symbolic["counterexample"]["args"], "42");
     assert_eq!(symbolic["counterexample"]["raw_args"], "42");
+    assert_eq!(symbolic["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
+    assert_eq!(result["counterexample_artifacts"][0], symbolic["artifact"]);
+    let artifact_path = symbolic["artifact"]["path"].as_str().unwrap().to_string();
+    let artifact = read_artifact(symbolic);
+    assert_eq!(artifact["schema_version"], 1);
+    assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(artifact["kind"], "single_call");
+    assert_eq!(artifact["test"]["test"], "checkRejectsFortyTwo(uint256)");
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+    assert!(artifact["calls"][0]["calldata"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(artifact["calls"][0]["args"], "42");
+    assert_eq!(artifact["calls"][0]["raw_args"], "42");
     assert!(symbolic["solver"]["stats"]["model_queries"].as_u64().unwrap() >= 1);
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+[FAIL;
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[42]
+"#]],
+    );
+    assert!(
+        !replay_stdout.contains("SymbolicJsonCounterexampleDuplicate.t.sol"),
+        "{replay_stdout}"
+    );
+
+    let mut invalid_artifact = artifact.clone();
+    invalid_artifact["calls"][0]["value"] = serde_json::json!("0x1");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&invalid_artifact).unwrap()).unwrap();
+    let invalid_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        invalid_stdout
+            .contains("single-call symbolic artifact replay does not support non-zero value"),
+        "{invalid_stdout}"
+    );
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256) public pure {}
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]).assert_success();
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRenamed(uint256) public pure {}
+}
+"#,
+    );
+    let stale_stderr = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stale_stderr.contains("symbolic artifact target"), "{stale_stderr}");
+    assert!(
+        stale_stderr.contains("checkRejectsFortyTwo(uint256)` was not found"),
+        "{stale_stderr}"
+    );
 });
 
 forgetest_init!(symbolic_json_schema_reports_replay_skip, |prj, cmd| {
@@ -291,6 +406,7 @@ contract SymbolicJsonReplaySkip is Test {
         symbolic["replay"]["reason"].as_str().unwrap().contains("vm.skip during concrete replay")
     );
     assert_eq!(symbolic["counterexample"]["args"], "42");
+    assert!(symbolic["artifact"].is_null());
 });
 
 forgetest_init!(symbolic_json_schema_reports_incomplete, |prj, cmd| {
@@ -846,11 +962,13 @@ contract SymbolicInvariantSingle is Test {
 "#,
     );
 
-    let stdout = cmd
+    let output = cmd
         .args(["test", "--symbolic", "--match-test", "invariant_counterNeverEleven"])
         .assert_failure()
         .get_output()
-        .stdout_lossy();
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
 
     assert_relevant_lines(
         &stdout,
@@ -876,7 +994,98 @@ set(uint256)
 args=[7]
 "#]],
     );
+    assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
+    assert!(stderr.contains("cache/symbolic/"), "{stderr}");
     assert!(!stdout.contains("No contracts to fuzz"), "{stdout}");
+});
+
+forgetest_init!(symbolic_json_reports_sequence_counterexample_artifact, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_sequence_counterexample_artifact because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantSequenceArtifact.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicInvariantSequenceArtifact is Test {
+    SymbolicArtifactTarget target;
+
+    function setUp() public {
+        target = new SymbolicArtifactTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_counterNeverEleven"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "invariant_counterNeverEleven()");
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let failure = failures.first().expect("invariant failure");
+    assert_eq!(failure["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
+    assert_eq!(result["counterexample_artifacts"][0], failure["artifact"]);
+    let artifact_path = failure["artifact"]["path"].as_str().unwrap().to_string();
+
+    let artifact = read_artifact_ref(&failure["artifact"]);
+    assert_eq!(artifact["schema_version"], 1);
+    assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(artifact["kind"], "sequence");
+    assert_eq!(artifact["test"]["test"], "invariant_counterNeverEleven()");
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(artifact["calls"][0]["function_name"], "set");
+    assert_eq!(artifact["calls"][0]["args"], "7");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+invariant_counterNeverEleven()
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[7]
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_invariant_respects_sequence_depth, |prj, cmd| {
