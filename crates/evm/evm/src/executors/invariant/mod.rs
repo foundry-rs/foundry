@@ -920,13 +920,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 if new_call_coverage {
                     current_run.new_coverage = true;
                 }
-                let observed_calls = current_run
-                    .executor
-                    .inspector_mut()
-                    .fuzzer
-                    .as_mut()
-                    .map(|fuzzer| fuzzer.take_observed_calls())
-                    .unwrap_or_default();
+                let observed_calls = std::mem::take(&mut call_result.observed_calls);
                 if new_call_coverage
                     && let Some(entry) = corpus_manager.hoist_observed_calls(
                         &observed_calls,
