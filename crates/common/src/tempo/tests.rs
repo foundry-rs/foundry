@@ -254,60 +254,25 @@ async fn sponsor_fee_token_resolution_preserves_explicit_token() -> eyre::Result
 }
 
 #[tokio::test]
-async fn distribute_reward_inference_respects_reported_hardfork() -> eyre::Result<()> {
-    fn distribute_reward_tx() -> TempoTransactionRequest {
-        TempoTransactionRequest {
-            inner: TransactionRequest::default()
-                .with_to(ALPHA_USD_ADDRESS)
-                .with_input(ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode()),
-            ..Default::default()
-        }
-    }
+async fn distribute_reward_does_not_infer_fee_token() -> eyre::Result<()> {
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest::default()
+            .with_to(ALPHA_USD_ADDRESS)
+            .with_input(ITIP20::distributeRewardCall { amount: U256::from(1) }.abi_encode()),
+        ..Default::default()
+    };
 
-    let asserter = Asserter::new();
-    let provider =
-        ProviderBuilder::new_with_network::<TempoNetwork>().connect_mocked_client(asserter.clone());
-    asserter.push_success(&serde_json::json!({ "active": "T6" }));
-    asserter.push_success(&serde_json::json!({ "active": "T7" }));
-
-    let mut pre_t7_tx = distribute_reward_tx();
     assert_eq!(
         resolve_and_set_fee_token::<TempoNetwork>(
-            Some(&provider),
-            Some(Chain::from_named(NamedChain::Tempo)),
-            &mut pre_t7_tx,
             None,
-        )
-        .await?,
-        Some(ALPHA_USD_ADDRESS)
-    );
-    assert_eq!(pre_t7_tx.fee_token, Some(ALPHA_USD_ADDRESS));
-
-    let mut t7_tx = distribute_reward_tx();
-    assert_eq!(
-        resolve_and_set_fee_token::<TempoNetwork>(
-            Some(&provider),
             Some(Chain::from_named(NamedChain::Tempo)),
-            &mut t7_tx,
+            &mut tx,
             None,
         )
         .await?,
         None
     );
-    assert_eq!(t7_tx.fee_token, None);
-
-    let mut unknown_hardfork_tx = distribute_reward_tx();
-    assert_eq!(
-        resolve_and_set_fee_token::<TempoNetwork>(
-            None,
-            Some(Chain::from_named(NamedChain::Tempo)),
-            &mut unknown_hardfork_tx,
-            None,
-        )
-        .await?,
-        None
-    );
-    assert_eq!(unknown_hardfork_tx.fee_token, None);
+    assert_eq!(tx.fee_token, None);
     Ok(())
 }
 

@@ -10,9 +10,7 @@ use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
-use foundry_evm_hardforks::TempoHardfork;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
-use serde::Deserialize;
 use std::sync::Arc;
 pub use tempo_alloy::contracts::precompiles::PATH_USD_ADDRESS;
 use tempo_alloy::contracts::precompiles::{
@@ -108,8 +106,7 @@ where
     };
     let inferred_fee_token =
         if immediate_user_token.is_none() && stored_fee_token.is_none() && !calls.is_empty() {
-            let hardfork = active_tempo_hardfork(provider).await;
-            infer_fee_token_from_tip20_calls(&calls, tx_from, fee_payer, hardfork)
+            infer_fee_token_from_tip20_calls(&calls, tx_from, fee_payer)
                 .or_else(|| infer_fee_token_from_stablecoin_dex_calls(&calls, has_call_list))
         } else {
             None
@@ -146,22 +143,6 @@ where
     Ok((!fee_token.is_zero()).then_some(fee_token))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TempoForkSchedule {
-    active: String,
-}
-
-async fn active_tempo_hardfork<N>(provider: Option<&dyn Provider<N>>) -> Option<TempoHardfork>
-where
-    N: Network,
-{
-    let provider = provider?;
-    let params = serde_json::value::to_raw_value(&()).ok()?;
-    let response = provider.raw_request_dyn("tempo_forkSchedule".into(), &params).await.ok()?;
-    serde_json::from_str::<TempoForkSchedule>(response.get()).ok()?.active.parse().ok()
-}
-
 async fn is_usd_tip20_fee_token<N>(provider: Option<&dyn Provider<N>>, fee_token: Address) -> bool
 where
     N: Network,
@@ -191,10 +172,8 @@ fn infer_fee_token_from_tip20_calls(
     calls: &[(TxKind, &[u8])],
     tx_from: Option<Address>,
     fee_payer: Option<Address>,
-    hardfork: Option<TempoHardfork>,
 ) -> Option<Address> {
-    if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input, hardfork))
-    {
+    if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input)) {
         return None;
     }
 
@@ -247,12 +226,10 @@ fn common_call_target(calls: &[(TxKind, &[u8])]) -> Option<Address> {
     targets.all(|next| next == Some(target)).then_some(target)
 }
 
-fn is_tip20_fee_token_call(input: &[u8], hardfork: Option<TempoHardfork>) -> bool {
+fn is_tip20_fee_token_call(input: &[u8]) -> bool {
     input_selector(input).is_some_and(|selector| {
         selector == ITIP20::transferCall::SELECTOR
             || selector == ITIP20::transferWithMemoCall::SELECTOR
-            || (hardfork.is_some_and(|hardfork| !hardfork.is_t7())
-                && selector == ITIP20::distributeRewardCall::SELECTOR)
     })
 }
 

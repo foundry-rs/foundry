@@ -17,7 +17,6 @@ foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
-foundry-evm-hardforks.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
@@ -99,6 +98,7 @@ vergen = { workspace = true, features = ["build", "emit_and_set"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
+foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
 
 [features]
