@@ -599,10 +599,10 @@ tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
 
 # solar
-solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "6fc7b6feb4746f61fc6c206f38297dd68518419e" }
-solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "6fc7b6feb4746f61fc6c206f38297dd68518419e" }
-solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "6fc7b6feb4746f61fc6c206f38297dd68518419e" }
-solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "6fc7b6feb4746f61fc6c206f38297dd68518419e" }
+solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "fe3931dc6c6ddfce2ce0ab77e24c852bd042b2a7" }
+solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "fe3931dc6c6ddfce2ce0ab77e24c852bd042b2a7" }
+solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "fe3931dc6c6ddfce2ce0ab77e24c852bd042b2a7" }
+solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "fe3931dc6c6ddfce2ce0ab77e24c852bd042b2a7" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
