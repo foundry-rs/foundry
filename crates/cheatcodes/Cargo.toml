@@ -70,7 +70,12 @@ proptest.workspace = true
 serde.workspace = true
 
 tempo-chainspec.workspace = true
+tempo-contracts.workspace = true
 tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
+
+[dev-dependencies]
+tempo-precompiles = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = ["optimism"]
