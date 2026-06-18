@@ -1763,10 +1763,9 @@ fn sequence_from_observed(
         .iter()
         .filter(|call| matches!(depth, ObservedCallDepth::All) || call.depth == 1)
         .filter_map(|call| {
-            let (warp, roll) = first_delay.take().unwrap_or((None, None));
-            let tx = BasicTxDetails {
-                warp,
-                roll,
+            let mut tx = BasicTxDetails {
+                warp: None,
+                roll: None,
                 sender: call.caller,
                 call_details: CallDetails {
                     target: call.target,
@@ -1774,7 +1773,12 @@ fn sequence_from_observed(
                     value: call.value,
                 },
             };
-            targets.can_replay(&tx).then_some(tx)
+            targets.can_replay(&tx).then(|| {
+                let (warp, roll) = first_delay.take().unwrap_or((None, None));
+                tx.warp = warp;
+                tx.roll = roll;
+                tx
+            })
         })
         .collect()
 }
@@ -2224,14 +2228,14 @@ mod tests {
             ObservedCall {
                 depth: 1,
                 caller: observed_caller,
-                target,
+                target: other,
                 calldata: Bytes::from(foo_calldata.clone()),
                 value: Some(value),
             },
             ObservedCall {
                 depth: 1,
                 caller: observed_caller,
-                target: other,
+                target,
                 calldata: Bytes::from(foo_calldata),
                 value: None,
             },
@@ -2288,7 +2292,7 @@ mod tests {
         assert_eq!(tx.sender, observed_caller);
         assert_eq!(tx.call_details.target, target);
         assert_eq!(&tx.call_details.calldata[..4], &foo_selector[..]);
-        assert_eq!(tx.call_details.value, Some(value));
+        assert_eq!(tx.call_details.value, None);
 
         let tx = &entry.tx_seq[1];
         assert_eq!(tx.warp, None);
