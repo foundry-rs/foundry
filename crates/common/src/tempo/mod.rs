@@ -227,14 +227,14 @@ fn common_call_target(calls: &[(TxKind, &[u8])]) -> Option<Address> {
 }
 
 fn is_tip20_fee_token_call(input: &[u8]) -> bool {
-    input_selector(input).is_some_and(|selector| {
+    input.get(..4).is_some_and(|selector| {
         selector == ITIP20::transferCall::SELECTOR
             || selector == ITIP20::transferWithMemoCall::SELECTOR
     })
 }
 
 fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
-    let selector = input_selector(input)?;
+    let selector = input.get(..4)?;
     if selector == IStablecoinDEX::swapExactAmountInCall::SELECTOR {
         IStablecoinDEX::swapExactAmountInCall::abi_decode(input).ok().map(|call| call.tokenIn)
     } else if selector == IStablecoinDEX::swapExactAmountOutCall::SELECTOR {
@@ -242,10 +242,6 @@ fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
     } else {
         None
     }
-}
-
-fn input_selector(input: &[u8]) -> Option<&[u8]> {
-    input.get(..4)
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
