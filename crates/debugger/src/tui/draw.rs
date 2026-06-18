@@ -17,6 +17,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
+use revm::bytecode::opcode;
 use revm_inspectors::tracing::types::{
     CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep, StorageChange,
     StorageChangeReason,
@@ -517,7 +518,21 @@ impl TUIContext<'_> {
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
-        self.current_step().storage_change.as_deref().map(storage_access_line)
+        let step = self.current_step();
+        if let Some(change) = step.storage_change.as_deref() {
+            return Some(storage_access_line(change));
+        }
+
+        // `revm-inspectors` records `storage_change` from journal entries, so warm `SLOAD`s do not
+        // get one. Debug traces already include the stack before execution and pushed stack values
+        // after execution, which is enough to display the accessed slot and loaded value.
+        if step.op.get() == opcode::SLOAD {
+            let key = step.stack.as_deref()?.last().copied()?;
+            let value = step.push_stack.as_deref()?.last().copied()?;
+            return Some(sload_storage_access_line(key, value));
+        }
+
+        None
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -910,6 +925,13 @@ fn storage_access_line(change: &StorageChange) -> Line<'static> {
     };
 
     Line::from(Span::styled(text, Style::new().fg(Color::Yellow)))
+}
+
+fn sload_storage_access_line(key: U256, value: U256) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("storage SLOAD slot {} = {}", hex_u256(key), hex_u256(value)),
+        Style::new().fg(Color::Yellow),
+    ))
 }
 
 fn hex_u256(value: U256) -> String {
@@ -1453,6 +1475,21 @@ mod tests {
         assert_eq!(
             line_text(&super::storage_access_line(&change)),
             "storage SSTORE slot 0x1: 0x7 -> 0x2a"
+        );
+    }
+
+    #[test]
+    fn current_storage_access_line_falls_back_for_warm_sload() {
+        let mut step = trace_step(vec![U256::from(1)]);
+        step.op = OpCode::SLOAD;
+        step.push_stack = Some(vec![U256::from(42)].into_boxed_slice());
+        step.storage_change = None;
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![step])]);
+        let tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            line_text(&tui.current_storage_access_line().unwrap()),
+            "storage SLOAD slot 0x1 = 0x2a"
         );
     }
 
