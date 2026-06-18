@@ -1938,6 +1938,21 @@ impl TestResult {
         self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
     }
 
+    /// Returns the success result for a replayed invariant test.
+    pub fn invariant_replay_success(&mut self, call_count: usize) {
+        self.kind = TestKind::Invariant {
+            runs: 1,
+            calls: call_count,
+            reverts: 0,
+            workers: default_invariant_workers(),
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+            optimization_best_value: None,
+        };
+        self.status = TestStatus::Success;
+        self.reason = None;
+    }
+
     /// Returns the fail result for invariant test setup.
     pub fn invariant_setup_fail(&mut self, e: Report) {
         self.kind = TestKind::Invariant {

@@ -1187,6 +1187,31 @@ contract SymbolicArtifactFailOnRevert is Test {
     cmd.forge_fuse()
         .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
         .assert_failure();
+
+    let fixed_artifact_path = prj.root().join("fixed-artifact.json");
+    let mut fixed_artifact = artifact;
+    fixed_artifact["replay_semantics"]["fail_on_revert"] = serde_json::json!(false);
+    std::fs::write(&fixed_artifact_path, serde_json::to_vec_pretty(&fixed_artifact).unwrap())
+        .unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--json",
+            "--replay-symbolic-artifact",
+            fixed_artifact_path.to_str().unwrap(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noop()");
+    assert_eq!(result["status"], "Success");
+    assert!(result["kind"].get("Invariant").is_some(), "{result}");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 1);
+    assert!(result["kind"].get("Unit").is_none(), "{result}");
 });
 
 forgetest_init!(symbolic_invariant_respects_sequence_depth, |prj, cmd| {

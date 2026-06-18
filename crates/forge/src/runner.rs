@@ -1432,8 +1432,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ) {
                     Ok((success, replayed_entirely, reason)) => {
                         if success {
-                            self.result.status = TestStatus::Success;
-                            self.result.reason = None;
+                            self.result.invariant_replay_success(txes.len());
                         } else {
                             self.result.invariant_replay_fail(
                                 replayed_entirely,
