@@ -416,7 +416,7 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.3.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm.git?branch=v1.7.0-monad#36dea0199cab741938e9a7f94091e215852e13ec"
+source = "git+https://github.com/category-labs/alloy-monad-evm.git?branch=main#4dbc3386e92ace3fac53757be34adbf2de7b3125"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -3056,7 +3056,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.18",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4013,7 +4013,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7453,7 +7453,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.3.0"
-source = "git+https://github.com/category-labs/monad-revm.git?branch=v1.7.0-monad#785dc2151f686ae727125bb432970d5d5cb51474"
+source = "git+https://github.com/category-labs/monad-revm.git?branch=main#9be9e279bd07602837cc6a2da8fdc911df759e6c"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
@@ -7621,7 +7621,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10887,7 +10887,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -11220,7 +11220,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
@@ -11541,7 +11541,7 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8c27177b12a6399ffc08b98f76f7c9a1f4fe9fc967c784c5a071fa8d93cf7e1"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -11551,7 +11551,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -12797,7 +12797,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

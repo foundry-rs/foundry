@@ -528,11 +528,11 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "1e5a82dff2
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "1e5a82dff207e2cbd6cecdcfb8ff3cd2e39baa69" }
 
 # Monad
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", branch = "v1.7.0-monad", default-features = false, features = [
+alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm.git", branch = "main", default-features = false, features = [
     "std",
     "memory_limit",
 ] }
-monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "v1.7.0-monad", default-features = false, features = [
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "main", default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
@@ -549,6 +549,8 @@ snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+monad-revm = { git = "https://github.com/category-labs/monad-revm.git", branch = "main" }
+
 # https://github.com/rust-cli/rexpect/pull/106
 rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 
