@@ -93,8 +93,12 @@ where
         return Ok(None);
     }
     let fee_payer = fee_payer.or_else(|| tx.from());
+    let calls = tx.tempo_calls();
+    let has_call_list = tx.has_tempo_call_list();
+    let tx_from = tx.from();
 
-    let immediate_user_token = infer_fee_token_from_set_user_token_call::<N>(tx, fee_payer);
+    let immediate_user_token =
+        infer_fee_token_from_set_user_token_call(&calls, has_call_list, tx_from, fee_payer);
     let stored_fee_token = if immediate_user_token.is_none()
         && let (Some(provider), Some(fee_payer)) = (provider, fee_payer)
     {
@@ -102,14 +106,15 @@ where
     } else {
         None
     };
-    let inferred_fee_token = if immediate_user_token.is_none() && stored_fee_token.is_none() {
-        let hardfork =
-            active_tempo_hardfork(provider).await.unwrap_or_else(latest_active_tempo_hardfork);
-        infer_fee_token_from_tip20_calls::<N>(tx, fee_payer, hardfork)
-            .or_else(|| infer_fee_token_from_stablecoin_dex_calls::<N>(tx))
-    } else {
-        None
-    };
+    let inferred_fee_token =
+        if immediate_user_token.is_none() && stored_fee_token.is_none() && !calls.is_empty() {
+            let hardfork =
+                active_tempo_hardfork(provider).await.unwrap_or_else(latest_active_tempo_hardfork);
+            infer_fee_token_from_tip20_calls(&calls, tx_from, fee_payer, hardfork)
+                .or_else(|| infer_fee_token_from_stablecoin_dex_calls(&calls, has_call_list))
+        } else {
+            None
+        };
     let inferred_fee_token = match inferred_fee_token {
         Some(fee_token) if is_usd_tip20_fee_token(provider, fee_token).await => Some(fee_token),
         _ => None,
@@ -183,42 +188,36 @@ where
     ITIP20::currencyCall::abi_decode_returns(&output).is_ok_and(|currency| currency == "USD")
 }
 
-fn infer_fee_token_from_tip20_calls<N>(
-    tx: &N::TransactionRequest,
+fn infer_fee_token_from_tip20_calls(
+    calls: &[(TxKind, &[u8])],
+    tx_from: Option<Address>,
     fee_payer: Option<Address>,
     hardfork: TempoHardfork,
-) -> Option<Address>
-where
-    N: Network,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    let calls = tx.tempo_calls();
+) -> Option<Address> {
     if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input, hardfork))
     {
         return None;
     }
 
-    let target = common_call_target(&calls)?;
-    if fee_payer != tx.from() {
+    let target = common_call_target(calls)?;
+    if fee_payer != tx_from {
         return None;
     }
     Some(target)
 }
 
-fn infer_fee_token_from_set_user_token_call<N>(
-    tx: &N::TransactionRequest,
+fn infer_fee_token_from_set_user_token_call(
+    calls: &[(TxKind, &[u8])],
+    has_call_list: bool,
+    tx_from: Option<Address>,
     fee_payer: Option<Address>,
-) -> Option<Address>
-where
-    N: Network,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    if tx.has_tempo_call_list() || fee_payer != tx.from() {
+) -> Option<Address> {
+    if has_call_list || fee_payer != tx_from {
         return None;
     }
 
-    let (to, input) = tx.tempo_calls().into_iter().next()?;
-    if to != TxKind::Call(TIP_FEE_MANAGER_ADDRESS) {
+    let (to, input) = calls.first()?;
+    if *to != TxKind::Call(TIP_FEE_MANAGER_ADDRESS) {
         return None;
     }
 
@@ -226,13 +225,11 @@ where
     call.token.is_tip20().then_some(call.token)
 }
 
-fn infer_fee_token_from_stablecoin_dex_calls<N>(tx: &N::TransactionRequest) -> Option<Address>
-where
-    N: Network,
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    let calls = tx.tempo_calls();
-    if tx.has_tempo_call_list() && calls.len() != 1 {
+fn infer_fee_token_from_stablecoin_dex_calls(
+    calls: &[(TxKind, &[u8])],
+    has_call_list: bool,
+) -> Option<Address> {
+    if has_call_list && calls.len() != 1 {
         return None;
     }
     let (to, input) = calls.first()?;
