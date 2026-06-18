@@ -1,7 +1,10 @@
 use alloy_primitives::U256;
-use foundry_test_utils::{TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str};
+use foundry_test_utils::{
+    TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str, util::OutputExt,
+};
 
 mod common;
+mod gas;
 mod handler;
 mod storage;
 mod target;

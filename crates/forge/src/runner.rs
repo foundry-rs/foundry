@@ -1933,6 +1933,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.calls,
             invariant_result.reverts,
             invariant_result.metrics,
+            invariant_config.gas_fuzz,
             invariant_result.failed_corpus_replays,
             invariant_result.workers,
             invariant_result.optimization_best_value,
@@ -2316,6 +2317,7 @@ fn base_counterexamples_to_txes(
                     target: seq.addr.unwrap_or_default(),
                     calldata: seq.calldata.clone(),
                     value: seq.value,
+                    gas_limit: seq.gas_limit,
                 },
             }
         })

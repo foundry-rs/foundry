@@ -282,6 +282,7 @@ impl WorkerCorpusSeed {
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
         dynamic: Option<DynamicTargetCtx<'_>>,
+        gas_fuzz: bool,
     ) -> Result<Self> {
         let mut seed = Self::empty(config).with_optimization_state(config);
         let Some(corpus_dir) = &config.corpus_dir else {
@@ -321,7 +322,7 @@ impl WorkerCorpusSeed {
                 metrics: Some(&mut seed.metrics),
             };
             let ReplayOutcome { keep_entry, cmp_seq, failed_replays, .. } =
-                replay_corpus_sequence(&tx_seq, executor, target, coverage)?;
+                replay_corpus_sequence(&tx_seq, executor, target, coverage, gas_fuzz)?;
             seed.failed_replays += failed_replays;
             if !keep_entry {
                 continue;
@@ -351,6 +352,7 @@ impl WorkerCorpusSeed {
         entries: impl IntoIterator<Item = CampaignCorpusEntry>,
         executor: &Executor<FEN>,
         target: ReplayTarget<'_>,
+        gas_fuzz: bool,
         optimization_best: Option<(I256, &[BasicTxDetails])>,
     ) -> Result<()> {
         let mut history_map = self.history_map.clone();
@@ -367,7 +369,7 @@ impl WorkerCorpusSeed {
                     metrics: None,
                 };
                 let ReplayOutcome { keep_entry, new_coverage, .. } =
-                    replay_corpus_sequence(&entry.tx_seq, executor, target, coverage)?;
+                    replay_corpus_sequence(&entry.tx_seq, executor, target, coverage, gas_fuzz)?;
                 if !keep_entry || !new_coverage {
                     continue;
                 }
@@ -496,6 +498,18 @@ pub struct WorkerCorpus {
     optimization_best_value: Option<I256>,
     /// Optimization mode: the call sequence that produced the best value.
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// `invariant.gas_fuzz` for this campaign; gates persisted `gas_limit` overrides on load.
+    gas_fuzz: bool,
+}
+
+/// Context used by the master worker to replay persisted corpus entries.
+#[derive(Clone, Copy, Default)]
+pub struct WorkerCorpusReplayConfig<'a, FEN: FoundryEvmNetwork> {
+    pub executor: Option<&'a Executor<FEN>>,
+    pub fuzzed_function: Option<&'a Function>,
+    pub fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
+    pub dynamic: Option<DynamicTargetCtx<'a>>,
+    pub gas_fuzz: bool,
 }
 
 /// Refs used during corpus replay to register contracts deployed mid-sequence as fuzz targets,
@@ -573,9 +587,18 @@ fn replay_corpus_sequence<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     target: ReplayTarget<'_>,
     coverage: ReplayCoverage<'_>,
+    gas_fuzz: bool,
 ) -> Result<ReplayOutcome> {
     let mut executor = executor.clone();
-    replay_corpus_sequence_with_executor(tx_seq, &mut executor, target, coverage, false, true)
+    replay_corpus_sequence_with_executor(
+        tx_seq,
+        &mut executor,
+        target,
+        coverage,
+        false,
+        true,
+        gas_fuzz,
+    )
 }
 
 fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
@@ -585,6 +608,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     mut coverage: ReplayCoverage<'_>,
     trace_sync: bool,
     reject_unmatched_function: bool,
+    gas_fuzz: bool,
 ) -> Result<ReplayOutcome> {
     let mut cmp_seq = Vec::with_capacity(tx_seq.len());
     let mut failed_replays = 0;
@@ -592,6 +616,14 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     let mut created: Vec<Address> = Vec::new();
 
     for tx in tx_seq {
+        let mut replay_tx;
+        let tx = if gas_fuzz {
+            tx
+        } else {
+            replay_tx = tx.clone();
+            replay_tx.call_details.gas_limit = None;
+            &replay_tx
+        };
         if WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
             let mut call_result = execute_tx(executor, tx)?;
             cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
@@ -657,12 +689,15 @@ impl WorkerCorpus {
         id: usize,
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
-        // Only required by master worker (id = 0) to replay existing corpus.
-        executor: Option<&Executor<FEN>>,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-        dynamic: Option<DynamicTargetCtx<'_>>,
+        replay: WorkerCorpusReplayConfig<'_, FEN>,
     ) -> Result<Self> {
+        let WorkerCorpusReplayConfig {
+            executor,
+            fuzzed_function,
+            fuzzed_contracts,
+            dynamic,
+            gas_fuzz,
+        } = replay;
         let seed = if id == 0 {
             WorkerCorpusSeed::load_from_disk(
                 &config,
@@ -670,11 +705,12 @@ impl WorkerCorpus {
                 fuzzed_function,
                 fuzzed_contracts,
                 dynamic,
+                gas_fuzz,
             )?
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
-        Ok(Self::from_seed(id, config, tx_generator, seed))
+        Ok(Self::from_seed(id, config, tx_generator, seed, gas_fuzz))
     }
 
     pub(crate) fn from_seed(
@@ -682,6 +718,7 @@ impl WorkerCorpus {
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         seed: WorkerCorpusSeed,
+        gas_fuzz: bool,
     ) -> Self {
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
@@ -724,6 +761,7 @@ impl WorkerCorpus {
             last_sync_metrics: Default::default(),
             optimization_best_value: seed.optimization_best_value,
             optimization_best_sequence: seed.optimization_best_sequence,
+            gas_fuzz,
         }
     }
 
@@ -1389,6 +1427,7 @@ impl WorkerCorpus {
                     coverage,
                     true,
                     false,
+                    self.gas_fuzz,
                 )?;
 
             let sync_path = &entry.path;
@@ -1700,6 +1739,7 @@ mod tests {
                 target: Address::ZERO,
                 calldata: Bytes::new(),
                 value: None,
+                gas_limit: None,
             },
         }
     }
@@ -1721,7 +1761,13 @@ mod tests {
     }
 
     fn worker_corpus(id: usize, corpus_root: PathBuf, seed: WorkerCorpusSeed) -> WorkerCorpus {
-        WorkerCorpus::from_seed(id, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed)
+        WorkerCorpus::from_seed(
+            id,
+            corpus_config(corpus_root),
+            Just(basic_tx()).boxed(),
+            seed,
+            false,
+        )
     }
 
     fn empty_worker_corpus(id: usize, corpus_root: PathBuf) -> WorkerCorpus {
@@ -1755,6 +1801,7 @@ mod tests {
                 target: Address::ZERO,
                 calldata,
                 value: None,
+                gas_limit: None,
             },
         };
         let cmp = CmpOperands {
@@ -1875,10 +1922,7 @@ mod tests {
             1,
             corpus_config(corpus_root),
             Just(basic_tx()).boxed(),
-            None,
-            None,
-            None,
-            None,
+            WorkerCorpusReplayConfig::default(),
         )
         .unwrap();
 
@@ -1921,8 +1965,13 @@ mod tests {
             optimization_best_sequence: tx_seq,
         };
 
-        let manager =
-            WorkerCorpus::from_seed(1, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed);
+        let manager = WorkerCorpus::from_seed(
+            1,
+            corpus_config(corpus_root),
+            Just(basic_tx()).boxed(),
+            seed,
+            false,
+        );
 
         assert_eq!(manager.in_memory_corpus.len(), 1);
         assert_eq!(manager.history_map, vec![1, 2, 3]);

@@ -51,6 +51,9 @@ serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [features]
 default = ["optimism"]
 optimism = [

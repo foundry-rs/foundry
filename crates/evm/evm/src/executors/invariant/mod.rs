@@ -150,6 +150,30 @@ pub struct InvariantMetrics {
     pub reverts: usize,
     // Count of fuzzed selector discards (through assume cheatcodes).
     pub discards: usize,
+    // Max `gas_used` for a successful call. Populated only when
+    // `invariant.gas_fuzz = true`; `0` otherwise.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub max_gas: u64,
+    // Run prefix up to and including the call that produced `max_gas`.
+    // Acts as a reproducer; updated whenever a strict new max is observed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub max_gas_sequence: Vec<BasicTxDetails>,
+}
+
+const fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+
+#[derive(Default)]
+struct InvariantMetricState {
+    metrics: InvariantMetrics,
+    max_gas_run: Option<MaxGasRun>,
+}
+
+struct MaxGasRun {
+    run_id: u32,
+    prefix_len: usize,
+    inputs: Option<Arc<[BasicTxDetails]>>,
 }
 
 /// Campaign-level throughput metrics for invariant progress reporting.
@@ -380,7 +404,7 @@ struct InvariantTestData {
     // Line coverage information collected from all fuzzed calls.
     line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
-    metrics: Map<String, InvariantMetrics>,
+    metrics: Map<String, InvariantMetricState>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -450,24 +474,44 @@ impl InvariantTest {
     /// Update metrics for a fuzzed selector, extracted from tx details.
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
-    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+    fn record_metrics(
+        &mut self,
+        tx_details: &BasicTxDetails,
+        reverted: bool,
+        discarded: bool,
+        gas_used: u64,
+        max_gas_run: Option<(u32, usize)>,
+    ) {
         if let Some(metric_key) = self.targeted_contracts.targets().fuzzed_metric_key(tx_details) {
             let test_metrics = &mut self.test_data.metrics;
-            let invariant_metrics = test_metrics.entry(metric_key).or_default();
+            let metric_state = test_metrics.entry(metric_key).or_default();
+            let invariant_metrics = &mut metric_state.metrics;
             invariant_metrics.calls += 1;
             if discarded {
                 invariant_metrics.discards += 1;
             } else if reverted {
                 invariant_metrics.reverts += 1;
+            } else if gas_used > invariant_metrics.max_gas {
+                invariant_metrics.max_gas = gas_used;
+                if let Some((run_id, prefix_len)) = max_gas_run {
+                    metric_state.max_gas_run = Some(MaxGasRun { run_id, prefix_len, inputs: None });
+                }
             }
         }
     }
 
     /// End invariant test run by collecting results, cleaning collected artifacts and reverting
     /// created fuzz state.
-    fn end_run<FEN: FoundryEvmNetwork>(&mut self, run: InvariantTestRun<FEN>, gas_samples: usize) {
+    fn end_run<FEN: FoundryEvmNetwork>(
+        &mut self,
+        run_id: u32,
+        run: InvariantTestRun<FEN>,
+        gas_samples: usize,
+    ) {
         // We clear all the targeted contracts created during this run.
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
+
+        self.attach_max_gas_inputs(run_id, &run.inputs);
 
         if self.test_data.gas_report_traces.len() < gas_samples {
             self.test_data
@@ -481,6 +525,18 @@ impl InvariantTest {
         self.fuzz_state.revert();
     }
 
+    fn attach_max_gas_inputs(&mut self, run_id: u32, run_inputs: &[BasicTxDetails]) {
+        let mut max_gas_inputs = None;
+        for metric_state in self.test_data.metrics.values_mut() {
+            let Some(max_gas_run) = metric_state.max_gas_run.as_mut() else { continue };
+            if max_gas_run.run_id == run_id && max_gas_run.inputs.is_none() {
+                let inputs =
+                    max_gas_inputs.get_or_insert_with(|| Arc::<[BasicTxDetails]>::from(run_inputs));
+                max_gas_run.inputs = Some(Arc::clone(inputs));
+            }
+        }
+    }
+
     /// Updates the optimization state if the new value is better (higher) than the current best.
     fn update_optimization_value(&mut self, value: I256, sequence: &[BasicTxDetails]) {
         if self.test_data.optimization_best_value.is_none_or(|best| value > best) {
@@ -488,6 +544,20 @@ impl InvariantTest {
             self.test_data.optimization_best_sequence = sequence.to_vec();
         }
     }
+}
+
+fn finalize_metrics(metrics: Map<String, InvariantMetricState>) -> Map<String, InvariantMetrics> {
+    metrics
+        .into_iter()
+        .map(|(key, mut state)| {
+            if let Some(max_gas_run) = state.max_gas_run
+                && let Some(inputs) = max_gas_run.inputs
+            {
+                state.metrics.max_gas_sequence = inputs[..max_gas_run.prefix_len].to_vec();
+            }
+            (key, state.metrics)
+        })
+        .collect()
 }
 
 /// Contains data for an invariant test run.
@@ -676,6 +746,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             None,
             Some(&replay_targets),
             Some(self.dynamic_target_ctx()),
+            self.config.gas_fuzz,
         )?;
         let corpus_persistence = if actual_worker_count > 1 {
             InvariantCorpusPersistence::Deferred
@@ -778,6 +849,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     fuzzed_contracts: Some(&replay_targets),
                     dynamic: Some(&dynamic_target_ctx),
                 },
+                self.config.gas_fuzz,
                 result
                     .optimization_best_value
                     .map(|value| (value, result.optimization_best_sequence.as_slice())),
@@ -894,11 +966,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // assumes / pops below) get zero-length entries that the corpus side filters out.
                 let call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
-                if config.show_metrics {
+                if config.show_metrics || config.gas_fuzz {
+                    let gas_used_for_metric =
+                        if config.gas_fuzz { call_result.gas_used } else { 0 };
+                    let max_gas_run_for_metric =
+                        config.gas_fuzz.then_some((runs, current_run.inputs.len()));
                     invariant_test.record_metrics(
                         current_run.inputs.last().expect("checked above"),
                         call_result.reverted,
                         discarded,
+                        gas_used_for_metric,
+                        max_gas_run_for_metric,
                     );
                 }
 
@@ -926,6 +1004,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             invariant_contract.anchor(),
                             InvariantFuzzError::MaxAssumeRejects(config.max_assume_rejects),
                         );
+                        invariant_test.attach_max_gas_inputs(runs, &current_run.inputs);
                         campaign_state.request_terminal_stop();
                         break 'stop;
                     }
@@ -1155,7 +1234,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             // End current invariant test run.
             current_run.drop_corpus_payloads();
-            invariant_test.end_run(current_run, gas_report_samples);
+            invariant_test.end_run(runs, current_run, gas_report_samples);
             runs += 1;
             let total_runs = campaign_state.increment_runs();
             debug_assert!(
@@ -1246,6 +1325,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // target state behind; once shrinking is complete, only `test_data` is needed.
         let InvariantTest { fuzz_state: _, targeted_contracts: _, test_data: result } =
             invariant_test;
+        let metrics = finalize_metrics(result.metrics);
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
         let worker_result = InvariantFuzzTestResult::new(
@@ -1257,7 +1337,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.last_run_inputs,
             result.gas_report_traces,
             result.line_coverage,
-            result.metrics,
+            metrics,
             if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
             1,
             result.optimization_best_value,
@@ -1450,6 +1530,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             config.corpus.clone(),
             strategy.boxed(),
             corpus_seed,
+            config.gas_fuzz,
         );
 
         let mut invariant_test =

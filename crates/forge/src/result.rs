@@ -309,6 +309,7 @@ mod tests {
                             reverts: 0,
                             workers: *workers,
                             metrics: Map::new(),
+                            gas_fuzz: false,
                             failed_corpus_replays: 0,
                             optimization_best_value: None,
                         },
@@ -1524,6 +1525,7 @@ impl TestResult {
             reverts: 1,
             workers: default_invariant_workers(),
             metrics: HashMap::default(),
+            gas_fuzz: false,
             failed_corpus_replays: 0,
             optimization_best_value: None,
         };
@@ -1549,6 +1551,7 @@ impl TestResult {
             reverts: 1,
             workers: default_invariant_workers(),
             metrics: HashMap::default(),
+            gas_fuzz: false,
             failed_corpus_replays: 0,
             optimization_best_value: None,
         };
@@ -1571,6 +1574,7 @@ impl TestResult {
             reverts: 0,
             workers: default_invariant_workers(),
             metrics: HashMap::default(),
+            gas_fuzz: false,
             failed_corpus_replays: 0,
             optimization_best_value: None,
         };
@@ -1594,6 +1598,7 @@ impl TestResult {
         calls: usize,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
+        gas_fuzz: bool,
         failed_corpus_replays: usize,
         workers: usize,
         optimization_best_value: Option<I256>,
@@ -1604,6 +1609,7 @@ impl TestResult {
             reverts,
             workers: workers.max(1),
             metrics,
+            gas_fuzz,
             failed_corpus_replays,
             optimization_best_value,
         };
@@ -1924,6 +1930,8 @@ pub enum TestKind {
         #[serde(default = "default_invariant_workers")]
         workers: usize,
         metrics: Map<String, InvariantMetrics>,
+        #[serde(default)]
+        gas_fuzz: bool,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
@@ -1996,6 +2004,7 @@ impl TestKind {
                 reverts,
                 workers: _,
                 metrics: _,
+                gas_fuzz: _,
                 failed_corpus_replays,
                 optimization_best_value,
             } => TestKindReport::Invariant {

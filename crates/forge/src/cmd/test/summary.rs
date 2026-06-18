@@ -139,6 +139,8 @@ impl TestSummaryReport {
 /// ╰-----------------------+----------------+-------+---------+----------╯
 pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,
+    block_gas_limit: Option<u64>,
+    show_max_gas: bool,
 ) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
@@ -147,13 +149,22 @@ pub(crate) fn format_invariant_metrics_table(
         table.apply_modifier(UTF8_ROUND_CORNERS);
     }
 
-    table.set_header(vec![
+    let show_max_gas = show_max_gas || test_metrics.values().any(|m| m.max_gas > 0);
+
+    let mut header = vec![
         Cell::new("Contract"),
         Cell::new("Selector"),
         Cell::new("Calls").fg(Color::Green),
         Cell::new("Reverts").fg(Color::Red),
         Cell::new("Discards").fg(Color::Yellow),
-    ]);
+    ];
+    if show_max_gas {
+        header.push(Cell::new("Max Gas").fg(Color::Cyan));
+    }
+    table.set_header(header);
+
+    let render_max_gas =
+        |max_gas: u64| -> Cell { Cell::new(max_gas).fg(max_gas_color(max_gas, block_gas_limit)) };
 
     for name in test_metrics.keys().sorted() {
         if let Some((contract, selector)) =
@@ -185,12 +196,36 @@ pub(crate) fn format_invariant_metrics_table(
                 row.add_cell(calls_cell);
                 row.add_cell(reverts_cell);
                 row.add_cell(discards_cell);
+
+                if show_max_gas {
+                    row.add_cell(render_max_gas(metrics.max_gas));
+                }
             }
 
             table.add_row(row);
         }
     }
     table
+}
+
+/// Warn (yellow) when a single selector burns >= this % of the block gas limit.
+const GAS_WARN_PCT: u64 = 25;
+/// Danger (red) when it crosses this % — DoS risk territory.
+const GAS_DANGER_PCT: u64 = 50;
+
+/// Color for a `max_gas` cell by share of `block_gas_limit`.
+fn max_gas_color(max_gas: u64, block_gas_limit: Option<u64>) -> Color {
+    if max_gas == 0 {
+        return Color::White;
+    }
+    let Some(cap) = block_gas_limit.filter(|c| *c > 0) else {
+        return Color::Cyan;
+    };
+    match max_gas.saturating_mul(100) / cap {
+        p if p >= GAS_DANGER_PCT => Color::Red,
+        p if p >= GAS_WARN_PCT => Color::Yellow,
+        _ => Color::Cyan,
+    }
 }
 
 #[cfg(test)]
@@ -204,13 +239,13 @@ mod tests {
         let mut test_metrics = HashMap::new();
         test_metrics.insert(
             "SystemConfig.setGasLimit".to_string(),
-            InvariantMetrics { calls: 10, reverts: 1, discards: 1 },
+            InvariantMetrics { calls: 10, reverts: 1, discards: 1, ..Default::default() },
         );
         test_metrics.insert(
             "src/universal/Proxy.sol:Proxy.changeAdmin".to_string(),
-            InvariantMetrics { calls: 20, reverts: 2, discards: 2 },
+            InvariantMetrics { calls: 20, reverts: 2, discards: 2, ..Default::default() },
         );
-        let table = format_invariant_metrics_table(&test_metrics);
+        let table = format_invariant_metrics_table(&test_metrics, None, false);
         assert_eq!(table.row_count(), 2);
 
         let mut first_row_content = table.row(0).unwrap().cell_iter();
@@ -226,5 +261,32 @@ mod tests {
         assert_eq!(second_row_content.next().unwrap().content(), "20");
         assert_eq!(second_row_content.next().unwrap().content(), "2");
         assert_eq!(second_row_content.next().unwrap().content(), "2");
+    }
+
+    #[test]
+    fn max_gas_cell_color_by_share_of_block_gas() {
+        use crate::cmd::test::summary::max_gas_color;
+        use comfy_table::Color;
+
+        let cap = Some(10_000_000_u64);
+        assert_eq!(max_gas_color(6_000_000, cap), Color::Red); // 60% → danger
+        assert_eq!(max_gas_color(3_000_000, cap), Color::Yellow); // 30% → warn
+        assert_eq!(max_gas_color(500_000, cap), Color::Cyan); // 5%  → safe
+        assert_eq!(max_gas_color(0, cap), Color::White);
+        // Without a cap, gas is always cyan (no warning available).
+        assert_eq!(max_gas_color(6_000_000, None), Color::Cyan);
+    }
+
+    #[test]
+    fn max_gas_column_can_be_forced_when_all_maxes_are_zero() {
+        let mut test_metrics = HashMap::new();
+        test_metrics.insert(
+            "SystemConfig.setGasLimit".to_string(),
+            InvariantMetrics { calls: 10, reverts: 10, discards: 0, ..Default::default() },
+        );
+
+        let table = format_invariant_metrics_table(&test_metrics, None, true);
+        let mut row = table.row(0).unwrap().cell_iter();
+        assert_eq!(row.nth(5).unwrap().content(), "0");
     }
 }

@@ -176,6 +176,6 @@ pub fn fuzz_contract_with_calldata<S: FuzzStateReader>(
 
     (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| {
         trace!(input=?calldata, ?value);
-        CallDetails { target, calldata, value }
+        CallDetails { target, calldata, value, gas_limit: None }
     })
 }
