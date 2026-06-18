@@ -3,19 +3,28 @@
 use clap::{Parser, ValueEnum};
 use eyre::{Context, Result};
 use foundry_common::sh_println;
+use once_cell::sync::Lazy;
 use serde_json::json;
 use std::{
+    collections::HashSet,
     env,
     ffi::{OsStr, OsString},
-    fs,
-    os::unix::fs::PermissionsExt,
+    fs, io,
+    os::unix::{fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus, Output, Stdio},
+    sync::Mutex,
+    thread,
+    time::Duration,
 };
 
 const DEFAULT_SCFUZZBENCH_REPO: &str = "https://github.com/tempoxyz/scfuzzbench.git";
 const DEFAULT_SCFUZZBENCH_REF: &str = "main";
 const OUTPUT_MARKER: &str = ".foundry-scfuzzbench-output";
+const PROCESS_GROUP_GRACE: Duration = Duration::from_secs(2);
+
+static ACTIVE_PROCESS_GROUPS: Lazy<Mutex<HashSet<libc::pid_t>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
 
 const REQUIRED_DATA_ARTIFACTS: &[&str] = &[
     "REPORT.md",
@@ -202,6 +211,7 @@ struct RunMetadata<'a> {
 
 fn main() -> Result<()> {
     color_eyre::install()?;
+    install_termination_handler()?;
     let cli = Cli::parse();
 
     validate_options(&cli)?;
@@ -322,6 +332,14 @@ fn command_exists(name: &str) -> Result<bool> {
         .status()
         .wrap_err_with(|| format!("failed to check for {name}"))?;
     Ok(status.success())
+}
+
+fn install_termination_handler() -> Result<()> {
+    ctrlc::set_handler(|| {
+        terminate_active_process_groups();
+        std::process::exit(130);
+    })
+    .wrap_err("failed to install termination handler")
 }
 
 fn install_date_shim(tools_bin: &Path) -> Result<()> {
@@ -460,10 +478,9 @@ fn clone_at(repo: &str, git_ref: &str, dest: &Path) -> Result<String> {
     remote.current_dir(dest).args(["remote", "add", "origin", repo]);
     run_required(&mut remote)?;
 
-    let fetch = Command::new("git")
-        .current_dir(dest)
-        .args(["fetch", "--depth", "1", "origin", git_ref])
-        .status()
+    let mut fetch_command = Command::new("git");
+    fetch_command.current_dir(dest).args(["fetch", "--depth", "1", "origin", git_ref]);
+    let fetch = run_status(&mut fetch_command)
         .wrap_err_with(|| format!("failed to fetch {repo}@{git_ref}"))?;
     if !fetch.success() {
         let mut fetch_full = Command::new("git");
@@ -666,7 +683,7 @@ fn run_campaign(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    command.status().wrap_err("failed to execute scripts/local-run.sh")
+    run_status(&mut command).wrap_err("failed to execute scripts/local-run.sh")
 }
 
 fn run_analysis(cli: &Cli, dirs: &Dirs, foundry: &FoundrySelection, run_id: &str) -> Result<()> {
@@ -1017,16 +1034,24 @@ fn write_llm_summary(
 
 fn run_required(command: &mut Command) -> Result<()> {
     let display = command_display(command);
-    let status = command.status().wrap_err_with(|| format!("failed to execute {display}"))?;
+    let status = run_status(command)?;
     if !status.success() {
         eyre::bail!("command failed ({status}): {display}");
     }
     Ok(())
 }
 
+fn run_status(command: &mut Command) -> Result<ExitStatus> {
+    let display = command_display(command);
+    let (mut child, mut guard) = spawn_guarded(command, &display)?;
+    let status = child.wait().wrap_err_with(|| format!("failed to wait for {display}"))?;
+    guard.finish();
+    Ok(status)
+}
+
 fn output_text(command: &mut Command) -> Result<String> {
     let display = command_display(command);
-    let output = command.output().wrap_err_with(|| format!("failed to execute {display}"))?;
+    let output = guarded_output(command, &display)?;
     if !output.status.success() {
         eyre::bail!(
             "command failed ({}): {}\nstdout:\n{}\nstderr:\n{}",
@@ -1037,6 +1062,83 @@ fn output_text(command: &mut Command) -> Result<String> {
         );
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
+}
+
+fn guarded_output(command: &mut Command, display: &str) -> Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let (child, mut guard) = spawn_guarded(command, display)?;
+    let output =
+        child.wait_with_output().wrap_err_with(|| format!("failed to wait for {display}"))?;
+    guard.finish();
+    Ok(output)
+}
+
+fn spawn_guarded(command: &mut Command, display: &str) -> Result<(Child, ActiveProcessGroup)> {
+    command.process_group(0);
+    let child = command.spawn().wrap_err_with(|| format!("failed to execute {display}"))?;
+    let guard = ActiveProcessGroup::new(child.id() as libc::pid_t);
+    Ok((child, guard))
+}
+
+struct ActiveProcessGroup {
+    pgid: libc::pid_t,
+    finished: bool,
+}
+
+impl ActiveProcessGroup {
+    fn new(pgid: libc::pid_t) -> Self {
+        ACTIVE_PROCESS_GROUPS.lock().expect("active process group lock poisoned").insert(pgid);
+        Self { pgid, finished: false }
+    }
+
+    fn finish(&mut self) {
+        terminate_process_group(self.pgid);
+        self.finished = true;
+        unregister_active_process_group(self.pgid);
+    }
+}
+
+impl Drop for ActiveProcessGroup {
+    fn drop(&mut self) {
+        unregister_active_process_group(self.pgid);
+        if !self.finished {
+            terminate_process_group(self.pgid);
+        }
+    }
+}
+
+fn unregister_active_process_group(pgid: libc::pid_t) {
+    ACTIVE_PROCESS_GROUPS.lock().expect("active process group lock poisoned").remove(&pgid);
+}
+
+fn terminate_active_process_groups() {
+    let pgids = ACTIVE_PROCESS_GROUPS
+        .lock()
+        .expect("active process group lock poisoned")
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    for pgid in pgids {
+        terminate_process_group(pgid);
+    }
+}
+
+fn terminate_process_group(pgid: libc::pid_t) {
+    if matches!(signal_process_group(pgid, libc::SIGINT), Ok(true)) {
+        thread::sleep(PROCESS_GROUP_GRACE);
+        let _ = signal_process_group(pgid, libc::SIGKILL);
+    }
+}
+
+fn signal_process_group(pgid: libc::pid_t, signal: libc::c_int) -> io::Result<bool> {
+    // SAFETY: negative pid targets the process group created for the child process.
+    let rc = unsafe { libc::kill(-pgid, signal) };
+    if rc == 0 {
+        Ok(true)
+    } else {
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ESRCH) { Ok(false) } else { Err(err) }
+    }
 }
 
 fn command_display(command: &Command) -> String {
