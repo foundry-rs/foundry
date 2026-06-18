@@ -8,7 +8,7 @@ use solar::{
     ast::{BinOpKind, LitKind},
     sema::{
         Gcx,
-        hir::{self, Expr, ExprKind, TypeKind},
+        hir::{self, ElementaryType, Expr, ExprKind, TypeKind},
     },
 };
 
@@ -36,45 +36,57 @@ impl<'hir> LateLintPass<'hir> for IncorrectExp {
         // base restriction, is allow-by-default precisely because of the resulting false positives.
         if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
             && matches!(op.kind, BinOpKind::BitXor)
-            && let Some(base) = decimal_int_lit(lhs)
+            && let Some(base) = plain_decimal_int_lit(ctx, lhs)
             && (base == U256::from(2u64) || base == U256::from(10u64))
-            && decimal_int_lit(rhs).is_some()
+            && plain_decimal_int_lit(ctx, rhs).is_some()
         {
             ctx.emit(&INCORRECT_EXP, expr.span);
         }
     }
 }
 
-/// Returns the value of a decimal integer literal, looking through parentheses and elementary-type
+/// Returns the value of a plain decimal integer literal, looking through parentheses and integer
 /// casts (`uint256(10)`), or `None` for anything else.
 ///
-/// Solidity has no binary or octal literals, so only hex (`0x`) is excluded: xor of a hex bit
-/// pattern is a legitimate operation, and writing a number in hex is a strong signal the author
-/// really means bitwise work.
-fn decimal_int_lit(expr: &Expr<'_>) -> Option<U256> {
-    if let ExprKind::Lit(lit) = &peel_casts(expr).kind
+/// Only literals written as plain decimal digits (`10`, `1_000`) qualify. Hex literals (`0x..`) are
+/// bitwise intent, and scientific notation (`1e1`, which solar evaluates to `10`) is not the plain
+/// integer literal the `^`/`**` typo involves. A sub-denomination (`2 wei`, `2 seconds`) is dropped
+/// from the HIR but still present in the source span, so it is filtered out too. All of these are
+/// left alone: this lint prefers a false negative to a false positive that would annoy developers.
+fn plain_decimal_int_lit(ctx: &LintContext, expr: &Expr<'_>) -> Option<U256> {
+    let expr = peel_int_casts(expr);
+    if let ExprKind::Lit(lit) = &expr.kind
         && let LitKind::Number(value) = &lit.kind
     {
         let s = lit.symbol.as_str();
-        if !s.starts_with("0x") && !s.starts_with("0X") {
+        if !s.is_empty()
+            && s.bytes().all(|b| b.is_ascii_digit() || b == b'_')
+            // The source span must be exactly those digits. This rejects a sub-denomination such as
+            // `2 wei` (dropped from the HIR but still in the source). If the source is unavailable,
+            // err toward not flagging.
+            && ctx.span_to_snippet(expr.span).is_some_and(|src| src.trim() == s)
+        {
             return Some(*value);
         }
     }
     None
 }
 
-/// Looks through parentheses and elementary-type casts (`uint256(x)`, `int8(x)`), returning the
-/// innermost operand. A misplaced `^` can hide behind a cast (`uint256(10) ^ 18`), which a bare
-/// literal check would miss.
-fn peel_casts<'a, 'hir>(expr: &'a Expr<'hir>) -> &'a Expr<'hir> {
+/// Looks through parentheses and integer casts (`uint256(x)`, `int8(x)`), returning the innermost
+/// operand. A misplaced `^` can hide behind such a cast (`uint256(10) ^ 18`), which a bare literal
+/// check would miss. Non-integer casts (`bytes32(x)`, `address(x)`) are left alone, since xor of a
+/// `bytesN` bit pattern is a legitimate operation.
+fn peel_int_casts<'a, 'hir>(expr: &'a Expr<'hir>) -> &'a Expr<'hir> {
     let expr = expr.peel_parens();
     if let ExprKind::Call(callee, args, _) = &expr.kind
-        && let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(_), .. }) =
-            &callee.peel_parens().kind
+        && let ExprKind::Type(hir::Type {
+            kind: TypeKind::Elementary(ElementaryType::Int(_) | ElementaryType::UInt(_)),
+            ..
+        }) = &callee.peel_parens().kind
         && args.len() == 1
         && let Some(inner) = args.exprs().next()
     {
-        return peel_casts(inner);
+        return peel_int_casts(inner);
     }
     expr
 }
