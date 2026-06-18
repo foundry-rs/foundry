@@ -7,7 +7,7 @@ Flags a relational or equality comparison whose two sides are the same expressio
 
 ## What it does
 
-Reports `a <op> a` where `a` is a side-effect-free expression (an identifier, member access, or indexing) and `<op>` is `<`, `<=`, `>`, `>=`, `==`, or `!=`. Such a comparison has a constant result. Comparisons whose sides could legitimately differ (for example involving a function call) are left untouched.
+Reports `a <op> a` where `a` is a side-effect-free expression (an identifier, member access, or indexing) and `<op>` is `<`, `<=`, `>`, `>=`, `==`, or `!=`. Such a comparison has a constant result. Comparisons whose sides could legitimately differ (for example involving a function call) are left untouched, as are comparisons on user-defined value types, whose operators are user-defined (`using {f as ==} for T`) and need not be constant.
 
 ## Why is this bad?
 

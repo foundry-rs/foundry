@@ -8,6 +8,7 @@ use solar::{
     sema::{
         Gcx,
         hir::{self, Expr, ExprKind},
+        ty::TyKind,
     },
 };
 
@@ -22,7 +23,7 @@ impl<'hir> LateLintPass<'hir> for TautologicalCompare {
     fn check_expr(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
+        gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {
@@ -37,10 +38,23 @@ impl<'hir> LateLintPass<'hir> for TautologicalCompare {
                     | BinOpKind::Ne
             )
             && exprs_equal(left, right)
+            && !operand_is_udvt(gcx, left)
         {
             ctx.emit(&TAUTOLOGICAL_COMPARE, expr.span);
         }
     }
+}
+
+/// Returns `true` if `expr`'s type is a user-defined value type (UDVT).
+///
+/// A UDVT can only be compared through a user-defined operator (`using {f as ==} for T global`),
+/// which dispatches to an arbitrary function instead of built-in equality, so `x == x` is not
+/// guaranteed to be tautological. Built-in comparisons only apply to elementary types, so skipping
+/// UDVT operands removes that false positive without missing any real self-comparison.
+/// See <https://soliditylang.org/blog/2023/02/22/user-defined-operators/>.
+fn operand_is_udvt<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+    gcx.type_of_expr(expr.peel_parens().id)
+        .is_some_and(|ty| matches!(ty.peel_refs().kind, TyKind::Udvt(..)))
 }
 
 /// Structural equality for the side-effect-free expressions a self-comparison can involve:
