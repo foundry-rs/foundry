@@ -27,7 +27,7 @@ impl Debugger {
     }
 
     /// Creates a new debugger.
-    pub fn new(
+    pub const fn new(
         debug_arena: Vec<DebugNode>,
         identified_contracts: AddressHashMap<String>,
         contracts_sources: ContractSources,

@@ -12,16 +12,28 @@ curl -L https://foundry.paradigm.xyz | bash
 
 ## Usage
 
-To install the **nightly** version:
+To install the **latest** version:
 
 ```sh
 foundryup
 ```
 
-To **install** a specific **version** (in this case the `nightly` version):
+Or alternatively:
+
+```sh
+foundryup -i latest
+```
+
+To install the latest **nightly** version:
 
 ```sh
 foundryup --install nightly
+```
+
+To install a specific version (e.g. `v1.6.0`):
+
+```sh
+foundryup --install v1.6.0
 ```
 
 To **list** all **versions** installed:

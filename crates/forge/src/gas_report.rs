@@ -1,11 +1,13 @@
 //! Gas reports.
 
 use crate::{
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MONAD_CHEATCODE_ADDRESS},
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, CellAlignment, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+};
 use foundry_common::{TestFunctionExt, calc, shell};
 use foundry_evm::traces::CallKind;
 
@@ -75,7 +77,10 @@ impl GasReport {
     async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
         let trace = &node.trace;
 
-        if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
+        if trace.address == CHEATCODE_ADDRESS
+            || trace.address == MONAD_CHEATCODE_ADDRESS
+            || trace.address == HARDHAT_CONSOLE_ADDRESS
+        {
             return;
         }
 
@@ -85,7 +90,7 @@ impl GasReport {
         if !self.should_report(contract_name) {
             return;
         }
-        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        let contract_info = self.contracts.entry(name.clone()).or_default();
         let is_create_call = trace.kind.is_any_create();
 
         // Record contract deployment size.
@@ -144,7 +149,7 @@ impl GasReport {
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         if shell::is_json() {
-            writeln!(f, "{}", &self.format_json_output())?;
+            writeln!(f, "{}", self.format_json_output())?;
         } else {
             for (name, contract) in &self.contracts {
                 if contract.functions.is_empty() {
@@ -213,8 +218,8 @@ impl GasReport {
             Cell::new("Deployment Size").fg(Color::Cyan),
         ]);
         table.add_row(vec![
-            Cell::new(contract.gas.to_string()),
-            Cell::new(contract.size.to_string()),
+            Cell::new(contract.gas.to_string()).set_alignment(CellAlignment::Right),
+            Cell::new(contract.size.to_string()).set_alignment(CellAlignment::Right),
         ]);
 
         // Add a blank row to separate deployment info from function info.
@@ -229,22 +234,30 @@ impl GasReport {
             Cell::new("# Calls").fg(Color::Cyan),
         ]);
 
-        contract.functions.iter().for_each(|(fname, sigs)| {
-            sigs.iter().for_each(|(sig, gas_info)| {
+        for (fname, sigs) in &contract.functions {
+            for (sig, gas_info) in sigs {
                 // Show function signature if overloaded else display function name.
                 let display_name =
-                    if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
+                    if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
 
                 table.add_row(vec![
                     Cell::new(display_name),
-                    Cell::new(gas_info.min.to_string()).fg(Color::Green),
-                    Cell::new(gas_info.mean.to_string()).fg(Color::Yellow),
-                    Cell::new(gas_info.median.to_string()).fg(Color::Yellow),
-                    Cell::new(gas_info.max.to_string()).fg(Color::Red),
-                    Cell::new(gas_info.calls.to_string()),
+                    Cell::new(gas_info.min.to_string())
+                        .fg(Color::Green)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.mean.to_string())
+                        .fg(Color::Yellow)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.median.to_string())
+                        .fg(Color::Yellow)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.max.to_string())
+                        .fg(Color::Red)
+                        .set_alignment(CellAlignment::Right),
+                    Cell::new(gas_info.calls.to_string()).set_alignment(CellAlignment::Right),
                 ]);
-            })
-        });
+            }
+        }
 
         table
     }

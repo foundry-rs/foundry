@@ -56,9 +56,9 @@ pub fn check_screaming_snake_case(s: &str) -> Option<String> {
     // Handle leading/trailing underscores like `heck` does
     let expected = format!(
         "{prefix}{name}{suffix}",
-        prefix = if s.starts_with("_") { "_" } else { "" },
+        prefix = if s.starts_with('_') { "_" } else { "" },
         name = heck::AsShoutySnakeCase(s),
-        suffix = if s.ends_with("_") { "_" } else { "" }
+        suffix = if s.ends_with('_') { "_" } else { "" }
     );
     if s == expected { None } else { Some(expected) }
 }

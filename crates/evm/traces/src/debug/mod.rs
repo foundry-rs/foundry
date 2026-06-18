@@ -18,7 +18,7 @@ pub struct DebugTraceIdentifier {
 }
 
 impl DebugTraceIdentifier {
-    pub fn new(contracts_sources: ContractSources) -> Self {
+    pub const fn new(contracts_sources: ContractSources) -> Self {
         Self { contracts_sources }
     }
 
@@ -65,7 +65,7 @@ struct DebugStepsWalker<'a> {
 }
 
 impl<'a> DebugStepsWalker<'a> {
-    pub fn new(
+    pub const fn new(
         node: &'a mut CallTraceNode,
         sources: &'a ContractSources,
         contract_name: &'a str,
@@ -143,18 +143,19 @@ impl<'a> DebugStepsWalker<'a> {
         // Try to decode function inputs and outputs from the stack and memory.
         let (inputs, outputs) = self
             .src_map(start_idx + 1)
-            .map(|(source_element, source)| {
+            .and_then(|(source_element, source)| {
                 let start = source_element.offset() as usize;
-                let end = start + source_element.length() as usize;
-                let fn_definition = source.source[start..end].replace('\n', "");
+                let (fn_definition, _) =
+                    source_span(&source.source, start, source_element.length() as usize)?;
+                let fn_definition = fn_definition.replace('\n', "");
                 let (inputs, outputs) = parse_types(&fn_definition);
 
-                (
+                Some((
                     inputs.and_then(|t| {
                         try_decode_args_from_step(&t, &self.node.trace.steps[start_idx + 1])
                     }),
                     outputs.and_then(|t| try_decode_args_from_step(&t, self.current_step())),
-                )
+                ))
             })
             .unwrap_or_default();
 
@@ -199,15 +200,8 @@ impl<'a> DebugStepsWalker<'a> {
 /// Returns string in the format `Contract::function`.
 fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<String> {
     let start = loc.offset() as usize;
-    let end = start + loc.length() as usize;
-    let src_len = source.source.len();
+    let (source_part, end) = source_span(&source.source, start, loc.length() as usize)?;
 
-    // Handle special case of preprocessed test sources.
-    if start > src_len || end > src_len {
-        return None;
-    }
-
-    let source_part = &source.source[start..end];
     if !source_part.starts_with("function") {
         return None;
     }
@@ -215,6 +209,12 @@ fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<S
     let contract_name = source.find_contract_name(start, end)?;
 
     Some(format!("{contract_name}::{function_name}"))
+}
+
+fn source_span(source: &str, start: usize, len: usize) -> Option<(&str, usize)> {
+    let end = start.checked_add(len)?;
+
+    Some((source.get(start..end)?, end))
 }
 
 /// Parses function input and output types into [Parameters].
@@ -327,5 +327,17 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
             Some(DynSolValue::Array(decoded))
         }
         _ => ty.abi_decode(first_word).ok(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_span;
+
+    #[test]
+    fn source_span_returns_none_for_invalid_ranges() {
+        assert_eq!(source_span("abcdef", 2, 3), Some(("cde", 5)));
+        assert_eq!(source_span("abcdef", 7, 1), None);
+        assert_eq!(source_span("abcdef", usize::MAX, 1), None);
     }
 }

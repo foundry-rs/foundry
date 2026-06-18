@@ -2,6 +2,9 @@ use alloy_network::Network;
 
 mod receipt;
 
+use alloy_provider::fillers::{
+    BlobGasFiller, ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
+};
 pub use receipt::*;
 
 /// Foundry network type.
@@ -41,4 +44,13 @@ impl Network for FoundryNetwork {
 
     type BlockResponse =
         alloy_rpc_types_eth::Block<Self::TransactionResponse, Self::HeaderResponse>;
+}
+
+impl RecommendedFillers for FoundryNetwork {
+    type RecommendedFillers =
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>;
+
+    fn recommended_fillers() -> Self::RecommendedFillers {
+        Default::default()
+    }
 }

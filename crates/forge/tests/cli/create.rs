@@ -496,3 +496,42 @@ Error: no bytecode found in bin object for AbstractCounter
 
 "#]]);
 });
+
+// Tests that `forge create` fails when the deployment transaction reverts
+// <https://github.com/foundry-rs/foundry/issues/13954>
+forgetest_async!(flaky_should_fail_on_reverted_deployment, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    prj.add_source(
+        "RevertingContract.sol",
+        r#"
+contract RevertingContract {
+    constructor() {
+        revert("deployment failed");
+    }
+}
+    "#,
+    );
+
+    // Use --gas-limit to bypass eth_estimateGas, which would reject the tx early.
+    // This simulates chains that mine reverted txs (e.g. when gas is manually specified).
+    cmd.args([
+        "create",
+        "./src/RevertingContract.sol:RevertingContract",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        pk.as_str(),
+        "--broadcast",
+        "--gas-limit",
+        "1000000",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: deployment transaction failed (receipt status 0): [..]
+
+"#]]);
+});

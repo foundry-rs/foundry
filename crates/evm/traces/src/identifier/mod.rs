@@ -102,7 +102,7 @@ impl<'a> TraceIdentifiers<'a> {
     }
 
     /// Returns `true` if there are no set identifiers.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.local.is_none() && self.external.is_none()
     }
 }

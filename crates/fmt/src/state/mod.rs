@@ -38,22 +38,25 @@ pub(super) struct CallContext {
 
     /// The size of the callee's head, excluding its arguments.
     pub(super) size: usize,
+
+    /// Whether this chain context added its own indentation box.
+    pub(super) has_indent: bool,
 }
 
 impl CallContext {
-    pub(super) fn nested(size: usize) -> Self {
-        Self { kind: CallContextKind::Nested, size }
+    pub(super) const fn nested(size: usize) -> Self {
+        Self { kind: CallContextKind::Nested, size, has_indent: false }
     }
 
-    pub(super) fn chained(size: usize) -> Self {
-        Self { kind: CallContextKind::Chained, size }
+    pub(super) const fn chained(size: usize, has_indent: bool) -> Self {
+        Self { kind: CallContextKind::Chained, size, has_indent }
     }
 
-    pub(super) fn is_nested(&self) -> bool {
+    pub(super) const fn is_nested(&self) -> bool {
         matches!(self.kind, CallContextKind::Nested)
     }
 
-    pub(super) fn is_chained(&self) -> bool {
+    pub(super) const fn is_chained(&self) -> bool {
         matches!(self.kind, CallContextKind::Chained)
     }
 }
@@ -61,7 +64,6 @@ impl CallContext {
 #[derive(Debug, Default)]
 pub(super) struct CallStack {
     stack: Vec<CallContext>,
-    precall_size: usize,
 }
 
 impl Deref for CallStack {
@@ -80,20 +82,14 @@ impl CallStack {
         self.stack.pop()
     }
 
-    pub(crate) fn add_precall(&mut self, size: usize) {
-        self.precall_size += size;
-    }
-
-    pub(crate) fn reset_precall(&mut self) {
-        self.precall_size = 0;
-    }
-
     pub(crate) fn is_nested(&self) -> bool {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    pub(crate) fn is_chain(&self) -> bool {
-        self.last().is_some_and(|call| call.is_chained())
+    /// Returns true if any chained call in the stack has its own indentation.
+    /// Used to determine if commasep should skip its own indentation (to avoid double indent).
+    pub(crate) fn has_chain_with_indent(&self) -> bool {
+        self.stack.iter().any(|call| call.is_chained() && call.has_indent)
     }
 }
 
@@ -205,11 +201,7 @@ impl<'sess> State<'sess, '_> {
         Self {
             s: pp::Printer::new(
                 config.line_length,
-                if matches!(config.style, IndentStyle::Tab) {
-                    Some(config.tab_width)
-                } else {
-                    None
-                },
+                matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
             ),
             ind: config.tab_width as isize,
             sm,
@@ -444,8 +436,8 @@ impl State<'_, '_> {
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[') | Some('(') | Some('{') => self.config.bracket_spacing,
-                    Some(',') | Some(';') => true,
+                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some(',' | ';') => true,
                     _ => false,
                 };
             }
@@ -486,10 +478,10 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn cmnt_config(&self) -> CommentConfig {
-        CommentConfig { ..Default::default() }
+        Default::default()
     }
 
-    fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
+    const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
         // Intetionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
@@ -719,7 +711,7 @@ impl<'sess> State<'sess, '_> {
                         // Merge the lines and let the wrapper handle breaking if needed
                         let merged_line = format!(
                             "{current_line} {next_content}",
-                            next_content = &next_line[prefix.len()..].trim_start()
+                            next_content = next_line[prefix.len()..].trim_start()
                         );
                         result.push(merged_line);
 
@@ -1069,12 +1061,12 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::Trailing), ..Default::default() }
     }
 
-    pub(crate) fn offset(mut self, off: isize) -> Self {
+    pub(crate) const fn offset(mut self, off: isize) -> Self {
         self.offset = off;
         self
     }
 
-    pub(crate) fn no_breaks(mut self) -> Self {
+    pub(crate) const fn no_breaks(mut self) -> Self {
         self.iso_no_break = true;
         self.trailing_no_break = true;
         self.mixed_no_break_prev = true;
@@ -1082,28 +1074,28 @@ impl CommentConfig {
         self
     }
 
-    pub(crate) fn trailing_no_break(mut self) -> Self {
+    pub(crate) const fn trailing_no_break(mut self) -> Self {
         self.trailing_no_break = true;
         self
     }
 
-    pub(crate) fn mixed_no_break(mut self) -> Self {
+    pub(crate) const fn mixed_no_break(mut self) -> Self {
         self.mixed_no_break_prev = true;
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_no_break_post(mut self) -> Self {
+    pub(crate) const fn mixed_no_break_post(mut self) -> Self {
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_prev_space(mut self) -> Self {
+    pub(crate) const fn mixed_prev_space(mut self) -> Self {
         self.mixed_prev_space = true;
         self
     }
 
-    pub(crate) fn mixed_post_nbsp(mut self) -> Self {
+    pub(crate) const fn mixed_post_nbsp(mut self) -> Self {
         self.mixed_post_nbsp = true;
         self
     }

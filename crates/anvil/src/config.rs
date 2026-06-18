@@ -3,7 +3,6 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
-            env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -14,15 +13,14 @@ use crate::{
     },
     mem::{self, in_memory_db::MemDb},
 };
-use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
-use alloy_eips::eip7840::BlobParams;
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
-use alloy_network::{AnyNetwork, TransactionResponse};
+use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
 use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
-use alloy_rpc_types::{Block, BlockNumberOrTag};
+use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
 use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
@@ -39,33 +37,30 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::AsEnvMut,
-    hardfork::{
-        FoundryHardfork, OpHardfork, ethereum_hardfork_from_block_tag,
-        spec_id_from_ethereum_hardfork,
+    hardfork::{FoundryHardfork, MonadHardfork, OpHardfork},
+    utils::{
+        apply_chain_and_block_specific_env_changes, block_env_from_header,
+        get_blob_base_fee_update_fraction,
     },
-    utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
+use foundry_primitives::FoundryTxEnvelope;
 use itertools::Itertools;
-use monad_revm::MonadSpecId;
-use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use revm::{
-    context::{BlockEnv, CfgEnv, TxEnv},
+    context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
 };
 use serde_json::{Value, json};
 use std::{
     fmt::Write as FmtWrite,
-    fs::File,
-    io,
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
+use tempo_chainspec::hardfork::TempoHardfork;
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
@@ -139,11 +134,13 @@ pub struct NodeConfig {
     pub port: u16,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
-    /// url of the rpc server that should be used for any rpc calls
-    pub eth_rpc_url: Option<String>,
+    /// Fork URLs for RPC calls. The first entry is the primary endpoint.
+    /// When multiple URLs are provided, requests are distributed using
+    /// round-robin load balancing with retry-based failover.
+    pub fork_urls: Vec<String>,
     /// pins the block number or transaction hash for the state fork
     pub fork_choice: Option<ForkChoice>,
-    /// headers to use with `eth_rpc_url`
+    /// headers to use with fork RPC endpoints
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
@@ -207,7 +204,8 @@ pub struct NodeConfig {
     pub networks: NetworkConfigs,
     /// Do not print log messages.
     pub silent: bool,
-    /// The path where states are cached.
+    /// The path where persisted states are cached (used with `max_persisted_states`).
+    /// This does not affect the fork RPC cache location.
     pub cache_path: Option<PathBuf>,
 }
 
@@ -272,11 +270,18 @@ Block number:   {}
 Block hash:     {:?}
 Chain ID:       {}
 "#,
-                fork.eth_rpc_url(),
+                fork.eth_rpc_url().as_deref().unwrap_or("none"),
                 fork.block_number(),
                 fork.block_hash(),
                 fork.chain_id()
             );
+
+            if self.fork_urls.len() > 1 {
+                let _ = writeln!(s, "Endpoints:      {}", self.fork_urls.len());
+                for (i, url) in self.fork_urls.iter().enumerate() {
+                    let _ = writeln!(s, "  ({i}) {url}");
+                }
+            }
 
             if let Some(tx_hash) = fork.transaction_hash() {
                 let _ = writeln!(s, "Transaction hash: {tx_hash}");
@@ -397,7 +402,7 @@ Genesis Number
             json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
-              "endpoint": fork.eth_rpc_url(),
+              "endpoint": fork.eth_rpc_url().unwrap_or_default(),
               "block_number": fork.block_number(),
               "block_hash": fork.block_hash(),
               "chain_id": fork.chain_id(),
@@ -426,6 +431,18 @@ impl NodeConfig {
     #[doc(hidden)]
     pub fn test() -> Self {
         Self { enable_tracing: true, port: 0, silent: true, ..Default::default() }
+    }
+
+    /// Returns a test config with Tempo network enabled.
+    #[doc(hidden)]
+    pub fn test_tempo() -> Self {
+        Self { networks: NetworkConfigs::with_tempo(), ..Self::test() }
+    }
+
+    /// Returns a test config with Monad network enabled.
+    #[doc(hidden)]
+    pub fn test_monad() -> Self {
+        Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
     }
 
     /// Returns a new config which does not initialize any accounts on node startup.
@@ -464,7 +481,7 @@ impl Default for NodeConfig {
             mixed_mining: false,
             port: NODE_PORT,
             max_transactions: 1_000,
-            eth_rpc_url: None,
+            fork_urls: vec![],
             fork_choice: None,
             account_generator: None,
             base_fee: None,
@@ -509,20 +526,35 @@ impl Default for NodeConfig {
 impl NodeConfig {
     /// Returns the memory limit of the node
     #[must_use]
-    pub fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
+    pub const fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
         self.memory_limit = mems_value;
         self
     }
-    /// Returns the base fee to use
+
+    /// Returns the base fee to use.
+    ///
+    /// In Tempo mode, uses the hardfork-specific base fee (10 gwei pre-T1, 20 gwei T1+).
     pub fn get_base_fee(&self) -> u64 {
+        let default = if self.networks.is_tempo() {
+            TempoHardfork::from(self.get_hardfork()).base_fee()
+        } else {
+            INITIAL_BASE_FEE
+        };
         self.base_fee
             .or_else(|| self.genesis.as_ref().and_then(|g| g.base_fee_per_gas.map(|g| g as u64)))
-            .unwrap_or(INITIAL_BASE_FEE)
+            .unwrap_or(default)
     }
 
-    /// Returns the base fee to use
+    /// Returns the gas price to use.
+    ///
+    /// In Tempo mode, defaults to the hardfork-specific base fee.
     pub fn get_gas_price(&self) -> u128 {
-        self.gas_price.unwrap_or(INITIAL_GAS_PRICE)
+        let default = if self.networks.is_tempo() {
+            TempoHardfork::from(self.get_hardfork()).base_fee() as u128
+        } else {
+            INITIAL_GAS_PRICE
+        };
+        self.gas_price.unwrap_or(default)
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
@@ -534,7 +566,7 @@ impl NodeConfig {
             BlobExcessGasAndPrice::new(
                 excess_blob_gas,
                 get_blob_base_fee_update_fraction(
-                    self.chain_id.unwrap_or(Chain::mainnet().id()),
+                    self.get_chain_id(),
                     self.get_genesis_timestamp(),
                 ),
             )
@@ -543,10 +575,7 @@ impl NodeConfig {
 
     /// Returns the [`BlobParams`] that should be used.
     pub fn get_blob_params(&self) -> BlobParams {
-        get_blob_params(
-            self.chain_id.unwrap_or(Chain::mainnet().id()),
-            self.get_genesis_timestamp(),
-        )
+        get_blob_params(self.get_chain_id(), self.get_genesis_timestamp())
     }
 
     /// Returns the hardfork to use
@@ -554,24 +583,27 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.networks.is_monad() {
-            return MonadSpecId::MonadNine.into();
-        }
         if self.networks.is_optimism() {
             return OpHardfork::default().into();
+        }
+        if self.networks.is_tempo() {
+            return TempoHardfork::default().into();
+        }
+        if self.networks.is_monad() {
+            return MonadHardfork::default().into();
         }
         EthereumHardfork::default().into()
     }
 
     /// Sets a custom code size limit
     #[must_use]
-    pub fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
+    pub const fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
         self.code_size_limit = code_size_limit;
         self
     }
     /// Disables  code size limit
     #[must_use]
-    pub fn disable_code_size_limit(mut self, disable_code_size_limit: bool) -> Self {
+    pub const fn disable_code_size_limit(mut self, disable_code_size_limit: bool) -> Self {
         if disable_code_size_limit {
             self.code_size_limit = Some(usize::MAX);
         }
@@ -622,7 +654,7 @@ impl NodeConfig {
 
     /// Sets the gas limit
     #[must_use]
-    pub fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
+    pub const fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
         self.gas_limit = gas_limit;
         self
     }
@@ -631,7 +663,7 @@ impl NodeConfig {
     ///
     /// If set to `true` block gas limit will not be enforced
     #[must_use]
-    pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
+    pub const fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
         self
     }
@@ -640,14 +672,14 @@ impl NodeConfig {
     ///
     /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
     #[must_use]
-    pub fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
+    pub const fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
         self.enable_tx_gas_limit = enable_tx_gas_limit;
         self
     }
 
     /// Sets the gas price
     #[must_use]
-    pub fn with_gas_price(mut self, gas_price: Option<u128>) -> Self {
+    pub const fn with_gas_price(mut self, gas_price: Option<u128>) -> Self {
         self.gas_price = gas_price;
         self
     }
@@ -669,6 +701,15 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the max number of transactions in a block
+    #[must_use]
+    pub const fn with_max_transactions(mut self, max_transactions: Option<usize>) -> Self {
+        if let Some(max_transactions) = max_transactions {
+            self.max_transactions = max_transactions;
+        }
+        self
+    }
+
     /// Sets max number of blocks with transactions to keep in memory
     #[must_use]
     pub fn with_transaction_block_keeper<U: Into<usize>>(
@@ -681,14 +722,14 @@ impl NodeConfig {
 
     /// Sets the base fee
     #[must_use]
-    pub fn with_base_fee(mut self, base_fee: Option<u64>) -> Self {
+    pub const fn with_base_fee(mut self, base_fee: Option<u64>) -> Self {
         self.base_fee = base_fee;
         self
     }
 
     /// Disable the enforcement of a minimum suggested priority fee
     #[must_use]
-    pub fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
+    pub const fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
         self.disable_min_priority_fee = disable_min_priority_fee;
         self
     }
@@ -734,7 +775,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+    pub const fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -788,21 +829,21 @@ impl NodeConfig {
 
     /// If set to `true` auto mining will be disabled
     #[must_use]
-    pub fn with_no_mining(mut self, no_mining: bool) -> Self {
+    pub const fn with_no_mining(mut self, no_mining: bool) -> Self {
         self.no_mining = no_mining;
         self
     }
 
     /// Sets the slots in an epoch
     #[must_use]
-    pub fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: u64) -> Self {
+    pub const fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: u64) -> Self {
         self.slots_in_an_epoch = slots_in_an_epoch;
         self
     }
 
     /// Sets the port to use
     #[must_use]
-    pub fn with_port(mut self, port: u16) -> Self {
+    pub const fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
@@ -826,22 +867,25 @@ impl NodeConfig {
         self
     }
 
-    /// Disables storage caching
     #[must_use]
-    pub fn no_storage_caching(self) -> Self {
-        self.with_storage_caching(true)
-    }
-
-    #[must_use]
-    pub fn with_storage_caching(mut self, storage_caching: bool) -> Self {
-        self.no_storage_caching = storage_caching;
+    pub const fn with_no_storage_caching(mut self, no_storage_caching: bool) -> Self {
+        self.no_storage_caching = no_storage_caching;
         self
     }
 
-    /// Sets the `eth_rpc_url` to use when forking
+    /// Sets the `eth_rpc_url` to use when forking (single endpoint convenience).
     #[must_use]
     pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
-        self.eth_rpc_url = eth_rpc_url.map(Into::into);
+        if let Some(url) = eth_rpc_url {
+            self.fork_urls = vec![url.into()];
+        }
+        self
+    }
+
+    /// Sets the fork URLs for load-balanced multi-endpoint forking.
+    #[must_use]
+    pub fn with_fork_urls(mut self, fork_urls: Vec<String>) -> Self {
+        self.fork_urls = fork_urls;
         self
     }
 
@@ -869,12 +913,12 @@ impl NodeConfig {
 
     /// Sets the `fork_chain_id` to use to fork off local cache from
     #[must_use]
-    pub fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
+    pub const fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
         self.fork_chain_id = fork_chain_id;
         self
     }
 
-    /// Sets the `fork_headers` to use with `eth_rpc_url`
+    /// Sets the `fork_headers` to use with fork RPC endpoints
     #[must_use]
     pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
         self.fork_headers = headers;
@@ -883,7 +927,7 @@ impl NodeConfig {
 
     /// Sets the `fork_request_timeout` to use for requests
     #[must_use]
-    pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
+    pub const fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
         if let Some(fork_request_timeout) = fork_request_timeout {
             self.fork_request_timeout = fork_request_timeout;
         }
@@ -892,7 +936,7 @@ impl NodeConfig {
 
     /// Sets the `fork_request_retries` to use for spurious networks
     #[must_use]
-    pub fn fork_request_retries(mut self, fork_request_retries: Option<u32>) -> Self {
+    pub const fn fork_request_retries(mut self, fork_request_retries: Option<u32>) -> Self {
         if let Some(fork_request_retries) = fork_request_retries {
             self.fork_request_retries = fork_request_retries;
         }
@@ -901,7 +945,7 @@ impl NodeConfig {
 
     /// Sets the initial `fork_retry_backoff` for rate limits
     #[must_use]
-    pub fn fork_retry_backoff(mut self, fork_retry_backoff: Option<Duration>) -> Self {
+    pub const fn fork_retry_backoff(mut self, fork_retry_backoff: Option<Duration>) -> Self {
         if let Some(fork_retry_backoff) = fork_retry_backoff {
             self.fork_retry_backoff = fork_retry_backoff;
         }
@@ -912,7 +956,10 @@ impl NodeConfig {
     ///
     /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[must_use]
-    pub fn fork_compute_units_per_second(mut self, compute_units_per_second: Option<u64>) -> Self {
+    pub const fn fork_compute_units_per_second(
+        mut self,
+        compute_units_per_second: Option<u64>,
+    ) -> Self {
         if let Some(compute_units_per_second) = compute_units_per_second {
             self.compute_units_per_second = compute_units_per_second;
         }
@@ -921,35 +968,35 @@ impl NodeConfig {
 
     /// Sets whether to enable tracing
     #[must_use]
-    pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
+    pub const fn with_tracing(mut self, enable_tracing: bool) -> Self {
         self.enable_tracing = enable_tracing;
         self
     }
 
     /// Sets whether to enable steps tracing
     #[must_use]
-    pub fn with_steps_tracing(mut self, enable_steps_tracing: bool) -> Self {
+    pub const fn with_steps_tracing(mut self, enable_steps_tracing: bool) -> Self {
         self.enable_steps_tracing = enable_steps_tracing;
         self
     }
 
     /// Sets whether to print `console.log` invocations to stdout.
     #[must_use]
-    pub fn with_print_logs(mut self, print_logs: bool) -> Self {
+    pub const fn with_print_logs(mut self, print_logs: bool) -> Self {
         self.print_logs = print_logs;
         self
     }
 
     /// Sets whether to print traces to stdout.
     #[must_use]
-    pub fn with_print_traces(mut self, print_traces: bool) -> Self {
+    pub const fn with_print_traces(mut self, print_traces: bool) -> Self {
         self.print_traces = print_traces;
         self
     }
 
     /// Sets whether to enable autoImpersonate
     #[must_use]
-    pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
+    pub const fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
         self.enable_auto_impersonate = enable_auto_impersonate;
         self
     }
@@ -968,7 +1015,7 @@ impl NodeConfig {
     }
 
     #[must_use]
-    pub fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
+    pub const fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
         self.transaction_order = transaction_order;
         self
     }
@@ -984,11 +1031,8 @@ impl NodeConfig {
     /// Prints the config info
     pub fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
         if let Some(path) = &self.config_out {
-            let file = io::BufWriter::new(
-                File::create(path).wrap_err("unable to create anvil config description file")?,
-            );
             let value = self.as_json(fork);
-            serde_json::to_writer(file, &value).wrap_err("failed writing JSON")?;
+            foundry_common::fs::write_json_file(path, &value).wrap_err("failed writing JSON")?;
         }
         if !self.silent {
             sh_println!("{}", self.as_string(fork))?;
@@ -1000,7 +1044,7 @@ impl NodeConfig {
     ///
     /// See also [ Config::foundry_block_cache_file()]
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
-        if self.no_storage_caching || self.eth_rpc_url.is_none() {
+        if self.no_storage_caching || self.fork_urls.is_empty() {
             return None;
         }
         let chain_id = self.get_chain_id();
@@ -1010,14 +1054,14 @@ impl NodeConfig {
 
     /// Sets whether to disable the default create2 deployer
     #[must_use]
-    pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
+    pub const fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
         self.disable_default_create2_deployer = yes;
         self
     }
 
     /// Sets whether to disable pool balance checks
     #[must_use]
-    pub fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
+    pub const fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
         self.disable_pool_balance_checks = yes;
         self
     }
@@ -1031,24 +1075,48 @@ impl NodeConfig {
 
     /// Enable features for provided networks.
     #[must_use]
-    pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
+    pub const fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
+        self
+    }
+
+    /// Enable Tempo network features.
+    #[must_use]
+    pub fn with_tempo(mut self) -> Self {
+        self.networks = NetworkConfigs::with_tempo();
+        self
+    }
+
+    /// Enable Monad network features.
+    #[must_use]
+    pub fn with_monad(mut self) -> Self {
+        self.networks = NetworkConfigs::with_monad();
+        self
+    }
+
+    /// Enable Optimism network features.
+    #[must_use]
+    pub fn with_optimism(mut self) -> Self {
+        self.networks = NetworkConfigs::with_optimism();
         self
     }
 
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
-    pub fn silent(self) -> Self {
+    pub const fn silent(self) -> Self {
         self.set_silent(true)
     }
 
     #[must_use]
-    pub fn set_silent(mut self, silent: bool) -> Self {
+    pub const fn set_silent(mut self, silent: bool) -> Self {
         self.silent = silent;
         self
     }
 
-    /// Sets the path where states are cached
+    /// Sets the path where persisted states are cached (used with `max_persisted_states`).
+    ///
+    /// Note: This does not control the fork RPC cache location (`storage.json`), which uses
+    /// `~/.foundry/cache/rpc/<chain>/<block>/` via [`Config::foundry_block_cache_file`].
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
@@ -1059,12 +1127,17 @@ impl NodeConfig {
     /// [Backend](mem::Backend)
     ///
     /// *Note*: only memory based backend for now
-    pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
+    pub(crate) async fn setup<N>(&mut self) -> Result<mem::Backend<N>>
+    where
+        N: alloy_network::Network<
+                TxEnvelope = foundry_primitives::FoundryTxEnvelope,
+                ReceiptEnvelope = foundry_primitives::FoundryReceiptEnvelope,
+            >,
+    {
         // configure the revm environment
 
-        let hardfork = self.get_hardfork();
         let mut cfg = CfgEnv::default();
-        cfg.spec = hardfork.into();
+        cfg.spec = self.get_hardfork().into();
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1083,22 +1156,17 @@ impl NodeConfig {
         }
 
         let spec_id = cfg.spec;
-        let mut env = Env::new(
-            EvmEnv::new(
-                cfg,
-                BlockEnv {
-                    gas_limit: self.gas_limit(),
-                    basefee: self.get_base_fee(),
-                    ..Default::default()
-                },
-            ),
-            OpTransaction {
-                base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+        let mut evm_env = EvmEnv::new(
+            cfg,
+            BlockEnv {
+                gas_limit: self.gas_limit(),
+                basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            self.networks,
-            hardfork,
         );
+
+        let base_fee_params: BaseFeeParams =
+            self.networks.base_fee_params(self.get_genesis_timestamp());
 
         let fees = FeeManager::new(
             spec_id,
@@ -1107,11 +1175,12 @@ impl NodeConfig {
             self.get_gas_price(),
             self.get_blob_excess_gas_and_price(),
             self.get_blob_params(),
+            base_fee_params,
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
-            if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
-                self.setup_fork_db(eth_rpc_url, &mut env, &fees).await?
+            if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
+                self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
                 (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
             };
@@ -1121,16 +1190,16 @@ impl NodeConfig {
             // --chain-id flag gets precedence over the genesis.json chain id
             // <https://github.com/foundry-rs/foundry/issues/10059>
             if self.chain_id.is_none() {
-                env.evm_env.cfg_env.chain_id = genesis.config.chain_id;
+                evm_env.cfg_env.chain_id = genesis.config.chain_id;
             }
-            env.evm_env.block_env.timestamp = U256::from(genesis.timestamp);
+            evm_env.block_env.timestamp = U256::from(genesis.timestamp);
             if let Some(base_fee) = genesis.base_fee_per_gas {
-                env.evm_env.block_env.basefee = base_fee.try_into()?;
+                evm_env.block_env.basefee = base_fee.try_into()?;
             }
             if let Some(number) = genesis.number {
-                env.evm_env.block_env.number = U256::from(number);
+                evm_env.block_env.number = U256::from(number);
             }
-            env.evm_env.block_env.beneficiary = genesis.coinbase;
+            evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
         let genesis = GenesisConfig {
@@ -1153,7 +1222,8 @@ impl NodeConfig {
         // only memory based backend for now
         let backend = mem::Backend::with_genesis(
             db,
-            Arc::new(RwLock::new(env)),
+            Arc::new(RwLock::new(evm_env)),
+            self.networks,
             genesis,
             fees,
             Arc::new(RwLock::new(fork)),
@@ -1172,15 +1242,11 @@ impl NodeConfig {
 
         // Writes the default create2 deployer to the backend,
         // if the option is not disabled and we are not forking.
-        if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
+        if !self.disable_default_create2_deployer && self.fork_urls.is_empty() {
             backend
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .wrap_err("failed to create default create2 deployer")?;
-        }
-
-        if let Some(state) = self.init_state.clone() {
-            backend.load_state(state).await.wrap_err("failed to load init state")?;
         }
 
         Ok(backend)
@@ -1195,10 +1261,10 @@ impl NodeConfig {
     pub async fn setup_fork_db(
         &mut self,
         eth_rpc_url: String,
-        env: &mut Env,
+        evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
-        let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await?;
+        let (db, config) = self.setup_fork_db_config(eth_rpc_url, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork)))
@@ -1212,10 +1278,14 @@ impl NodeConfig {
     pub async fn setup_fork_db_config(
         &mut self,
         eth_rpc_url: String,
-        env: &mut Env,
+        evm_env: &mut EvmEnv,
         fees: &FeeManager,
-    ) -> Result<(ForkedDatabase, ClientForkConfig)> {
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
+
+        // Always bootstrap with the primary URL only to avoid race conditions
+        // where discovery calls (get_chain_id, find_latest_fork_block, get_block)
+        // hit different endpoints that may be at different chain tips.
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
                 .timeout(self.fork_request_timeout)
@@ -1237,17 +1307,8 @@ impl NodeConfig {
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
                 Some(chain_id)
             } else if self.hardfork.is_none() {
-                // Auto-adjust hardfork if not specified, but only if we're forking mainnet.
                 let chain_id =
                     provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
-                if alloy_chains::NamedChain::Mainnet == chain_id {
-                    let hardfork: EthereumHardfork =
-                        ethereum_hardfork_from_block_tag(fork_block_number);
-
-                    env.evm_env.cfg_env.spec = spec_id_from_ethereum_hardfork(hardfork);
-                    env.hardfork = FoundryHardfork::Ethereum(hardfork);
-                    self.hardfork = Some(FoundryHardfork::Ethereum(hardfork));
-                }
                 Some(U256::from(chain_id))
             } else {
                 None
@@ -1289,60 +1350,76 @@ latest block number: {latest_block}"
         let gas_limit = self.fork_gas_limit(&block);
         self.gas_limit = Some(gas_limit);
 
-        env.evm_env.block_env = BlockEnv {
-            number: U256::from(fork_block_number),
-            timestamp: U256::from(block.header.timestamp),
-            difficulty: block.header.difficulty,
-            // ensures prevrandao is set
-            prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
+        evm_env.block_env = BlockEnv {
             gas_limit,
             // Keep previous `coinbase` and `basefee` value
-            beneficiary: env.evm_env.block_env.beneficiary,
-            basefee: env.evm_env.block_env.basefee,
-            ..Default::default()
+            beneficiary: evm_env.block_env.beneficiary,
+            basefee: evm_env.block_env.basefee,
+            ..block_env_from_header(&block.header)
         };
 
+        // Determine chain_id early so we can use it consistently
+        let chain_id = if let Some(chain_id) = self.chain_id {
+            chain_id
+        } else {
+            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
+                fork_chain_id.to()
+            } else {
+                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
+            };
+
+            // need to update the dev signers and env with the chain id
+            self.set_chain_id(Some(chain_id));
+            evm_env.cfg_env.chain_id = chain_id;
+            chain_id
+        };
+
+        // Auto-detect hardfork from chain activation data if not explicitly set.
+        if self.hardfork.is_none()
+            && let Some(hardfork) =
+                FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
+        {
+            evm_env.cfg_env.spec = SpecId::from(hardfork);
+            self.hardfork = Some(hardfork);
+        }
+
         // if not set explicitly we use the base fee of the latest block
-        if self.base_fee.is_none() {
-            if let Some(base_fee) = block.header.base_fee_per_gas {
-                self.base_fee = Some(base_fee);
-                env.evm_env.block_env.basefee = base_fee;
-                // this is the base fee of the current block, but we need the base fee of
-                // the next block
-                let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used,
-                    gas_limit,
-                    block.header.base_fee_per_gas.unwrap_or_default(),
-                );
+        if self.base_fee.is_none()
+            && let Some(base_fee) = block.header.base_fee_per_gas()
+        {
+            self.base_fee = Some(base_fee);
+            evm_env.block_env.basefee = base_fee;
+            // this is the base fee of the current block, but we need the base fee of
+            // the next block
+            let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
+                block.header.gas_used(),
+                gas_limit,
+                block.header.base_fee_per_gas().unwrap_or_default(),
+            );
 
-                // update next base fee
-                fees.set_base_fee(next_block_base_fee);
-            }
-            if let (Some(blob_excess_gas), Some(blob_gas_used)) =
-                (block.header.excess_blob_gas, block.header.blob_gas_used)
-            {
-                // derive the blobparams that are active at this timestamp
-                let blob_params = get_blob_params(
-                    fork_chain_id
-                        .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
-                        .saturating_to(),
-                    block.header.timestamp,
-                );
+            // update next base fee
+            fees.set_base_fee(next_block_base_fee);
+        }
 
-                env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
-                    blob_excess_gas,
-                    blob_params.update_fraction as u64,
-                ));
+        if let (Some(blob_excess_gas), Some(blob_gas_used)) =
+            (block.header.excess_blob_gas(), block.header.blob_gas_used())
+        {
+            // Derive blob params using the fork block timestamp regardless of explicit base fee.
+            let blob_params = get_blob_params(chain_id, block.header.timestamp());
 
-                fees.set_blob_params(blob_params);
+            evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+                blob_excess_gas,
+                blob_params.update_fraction as u64,
+            ));
 
-                let next_block_blob_excess_gas =
-                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
-                fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
-                    next_block_blob_excess_gas,
-                    blob_params.update_fraction as u64,
-                ));
-            }
+            fees.set_blob_params(blob_params);
+
+            let next_block_blob_excess_gas =
+                fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
+            fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                next_block_blob_excess_gas,
+                blob_params.update_fraction as u64,
+            ));
         }
 
         // use remote gas price
@@ -1355,34 +1432,38 @@ latest block number: {latest_block}"
 
         let block_hash = block.header.hash;
 
-        let chain_id = if let Some(chain_id) = self.chain_id {
-            chain_id
-        } else {
-            let chain_id = if let Some(fork_chain_id) = fork_chain_id {
-                fork_chain_id.to()
-            } else {
-                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
-            };
-
-            // need to update the dev signers and env with the chain id
-            self.set_chain_id(Some(chain_id));
-            env.evm_env.cfg_env.chain_id = chain_id;
-            env.tx.base.chain_id = chain_id.into();
-            chain_id
-        };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork, SpecId>(
-            env.as_env_mut(),
+        apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(
+            evm_env,
             &block,
             self.networks,
         );
 
-        let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
             BlockchainDb::new(meta, self.block_cache_path(fork_block_number))
+        };
+
+        // After bootstrap, rebuild the provider with round-robin if multiple URLs are
+        // configured. This ensures bootstrap used only the primary endpoint for consistency,
+        // while ongoing requests are distributed across all endpoints.
+        let provider = if self.fork_urls.len() > 1 {
+            debug!(target: "node", urls=?self.fork_urls, "using multi-endpoint round-robin provider");
+            Arc::new(
+                ProviderBuilder::new(&eth_rpc_url)
+                    .timeout(self.fork_request_timeout)
+                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                    .compute_units_per_second(self.compute_units_per_second)
+                    .max_retry(self.fork_request_retries)
+                    .headers(self.fork_headers.clone())
+                    .build_fallback(self.fork_urls.clone())
+                    .wrap_err("failed to establish round-robin provider to fork urls")?,
+            )
+        } else {
+            provider
         };
 
         // This will spawn the background thread that will use the provider to fetch
@@ -1395,22 +1476,23 @@ latest block number: {latest_block}"
         .await;
 
         let config = ClientForkConfig {
-            eth_rpc_url,
+            fork_urls: self.fork_urls.clone(),
             block_number: fork_block_number,
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
             provider,
             chain_id,
             override_chain_id,
-            timestamp: block.header.timestamp,
-            base_fee: block.header.base_fee_per_gas.map(|g| g as u128),
+            timestamp: block.header.timestamp(),
+            base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
+            headers: self.fork_headers.clone(),
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
-            blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
-            blob_excess_gas_and_price: env.evm_env.block_env.blob_excess_gas_and_price,
+            blob_gas_used: block.header.blob_gas_used().map(|g| g as u128),
+            blob_excess_gas_and_price: evm_env.block_env.blob_excess_gas_and_price,
             force_transactions,
         };
 
@@ -1427,15 +1509,12 @@ latest block number: {latest_block}"
     /// we only use the gas limit value of the block if it is non-zero and the block gas
     /// limit is enabled, since there are networks where this is not used and is always
     /// `0x0` which would inevitably result in `OutOfGas` errors as soon as the evm is about to record gas, See also <https://github.com/foundry-rs/foundry/issues/3247>
-    pub(crate) fn fork_gas_limit<T: TransactionResponse, H: BlockHeader>(
-        &self,
-        block: &Block<T, H>,
-    ) -> u64 {
+    pub(crate) fn fork_gas_limit<B: BlockResponse<Header: BlockHeader>>(&self, block: &B) -> u64 {
         if !self.disable_block_gas_limit {
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
-            } else if block.header.gas_limit() > 0 {
-                return block.header.gas_limit();
+            } else if block.header().gas_limit() > 0 {
+                return block.header().gas_limit();
             }
         }
 
@@ -1461,7 +1540,7 @@ latest block number: {latest_block}"
 async fn derive_block_and_transactions(
     fork_choice: &ForkChoice,
     provider: &Arc<RetryProvider>,
-) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
+) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction<FoundryTxEnvelope>>>)> {
     match fork_choice {
         ForkChoice::Block(block_number) => {
             let block_number = *block_number;
@@ -1479,7 +1558,7 @@ async fn derive_block_and_transactions(
                 .get_transaction_by_hash(transaction_hash.0.into())
                 .await?
                 .ok_or_else(|| eyre::eyre!("failed to get fork transaction by hash"))?;
-            let transaction_block_number = transaction.block_number.ok_or_else(|| {
+            let transaction_block_number = transaction.block_number().ok_or_else(|| {
                 eyre::eyre!("fork transaction is not mined yet (no block number)")
             })?;
 
@@ -1523,7 +1602,7 @@ pub enum ForkChoice {
 
 impl ForkChoice {
     /// Returns the block number to fork from
-    pub fn block_number(&self) -> Option<i128> {
+    pub const fn block_number(&self) -> Option<i128> {
         match self {
             Self::Block(block_number) => Some(*block_number),
             Self::Transaction(_) => None,
@@ -1531,7 +1610,7 @@ impl ForkChoice {
     }
 
     /// Returns the transaction hash to fork from
-    pub fn transaction_hash(&self) -> Option<TxHash> {
+    pub const fn transaction_hash(&self) -> Option<TxHash> {
         match self {
             Self::Block(_) => None,
             Self::Transaction(transaction_hash) => Some(*transaction_hash),
@@ -1561,12 +1640,12 @@ pub struct PruneStateHistoryConfig {
 
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported
-    pub fn is_state_history_supported(&self) -> bool {
+    pub const fn is_state_history_supported(&self) -> bool {
         !self.enabled || self.max_memory_history.is_some()
     }
 
     /// Returns true if this setting was enabled.
-    pub fn is_config_enabled(&self) -> bool {
+    pub const fn is_config_enabled(&self) -> bool {
         self.enabled
     }
 
@@ -1689,11 +1768,5 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
-    }
-
-    #[test]
-    fn test_monad_defaults_to_monad_nine_hardfork() {
-        let config = NodeConfig::default().with_networks(NetworkConfigs::with_monad());
-        assert_eq!(config.get_hardfork(), MonadSpecId::MonadNine.into());
     }
 }

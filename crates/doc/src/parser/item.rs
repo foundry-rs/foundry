@@ -159,16 +159,16 @@ impl ParseSource {
     /// Get the identity of the source
     pub fn ident(&self) -> String {
         match self {
-            Self::Contract(contract) => contract.name.safe_unwrap().name.to_owned(),
-            Self::Variable(var) => var.name.safe_unwrap().name.to_owned(),
-            Self::Event(event) => event.name.safe_unwrap().name.to_owned(),
-            Self::Error(error) => error.name.safe_unwrap().name.to_owned(),
-            Self::Struct(structure) => structure.name.safe_unwrap().name.to_owned(),
-            Self::Enum(enumerable) => enumerable.name.safe_unwrap().name.to_owned(),
+            Self::Contract(contract) => contract.name.safe_unwrap().name.clone(),
+            Self::Variable(var) => var.name.safe_unwrap().name.clone(),
+            Self::Event(event) => event.name.safe_unwrap().name.clone(),
+            Self::Error(error) => error.name.safe_unwrap().name.clone(),
+            Self::Struct(structure) => structure.name.safe_unwrap().name.clone(),
+            Self::Enum(enumerable) => enumerable.name.safe_unwrap().name.clone(),
             Self::Function(func) => {
-                func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.to_owned())
+                func.name.as_ref().map_or(func.ty.to_string(), |n| n.name.clone())
             }
-            Self::Type(ty) => ty.name.name.to_owned(),
+            Self::Type(ty) => ty.name.name.clone(),
         }
     }
 

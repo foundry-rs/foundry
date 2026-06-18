@@ -79,7 +79,7 @@ impl UnwrappedModifierLogic {
         let (mut res, mut has_valid_stmt) = (false, false);
         for stmt in stmts {
             match &stmt.kind {
-                hir::StmtKind::Placeholder => continue,
+                hir::StmtKind::Placeholder => {}
                 hir::StmtKind::Expr(expr) => {
                     if !self.is_valid_expr(hir, expr) || has_valid_stmt {
                         res = true;

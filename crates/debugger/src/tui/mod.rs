@@ -34,7 +34,7 @@ pub struct TUI<'a> {
 
 impl<'a> TUI<'a> {
     /// Creates a new debugger.
-    pub fn new(debugger_context: &'a mut DebuggerContext) -> Self {
+    pub const fn new(debugger_context: &'a mut DebuggerContext) -> Self {
         Self { debugger_context }
     }
 

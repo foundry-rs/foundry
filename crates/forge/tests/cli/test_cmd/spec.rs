@@ -1,10 +1,6 @@
 use foundry_test_utils::rpc;
-use monad_revm::MonadSpecId;
 
-// Test evm version behavior during tests / scripts.
-// On Monad, Ethereum evm_version strings are compatibility no-ops, while Monad hardfork names can
-// explicitly select a Monad execution spec.
-// Original upstream refs:
+// Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
 // <https://github.com/foundry-rs/foundry/issues/6228>
 forgetest_init!(test_set_evm_version, |prj, cmd| {
@@ -31,15 +27,17 @@ contract TestEvmVersion is Test {
         evm.setEvmVersion("istanbul");
         evm.getEvmVersion();
 
-        // On Monad (MONAD_EIGHT / Prague-compatible), CREATE2 is always available
-        // even after setEvmVersion to older versions.
+        // revert with NotActivated for istanbul
+        vm.expectRevert();
         compute();
 
         evm.setEvmVersion("shanghai");
         evm.getEvmVersion();
         compute();
 
+        // switch to Paris, expect revert with NotActivated
         evm.setEvmVersion("paris");
+        vm.expectRevert();
         compute();
     }
 
@@ -51,18 +49,45 @@ contract TestEvmVersion is Test {
     );
 
     cmd.args(["test", "--mc", "TestEvmVersion", "-vvvv"]).assert_success().stdout_eq(str![[r#"
-...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
 Ran 1 test for test/TestEvmVersion.t.sol:TestEvmVersion
 [PASS] test_evm_version() ([GAS])
-...
+Traces:
+  [..] TestEvmVersion::test_evm_version()
+    ├─ [0] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 0
+    ├─ [0] VM::setEvmVersion("istanbul")
+    │   └─ ← [Return]
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "istanbul"
+    ├─ [0] VM::expectRevert(custom error 0xf4844814)
+    │   └─ ← [Return]
+    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
+    │   └─ ← [NotActivated] EvmError: NotActivated
+    ├─ [0] VM::setEvmVersion("shanghai")
+    │   └─ ← [Return]
+    ├─ [0] VM::getEvmVersion() [staticcall]
+    │   └─ ← [Return] "shanghai"
+    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
+    │   └─ ← [Return] 0x0f40d7B7669e3a6683EaB25358318fd42a9F2342
+    ├─ [0] VM::setEvmVersion("paris")
+    │   └─ ← [Return]
+    ├─ [0] VM::expectRevert(custom error 0xf4844814)
+    │   └─ ← [Return]
+    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
+    │   └─ ← [NotActivated] EvmError: NotActivated
+    └─ ← [Stop]
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 
-    // Test evm version set in `setUp` — on Monad, setEvmVersion("istanbul") has no effect,
-    // so CREATE2 remains available and the test succeeds.
+    // Test evm version set in `setUp` is accounted in test.
     prj.add_test(
         "TestSetupEvmVersion.t.sol",
         &r#"
@@ -86,7 +111,7 @@ contract TestSetupEvmVersion is Test {
 
     function test_evm_version_in_setup() public {
         vm.createSelectFork("<rpc>");
-        // On Monad, CREATE2 is always available (MONAD_EIGHT is Prague-compatible).
+        // revert with NotActivated for istanbul
         ICreate2Deployer(0x35Da41c476fA5c6De066f20556069096A1F39364).computeAddress(bytes32(0), bytes32(0));
     }
 }
@@ -94,19 +119,23 @@ contract TestSetupEvmVersion is Test {
     );
     cmd.forge_fuse()
         .args(["test", "--mc", "TestSetupEvmVersion", "-vvvv"])
-        .assert_success()
+        .assert_failure()
         .stdout_eq(str![[r#"
 ...
-[PASS] test_evm_version_in_setup() ([GAS])
-...
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[FAIL: EvmError: NotActivated] test_evm_version_in_setup() ([GAS])
+Traces:
+  [..] TestSetupEvmVersion::setUp()
+    ├─ [0] VM::setEvmVersion("istanbul")
+    │   └─ ← [Return]
+    └─ ← [Stop]
 
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+  [..] TestSetupEvmVersion::test_evm_version_in_setup()
+    └─ ← [NotActivated] EvmError: NotActivated
+...
 
 "#]]);
 
-    // Test evm version set in constructor — on Monad, setEvmVersion("istanbul") has no effect,
-    // so CREATE2 remains available and the test succeeds.
+    // Test evm version set in constructor is accounted in test.
     prj.add_test(
         "TestConstructorEvmVersion.t.sol",
         &r#"
@@ -130,7 +159,7 @@ contract TestConstructorEvmVersion is Test {
 
     function test_evm_version_in_constructor() public {
         vm.createSelectFork("<rpc>");
-        // On Monad, CREATE2 is always available (MONAD_EIGHT is Prague-compatible).
+        // revert with NotActivated for istanbul
         ICreate2Deployer(0x35Da41c476fA5c6De066f20556069096A1F39364).computeAddress(bytes32(0), bytes32(0));
     }
 }
@@ -138,22 +167,21 @@ contract TestConstructorEvmVersion is Test {
     );
     cmd.forge_fuse()
         .args(["test", "--mc", "TestConstructorEvmVersion", "-vvvv"])
-        .assert_success()
+        .assert_failure()
         .stdout_eq(str![[r#"
 ...
-[PASS] test_evm_version_in_constructor() ([GAS])
+[FAIL: EvmError: NotActivated] test_evm_version_in_constructor() ([GAS])
+Traces:
+  [..] TestConstructorEvmVersion::test_evm_version_in_constructor()
+    └─ ← [NotActivated] EvmError: NotActivated
 ...
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
 
-    prj.update_config(|config| {
-        config.monad_hardfork = Some(MonadSpecId::MonadNine);
-    });
+forgetest_init!(test_set_evm_version_monad_hardfork, |prj, cmd| {
     prj.add_test(
-        "TestMonadHardforkEvmVersion.t.sol",
+        "MonadEvmVersion.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
 
@@ -162,37 +190,33 @@ interface EvmVm {
     function setEvmVersion(string calldata evm) external;
 }
 
-contract TestMonadHardforkEvmVersion is Test {
+contract MonadEvmVersionTest is Test {
     EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+    address constant CLZ_TARGET = address(uint160(0x0c17));
 
-    function test_monad_hardfork_override() public {
-        assertEq(evm.getEvmVersion(), "monadnine");
-
-        evm.setEvmVersion("istanbul");
-        assertEq(evm.getEvmVersion(), "monadnine");
+    function test_set_monad_evm_version() public {
+        vm.etch(CLZ_TARGET, hex"60011e60005260206000f3");
 
         evm.setEvmVersion("MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
-
-        evm.setEvmVersion("paris");
-        assertEq(evm.getEvmVersion(), "monadeight");
+        (bool ok,) = CLZ_TARGET.staticcall(hex"");
+        assertFalse(ok, "CLZ should be unavailable on MonadEight");
 
         evm.setEvmVersion("MonadNine");
         assertEq(evm.getEvmVersion(), "monadnine");
+        bytes memory output;
+        (ok, output) = CLZ_TARGET.staticcall(hex"");
+        assertTrue(ok, "CLZ should be available on MonadNine");
+        assertEq(abi.decode(output, (uint256)), 255);
+
+        evm.setEvmVersion("monad:MonadEight");
+        assertEq(evm.getEvmVersion(), "monadeight");
+        (ok,) = CLZ_TARGET.staticcall(hex"");
+        assertFalse(ok, "CLZ should be disabled after switching back to MonadEight");
     }
 }
    "#,
     );
-    cmd.forge_fuse()
-        .args(["test", "--mc", "TestMonadHardforkEvmVersion", "-vvvv"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-[PASS] test_monad_hardfork_override() ([GAS])
-...
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
+    cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
 });

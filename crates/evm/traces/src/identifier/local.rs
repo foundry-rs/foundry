@@ -29,14 +29,14 @@ impl<'a> LocalTraceIdentifier<'a> {
         Self { known_contracts, ordered_ids, contracts_bytecode: None }
     }
 
-    pub fn with_bytecodes(mut self, contracts_bytecode: &'a HashMap<Address, Bytes>) -> Self {
+    pub const fn with_bytecodes(mut self, contracts_bytecode: &'a HashMap<Address, Bytes>) -> Self {
         self.contracts_bytecode = Some(contracts_bytecode);
         self
     }
 
     /// Returns the known contracts.
     #[inline]
-    pub fn contracts(&self) -> &'a ContractsByArtifact {
+    pub const fn contracts(&self) -> &'a ContractsByArtifact {
         self.known_contracts
     }
 

@@ -4,8 +4,10 @@ use crate::{
     abi::{Multicall, SimpleStorage, VendingMachine},
     utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
-use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder, Transaction, TxEip1559};
-use alloy_eips::eip4844::BlobTransactionSidecar;
+use alloy_consensus::{
+    BlobTransactionSidecar, SidecarBuilder, SignableTransaction, SimpleCoder, Transaction,
+    TxEip1559,
+};
 use alloy_network::{
     EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TxSignerSync,
 };
@@ -52,10 +54,12 @@ async fn can_dev_get_balance() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_price() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    let _ = provider.get_gas_price().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    assert!(gas_price > 0);
+    assert_eq!(gas_price, api.gas_price());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -63,7 +67,12 @@ async fn can_get_accounts() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    let _ = provider.get_accounts().await.unwrap();
+    let accounts = provider.get_accounts().await.unwrap();
+    let dev_accounts: Vec<_> = handle.dev_accounts().collect();
+    assert_eq!(accounts.len(), dev_accounts.len());
+    for account in dev_accounts {
+        assert!(accounts.contains(&account), "Missing dev account {account}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -99,10 +108,14 @@ async fn can_modify_chain_id() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_network_id() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
 
-    let chain_id = api.network_id().unwrap().unwrap();
-    assert_eq!(chain_id, CHAIN_ID.to_string());
+    let network_id = api.network_id().unwrap().unwrap();
+    assert_eq!(network_id, CHAIN_ID.to_string());
+
+    let provider_network_id = provider.get_net_version().await.unwrap();
+    assert_eq!(provider_network_id, CHAIN_ID);
 }
 
 #[tokio::test(flavor = "multi_thread")]

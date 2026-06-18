@@ -89,7 +89,7 @@ pub enum DocumentContent {
 }
 
 impl DocumentContent {
-    pub(crate) fn len(&self) -> usize {
+    pub(crate) const fn len(&self) -> usize {
         match self {
             Self::Empty => 0,
             Self::Single(_) => 1,
@@ -101,13 +101,7 @@ impl DocumentContent {
     pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut ParseItem> {
         match self {
             Self::Empty => None,
-            Self::Single(item) => {
-                if index == 0 {
-                    Some(item)
-                } else {
-                    None
-                }
-            }
+            Self::Single(item) => (index == 0).then_some(item),
             Self::Constants(items) => items.get_mut(index),
             Self::OverloadedFunctions(items) => items.get_mut(index),
         }

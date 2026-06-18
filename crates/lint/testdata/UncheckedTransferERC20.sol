@@ -1,3 +1,5 @@
+//@compile-flags: --severity high med low info
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
@@ -34,7 +36,7 @@ contract UncheckedTransfer {
     }
 
     function uncheckedInLoop(address[] memory recipients, uint256[] memory amounts) public {
-        for (uint i = 0; i < recipients.length; i++) {
+        for (uint256 i = 0; i < recipients.length; i++) {
             IERC20(address(token)).transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
             token.transfer(recipients[i], amounts[i]); //~WARN: ERC20 'transfer' and 'transferFrom' calls should check the return value
         }
@@ -85,10 +87,7 @@ contract UncheckedTransfer {
     }
 
     function checkedTransferInRequireWithLogic(address to, uint256 amount) public {
-        require(
-            amount > 0 && token.transfer(to, amount),
-            "Invalid amount or transfer failed"
-        );
+        require(amount > 0 && token.transfer(to, amount), "Invalid amount or transfer failed");
     }
 
     function uncheckedApprove(address spender, uint256 amount) public {

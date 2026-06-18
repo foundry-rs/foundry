@@ -124,7 +124,7 @@ impl SlotInfo {
     }
 
     /// Slot is of type [`DynSolType::Bytes`] or [`DynSolType::String`]
-    pub fn is_bytes_or_string(&self) -> bool {
+    pub const fn is_bytes_or_string(&self) -> bool {
         matches!(self.slot_type.dyn_sol_type, DynSolType::Bytes | DynSolType::String)
     }
 
@@ -377,7 +377,7 @@ pub struct SlotIdentifier {
 
 impl SlotIdentifier {
     /// Creates a new SlotIdentifier with the given storage layout.
-    pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
+    pub const fn new(storage_layout: Arc<StorageLayout>) -> Self {
         Self { storage_layout }
     }
 
@@ -654,37 +654,37 @@ impl SlotIdentifier {
                     members: if member_infos.is_empty() { None } else { Some(member_infos) },
                     keys: None,
                 });
-            } else {
-                // Multi-slot struct - return the first member.
-                let member_label = format!("{}.{}", base_label, first_member.label);
-
-                // If the first member is itself a struct, recurse
-                if is_struct(&member_type_info.label) {
-                    return self.handle_struct(
-                        &member_label,
-                        member_type_info,
-                        target_slot,
-                        struct_start_slot,
-                        first_member.offset,
-                        slot_str,
-                        depth + 1,
-                    );
-                }
-
-                // Return the first member as a primitive
-                return Some(SlotInfo {
-                    label: member_label,
-                    slot_type: StorageTypeInfo {
-                        label: member_type_info.label.clone(),
-                        dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
-                    },
-                    offset: first_member.offset,
-                    slot: slot_str.to_string(),
-                    decoded: None,
-                    members: None,
-                    keys: None,
-                });
             }
+
+            // Multi-slot struct - return the first member.
+            let member_label = format!("{}.{}", base_label, first_member.label);
+
+            // If the first member is itself a struct, recurse
+            if is_struct(&member_type_info.label) {
+                return self.handle_struct(
+                    &member_label,
+                    member_type_info,
+                    target_slot,
+                    struct_start_slot,
+                    first_member.offset,
+                    slot_str,
+                    depth + 1,
+                );
+            }
+
+            // Return the first member as a primitive
+            return Some(SlotInfo {
+                label: member_label,
+                slot_type: StorageTypeInfo {
+                    label: member_type_info.label.clone(),
+                    dyn_sol_type: DynSolType::parse(&member_type_info.label).ok()?,
+                },
+                offset: first_member.offset,
+                slot: slot_str.to_string(),
+                decoded: None,
+                members: None,
+                keys: None,
+            });
         }
 
         // Not the base slot - search through members
@@ -954,14 +954,9 @@ impl SlotIdentifier {
                 let (nested_keys, final_value, _) = self.resolve_mapping_type(value_type_ref)?;
                 key_types.extend(nested_keys);
                 return Some((key_types, final_value, storage_type.label.clone()));
-            } else {
-                // Value is not a mapping, we're done
-                return Some((
-                    key_types,
-                    value_storage_type.label.clone(),
-                    storage_type.label.clone(),
-                ));
             }
+            // Value is not a mapping, we're done
+            return Some((key_types, value_storage_type.label.clone(), storage_type.label.clone()));
         }
 
         None

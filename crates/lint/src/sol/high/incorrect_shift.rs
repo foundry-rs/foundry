@@ -29,7 +29,7 @@ impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
 // TODO: come up with a better heuristic. Treat initial impl as a PoC.
 // Checks if the left operand is a literal and the right operand is not, indicating a potential
 // reversed shift operation.
-fn contains_incorrect_shift<'ast>(
+const fn contains_incorrect_shift<'ast>(
     left_expr: &'ast Expr<'ast>,
     right_expr: &'ast Expr<'ast>,
 ) -> bool {

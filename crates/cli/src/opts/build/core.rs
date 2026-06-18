@@ -184,12 +184,15 @@ impl BuildOpts {
 impl<'a> From<&'a BuildOpts> for Figment {
     fn from(args: &'a BuildOpts) -> Self {
         let root = if let Some(config_path) = &args.project_paths.config_path {
-            if !config_path.exists() {
-                panic!("error: config-path `{}` does not exist", config_path.display())
-            }
-            if !config_path.ends_with(Config::FILE_NAME) {
-                panic!("error: the config-path must be a path to a foundry.toml file")
-            }
+            assert!(
+                config_path.exists(),
+                "error: config-path `{}` does not exist",
+                config_path.display()
+            );
+            assert!(
+                config_path.ends_with(Config::FILE_NAME),
+                "error: the config-path must be a path to a foundry.toml file"
+            );
             let config_path = canonicalized(config_path);
             config_path.parent().unwrap().to_path_buf()
         } else {

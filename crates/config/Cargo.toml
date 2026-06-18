@@ -20,10 +20,8 @@ foundry-compilers = { workspace = true, features = ["svm-solc"] }
 alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
+foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
-
-revm.workspace = true
-monad-revm.workspace = true
 
 solar.workspace = true
 
@@ -36,10 +34,9 @@ globset = "0.4"
 heck.workspace = true
 itertools.workspace = true
 mesc.workspace = true
-number_prefix = "0.4"
+unit-prefix = "0.5.2"
 rayon.workspace = true
 regex.workspace = true
-reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 serde.workspace = true

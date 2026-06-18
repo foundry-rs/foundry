@@ -4,82 +4,96 @@ pragma solidity ^0.8.18;
 import "utils/Test.sol";
 
 interface IERC20 {
-    event Transfer(address indexed from, address indexed to, uint256 value);
+    function transfer(address to, uint256 amount) external returns (bool);
+
     function balanceOf(address account) external view returns (uint256);
 }
 
-contract TransactTest is Test {
-    // Monad mainnet USDC
-    address constant USDC = 0x754704Bc059F8C67012fEd69BC8A327a5aafb603;
-    // Sender of the USDC transfer
-    address constant SENDER = 0x65b1683fA503005EeF709613566F02cE8A621c26;
-    // Recipient of the USDC transfer
-    address constant RECIPIENT = 0x240c0AE518EAA5667670d79560F16Fe4D9949d52;
-    // Transfer amount: 400 USDC (6 decimals)
-    uint256 constant AMOUNT = 400000000;
-    // Balances at block 38118706 (before the transfer)
-    uint256 constant SENDER_BALANCE_BEFORE = 550671950;
-    uint256 constant RECIPIENT_BALANCE_BEFORE = 0;
+contract TransactOnForkTest is Test {
+    IERC20 constant USDT = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
 
-    /// forge-config: default.rpc_storage_caching.chains = ["monad"]
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
     function testTransact() public {
-        // Fork at block 38118706
-        vm.createSelectFork("monad", 38118706);
+        // A random block https://etherscan.io/block/17134913
+        uint256 fork = vm.createFork("mainnet", 17134913);
+        vm.selectFork(fork);
+        // a random transfer transaction in the next block: https://etherscan.io/tx/0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771
+        bytes32 transaction = 0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771;
 
-        // Verify balances before transact
-        assertEq(IERC20(USDC).balanceOf(SENDER), SENDER_BALANCE_BEFORE);
-        assertEq(IERC20(USDC).balanceOf(RECIPIENT), RECIPIENT_BALANCE_BEFORE);
+        address sender = address(0x9B315A70FEe05a70A9F2c832E93a7095FEb32Bfe);
+        address recipient = address(0xDB358B93157Df9b3B1eE9Ea5CDB7D0aE9a1D8110);
 
-        // Replay the USDC transfer transaction from block 38118707
-        // tx: 0x62068873ff1d3681a117c13563584226126bccc22c4d1f47fc4367d475d9e824
-        vm.transact(0x62068873ff1d3681a117c13563884226126bccc22c4d1f47fc4367d475d9e824);
+        assertEq(sender.balance, 110231651357268209);
+        assertEq(recipient.balance, 892860016357511);
 
-        // Verify balances after transact
-        assertEq(IERC20(USDC).balanceOf(SENDER), SENDER_BALANCE_BEFORE - AMOUNT);
-        assertEq(IERC20(USDC).balanceOf(RECIPIENT), RECIPIENT_BALANCE_BEFORE + AMOUNT);
+        // transfer amount: 0.015 Ether
+        uint256 transferAmount = 15000000000000000;
+        uint256 expectedRecipientBalance = recipient.balance + transferAmount;
+        uint256 expectedSenderBalance = sender.balance - transferAmount;
+
+        // execute the transaction
+        vm.transact(transaction);
+
+        // recipient received transfer
+        assertEq(recipient.balance, expectedRecipientBalance);
+
+        // decreased by transferAmount and gas
+        assert(sender.balance < expectedSenderBalance);
     }
 
-    /// forge-config: default.rpc_storage_caching.chains = ["monad"]
     function testTransactCooperatesWithCheatcodes() public {
-        // Fork at block 38118706
-        vm.createSelectFork("monad", 38118706);
+        // A random block https://etherscan.io/block/16260609
+        uint256 fork = vm.createFork("mainnet", 16260609);
+        vm.selectFork(fork);
 
-        // Verify balances before transact
-        assertEq(IERC20(USDC).balanceOf(SENDER), SENDER_BALANCE_BEFORE);
-        assertEq(IERC20(USDC).balanceOf(RECIPIENT), RECIPIENT_BALANCE_BEFORE);
+        // a random ERC20 USDT transfer transaction in the next block: https://etherscan.io/tx/0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c
+        bytes32 transaction = 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c;
 
-        // Expect the Transfer event
-        vm.expectEmit(true, true, false, true, USDC);
-        emit IERC20.Transfer(SENDER, RECIPIENT, AMOUNT);
+        address sender = address(0x2e09BB78B3D64d98Da44D1C776fa77dcd133ED54);
+        address recipient = address(0x23a6B9711B711b1d404F2AA740bde350c67a6F06);
 
-        // Start recording logs
+        uint256 senderBalance = USDT.balanceOf(sender);
+        uint256 recipientBalance = USDT.balanceOf(recipient);
+
+        assertEq(senderBalance, 20041000000);
+        assertEq(recipientBalance, 66000000);
+
+        // transfer amount: 14000 USDT
+        uint256 transferAmount = 14000000000;
+        uint256 expectedRecipientBalance = recipientBalance + transferAmount;
+        uint256 expectedSenderBalance = senderBalance - transferAmount;
+
+        // expect a call to USDT's transfer
+        // With the current expect call behavior, in which we expect calls to be matched in the next call's subcalls,
+        // expecting calls on vm.transact is impossible. This is because transact essentially creates another call context
+        // that operates independently of the current one, meaning that depths won't match and will trigger a panic on REVM,
+        // as the transact storage is not persisted as well and can't be checked.
+        // vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount));
+
+        // expect a Transfer event to be emitted
+        vm.expectEmit(true, true, false, true, address(USDT));
+        emit Transfer(address(sender), address(recipient), transferAmount);
+
+        // start recording logs
         vm.recordLogs();
 
-        // Replay the USDC transfer transaction
-        vm.transact(0x62068873ff1d3681a117c13563884226126bccc22c4d1f47fc4367d475d9e824);
+        // execute the transaction
+        vm.transact(transaction);
 
-        // Verify the recorded logs contain the Transfer event
+        // extract recorded logs
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertGt(logs.length, 0);
 
-        // Find the Transfer event in logs
-        bool foundTransfer = false;
-        bytes32 transferTopic = keccak256("Transfer(address,address,uint256)");
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == transferTopic && logs[i].emitter == USDC) {
-                foundTransfer = true;
-                // Verify indexed parameters (from, to)
-                assertEq(address(uint160(uint256(logs[i].topics[1]))), SENDER);
-                assertEq(address(uint160(uint256(logs[i].topics[2]))), RECIPIENT);
-                // Verify amount from data
-                assertEq(abi.decode(logs[i].data, (uint256)), AMOUNT);
-                break;
-            }
-        }
-        assertTrue(foundTransfer, "Transfer event not found");
+        senderBalance = USDT.balanceOf(sender);
+        recipientBalance = USDT.balanceOf(recipient);
 
-        // Verify balances after transact
-        assertEq(IERC20(USDC).balanceOf(SENDER), SENDER_BALANCE_BEFORE - AMOUNT);
-        assertEq(IERC20(USDC).balanceOf(RECIPIENT), RECIPIENT_BALANCE_BEFORE + AMOUNT);
+        // recipient received transfer
+        assertEq(recipientBalance, expectedRecipientBalance);
+
+        // decreased by transferAmount
+        assertEq(senderBalance, expectedSenderBalance);
+
+        // recorded a `Transfer` log
+        assertEq(logs.length, 1);
     }
 }

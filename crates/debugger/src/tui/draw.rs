@@ -290,11 +290,11 @@ impl TUIContext<'_> {
                 lines.push(u_num, line, u_text);
             }
 
-            let first = if !last_has_nl {
+            let first = if last_has_nl {
+                0
+            } else {
                 lines.push_raw(h_num, &[Span::raw(last), Span::styled(actual[0], h_text)]);
                 1
-            } else {
-                0
             };
 
             // Skip the first line if it has already been handled above.
@@ -372,10 +372,11 @@ impl TUIContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {}",
+            "Address: {} | PC: {} | Gas used: {} | Gas refund: {}",
             self.address(),
             self.current_step().pc,
-            self.current_step().gas_used,
+            self.debug_call().gas_limit - self.current_step().gas_remaining,
+            self.current_step().gas_refund_counter
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)

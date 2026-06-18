@@ -1,17 +1,12 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
-use foundry_evm_core::{
-    backend::DatabaseError,
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-};
+use foundry_evm_core::constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS};
 use revm::{
-    Database, Inspector,
+    Inspector,
     bytecode::opcode,
     context::{ContextTr, JournalTr},
-    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
-        interpreter::EthInterpreter,
         interpreter_types::{Jumps, LoopControl},
     },
 };
@@ -20,7 +15,7 @@ use std::fmt;
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
 /// Checks if the call scheme corresponds to any sort of delegate call
-pub fn is_delegatecall(scheme: CallScheme) -> bool {
+pub const fn is_delegatecall(scheme: CallScheme) -> bool {
     matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
 }
 
@@ -73,12 +68,12 @@ pub struct RevertDiagnostic {
 impl RevertDiagnostic {
     /// Returns the effective target address whose code would be executed.
     /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
-    fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
+    const fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
         if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
     }
 
     /// Derives the revert reason based on the cached data. Should only be called after a revert.
-    fn reason(&self) -> Option<DetailedRevertReason> {
+    const fn reason(&self) -> Option<DetailedRevertReason> {
         if let Some((addr, scheme, _)) = self.non_contract_call {
             let reason = if is_delegatecall(scheme) {
                 DetailedRevertReason::DelegateCallToNonContract(addr)
@@ -114,12 +109,7 @@ impl RevertDiagnostic {
     ///  - if `non_contract_size_check` was set at the current depth, `broadcast_diagnostic` is
     ///    called. Otherwise, it is cleared.
     #[cold]
-    fn handle_revert<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
-    where
-        D: Database<Error = DatabaseError>,
-        CTX: ContextTr<Db = D>,
-        CTX::Journal: JournalExt,
-    {
+    fn handle_revert<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
         // REVERT (offset, size)
         if let Ok(size) = interp.stack.peek(1)
             && size.is_zero()
@@ -149,12 +139,7 @@ impl RevertDiagnostic {
     ///  - Optimistically caches the target address and current depth in `non_contract_size_check`,
     ///    pending later validation.
     #[cold]
-    fn handle_extcodesize<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
-    where
-        D: Database<Error = DatabaseError>,
-        CTX: ContextTr<Db = D>,
-        CTX::Journal: JournalExt,
-    {
+    fn handle_extcodesize<CTX: ContextTr>(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
         // EXTCODESIZE (address)
         if let Ok(word) = interp.stack.peek(0) {
             let addr = Address::from_word(word.into());
@@ -182,12 +167,7 @@ impl RevertDiagnostic {
     }
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for RevertDiagnostic
-where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
-{
+impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
     /// Tracks the first call with non-zero calldata that targets a non-contract address. Excludes
     /// precompiles and test addresses.
     fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {

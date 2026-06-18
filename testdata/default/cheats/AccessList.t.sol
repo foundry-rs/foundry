@@ -11,7 +11,7 @@ contract AccessListIsolatedTest is Test {
 
         uint256 initial = gasleft();
         write.setNumber(1);
-        assertEq(initial - gasleft(), 32754);
+        assertEq(initial - gasleft(), 26762);
 
         // set access list to anotherWrite address, hence becoming more expensive
         Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
@@ -21,26 +21,26 @@ contract AccessListIsolatedTest is Test {
 
         uint256 initial1 = gasleft();
         write.setNumber(2);
-        assertEq(initial1 - gasleft(), 35154);
+        assertEq(initial1 - gasleft(), 29162);
 
         uint256 initial2 = gasleft();
         write.setNumber(3);
-        assertEq(initial2 - gasleft(), 35154);
+        assertEq(initial2 - gasleft(), 29162);
 
         // reset access list, should take same gas as before setting
         vm.noAccessList();
         uint256 initial4 = gasleft();
         write.setNumber(4);
-        assertEq(initial4 - gasleft(), 32754);
+        assertEq(initial4 - gasleft(), 26762);
 
         uint256 initial5 = gasleft();
         write.setNumber(5);
-        assertEq(initial5 - gasleft(), 32754);
+        assertEq(initial5 - gasleft(), 26762);
 
         vm.accessList(accessList);
         uint256 initial6 = gasleft();
         write.setNumber(6);
-        assertEq(initial6 - gasleft(), 35154);
+        assertEq(initial6 - gasleft(), 29162);
     }
 }
 

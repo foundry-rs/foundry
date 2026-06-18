@@ -267,9 +267,8 @@ impl EtherscanVerificationProvider {
             || (verifier_type.is_sourcify() && etherscan_key.is_some());
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
-        let etherscan_api_url = verifier_url.or(None).map(str::to_owned);
-
-        let api_url = etherscan_api_url.as_deref();
+        let api_url =
+            verifier_url.or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()));
         let base_url = etherscan_config
             .as_ref()
             .and_then(|c| c.browser_url.as_deref())
@@ -282,11 +281,11 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
             let api_url = api_url.trim_end_matches('/');
-            let base_url = if !is_etherscan {
+            let base_url = if is_etherscan {
+                base_url.unwrap_or(api_url)
+            } else {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
                 api_url.strip_suffix("/api").unwrap_or(api_url)
-            } else {
-                base_url.unwrap_or(api_url)
             };
             builder.with_api_url(api_url)?.with_url(base_url)?
         } else {
@@ -384,7 +383,7 @@ impl EtherscanVerificationProvider {
             };
             let encoded_args = encode_function_args(
                 &func,
-                read_constructor_args_file(constructor_args_path.to_path_buf())?,
+                read_constructor_args_file(constructor_args_path.clone())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()));
@@ -419,9 +418,9 @@ impl EtherscanVerificationProvider {
             .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
 
         let maybe_creation_code = if receipt.contract_address == Some(args.address) {
-            transaction.inner.inner.input()
+            transaction.input()
         } else if transaction.to() == Some(DEFAULT_CREATE2_DEPLOYER) {
-            &transaction.inner.inner.input()[32..]
+            &transaction.input()[32..]
         } else {
             eyre::bail!(
                 "Fetching of constructor arguments is not supported for contracts created by contracts"
@@ -492,10 +491,8 @@ mod tests {
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
-        assert_eq!(
-            client.etherscan_api_url().as_str(),
-            "https://api.etherscan.io/v2/api?chainid=80002"
-        );
+        // Custom URL from foundry.toml should be used
+        assert_eq!(client.etherscan_api_url().as_str(), "https://amoy.polygonscan.com/");
 
         assert!(format!("{client:?}").contains("dummykey"));
 
@@ -552,10 +549,8 @@ mod tests {
 
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
 
-        assert_eq!(
-            client.etherscan_api_url().as_str(),
-            "https://api.etherscan.io/v2/api?chainid=80002"
-        );
+        // Custom URL from foundry.toml should be used
+        assert_eq!(client.etherscan_api_url().as_str(), "https://amoy.polygonscan.com/");
         assert!(format!("{client:?}").contains("dummykey"));
 
         let args: VerifyArgs = VerifyArgs::parse_from([

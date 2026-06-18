@@ -11,7 +11,10 @@ use foundry_common::{
     sh_warn,
 };
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
-use foundry_config::{DenyLevel, lint::Severity};
+use foundry_config::{
+    DenyLevel,
+    lint::{LintSpecificConfig, Severity},
+};
 use rayon::prelude::*;
 use solar::{
     ast::{self as ast, visit::Visit as _},
@@ -49,6 +52,9 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     lints.into_iter().map(|lint| lint.id()).collect()
 });
 
+static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
+    LazyLock::new(LintSpecificConfig::default);
+
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.
 #[derive(Debug)]
@@ -60,7 +66,7 @@ pub struct SolidityLinter<'a> {
     with_description: bool,
     with_json_emitter: bool,
     // lint-specific configuration
-    mixed_case_exceptions: &'a [String],
+    lint_specific: &'a LintSpecificConfig,
 }
 
 impl<'a> SolidityLinter<'a> {
@@ -72,7 +78,7 @@ impl<'a> SolidityLinter<'a> {
             lints_included: None,
             lints_excluded: None,
             with_json_emitter: false,
-            mixed_case_exceptions: &[],
+            lint_specific: &DEFAULT_LINT_SPECIFIC_CONFIG,
         }
     }
 
@@ -91,23 +97,23 @@ impl<'a> SolidityLinter<'a> {
         self
     }
 
-    pub fn with_description(mut self, with: bool) -> Self {
+    pub const fn with_description(mut self, with: bool) -> Self {
         self.with_description = with;
         self
     }
 
-    pub fn with_json_emitter(mut self, with: bool) -> Self {
+    pub const fn with_json_emitter(mut self, with: bool) -> Self {
         self.with_json_emitter = with;
         self
     }
 
-    pub fn with_mixed_case_exceptions(mut self, exceptions: &'a [String]) -> Self {
-        self.mixed_case_exceptions = exceptions;
+    pub const fn with_lint_specific(mut self, lint_specific: &'a LintSpecificConfig) -> Self {
+        self.lint_specific = lint_specific;
         self
     }
 
-    fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
-        LinterConfig { inline, mixed_case_exceptions: self.mixed_case_exceptions }
+    const fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
+        LinterConfig { inline, lint_specific: self.lint_specific }
     }
 
     fn include_lint(&self, lint: SolLint) -> bool {
@@ -141,7 +147,7 @@ impl<'a> SolidityLinter<'a> {
             .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
                 let included_ids: Vec<_> = lints
                     .iter()
-                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .filter_map(|lint| self.include_lint(*lint).then_some(lint.id))
                     .collect();
 
                 if !included_ids.is_empty() {
@@ -192,7 +198,7 @@ impl<'a> SolidityLinter<'a> {
             .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
                 let included_ids: Vec<_> = lints
                     .iter()
-                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .filter_map(|lint| self.include_lint(*lint).then_some(lint.id))
                     .collect();
 
                 if !included_ids.is_empty() {
@@ -231,6 +237,10 @@ impl<'a> Linter for SolidityLinter<'a> {
         compiler: &mut Compiler,
     ) -> eyre::Result<()> {
         convert_solar_errors(compiler.dcx())?;
+
+        // Cache diagnostic count before linting to isolate from the build phase.
+        let warn_count_before = compiler.dcx().warn_count();
+        let note_count_before = compiler.dcx().note_count();
 
         let ui_testing = std::env::var_os("FOUNDRY_LINT_UI_TESTING").is_some();
 
@@ -293,9 +303,11 @@ impl<'a> Linter for SolidityLinter<'a> {
             sess.reconfigure();
         }
 
-        // Handle diagnostics and fail if necessary.
+        let lint_warn_count = compiler.dcx().warn_count().saturating_sub(warn_count_before);
+        let lint_note_count = compiler.dcx().note_count().saturating_sub(note_count_before);
+
         const MSG: &str = "aborting due to ";
-        match (deny, compiler.dcx().warn_count(), compiler.dcx().note_count()) {
+        match (deny, lint_warn_count, lint_note_count) {
             // Deny warnings.
             (DenyLevel::Warnings, w, n) if w > 0 => {
                 if n > 0 {

@@ -55,7 +55,6 @@ pub struct CoverageArgs {
     /// If not specified, the report will be stored in the root of the project.
     #[arg(
         long,
-        short,
         value_hint = ValueHint::FilePath,
         value_name = "PATH"
     )]
@@ -137,13 +136,14 @@ impl CoverageArgs {
                  which can result in inaccurate source mappings.\n\
                  Only use this flag as a workaround if you are experiencing \"stack too deep\" errors.\n\
                  Note that `viaIR` is production ready since Solidity 0.8.13 and above.\n\
-                 See more: https://github.com/foundry-rs/foundry/issues/3357"
+                 See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
             )?;
         } else {
             sh_warn!(
                 "optimizer settings and `viaIR` have been disabled for accurate coverage reports.\n\
                  If you encounter \"stack too deep\" errors, consider using `--ir-minimum` which \
-                 enables `viaIR` with minimum optimization resolving most of the errors"
+                 enables `viaIR` with minimum optimization resolving most of the errors.\n\
+                 See more: https://book.getfoundry.sh/guides/best-practices/stack-too-deep"
             )?;
         }
 
@@ -250,9 +250,8 @@ impl CoverageArgs {
         let filter = self.test.filter(&config)?;
         let outcome =
             self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
-        outcome.ensure_ok(false)?;
 
-        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
+        let known_contracts = outcome.known_contracts.as_ref().unwrap().clone();
 
         // Add hit data to the coverage report
         let data = outcome.results.values().flat_map(|suite| {
@@ -300,6 +299,10 @@ impl CoverageArgs {
         // Output final reports.
         self.report(&report)?;
 
+        // Check for test failures after generating coverage report.
+        // This ensures coverage data is written even when tests fail.
+        outcome.ensure_ok(false)?;
+
         Ok(())
     }
 
@@ -312,11 +315,11 @@ impl CoverageArgs {
         Ok(())
     }
 
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
-    pub fn watch(&self) -> &WatchArgs {
+    pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
 }

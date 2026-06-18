@@ -97,7 +97,11 @@ impl InlineConfig {
 
     /// Returns a [`figment::Provider`] for this [`InlineConfig`] at the given contract and function
     /// level.
-    pub fn provide<'a>(&'a self, contract: &'a str, function: &'a str) -> InlineConfigProvider<'a> {
+    pub const fn provide<'a>(
+        &'a self,
+        contract: &'a str,
+        function: &'a str,
+    ) -> InlineConfigProvider<'a> {
         InlineConfigProvider { inline: self, contract, function }
     }
 

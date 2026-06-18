@@ -7,7 +7,6 @@ use alloy_rpc_types::BlockId;
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
-use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{BuildOpts, EtherscanOpts, RpcOpts},
     utils,
@@ -140,15 +139,17 @@ impl StorageArgs {
             }
         }
 
-        if !self.etherscan.has_key() {
-            eyre::bail!(
-                "You must provide an Etherscan API key if you're fetching a remote contract's storage."
-            );
-        }
-
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, api_key)?;
+        let etherscan_api_key = self.etherscan.key();
+        let client = match config.get_etherscan_config_with_chain(Some(chain))? {
+            Some(etherscan_config) => etherscan_config.into_client()?,
+            None => {
+                let api_key = etherscan_api_key.ok_or_else(|| {
+                    eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
+                })?;
+                foundry_block_explorers::Client::new(chain, api_key)?
+            }
+        };
         let source = if let Some(proxy) = self.proxy {
             find_source(client, proxy.resolve(&provider).await?).await?
         } else {
@@ -159,11 +160,29 @@ impl StorageArgs {
             eyre::bail!("Contract at provided address is not a valid Solidity contract")
         }
 
-        // Create a new temp project
-        // TODO: Cache instead of using a temp directory: metadata from Etherscan won't change
-        let root = tempfile::tempdir()?;
-        let root_path = root.path();
-        let mut project = etherscan_project(metadata, root_path)?;
+        // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir
+        let mut temp_dir = None;
+        let root_path = if let Some(cache_root) =
+            foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
+        {
+            let sources_root = cache_root.join("sources");
+            let contract_root = sources_root.join(format!("{address}"));
+            if let Err(err) = std::fs::create_dir_all(&contract_root) {
+                sh_warn!("Could not create etherscan cache dir, falling back to temp: {err}")?;
+                let tmp = tempfile::tempdir()?;
+                let path = tmp.path().to_path_buf();
+                temp_dir = Some(tmp);
+                path
+            } else {
+                contract_root
+            }
+        } else {
+            let tmp = tempfile::tempdir()?;
+            let path = tmp.path().to_path_buf();
+            temp_dir = Some(tmp);
+            path
+        };
+        let mut project = etherscan_project(metadata, &root_path)?;
         add_storage_layout_output(&mut project);
 
         // Decide on compiler to use (user override -> metadata -> autodetect)
@@ -214,9 +233,7 @@ impl StorageArgs {
             artifact
         };
 
-        // Clear temp directory
-        root.close()?;
-
+        drop(temp_dir);
         fetch_and_print_storage(provider, address, block, artifact).await
     }
 }
@@ -362,15 +379,15 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>) -> Result<()>
 fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: &mut Project<C>) {
     project.artifacts.additional_values.storage_layout = true;
     project.update_output_selection(|selection| {
-        selection.0.values_mut().for_each(|contract_selection| {
-            contract_selection
-                .values_mut()
-                .for_each(|selection| selection.push("storageLayout".to_string()))
-        });
+        for contract_selection in selection.0.values_mut() {
+            for selection in contract_selection.values_mut() {
+                selection.push("storageLayout".to_string());
+            }
+        }
     })
 }
 
-fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
+const fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
     if let Some(s) = storage_layout { s.storage.is_empty() } else { true }
 }
 

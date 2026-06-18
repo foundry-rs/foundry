@@ -46,7 +46,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
     ) -> Result<()> {
         // Skip if we are not preprocessing any tests or scripts. Avoids unnecessary AST parsing.
         if !input.input.sources.iter().any(|(path, _)| paths.is_test_or_script(path)) {
-            trace!("no tests or sources to preprocess");
+            trace!("no tests or scripts to preprocess");
             return Ok(());
         }
 

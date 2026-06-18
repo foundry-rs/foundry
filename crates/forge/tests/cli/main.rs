@@ -21,6 +21,7 @@ mod eip712;
 mod failure_assertions;
 mod inline_config;
 mod install;
+
 mod json;
 mod lint;
 mod multi_script;

@@ -35,6 +35,7 @@ foundry-linking.workspace = true
 comfy-table.workspace = true
 eyre.workspace = true
 proptest.workspace = true
+rand.workspace = true
 rayon.workspace = true
 serde.workspace = true
 tracing.workspace = true
@@ -50,20 +51,21 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
-foundry-wallets = { workspace = true, optional = true }
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
 alloy-chains.workspace = true
+alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-network.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
-alloy-rpc-types.workspace = true
-alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
 
-monad-revm.workspace = true
+tempo-alloy.workspace = true
+
+revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
@@ -87,6 +89,8 @@ watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+url.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -95,19 +99,17 @@ opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
-quick-junit = "0.5.1"
+soldeer-core.workspace = true
+quick-junit = "0.5.2"
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
-futures.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 
-mockall = "0.13"
+mockall = "0.14"
 globset = "0.4"
-paste = "1.0"
 similar-asserts.workspace = true
 svm.workspace = true
 tempfile.workspace = true
@@ -115,12 +117,12 @@ tempfile.workspace = true
 alloy-signer-local.workspace = true
 
 [features]
-default = ["jemalloc"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
+default = ["jemalloc", "asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
-aws-kms = ["dep:foundry-wallets", "foundry-wallets/aws-kms"]
-gcp-kms = ["dep:foundry-wallets", "foundry-wallets/gcp-kms"]
-turnkey = ["dep:foundry-wallets", "foundry-wallets/turnkey"]
+aws-kms = ["foundry-wallets/aws-kms"]
+gcp-kms = ["foundry-wallets/gcp-kms"]
+turnkey = ["foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]

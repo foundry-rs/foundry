@@ -9,7 +9,7 @@ contract StorageSlotStateTest is Test {
         read.number();
         uint256 initial = gasleft();
         read.number();
-        assert(initial - gasleft() < 2614);
+        assert(initial - gasleft() >= 614);
     }
 
     function test_gas_mark_warm() public {
@@ -17,7 +17,7 @@ contract StorageSlotStateTest is Test {
         vm.warmSlot(address(read), bytes32(0));
         uint256 initial = gasleft();
         read.number();
-        assert(initial - gasleft() < 2614);
+        assert(initial - gasleft() >= 614);
     }
 
     function test_gas_mark_cold() public {

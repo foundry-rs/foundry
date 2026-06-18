@@ -182,6 +182,7 @@ interface Vm {
     function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
     function copyStorage(address from, address to) external;
     function createDir(string calldata path, bool recursive) external;
+    function createEd25519Key(bytes32 salt) external pure returns (bytes32 publicKey, bytes32 privateKey);
     function createFork(string calldata urlOrAlias) external returns (uint256 forkId);
     function createFork(string calldata urlOrAlias, uint256 blockNumber) external returns (uint256 forkId);
     function createFork(string calldata urlOrAlias, bytes32 txHash) external returns (uint256 forkId);
@@ -191,6 +192,7 @@ interface Vm {
     function createWallet(string calldata walletLabel) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey) external returns (Wallet memory wallet);
     function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
+    function currentFilePath() external view returns (string memory path);
     function deal(address account, uint256 newBalance) external;
     function deleteSnapshot(uint256 snapshotId) external returns (bool success);
     function deleteSnapshots() external;
@@ -247,6 +249,7 @@ interface Vm {
     function envUint(string calldata name, string calldata delim) external view returns (uint256[] memory value);
     function etch(address target, bytes calldata newRuntimeBytecode) external;
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);
+    function executeTransaction(bytes calldata rawTx) external returns (bytes memory);
     function exists(string calldata path) external view returns (bool result);
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data, uint64 count) external;
@@ -319,6 +322,7 @@ interface Vm {
     function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
     function getRecordedLogs() external view returns (Log[] memory logs);
+    function getRecordedLogsJson() external view returns (string memory logsJson);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
     function getStorageAccesses() external view returns (StorageAccess[] memory storageAccesses);
@@ -413,6 +417,7 @@ interface Vm {
     function promptSecret(string calldata promptText) external returns (string memory input);
     function promptSecretUint(string calldata promptText) external returns (uint256);
     function promptUint(string calldata promptText) external returns (uint256);
+    function publicKeyEd25519(bytes32 privateKey) external pure returns (bytes32 publicKey);
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
     function randomAddress() external view returns (address);
     function randomBool() external view returns (bool);
@@ -492,16 +497,17 @@ interface Vm {
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
     function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
     function signAndAttachDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
-    function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);
+    function signCompact(Wallet calldata wallet, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
     function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
     function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
     function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
+    function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey) external pure returns (bytes memory signature);
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
-    function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
+    function sign(Wallet calldata wallet, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
@@ -558,6 +564,7 @@ interface Vm {
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
     function txGasPrice(uint256 newGasPrice) external;
     function unixTime() external view returns (uint256 milliseconds);
+    function verifyEd25519(bytes calldata signature, bytes calldata namespace, bytes calldata message, bytes32 publicKey) external pure returns (bool valid);
     function warmSlot(address target, bytes32 slot) external;
     function warp(uint256 newTimestamp) external;
     function writeFile(string calldata path, string calldata data) external;

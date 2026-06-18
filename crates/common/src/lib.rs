@@ -32,6 +32,7 @@ pub mod retry;
 pub mod selectors;
 pub mod serde_helpers;
 pub mod slot_identifier;
+pub mod tempo;
 pub mod term;
 pub mod traits;
 pub mod transactions;

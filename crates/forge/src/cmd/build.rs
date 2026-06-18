@@ -4,9 +4,12 @@ use eyre::{Context, Result};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
-    utils::{LoadConfig, cache_local_signatures},
+    utils::{Git, LoadConfig, cache_local_signatures},
 };
-use foundry_common::{compile::ProjectCompiler, shell};
+use foundry_common::{
+    compile::{ContractSizeLimits, ProjectCompiler},
+    shell,
+};
 use foundry_compilers::{
     CompilationError, FileFilter, Project, ProjectCompileOutput,
     compilers::{Language, multi::MultiCompilerLanguage},
@@ -80,6 +83,9 @@ impl BuildArgs {
             config = self.load_config()?;
         }
 
+        self.check_soldeer_lock_consistency(&config).await;
+        self.check_foundry_lock_consistency(&config);
+
         let project = config.project()?;
 
         // Collect sources to compile if build subdirectories specified.
@@ -102,6 +108,7 @@ impl BuildArgs {
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
+            .size_limits(contract_size_limits(&config))
             .bail(!format_json);
 
         let mut output = compiler.compile(&project)?;
@@ -151,7 +158,7 @@ impl BuildArgs {
                             .collect(),
                     )
                 })
-                .with_mixed_case_exceptions(&config.lint.mixed_case_exceptions);
+                .with_lint_specific(&config.lint.lint_specific);
 
             // Expand ignore globs and canonicalize from the get go
             let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
@@ -175,12 +182,10 @@ impl BuildArgs {
                 .collect::<Vec<_>>();
 
             let solar_sources =
-                get_solar_sources_from_compile_output(config, output, Some(&input_files))?;
+                get_solar_sources_from_compile_output(config, output, Some(&input_files), None)?;
             if solar_sources.input.sources.is_empty() {
                 if !input_files.is_empty() {
-                    sh_warn!(
-                        "unable to lint. Solar only supports Solidity versions prior to 0.8.0"
-                    )?;
+                    sh_warn!("unable to lint. Solar only supports Solidity versions >=0.8.0")?;
                 }
                 return Ok(());
             }
@@ -214,7 +219,7 @@ impl BuildArgs {
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 
@@ -228,6 +233,110 @@ impl BuildArgs {
             Ok([config.src, config.test, config.script, foundry_toml])
         })
     }
+
+    /// Check soldeer.lock file consistency using soldeer_core APIs
+    async fn check_soldeer_lock_consistency(&self, config: &Config) {
+        let soldeer_lock_path = config.root.join("soldeer.lock");
+        if !soldeer_lock_path.exists() {
+            return;
+        }
+
+        // Note: read_lockfile returns Ok with empty entries for malformed files
+        let Ok(lockfile) = soldeer_core::lock::read_lockfile(&soldeer_lock_path) else {
+            return;
+        };
+
+        let deps_dir = config.root.join("dependencies");
+        for entry in &lockfile.entries {
+            let dep_name = entry.name();
+
+            // Use soldeer_core's integrity check
+            match soldeer_core::install::check_dependency_integrity(entry, &deps_dir).await {
+                Ok(status) => {
+                    use soldeer_core::install::DependencyStatus;
+                    // Check if status indicates a problem
+                    if matches!(
+                        status,
+                        DependencyStatus::Missing | DependencyStatus::FailedIntegrity
+                    ) {
+                        sh_warn!("Dependency '{}' integrity check failed: {:?}", dep_name, status)
+                            .ok();
+                    }
+                }
+                Err(e) => {
+                    sh_warn!("Dependency '{}' integrity check error: {}", dep_name, e).ok();
+                }
+            }
+        }
+    }
+
+    /// Check foundry.lock file consistency with git submodules
+    fn check_foundry_lock_consistency(&self, config: &Config) {
+        use crate::lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
+
+        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
+        if !foundry_lock_path.exists() {
+            return;
+        }
+
+        let git = Git::new(&config.root);
+
+        let mut lockfile = Lockfile::new(&config.root).with_git(&git);
+        if let Err(e) = lockfile.read() {
+            if !e.to_string().contains("Lockfile not found") {
+                sh_warn!("Failed to parse foundry.lock: {}", e).ok();
+            }
+            return;
+        }
+
+        for (dep_path, dep_identifier) in lockfile.iter() {
+            let full_path = config.root.join(dep_path);
+
+            if !full_path.exists() {
+                sh_warn!("Dependency '{}' not found at expected path", dep_path.display()).ok();
+                continue;
+            }
+
+            let actual_rev = match git.get_rev("HEAD", &full_path) {
+                Ok(rev) => rev,
+                Err(_) => {
+                    sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display())
+                        .ok();
+                    continue;
+                }
+            };
+
+            // Compare with the expected revision from lockfile
+            let expected_rev = match dep_identifier {
+                DepIdentifier::Branch { rev, .. }
+                | DepIdentifier::Tag { rev, .. }
+                | DepIdentifier::Rev { rev, .. } => rev.clone(),
+            };
+
+            if actual_rev != expected_rev {
+                sh_warn!(
+                    "Dependency '{}' revision mismatch: expected '{}', found '{}'",
+                    dep_path.display(),
+                    expected_rev,
+                    actual_rev
+                )
+                .ok();
+            }
+        }
+    }
+}
+
+fn contract_size_limits(config: &Config) -> ContractSizeLimits {
+    config
+        .code_size_limit
+        .map(ContractSizeLimits::with_runtime_limit)
+        .or_else(|| {
+            config
+                .networks
+                .contract_size_limits()
+                .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+        })
+        .unwrap_or_default()
 }
 
 // Make this args a `figment::Provider` so that it can be merged into the `Config`

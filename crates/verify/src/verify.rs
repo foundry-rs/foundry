@@ -4,7 +4,7 @@ use crate::{
     RetryArgs,
     etherscan::EtherscanVerificationProvider,
     provider::{VerificationContext, VerificationProvider, VerificationProviderType},
-    utils::is_host_only,
+    utils::wrap_verifier_url_error,
 };
 use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_provider::Provider;
@@ -16,9 +16,10 @@ use foundry_cli::{
 };
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
-use foundry_config::{Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast};
+use foundry_config::{
+    Chain, Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast,
+};
 use itertools::Itertools;
-use reqwest::Url;
 use semver::BuildMetadata;
 use std::path::PathBuf;
 
@@ -248,6 +249,14 @@ impl VerifyArgs {
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
+        // For chains with Sourcify-compatible APIs, use the chain's URL from etherscan_urls
+        if self.verifier.verifier.is_sourcify()
+            && self.verifier.verifier_url.is_none()
+            && let Some(url) = sourcify_api_url(chain)
+        {
+            self.verifier.verifier_url = Some(url);
+        }
+
         if self.show_standard_json_input {
             let args = EtherscanVerificationProvider::default()
                 .create_verify_request(&self, &context)
@@ -272,26 +281,28 @@ impl VerifyArgs {
         {
             sh_println!("Constructor args: {args}")?
         }
-        self.verifier.verifier.client(self.etherscan.key().as_deref(), self.etherscan.chain, self.verifier.verifier_url.is_some())?.verify(self, context).await.map_err(|err| {
-            if let Some(verifier_url) = verifier_url {
-                 match Url::parse(&verifier_url) {
-                    Ok(url) => {
-                        if is_host_only(&url) {
-                            return err.wrap_err(format!(
-                                "Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"
-                            ))
-                        }
-                    }
-                    Err(url_err) => {
-                        return err.wrap_err(format!(
-                            "Invalid URL {verifier_url} provided: {url_err}"
-                        ))
-                    }
-                }
-            }
-
-            err
-        })
+        // `client()` picks Etherscan when `--verifier etherscan` is passed, or when
+        // `ETHERSCAN_API_KEY` is set and no other provider was explicitly chosen. This mirrors
+        // that selection closely enough to decide whether the host-only URL hint applies.
+        let etherscan_key = self.etherscan.key();
+        let using_etherscan = self.verifier.verifier.is_etherscan()
+            || (etherscan_key.as_deref().is_some_and(|k| !k.is_empty())
+                && !matches!(
+                    self.verifier.verifier,
+                    VerificationProviderType::Blockscout
+                        | VerificationProviderType::Oklink
+                        | VerificationProviderType::Custom
+                ));
+        self.verifier
+            .verifier
+            .client(
+                etherscan_key.as_deref(),
+                self.etherscan.chain,
+                self.verifier.verifier_url.is_some(),
+            )?
+            .verify(self, context)
+            .await
+            .map_err(|err| wrap_verifier_url_error(err, verifier_url.as_deref(), using_etherscan))
     }
 
     /// Returns the configured verification provider
@@ -412,7 +423,7 @@ impl VerifyArgs {
                 &project.settings
             } else {
                 eyre::bail!(
-                    "If cache is disabled, compilation profile must be provided with `--compiler-version` option or set in foundry.toml"
+                    "If cache is disabled, compilation profile must be provided with `--compilation-profile` option or set in foundry.toml"
                 )
             };
 
@@ -525,6 +536,21 @@ impl figment::Provider for VerifyCheckArgs {
         }
 
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+/// Returns the Sourcify-compatible API URL for chains that have one registered in `etherscan_urls`.
+///
+/// Some chains register their Sourcify-compatible verification API under `etherscan_urls` in
+/// alloy-chains. This function returns the properly formatted URL for such chains.
+fn sourcify_api_url(chain: Chain) -> Option<String> {
+    if chain.is_custom_sourcify() {
+        chain.etherscan_urls().map(|(api_url, _)| {
+            let api_url = api_url.trim_end_matches('/');
+            format!("{api_url}/")
+        })
+    } else {
+        None
     }
 }
 

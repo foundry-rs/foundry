@@ -6,15 +6,40 @@ use alloy_serde::WithOtherFields;
 use derive_more::AsRef;
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use serde::{Deserialize, Serialize};
+use tempo_primitives::TEMPO_TX_TYPE_ID;
 
 use crate::FoundryReceiptEnvelope;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, AsRef)]
-pub struct FoundryTxReceipt(WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);
+pub struct FoundryTxReceipt(pub WithOtherFields<TransactionReceipt<FoundryReceiptEnvelope<Log>>>);
 
 impl FoundryTxReceipt {
     pub fn new(inner: TransactionReceipt<FoundryReceiptEnvelope<Log>>) -> Self {
         Self(WithOtherFields::new(inner))
+    }
+
+    /// Creates a new receipt with a timestamp in the other fields.
+    /// This avoids extra block lookups when timestamp is needed later.
+    pub fn with_timestamp(
+        inner: TransactionReceipt<FoundryReceiptEnvelope<Log>>,
+        timestamp: u64,
+    ) -> Self {
+        let mut receipt = WithOtherFields::new(inner);
+        receipt
+            .other
+            .insert("blockTimestamp".to_string(), serde_json::to_value(timestamp).unwrap());
+        Self(receipt)
+    }
+
+    /// Adds a `feePayer` field to the receipt.
+    pub fn with_fee_payer(mut self, fee_payer: Address) -> Self {
+        self.0.other.insert("feePayer".to_string(), serde_json::to_value(fee_payer).unwrap());
+        self
+    }
+
+    /// Get block timestamp from other fields if present.
+    pub fn block_timestamp(&self) -> Option<u64> {
+        self.0.other.get_deserialized::<u64>("blockTimestamp").transpose().ok().flatten()
     }
 }
 
@@ -97,7 +122,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
                 },
             other,
-        } = receipt;
+        } = receipt.0;
 
         Ok(Self(WithOtherFields {
             inner: TransactionReceipt {
@@ -118,6 +143,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x02 => FoundryReceiptEnvelope::Eip1559(receipt_with_bloom),
                     0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
+                    TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
                     0x7E => {
                         // Construct the deposit receipt, extracting optional deposit fields
                         // These fields may not be present in all receipts, so missing/invalid

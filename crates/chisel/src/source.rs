@@ -14,7 +14,14 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{Config, SolcReq};
-use foundry_evm::{backend::Backend, core::bytecode::InstIter, opts::EvmOpts};
+use foundry_evm::{
+    backend::Backend,
+    core::{
+        bytecode::InstIter,
+        evm::{EthEvmNetwork, FoundryEvmNetwork},
+    },
+    opts::EvmOpts,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
@@ -369,7 +376,8 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
 
 /// Configuration for the [SessionSource]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct SessionSourceConfig {
+#[serde(bound = "")]
+pub struct SessionSourceConfig<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Foundry configuration
     pub foundry_config: Config,
     /// EVM Options
@@ -378,7 +386,7 @@ pub struct SessionSourceConfig {
     pub no_vm: bool,
     /// In-memory REVM db for the session's runner.
     #[serde(skip)]
-    pub backend: Option<Backend>,
+    pub backend: Option<Backend<FEN>>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution
@@ -390,7 +398,7 @@ pub struct SessionSourceConfig {
     pub ir_minimum: bool,
 }
 
-impl SessionSourceConfig {
+impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
     /// Detect the solc version to know if VM can be injected.
     pub fn detect_solc(&mut self) -> Result<()> {
         if self.foundry_config.solc.is_none() {
@@ -412,14 +420,15 @@ impl SessionSourceConfig {
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SessionSource {
+#[serde(bound = "")]
+pub struct SessionSource<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The file name
     pub file_name: String,
     /// The contract name
     pub contract_name: String,
 
     /// Session Source configuration
-    pub config: SessionSourceConfig,
+    pub config: SessionSourceConfig<FEN>,
 
     /// Global level Solidity code.
     ///
@@ -444,7 +453,7 @@ fn vm_source() -> Source {
     Source::new(VM_SOURCE)
 }
 
-impl Clone for SessionSource {
+impl<FEN: FoundryEvmNetwork> Clone for SessionSource<FEN> {
     fn clone(&self) -> Self {
         Self {
             file_name: self.file_name.clone(),
@@ -459,7 +468,7 @@ impl Clone for SessionSource {
     }
 }
 
-impl SessionSource {
+impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     /// Creates a new source given a solidity compiler version
     ///
     /// # Panics
@@ -474,7 +483,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A new instance of [SessionSource]
-    pub fn new(mut config: SessionSourceConfig) -> Result<Self> {
+    pub fn new(mut config: SessionSourceConfig<FEN>) -> Result<Self> {
         config.detect_solc()?;
         Ok(Self {
             file_name: "ReplContract.sol".to_string(),
@@ -565,20 +574,6 @@ impl SessionSource {
         String::clear(&mut self.contract_code);
         String::clear(&mut self.run_code);
         self.clear_output();
-    }
-
-    /// Clear the global-level code .
-    pub fn clear_global(&mut self) -> &mut Self {
-        String::clear(&mut self.global_code);
-        self.clear_output();
-        self
-    }
-
-    /// Clear the contract-level code .
-    pub fn clear_contract(&mut self) -> &mut Self {
-        String::clear(&mut self.contract_code);
-        self.clear_output();
-        self
     }
 
     /// Clear the `run()` function code.
@@ -692,39 +687,6 @@ impl SessionSource {
         }
 
         Ok(intermediate_output)
-    }
-
-    /// Construct the source as a valid Forge script.
-    pub fn to_script_source(&self) -> String {
-        let Self {
-            contract_name,
-            global_code,
-            contract_code: top_level_code,
-            run_code,
-            config,
-            ..
-        } = self;
-
-        let script_import =
-            if !config.no_vm { "import {Script} from \"forge-std/Script.sol\";\n" } else { "" };
-
-        format!(
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0;
-
-{script_import}
-{global_code}
-
-contract {contract_name} is Script {{
-    {top_level_code}
-
-    /// @notice Script entry point
-    function run() public {{
-        {run_code}
-    }}
-}}"#,
-        )
     }
 
     /// Construct the REPL source.
@@ -905,4 +867,58 @@ enum ParseTreeFragment {
     Contract,
     /// Code for the "run()" function
     Function,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
+    use std::fs;
+
+    /// Regression test for <https://github.com/foundry-rs/foundry/issues/14711>.
+    ///
+    /// `to_repl_source()` must use forward slashes in the Vm import path regardless of OS,
+    /// because Solidity import statements require `/` as the path separator.
+    #[test]
+    fn test_vm_import_path_uses_forward_slashes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vm_sol = tmp.path().join("Vm.sol");
+        fs::write(&vm_sol, "// dummy").unwrap();
+
+        let remapping = RelativeRemapping {
+            context: None,
+            name: "forge-std/".to_string(),
+            path: RelativeRemappingPathBuf { parent: None, path: tmp.path().to_path_buf() },
+        };
+
+        let mut config: SessionSourceConfig = SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                remappings: vec![remapping],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Pre-set solc so detect_solc() skips the ensure_installed I/O.
+        config.detect_solc().unwrap();
+
+        let source = SessionSource {
+            file_name: "ReplContract.sol".to_string(),
+            contract_name: "REPL".to_string(),
+            config,
+            global_code: Default::default(),
+            contract_code: Default::default(),
+            run_code: Default::default(),
+            vm_source: vm_source(),
+            output: Default::default(),
+        };
+
+        let repl = source.to_repl_source();
+        let import_line = repl.lines().find(|l| l.contains("import {Vm}")).unwrap();
+        assert!(
+            !import_line.contains('\\'),
+            "Vm import path must not contain backslashes, got: {import_line}"
+        );
+        assert!(import_line.contains('/'), "Vm import path must use forward slashes");
+    }
 }

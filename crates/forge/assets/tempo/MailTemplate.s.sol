@@ -11,13 +11,16 @@ import {Mail} from "../src/Mail.sol";
 contract MailScript is Script {
     function setUp() public {}
 
-    function run() public {
+    function run(string memory salt) public {
         vm.startBroadcast();
 
-        StdPrecompiles.TIP_FEE_MANAGER.setUserToken(StdTokens.ALPHA_USD_ADDRESS);
+        address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.ALPHA_USD_ADDRESS);
+        StdPrecompiles.TIP_FEE_MANAGER.setUserToken(feeToken);
 
-        ITIP20 token =
-            ITIP20(StdPrecompiles.TIP20_FACTORY.createToken("testUSD", "tUSD", "USD", StdTokens.PATH_USD, msg.sender));
+        ITIP20 token = ITIP20(
+            StdPrecompiles.TIP20_FACTORY
+                .createToken("testUSD", "tUSD", "USD", StdTokens.PATH_USD, msg.sender, keccak256(bytes(salt)))
+        );
 
         ITIP20RolesAuth(address(token)).grantRole(token.ISSUER_ROLE(), msg.sender);
 

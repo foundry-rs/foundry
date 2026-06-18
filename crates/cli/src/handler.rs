@@ -1,5 +1,4 @@
 use eyre::EyreHandler;
-use itertools::Itertools;
 use std::{error::Error, fmt};
 
 /// A custom context type for Foundry specific error reporting via `eyre`.
@@ -23,8 +22,7 @@ impl Handler {
 
 impl EyreHandler for Handler {
     fn display(&self, error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use fmt::Display;
-        foundry_common::errors::dedup_chain(error).into_iter().format("; ").fmt(f)
+        f.write_str(&foundry_common::errors::display_chain(error))
     }
 
     fn debug(&self, error: &(dyn Error + 'static), f: &mut fmt::Formatter<'_>) -> fmt::Result {

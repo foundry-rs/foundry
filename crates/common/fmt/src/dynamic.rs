@@ -107,7 +107,7 @@ struct DynValueDisplay<'a> {
 
 impl<'a> DynValueDisplay<'a> {
     /// Creates a new [`Display`](fmt::Display) wrapper for the given value.
-    fn new(value: &'a DynSolValue, raw: bool) -> Self {
+    const fn new(value: &'a DynSolValue, raw: bool) -> Self {
         Self { value, formatter: DynValueFormatter { raw } }
     }
 }
@@ -242,7 +242,7 @@ impl From<TypeDefMap> for StructDefinitions {
 }
 
 impl StructDefinitions {
-    pub fn new(map: TypeDefMap) -> Self {
+    pub const fn new(map: TypeDefMap) -> Self {
         Self(map)
     }
 

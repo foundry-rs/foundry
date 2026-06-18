@@ -48,8 +48,16 @@ struct Cli {
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 
-    /// Run only on specific repositories (comma-separated in org/repo[:rev] format:
-    /// ithacaxyz/account,Vectorized/solady:main,foundry-rs/foundry:v1.0.0)
+    /// Comma-separated list of repositories to benchmark.
+    ///
+    /// Each entry has the form `org/repo[:rev][ <extra args...>]`. Anything
+    /// after the first whitespace is appended to every benchmark command for
+    /// that repo (handy to skip a broken test contract via e.g.
+    /// `--nmc BrokenTest`).
+    ///
+    /// Examples:
+    ///   `ithacaxyz/account:v0.5.7`
+    ///   `vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest'`
     #[clap(long, value_delimiter = ',')]
     repos: Option<Vec<String>>,
 }

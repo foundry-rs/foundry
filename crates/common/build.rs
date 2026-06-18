@@ -2,31 +2,27 @@
 
 use chrono::DateTime;
 use std::{error::Error, path::PathBuf};
-use vergen::EmitBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
 
-    EmitBuilder::builder()
-        .build_date()
-        .build_timestamp()
-        .git_describe(false, true, None)
-        .git_sha(false)
-        .emit_and_set()?;
+    let build = vergen::Build::builder().build_date(true).build_timestamp(true).build();
+    let git = vergen::Gitcl::builder().describe(false, true, None).sha(false).build();
+
+    vergen::Emitter::new().add_instructions(&build)?.add_instructions(&git)?.emit_and_set()?;
 
     let sha = env_var("VERGEN_GIT_SHA");
     let sha_short = &sha[..10];
 
     let tag_name = try_env_var("TAG_NAME").unwrap_or_else(|| String::from("dev"));
     let is_nightly = tag_name.contains("nightly");
-    let version_suffix = if is_nightly { "nightly" } else { &tag_name };
 
     if is_nightly {
         println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION=true");
     }
 
     let pkg_version = env_var("CARGO_PKG_VERSION");
-    let version = format!("{pkg_version}-{version_suffix}");
+    let version = foundry_version(&pkg_version, &tag_name);
 
     // `PROFILE` captures only release or debug. Get the actual name from the out directory.
     let out_dir = PathBuf::from(env_var("OUT_DIR"));
@@ -78,6 +74,11 @@ Build Profile: {profile}"
         println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_{i}={line}");
     }
 
+    // The long SHA of the latest commit.
+    //
+    // Example: 5186142d3bb4d1be7bb4ade548b77c8e2270717e
+    println!("cargo:rustc-env=FOUNDRY_COMMIT_SHA={sha}");
+
     Ok(())
 }
 
@@ -88,4 +89,17 @@ fn env_var(name: &str) -> String {
 fn try_env_var(name: &str) -> Option<String> {
     println!("cargo:rerun-if-env-changed={name}");
     std::env::var(name).ok()
+}
+
+fn foundry_version(pkg_version: &str, tag_name: &str) -> String {
+    if tag_name.contains("nightly") {
+        return format!("{pkg_version}-nightly");
+    }
+
+    let tag_version = tag_name.strip_prefix('v').unwrap_or(tag_name);
+    if tag_version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        tag_version.to_owned()
+    } else {
+        format!("{pkg_version}-{tag_name}")
+    }
 }

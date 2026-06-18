@@ -1,6 +1,8 @@
 use crate::utils::generate_large_init_contract;
-use foundry_test_utils::{forgetest, snapbox::IntoData, str};
+use foundry_evm_networks::NetworkConfigs;
+use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
+use std::fs;
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
@@ -72,7 +74,7 @@ contract Dummy {
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
-    cmd.args(["build", "--sizes"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -80,32 +82,32 @@ Compiler run successful!
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +=================================================================================================+
-| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
 "#]]);
 
-    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+    cmd.forge_fuse().args(["build", "--sizes", "--json"]).assert_failure().stdout_eq(
         str![[r#"
 {
   "LargeContract": {
     "runtime_size": 62,
     "init_size": 50125,
-    "runtime_margin": 131010,
-    "init_margin": 212019
+    "runtime_margin": 24514,
+    "init_margin": -973
   }
 }
 "#]]
         .is_json(),
     );
 
-    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
-| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
 
 
 "#]]);
@@ -119,7 +121,7 @@ No files changed, compilation skipped
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +=================================================================================================+
-| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -135,8 +137,8 @@ No files changed, compilation skipped
   "LargeContract": {
     "runtime_size": 62,
     "init_size": 50125,
-    "runtime_margin": 131010,
-    "init_margin": 212019
+    "runtime_margin": 24514,
+    "init_margin": -973
   }
 }
 "#]]
@@ -151,10 +153,52 @@ No files changed, compilation skipped
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
-| LargeContract | 62               | 50,125            | 131,010            | 212,019             |
+| LargeContract | 62               | 50,125            | 24,514             | -973                |
 
 
 "#]]);
+});
+
+forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.code_size_limit = Some(64_000);
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 63938,
+    "init_margin": 77875
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+forgetest!(build_sizes_respects_monad_network_code_size_limit, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.networks = NetworkConfigs::with_monad();
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 131010,
+    "init_margin": 212019
+  }
+}
+"#]]
+        .is_json(),
+    );
 });
 
 // tests build output is as expected
@@ -181,7 +225,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 ╭----------+------------------+-------------------+--------------------+---------------------╮
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +============================================================================================+
-| Counter  | 481              | 509               | 130,591            | 261,635             |
+| Counter  | 481              | 509               | 24,095             | 48,643              |
 ╰----------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -193,8 +237,8 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
   "Counter": {
     "runtime_size": 481,
     "init_size": 509,
-    "runtime_margin": 130591,
-    "init_margin": 261635
+    "runtime_margin": 24095,
+    "init_margin": 48643
   }
 }
 "#]]
@@ -206,7 +250,7 @@ forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
 
 | Contract | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |----------|------------------|-------------------|--------------------|---------------------|
-| Counter  | 481              | 509               | 130,591            | 261,635             |
+| Counter  | 481              | 509               | 24,095             | 48,643              |
 
 
 "#]]);
@@ -253,13 +297,13 @@ contract Counter {
 ╭-----------------------------+------------------+-------------------+--------------------+---------------------╮
 | Contract                    | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 +===============================================================================================================+
-| Counter (src/Counter.sol)   | 481              | 509               | 130,591            | 261,635             |
+| Counter (src/Counter.sol)   | 481              | 509               | 24,095             | 48,643              |
 |-----------------------------+------------------+-------------------+--------------------+---------------------|
-| Counter (src/a/Counter.sol) | 344              | 372               | 130,728            | 261,772             |
+| Counter (src/a/Counter.sol) | 344              | 372               | 24,232             | 48,780              |
 |-----------------------------+------------------+-------------------+--------------------+---------------------|
-| Counter (src/b/Counter.sol) | 291              | 319               | 130,781            | 261,825             |
+| Counter (src/b/Counter.sol) | 291              | 319               | 24,285             | 48,833              |
 |-----------------------------+------------------+-------------------+--------------------+---------------------|
-| Foo                         | 62               | 88                | 131,010            | 262,056             |
+| Foo                         | 62               | 88                | 24,514             | 49,064              |
 ╰-----------------------------+------------------+-------------------+--------------------+---------------------╯
 
 
@@ -270,10 +314,10 @@ contract Counter {
 
 | Contract                    | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |-----------------------------|------------------|-------------------|--------------------|---------------------|
-| Counter (src/Counter.sol)   | 481              | 509               | 130,591            | 261,635             |
-| Counter (src/a/Counter.sol) | 344              | 372               | 130,728            | 261,772             |
-| Counter (src/b/Counter.sol) | 291              | 319               | 130,781            | 261,825             |
-| Foo                         | 62               | 88                | 131,010            | 262,056             |
+| Counter (src/Counter.sol)   | 481              | 509               | 24,095             | 48,643              |
+| Counter (src/a/Counter.sol) | 344              | 372               | 24,232             | 48,780              |
+| Counter (src/b/Counter.sol) | 291              | 319               | 24,285             | 48,833              |
+| Foo                         | 62               | 88                | 24,514             | 49,064              |
 
 
 "#]]);
@@ -317,30 +361,30 @@ contract Counter {
     cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
         str![[r#"
 {
-  "Counter (src/Counter.sol)": {
-    "runtime_size": 481,
-    "init_size": 509,
-    "runtime_margin": 130591,
-    "init_margin": 261635
-  },
-  "Counter (src/a/Counter.sol)": {
-    "runtime_size": 344,
-    "init_size": 372,
-    "runtime_margin": 130728,
-    "init_margin": 261772
-  },
-  "Counter (src/b/Counter.sol)": {
-    "runtime_size": 291,
-    "init_size": 319,
-    "runtime_margin": 130781,
-    "init_margin": 261825
-  },
-  "Foo": {
-    "runtime_size": 62,
-    "init_size": 88,
-    "runtime_margin": 131010,
-    "init_margin": 262056
-  }
+   "Counter (src/Counter.sol)":{
+      "runtime_size":481,
+      "init_size":509,
+      "runtime_margin":24095,
+      "init_margin":48643
+   },
+   "Counter (src/a/Counter.sol)":{
+      "runtime_size":344,
+      "init_size":372,
+      "runtime_margin":24232,
+      "init_margin":48780
+   },
+   "Counter (src/b/Counter.sol)":{
+      "runtime_size":291,
+      "init_size":319,
+      "runtime_margin":24285,
+      "init_margin":48833
+   },
+   "Foo":{
+      "runtime_size":62,
+      "init_size":88,
+      "runtime_margin":24514,
+      "init_margin":49064
+   }
 }
 "#]]
         .is_json(),
@@ -439,22 +483,73 @@ contract ContractB {
     cmd.args(["build", "src/ContractWithInvalidNatspec.sol"]).assert_success().stderr_eq(str![[
         r#"
 warning: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
- [FILE]:5:5
-  |
-5 |     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
+  [FILE]:5:5
+  │
+5 │     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  │
 ...
 
 warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
- [FILE]:9:1
-  |
-9 | /// @note foo bar
-  | ^^^^^^^^^^^^^^^^^
-  |
+  [FILE]:9:1
+  │
+9 │ /// @note foo bar
+  │ ━━━━━━━━━━━━━━━━━
+  │
 ...
-
 
 "#
     ]]);
+});
+
+// tests that build succeeds without warning when no soldeer.lock exists
+forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
+    let soldeer_lock = prj.root().join("soldeer.lock");
+    // soldeer.lock should not exist in a fresh project
+    assert!(!soldeer_lock.exists());
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
+});
+
+// tests that malformed foundry.lock triggers a warning during build
+forgetest_init!(build_warns_on_malformed_foundry_lock, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    fs::write(&foundry_lock, "this is not valid toml { [ }").unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: Failed to parse foundry.lock: [..]
+...
+"#]]);
+});
+
+// tests that build succeeds without warning when no foundry.lock exists
+forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    // Remove foundry.lock if it exists from template
+    let _ = fs::remove_file(&foundry_lock);
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+"#]]);
+});
+
+// tests that build warns when foundry.lock revision differs from actual submodule revision
+forgetest_init!(build_warns_on_foundry_lock_revision_mismatch, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+
+    // Write a foundry.lock with a fake/old revision for forge-std that differs from the actual
+    let lockfile_content = r#"{
+  "lib/forge-std": {
+    "tag": {
+      "name": "v1.9.7",
+      "rev": "0000000000000000000000000000000000000000"
+    }
+  }
+}"#;
+    fs::write(&foundry_lock, lockfile_content).unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: Dependency 'lib/forge-std' revision mismatch: expected '0000000000000000000000000000000000000000', found '[..]'
+
+"#]]);
 });

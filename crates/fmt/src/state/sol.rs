@@ -93,7 +93,7 @@ impl<'ast> State<'_, 'ast> {
         let cmnts = self
             .comments
             .iter()
-            .filter_map(|c| if c.pos() < span.lo() { Some(c.style) } else { None })
+            .filter_map(|c| (c.pos() < span.lo()).then_some(c.style))
             .collect::<Vec<_>>();
 
         if let Some(first) = cmnts.first()
@@ -205,16 +205,32 @@ impl<'ast> State<'_, 'ast> {
     fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
-        match items {
-            ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
+
+        use ast::ImportItems;
+        use config::NamespaceImportStyle as NIStyle;
+
+        match (items, self.config.namespace_import_style) {
+            (ImportItems::Plain(None), _) => {
                 self.print_ast_str_lit(path);
-                if let Some(ident) = items.source_alias() {
-                    self.word(" as ");
-                    self.print_ident(&ident);
-                }
             }
 
-            ast::ImportItems::Aliases(aliases) => {
+            (ImportItems::Plain(Some(source_alias)), NIStyle::Preserve | NIStyle::PreferPlain)
+            | (ImportItems::Glob(source_alias), NIStyle::PreferPlain) => {
+                self.print_ast_str_lit(path);
+                self.word(" as ");
+                self.print_ident(source_alias);
+            }
+
+            (ImportItems::Glob(source_alias), NIStyle::Preserve | NIStyle::PreferGlob)
+            | (ImportItems::Plain(Some(source_alias)), NIStyle::PreferGlob) => {
+                self.word("*");
+                self.word(" as ");
+                self.print_ident(source_alias);
+                self.word(" from ");
+                self.print_ast_str_lit(path);
+            }
+
+            (ImportItems::Aliases(aliases), _) => {
                 // Check if we should keep single imports on one line
                 let use_single_line = self.config.single_line_imports && aliases.len() == 1;
 
@@ -348,7 +364,16 @@ impl<'ast> State<'_, 'ast> {
 
         self.print_word("{");
         self.end();
-        if !body.is_empty() {
+        if body.is_empty() {
+            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                self.s.offset(-self.ind);
+            } else if self.config.bracket_spacing {
+                self.nbsp();
+            };
+            self.end();
+        } else {
             // update block depth
             self.block_depth += 1;
 
@@ -389,13 +414,6 @@ impl<'ast> State<'_, 'ast> {
 
             // restore block depth
             self.block_depth -= 1;
-        } else {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                self.zerobreak();
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
-            self.end();
         }
         self.print_word("}");
 
@@ -681,16 +699,17 @@ impl<'ast> State<'_, 'ast> {
                 for cmnt in inner_cmnts.into_iter().rev() {
                     self.comments.push_front(cmnt);
                 }
-                let mut enabled = false;
-                if !self.handle_span(span, false) {
+                let enabled = if self.handle_span(span, false) {
+                    false
+                } else {
                     if !self.is_bol_or_only_ind() {
                         self.space();
                     }
                     self.ibox(0);
                     print_fn(self);
                     self.cursor.advance_to(span.hi(), true);
-                    enabled = true;
-                }
+                    true
+                };
                 // Print subsequent comments.
                 for cmnt in post_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
@@ -795,12 +814,8 @@ impl<'ast> State<'_, 'ast> {
             fits_alone && !self.has_comment_between(rhs.span.lo(), rhs.span.hi());
         let force_break = overflows && fits_alone_no_cmnts;
 
-        // Set up precall size tracking
         if lhs_size <= space_left {
             self.neverbreak();
-            self.call_stack.add_precall(lhs_size + 1);
-        } else {
-            self.call_stack.add_precall(space_left + self.config.tab_width);
         }
 
         // Handle comments before the RHS expression
@@ -932,7 +947,6 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.var_init = cache;
-        self.call_stack.reset_precall();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>, is_var_def: bool) {
@@ -1340,6 +1354,11 @@ impl<'ast> State<'_, 'ast> {
                         match member_expr.kind {
                             ast::ExprKind::Ident(_) | ast::ExprKind::Type(_) => (),
                             ast::ExprKind::Index(..) if s.skip_index_break => (),
+                            // Don't add break when accessing a field after a call with named args.
+                            // e.g., `_lzSend({_dstEid: x, ...}).guid` should keep `.guid`
+                            // on the same line as the closing `})`.
+                            // See: https://github.com/foundry-rs/foundry/issues/12399
+                            _ if is_call_with_named_args(&member_expr.kind) => (),
                             _ => s.zerobreak(),
                         }
                         s.word(".");
@@ -1548,14 +1567,15 @@ impl<'ast> State<'_, 'ast> {
                 }
 
                 // Trailing comment handling.
-                let mut is_trailing = false;
-                if let Some(style) = self.print_comments(
+                let is_trailing = if let Some(style) = self.print_comments(
                     span.hi(),
                     CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 ) {
                     skip_break = true;
-                    is_trailing = style.is_trailing();
-                }
+                    style.is_trailing()
+                } else {
+                    false
+                };
 
                 // Adjust indentation and line breaks.
                 match (skip_break, end.is_some()) {
@@ -1672,11 +1692,6 @@ impl<'ast> State<'_, 'ast> {
             let callee_size = get_callee_head_size(child_expr) + member_or_args.member_size();
             let expr_size = self.estimate_size(child_expr.span);
 
-            // Start a new chain if needed
-            if is_call_chain(&child_expr.kind, false) {
-                self.call_stack.push(CallContext::chained(callee_size));
-            }
-
             let callee_fits_line = self.space_left() > callee_size + 1;
             let total_fits_line = self.space_left() > expr_size + member_or_args.size() + 2;
             let no_cmnt_or_mixed =
@@ -1688,17 +1703,24 @@ impl<'ast> State<'_, 'ast> {
                 extra_box = true;
             }
 
-            if !is_call_chain(&child_expr.kind, true)
-                && (no_cmnt_or_mixed || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
-                && callee_fits_line
-                && (member_depth(0, child_expr) < 2
-                    // calls with cmnts between the args always break
-                    || (total_fits_line && !member_or_args.has_comments()))
-            {
+            // Determine if this chain will add its own indentation
+            let chain_has_indent = is_call_chain(&child_expr.kind, true)
+                || !(no_cmnt_or_mixed
+                    || matches!(&child_expr.kind, ast::ExprKind::CallOptions(..)))
+                || !callee_fits_line
+                || (member_depth(0, child_expr) >= 2
+                    && (!total_fits_line || member_or_args.has_comments()));
+
+            // Start a new chain if needed
+            if is_call_chain(&child_expr.kind, false) {
+                self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
+            }
+
+            if chain_has_indent {
+                self.s.ibox(self.ind);
+            } else {
                 self.skip_index_break = true;
                 self.cbox(0);
-            } else {
-                self.s.ibox(self.ind);
             }
         }
 
@@ -1801,7 +1823,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.is_chain())
+                    .without_ind(self.call_stack.has_chain_with_indent())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -1954,12 +1976,6 @@ impl<'ast> State<'_, 'ast> {
         );
         self.end();
         self.word(" =");
-
-        // '(' + var + ', ' + var + ')' + ' ='
-        let vars_size = vars.iter().fold(0, |acc, var| {
-            acc + var.as_ref().unspan().map_or(0, |v| self.estimate_size(v.span)) + 2
-        }) + 2;
-        self.call_stack.add_precall(vars_size);
 
         if self.estimate_size(init_expr.span) + self.config.tab_width
             <= std::cmp::max(space_left, self.space_left())
@@ -2176,7 +2192,9 @@ impl<'ast> State<'_, 'ast> {
                 self.nbsp();
             }
 
-            if !args.is_empty() {
+            if args.is_empty() {
+                self.end();
+            } else {
                 self.print_word("returns ");
                 self.print_word("(");
                 self.zerobreak();
@@ -2192,8 +2210,6 @@ impl<'ast> State<'_, 'ast> {
                 );
                 self.print_word(")");
                 self.nbsp();
-            } else {
-                self.end();
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
@@ -2419,20 +2435,19 @@ impl<'ast> State<'_, 'ast> {
 
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve => {
-                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
-                {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Preserve
+                if self.is_stmt_in_new_line(cond, then)
+                    || self.is_multiline_block_stmt(then, true) =>
+            {
+                return Decision { outcome: false, is_cached: false };
             }
-            config::SingleLineBlockStyle::Single => {
-                if self.is_multiline_block_stmt(then, true) {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Single if self.is_multiline_block_stmt(then, true) => {
+                return Decision { outcome: false, is_cached: false };
             }
             config::SingleLineBlockStyle::Multi => {
                 return Decision { outcome: false, is_cached: false };
             }
+            _ => {}
         };
 
         // If no decision was made, estimate the length to be formatted.
@@ -2516,10 +2531,16 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
-    /// Checks if a block statement `{ ... }` contains more than one line of actual code.
+    /// Checks if a block statement `{ ... }` should be treated as multiline,
+    /// either because it spans multiple lines or contains multiple statements.
     fn is_multiline_block(&self, block: &'ast ast::Block<'ast>, empty_as_multiline: bool) -> bool {
         if block.stmts.is_empty() {
             return empty_as_multiline;
+        }
+        // A block with multiple statements should never be inlined, regardless of
+        // whether it was written on a single line in the source.
+        if block.stmts.len() > 1 {
+            return true;
         }
         if self.sm.is_multiline(block.span)
             && let Ok(snip) = self.sm.span_to_snippet(block.span)
@@ -2659,20 +2680,20 @@ enum MemberOrCallArgs {
 }
 
 impl MemberOrCallArgs {
-    fn size(&self) -> usize {
+    const fn size(&self) -> usize {
         match self {
             Self::CallArgs(size, ..) | Self::Member(size) => *size,
         }
     }
 
-    fn member_size(&self) -> usize {
+    const fn member_size(&self) -> usize {
         match self {
             Self::CallArgs(..) => 0,
             Self::Member(size) => *size,
         }
     }
 
-    fn has_comments(&self) -> bool {
+    const fn has_comments(&self) -> bool {
         matches!(self, Self::CallArgs(.., true))
     }
 }
@@ -2731,7 +2752,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
             let before_limit = self.attributes[a].span.lo();
             let inner_limit = self.attributes[a].span.hi();
             let after_limit =
-                if !is_last { self.attributes[a + 1].span.lo() } else { self.limit_pos };
+                if is_last { self.limit_pos } else { self.attributes[a + 1].span.lo() };
 
             let mut c = 0;
             while c < self.comments.len() {
@@ -2815,7 +2836,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 }
 
-fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
+const fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     match stmt {
         ast::StmtKind::Assembly { .. }
         | ast::StmtKind::Block { .. }
@@ -2860,7 +2881,7 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
     }
 }
 
-fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
@@ -2880,8 +2901,20 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     }
 }
 
-fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
+}
+
+/// Returns true if this is a call with named arguments (struct-style syntax).
+/// Used to determine if `.field` after such a call should avoid breaking.
+/// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
+/// E.g., `someFunc(a, b).field` → false (positional args)
+const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+    if let ast::ExprKind::Call(_, args) = expr_kind {
+        matches!(args.kind, ast::CallArgsKind::Named(_))
+    } else {
+        false
+    }
 }
 
 fn is_call_chain(expr_kind: &ast::ExprKind<'_>, must_have_child: bool) -> bool {

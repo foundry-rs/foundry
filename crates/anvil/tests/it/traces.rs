@@ -16,7 +16,7 @@ use alloy_provider::{
     ext::{DebugApi, TraceApi},
 };
 use alloy_rpc_types::{
-    TransactionRequest,
+    BlockNumberOrTag, TransactionRequest,
     state::StateOverride,
     trace::{
         filter::{TraceFilter, TraceFilterMode},
@@ -25,7 +25,7 @@ use alloy_rpc_types::{
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, PreStateConfig,
             PreStateFrame,
         },
-        parity::{Action, LocalizedTransactionTrace},
+        parity::{Action, ChangedType, LocalizedTransactionTrace, TraceType},
     },
 };
 use alloy_serde::WithOtherFields;
@@ -777,7 +777,6 @@ async fn test_trace_address_fork2() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "flaky"]
 async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
@@ -803,11 +802,11 @@ async fn test_trace_filter() {
     for i in 0..=5 {
         let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
         let tx = WithOtherFields::new(tx);
-        api.send_transaction(tx).await.unwrap();
+        provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     }
 
     let traces = api.trace_filter(tracer).await.unwrap();
-    assert_eq!(traces.len(), 5);
+    assert_eq!(traces.len(), 6);
 
     // Test filtering by address
     let tracer = TraceFilter {
@@ -1237,14 +1236,14 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
     let expected = r#"
 {
   "0x0000000000000000000000000000000000000000": {
-    "balance": "0x0"
+    "balance": "1206031000000000"
   },
   "0x5fbdb2315678afecb367f032d93f642f64180aa3": {
     "balance": "0x0",
     "nonce": 1
   },
   "0x70997970c51812dc3a010c7d01b50e0d17dc79c8": {
-    "balance": "0x56bc75e2d630fffff"
+    "balance": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   },
   "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512": {
     "balance": "0x0",
@@ -1272,5 +1271,167 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
             }
         }
         _ => unreachable!(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trace_replay_block_transactions_local() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000000u64);
+
+    // Send first transaction
+    let tx1 = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx1 = WithOtherFields::new(tx1);
+    let pending_tx1 = provider.send_transaction(tx1).await.unwrap();
+
+    // Send second transaction with different value
+    let tx2 = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx2 = WithOtherFields::new(tx2);
+    let pending_tx2 = provider.send_transaction(tx2).await.unwrap();
+
+    api.mine_one().await;
+    let receipt1 = pending_tx1.get_receipt().await.unwrap();
+    let receipt2 = pending_tx2.get_receipt().await.unwrap();
+
+    let block_number = receipt2.block_number.unwrap();
+
+    // Replay the block transactions with call trace type
+    // Pass block number as hex string as per Ethereum RPC spec
+    let results = api
+        .trace_replay_block_transactions(
+            block_number.into(),
+            vec![TraceType::Trace, TraceType::VmTrace, TraceType::StateDiff].into_iter().collect(),
+        )
+        .await
+        .unwrap();
+
+    // Verify we have traces for both transactions
+    assert_eq!(results.len(), 2, "Should have traces for 2 transactions");
+
+    // Verify first transaction hash matches
+    assert_eq!(results[0].transaction_hash, receipt1.transaction_hash);
+
+    // Verify second transaction hash matches
+    assert_eq!(results[1].transaction_hash, receipt2.transaction_hash);
+
+    // Verify trace types are present and accurate
+    for result in results {
+        let full_trace = &result.full_trace;
+
+        // Verify Trace (call trace) is present and accurate
+        assert!(!full_trace.trace.is_empty(), "Trace should not be empty");
+        let first_trace = &full_trace.trace[0];
+        match &first_trace.action {
+            Action::Call(call) => {
+                assert_eq!(call.from, from, "Call from address should match");
+                assert_eq!(call.to, to, "Call to address should match");
+            }
+            _ => panic!("Expected Call action, got {:?}", first_trace.action),
+        }
+
+        // Verify VmTrace is present
+        assert!(full_trace.vm_trace.is_some(), "VmTrace should be present when requested");
+
+        // Verify StateDiff is present
+        assert!(full_trace.state_diff.is_some(), "StateDiff should be present when requested");
+        // Verify balance change is correct in state diff
+        let ChangedType::<U256> { from, to } =
+            full_trace.state_diff.as_ref().unwrap().get(&to).unwrap().balance.as_changed().unwrap();
+        assert_eq!(
+            to.checked_sub(*from).unwrap(),
+            amount,
+            "Incorrect balance change in state diff"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_by_number() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    let traces = api
+        .backend
+        .debug_trace_block_by_number(
+            BlockNumberOrTag::Number(block_number),
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(traces.len(), 1);
+
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {error}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_by_hash() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(2000);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+
+    let traces = api
+        .backend
+        .debug_trace_block_by_hash(
+            block_hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(traces.len(), 1);
+
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {error}");
+        }
     }
 }

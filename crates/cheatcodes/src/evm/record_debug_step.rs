@@ -55,7 +55,6 @@ fn recursive_flatten_call_trace<'a>(
                 let step = &node.trace.steps[*step_idx];
                 flatten_steps.push(CallTraceCtx { node, step });
             }
-            TraceMemberOrder::Step(_) => {}
             TraceMemberOrder::Call(call_idx) => {
                 let child_node_idx = node.children[*call_idx];
                 recursive_flatten_call_trace(

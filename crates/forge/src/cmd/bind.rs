@@ -202,7 +202,7 @@ impl BindArgs {
             .get_json_files(artifacts)?
             .filter_map(|(name, path)| {
                 trace!(?path, "parsing SolMacroGen from file");
-                if dup.insert(name.clone()) { Some(SolMacroGen::new(path, name)) } else { None }
+                dup.insert(name.clone()).then(|| SolMacroGen::new(path, name))
             })
             .collect::<Vec<_>>();
 
@@ -235,7 +235,14 @@ impl BindArgs {
         let mut solmacrogen = self.get_solmacrogen(artifacts)?;
         sh_println!("Generating bindings for {} contracts", solmacrogen.instances.len())?;
 
-        if !self.module {
+        if self.module {
+            trace!(single_file = self.single_file, "generating module");
+            solmacrogen.write_to_module(
+                bindings_root,
+                self.single_file,
+                !self.skip_extra_derives,
+            )?;
+        } else {
             trace!(single_file = self.single_file, "generating crate");
             solmacrogen.write_to_crate(
                 &self.crate_name,
@@ -246,13 +253,6 @@ impl BindArgs {
                 self.single_file,
                 self.alloy_version.clone(),
                 self.alloy_rev.clone(),
-                !self.skip_extra_derives,
-            )?;
-        } else {
-            trace!(single_file = self.single_file, "generating module");
-            solmacrogen.write_to_module(
-                bindings_root,
-                self.single_file,
                 !self.skip_extra_derives,
             )?;
         }

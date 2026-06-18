@@ -424,12 +424,14 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 	[Sequence] (original: 3, shrunk: 3)
 		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016Ab addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]],
     );
@@ -450,13 +452,15 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
 		vm.prank(0x8ef7F804bAd9183981A366EA618d9D47D3124649);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x00000000000000000000000000000000000016Ab);
+		vm.prank(0x00000000000000000000000000000000000016Ac);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]],
     );
@@ -470,16 +474,18 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
-[FAIL: invariant_increment replay failure]
+[FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
 		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016Ab addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 1, calls: 1, reverts: 1)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]],
     );
@@ -536,7 +542,7 @@ contract OwnableTest is Test {
     // Should replay failure if same test.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: invariant_never_owner replay failure]
+[FAIL: never owner]
 ...
 "#]]);
 
@@ -566,12 +572,152 @@ contract OwnableTest is Test {
     );
     cmd.assert_success().stderr_eq(str![[r#"
 ...
-Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
+Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because invariant test settings have changed: target selectors changed
 ...
 "#]])
     .stdout_eq(str![[r#"
 ...
 [PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0)
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_preserves_fail_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "InvariantReplayFailReason.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantReplayFailReason is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function callTarget(uint256) external {}
+
+    function invariant_fail_reason() public {
+        fail();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_fail_reason"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: assertion failed][..]
+...
+"#]]);
+
+    // Replay should preserve failure reason instead of generic replay message.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: assertion failed][..]
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_preserves_custom_error_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test(
+        "InvariantReplayCustomError.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CustomErrorTarget {
+    error InvariantCustomError(uint256, string);
+
+    function breakInvariant() external {
+        revert InvariantCustomError(111, "custom");
+    }
+}
+
+contract CustomErrorHandler is Test {
+    CustomErrorTarget target;
+
+    constructor() {
+        target = new CustomErrorTarget();
+    }
+
+    function callTarget() external {
+        target.breakInvariant();
+    }
+}
+
+contract InvariantReplayCustomError is Test {
+    CustomErrorHandler handler;
+
+    function setUp() public {
+        handler = new CustomErrorHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_custom_error_reason() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_custom_error_reason"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: [..]custom[..]][..]
+...
+"#
+    ]]);
+
+    // Replay should preserve custom error string too.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: [..]custom[..]][..]
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_preserves_invariant_custom_error_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "InvariantReplayInvariantCustomError.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantReplayInvariantCustomError is Test {
+    error InvariantCustomError(uint256, string);
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function touch(uint256) external {}
+
+    function invariant_custom_error_reason_from_invariant() public pure {
+        revert InvariantCustomError(222, "invariant custom");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_custom_error_reason_from_invariant"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
+...
+"#]]);
+
+    // Replay should preserve invariant-level custom error string too.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
 ...
 "#]]);
 });
@@ -990,4 +1136,184 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
     assert!(
         prj.root().join("fuzz_corpus").join("Counter2Test").join("testFuzz_SetNumber").exists()
     );
+});
+
+// Tests that check_interval=0 only asserts on the last call of each run.
+forgetest_init!(check_interval_zero_only_checks_last_call, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 10;
+        config.invariant.check_interval = 0;
+    });
+    prj.add_test(
+        "CheckIntervalTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterHandler {
+    uint256 public counter;
+
+    function increment() public {
+        counter++;
+    }
+}
+
+contract CheckIntervalTest is Test {
+    CounterHandler handler;
+
+    function setUp() public {
+        handler = new CounterHandler();
+        targetContract(address(handler));
+    }
+
+    // This invariant would fail on intermediate calls (counter 1-9) but passes on call 10
+    // With check_interval=0, only the last call is checked, so if depth=10 and counter=10
+    // at the end, this should pass even though intermediate states violated the invariant.
+    function invariant_counter_multiple_of_depth() public view {
+        // Only passes when counter is 0 or 10 (depth). Fails for 1-9.
+        require(handler.counter() == 0 || handler.counter() == 10, "not multiple of depth");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_counter"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_counter_multiple_of_depth() (runs: 5, calls: 50, reverts: 0)
+...
+"#]]);
+});
+
+// Tests that check_interval=1 (default) asserts after every call.
+forgetest_init!(check_interval_one_checks_every_call, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.check_interval = 1;
+    });
+    prj.add_test(
+        "CheckIntervalTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterHandler {
+    uint256 public counter;
+
+    function increment() public {
+        counter++;
+    }
+}
+
+contract CheckIntervalTest is Test {
+    CounterHandler handler;
+
+    function setUp() public {
+        handler = new CounterHandler();
+        targetContract(address(handler));
+    }
+
+    // This invariant fails as soon as counter > 5.
+    // With check_interval=1, it should fail on call 6.
+    function invariant_counter_le_five() public view {
+        require(handler.counter() <= 5, "counter > 5");
+    }
+}
+   "#,
+    );
+
+    assert_invariant(cmd.args(["test", "--mt", "invariant_counter"])).failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: counter > 5]
+	[SEQUENCE]
+...
+"#
+    ]]);
+});
+
+// Tests that check_interval=N checks every N calls AND always on the last call.
+forgetest_init!(check_interval_n_checks_every_n_calls, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 20;
+        config.invariant.check_interval = 5;
+    });
+    prj.add_test(
+        "CheckIntervalTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterHandler {
+    uint256 public counter;
+
+    function increment() public {
+        counter++;
+    }
+}
+
+contract CheckIntervalTest is Test {
+    CounterHandler handler;
+
+    function setUp() public {
+        handler = new CounterHandler();
+        targetContract(address(handler));
+    }
+
+    // With check_interval=5 and depth=20, invariant is checked at calls 5,10,15,20.
+    // This passes because 5,10,15,20 are all multiples of 5.
+    function invariant_counter_multiple_of_five() public view {
+        require(handler.counter() % 5 == 0, "not multiple of 5");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_counter"]).assert_success().stdout_eq(str![[r#"
+...
+[PASS] invariant_counter_multiple_of_five() (runs: 1, calls: 20, reverts: 0)
+...
+"#]]);
+});
+
+// Tests check_interval via inline config annotation.
+forgetest_init!(check_interval_inline_config, |prj, cmd| {
+    prj.add_test(
+        "CheckIntervalInlineTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CounterHandler {
+    uint256 public counter;
+
+    function increment() public {
+        counter++;
+    }
+}
+
+contract CheckIntervalInlineTest is Test {
+    CounterHandler handler;
+
+    function setUp() public {
+        handler = new CounterHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 10
+    /// forge-config: default.invariant.check_interval = 0
+    function invariant_only_last_checked() public view {
+        // Only passes when counter is 0 or 10. With check_interval=0, only last call is checked.
+        require(handler.counter() == 0 || handler.counter() == 10, "not at boundary");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_only_last_checked"]).assert_success().stdout_eq(str![[
+        r#"
+...
+[PASS] invariant_only_last_checked() (runs: 1, calls: 10, reverts: 0)
+...
+"#
+    ]]);
 });

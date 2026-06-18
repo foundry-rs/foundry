@@ -1,11 +1,8 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, U256, map::HashMap};
-use alloy_provider::{Provider, network::AnyNetwork};
+use alloy_provider::{Network, Provider, RootProvider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
-use foundry_common::{
-    provider::{ProviderBuilder, RetryProvider},
-    shell,
-};
+use foundry_common::{provider::ProviderBuilder, shell};
 use foundry_config::{Chain, Config};
 use itertools::Itertools;
 use path_slash::PathExt;
@@ -32,6 +29,9 @@ pub use abi::*;
 
 mod allocator;
 pub use allocator::*;
+
+mod tempo;
+pub use tempo::*;
 
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
@@ -87,7 +87,7 @@ pub fn subscriber() {
     let registry = tracing_subscriber::Registry::default().with(env_filter());
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
-    registry.with(tracing_subscriber::fmt::layer()).init()
+    registry.with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr)).init()
 }
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
@@ -99,9 +99,8 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
     filter
 }
 
-/// Returns a [RetryProvider] instantiated using [Config]'s
-/// RPC
-pub fn get_provider(config: &Config) -> Result<RetryProvider> {
+/// Returns a [`RootProvider`] instantiated using [Config]'s RPC settings.
+pub fn get_provider(config: &Config) -> Result<RootProvider<AnyNetwork>> {
     get_provider_builder(config)?.build()
 }
 
@@ -109,33 +108,13 @@ pub fn get_provider(config: &Config) -> Result<RetryProvider> {
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
 pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
-    let url = config.get_rpc_url_or_localhost_http()?;
-    let mut builder = ProviderBuilder::new(url.as_ref());
-
-    builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
-
-    if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
-        builder = builder.chain(chain);
-    }
-
-    if let Some(jwt) = config.get_rpc_jwt_secret()? {
-        builder = builder.jwt(jwt.as_ref());
-    }
-
-    if let Some(rpc_timeout) = config.eth_rpc_timeout {
-        builder = builder.timeout(Duration::from_secs(rpc_timeout));
-    }
-
-    if let Some(rpc_headers) = config.eth_rpc_headers.clone() {
-        builder = builder.headers(rpc_headers);
-    }
-
-    Ok(builder)
+    ProviderBuilder::from_config(config)
 }
 
-pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
+pub async fn get_chain<N, P>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    P: Provider<AnyNetwork>,
+    N: Network,
+    P: Provider<N>,
 {
     match chain {
         Some(chain) => Ok(chain),
@@ -150,8 +129,8 @@ where
 /// If the string represents an untagged amount (e.g. "100") then
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
-    Ok(if value.starts_with("0x") {
-        U256::from_str_radix(value, 16)?
+    Ok(if value.starts_with("0x") || value.starts_with("0X") {
+        U256::from_str(value)?
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
             .as_uint()
@@ -248,8 +227,10 @@ pub async fn fetch_abi_from_etherscan(
     config: &foundry_config::Config,
 ) -> Result<Vec<(JsonAbi, String)>> {
     let chain = config.chain.unwrap_or_default();
-    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let client = config
+        .get_etherscan_config_with_chain(Some(chain))?
+        .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
+        .into_client()?;
     let source = client.contract_source_code(address).await?;
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
@@ -303,7 +284,7 @@ impl CommandUtils for Command {
             };
             if !msg.is_empty() {
                 err.push(':');
-                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push(if msg.lines().count() == 1 { ' ' } else { '\n' });
                 err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
@@ -394,16 +375,16 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    pub fn root(self, root: &Path) -> Git<'_> {
+    pub const fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    pub fn quiet(self, quiet: bool) -> Self {
+    pub const fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    pub fn shallow(self, shallow: bool) -> Self {
+    pub const fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
 
@@ -498,7 +479,7 @@ impl<'a> Git<'a> {
     }
 
     pub fn is_repo_root(self) -> Result<bool> {
-        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
+        self.cmd().args(["rev-parse", "--show-cdup"]).get_stdout_lossy().map(|s| s.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {
@@ -699,10 +680,9 @@ ignore them in the `.gitignore` file."
     ///
     /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
     pub fn submodules_uninitialized(self) -> Result<bool> {
-        self.cmd()
-            .args(["submodule", "status"])
-            .get_stdout_lossy()
-            .map(|stdout| stdout.lines().any(|line| line.starts_with('-')))
+        // keep behavior consistent with `has_missing_dependencies`, but avoid duplicating the
+        // "submodule status has '-' prefix" logic.
+        self.has_missing_dependencies(std::iter::empty::<&OsStr>())
     }
 
     /// Initializes the git submodules.
@@ -726,19 +706,54 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
-    pub fn cmd(self) -> Command {
+    /// Returns the fetch URL of the given remote, or `None` if it doesn't exist.
+    pub fn remote_url(self, name: &str) -> Option<String> {
+        self.cmd().args(["remote", "get-url", name]).get_stdout_lossy().ok()
+    }
+
+    /// Sets the branch for a submodule.
+    pub fn set_submodule_branch(self, rel_path: &Path, branch: &str) -> Result<()> {
+        self.cmd().args(["submodule", "set-branch", "-b", branch]).arg(rel_path).exec().map(drop)
+    }
+
+    /// Returns remote branch names as a newline-separated string.
+    pub fn remote_branches(self) -> Result<String> {
+        self.cmd().args(["branch", "-r"]).get_stdout_lossy()
+    }
+
+    /// Fetches a branch from origin and checks out a local tracking branch at the given path.
+    pub fn fetch_and_checkout_branch(self, at: &Path, branch: &str) -> Result<()> {
+        self.cmd_at(at).args(["fetch", "origin", branch]).exec().map_err(|e| {
+            eyre::eyre!(
+                "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
+                at.display()
+            )
+        })?;
+        self.cmd_at(at)
+            .args(["checkout", "-B", branch, &format!("origin/{branch}")])
+            .exec()
+            .map_err(|e| {
+                eyre::eyre!(
+                    "Could not checkout and track origin/{branch} for submodule at {}: {e}",
+                    at.display()
+                )
+            })?;
+        Ok(())
+    }
+
+    fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
         cmd
     }
 
-    pub fn cmd_at(self, path: &Path) -> Command {
+    fn cmd_at(self, path: &Path) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(path);
         cmd
     }
 
-    pub fn cmd_no_root() -> Command {
+    fn cmd_no_root() -> Command {
         let mut cmd = Command::new("git");
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd
@@ -760,7 +775,7 @@ pub struct Submodule {
 }
 
 impl Submodule {
-    pub fn new(rev: String, path: PathBuf) -> Self {
+    pub const fn new(rev: String, path: PathBuf) -> Self {
         Self { rev, path }
     }
 
@@ -768,7 +783,7 @@ impl Submodule {
         &self.rev
     }
 
-    pub fn path(&self) -> &PathBuf {
+    pub const fn path(&self) -> &PathBuf {
         &self.path
     }
 }
@@ -793,11 +808,11 @@ impl FromStr for Submodule {
 pub struct Submodules(pub Vec<Submodule>);
 
 impl Submodules {
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
@@ -866,6 +881,16 @@ mod tests {
         assert!(!p.is_sol_test());
     }
 
+    #[test]
+    fn parse_ether_value_accepts_hex_prefixed_wei() {
+        assert_eq!(parse_ether_value("0x10").unwrap(), U256::from(16));
+        assert_eq!(parse_ether_value("0X10").unwrap(), U256::from(16));
+        assert_eq!(parse_ether_value("0x12").unwrap(), U256::from(0x12));
+        assert_eq!(parse_ether_value("0xff").unwrap(), U256::from(0xff));
+        assert_eq!(parse_ether_value("100").unwrap(), U256::from(100));
+        assert_eq!(parse_ether_value("1ether").unwrap(), U256::from(1000000000000000000u128));
+    }
+
     // loads .env from cwd and project dir, See [`find_project_root()`]
     #[test]
     fn can_load_dotenv() {
@@ -879,10 +904,10 @@ mod tests {
         let mut cwd_file = File::create(cwd_env).unwrap();
         let mut prj_file = File::create(nested.join(".env")).unwrap();
 
-        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.write_all(b"TESTCWDKEY=cwd_val").unwrap();
         cwd_file.sync_all().unwrap();
 
-        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.write_all(b"TESTPRJKEY=prj_val").unwrap();
         prj_file.sync_all().unwrap();
 
         let cwd = env::current_dir().unwrap();

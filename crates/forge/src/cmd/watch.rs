@@ -201,14 +201,13 @@ impl WatchArgs {
                     if e.is_empty() {
                         has_synthetic_events = true;
                         break;
-                    } else {
-                        for tag in &e.tags {
-                            if let Tag::FileEventKind(kind) = tag
-                                && !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
-                                    has_file_events = true;
-                                    break 'outer;
-                                }
-                        }
+                    }
+                    for tag in &e.tags {
+                        if let Tag::FileEventKind(kind) = tag
+                            && !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
+                                has_file_events = true;
+                                break 'outer;
+                            }
                     }
                 }
                 if !has_file_events && !has_synthetic_events {

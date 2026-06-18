@@ -57,6 +57,9 @@ pub struct ProjectCompiler {
     /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
     ignore_eip_3860: bool,
 
+    /// Contract size limits used when reporting compiled contract sizes.
+    size_limits: ContractSizeLimits,
+
     /// Extra files to include, that are not necessarily in the project's source directory.
     files: Vec<PathBuf>,
 
@@ -82,6 +85,7 @@ impl ProjectCompiler {
             quiet: Some(crate::shell::is_quiet()),
             bail: None,
             ignore_eip_3860: false,
+            size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
         }
@@ -89,14 +93,14 @@ impl ProjectCompiler {
 
     /// Sets whether to print contract names.
     #[inline]
-    pub fn print_names(mut self, yes: bool) -> Self {
+    pub const fn print_names(mut self, yes: bool) -> Self {
         self.print_names = Some(yes);
         self
     }
 
     /// Sets whether to print contract sizes.
     #[inline]
-    pub fn print_sizes(mut self, yes: bool) -> Self {
+    pub const fn print_sizes(mut self, yes: bool) -> Self {
         self.print_sizes = Some(yes);
         self
     }
@@ -104,22 +108,29 @@ impl ProjectCompiler {
     /// Sets whether to print anything at all. Overrides other `print` options.
     #[inline]
     #[doc(alias = "silent")]
-    pub fn quiet(mut self, yes: bool) -> Self {
+    pub const fn quiet(mut self, yes: bool) -> Self {
         self.quiet = Some(yes);
         self
     }
 
     /// Sets whether to bail on compiler errors.
     #[inline]
-    pub fn bail(mut self, yes: bool) -> Self {
+    pub const fn bail(mut self, yes: bool) -> Self {
         self.bail = Some(yes);
         self
     }
 
     /// Sets whether to ignore EIP-3860 initcode size limits.
     #[inline]
-    pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
+    pub const fn ignore_eip_3860(mut self, yes: bool) -> Self {
         self.ignore_eip_3860 = yes;
+        self
+    }
+
+    /// Sets the contract size limits for size reports.
+    #[inline]
+    pub const fn size_limits(mut self, limits: ContractSizeLimits) -> Self {
+        self.size_limits = limits;
         self
     }
 
@@ -132,7 +143,7 @@ impl ProjectCompiler {
 
     /// Sets if tests should be dynamically linked.
     #[inline]
-    pub fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
+    pub const fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
         self.dynamic_test_linking = preprocess;
         self
     }
@@ -163,10 +174,10 @@ impl ProjectCompiler {
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
         self.compile_with(|| {
-            let sources = if !files.is_empty() {
-                Source::read_all(files)?
-            } else {
+            let sources = if files.is_empty() {
                 project.paths.read_input_files()?
+            } else {
+                Source::read_all(files)?
             };
 
             let mut compiler =
@@ -258,7 +269,8 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report = SizeReport { contracts: BTreeMap::new() };
+            let mut size_report =
+                SizeReport { contracts: BTreeMap::new(), limits: self.size_limits };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
@@ -306,13 +318,15 @@ impl ProjectCompiler {
             eyre::ensure!(
                 !size_report.exceeds_runtime_size_limit(),
                 "some contracts exceed the runtime size limit \
-                 (Monad: {CONTRACT_RUNTIME_SIZE_LIMIT} bytes)"
+                 ({} bytes)",
+                size_report.limits.runtime
             );
-            // Check size limits only if not ignoring initcode size limit
+            // Check size limits only if not ignoring EIP-3860
             eyre::ensure!(
                 self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
                 "some contracts exceed the initcode size limit \
-                 (Monad: {CONTRACT_INITCODE_SIZE_LIMIT} bytes)"
+                 ({} bytes)",
+                size_report.limits.initcode
             );
         }
 
@@ -320,16 +334,68 @@ impl ProjectCompiler {
     }
 }
 
-// Monad uses 128KB runtime limit instead of Ethereum's 24KB (EIP-170)
-const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 131072;
+// https://eips.ethereum.org/EIPS/eip-170
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
 
-// Monad uses 256KB initcode limit instead of Ethereum's 49152 (EIP-3860)
-const CONTRACT_INITCODE_SIZE_LIMIT: usize = 262144;
+// https://eips.ethereum.org/EIPS/eip-3860
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
+
+const CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD: usize = 18_000;
+const CONTRACT_INITCODE_SIZE_WARN_THRESHOLD: usize = 36_000;
+
+/// Runtime and initcode byte-size limits for compiled contract size reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContractSizeLimits {
+    /// Maximum deployed runtime bytecode size.
+    pub runtime: usize,
+    /// Maximum initcode bytecode size.
+    pub initcode: usize,
+}
+
+impl ContractSizeLimits {
+    /// Creates a new set of contract size limits.
+    pub const fn new(runtime: usize, initcode: usize) -> Self {
+        Self { runtime, initcode }
+    }
+
+    /// Creates limits from a runtime code-size limit, using the EIP-3860 2x initcode ratio.
+    pub const fn with_runtime_limit(runtime: usize) -> Self {
+        Self { runtime, initcode: runtime.saturating_mul(2) }
+    }
+
+    const fn runtime_warning_threshold(self) -> usize {
+        scaled_threshold(
+            self.runtime,
+            CONTRACT_RUNTIME_SIZE_WARN_THRESHOLD,
+            CONTRACT_RUNTIME_SIZE_LIMIT,
+        )
+    }
+
+    const fn initcode_warning_threshold(self) -> usize {
+        scaled_threshold(
+            self.initcode,
+            CONTRACT_INITCODE_SIZE_WARN_THRESHOLD,
+            CONTRACT_INITCODE_SIZE_LIMIT,
+        )
+    }
+}
+
+impl Default for ContractSizeLimits {
+    fn default() -> Self {
+        Self::new(CONTRACT_RUNTIME_SIZE_LIMIT, CONTRACT_INITCODE_SIZE_LIMIT)
+    }
+}
+
+const fn scaled_threshold(limit: usize, threshold: usize, default_limit: usize) -> usize {
+    limit.saturating_mul(threshold) / default_limit
+}
 
 /// Contracts with info about their size
 pub struct SizeReport {
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
+    /// Size limits used to calculate margins and failures.
+    pub limits: ContractSizeLimits,
 }
 
 impl SizeReport {
@@ -355,12 +421,12 @@ impl SizeReport {
 
     /// Returns true if any contract exceeds the runtime size limit, excluding dev contracts.
     pub fn exceeds_runtime_size_limit(&self) -> bool {
-        self.max_runtime_size() > CONTRACT_RUNTIME_SIZE_LIMIT
+        self.max_runtime_size() > self.limits.runtime
     }
 
     /// Returns true if any contract exceeds the initcode size limit, excluding dev contracts.
     pub fn exceeds_initcode_size_limit(&self) -> bool {
-        self.max_init_size() > CONTRACT_INITCODE_SIZE_LIMIT
+        self.max_init_size() > self.limits.initcode
     }
 }
 
@@ -387,8 +453,8 @@ impl SizeReport {
                     serde_json::json!({
                         "runtime_size": contract.runtime_size,
                         "init_size": contract.init_size,
-                        "runtime_margin": CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize,
-                        "init_margin": CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize,
+                        "runtime_margin": self.limits.runtime as isize - contract.runtime_size as isize,
+                        "init_margin": self.limits.initcode as isize - contract.init_size as isize,
                     }),
                 )
             })
@@ -418,21 +484,26 @@ impl SizeReport {
             .contracts
             .iter()
             .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0));
+        let runtime_warning_threshold = self.limits.runtime_warning_threshold();
+        let initcode_warning_threshold = self.limits.initcode_warning_threshold();
         for (name, contract) in contracts {
-            let runtime_margin =
-                CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize;
-            let init_margin = CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize;
+            let runtime_margin = self.limits.runtime as isize - contract.runtime_size as isize;
+            let init_margin = self.limits.initcode as isize - contract.init_size as isize;
 
-            let runtime_color = match contract.runtime_size {
-                ..95_000 => Color::Reset,
-                95_000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
-                _ => Color::Red,
+            let runtime_color = if contract.runtime_size < runtime_warning_threshold {
+                Color::Reset
+            } else if contract.runtime_size <= self.limits.runtime {
+                Color::Yellow
+            } else {
+                Color::Red
             };
 
-            let init_color = match contract.init_size {
-                ..190_000 => Color::Reset,
-                190_000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
-                _ => Color::Red,
+            let init_color = if contract.init_size < initcode_warning_threshold {
+                Color::Reset
+            } else if contract.init_size <= self.limits.initcode {
+                Color::Yellow
+            } else {
+                Color::Red
             };
 
             let locale = &Locale::en;
@@ -591,7 +662,7 @@ impl PathOrContractInfo {
     /// Returns the path to the contract file if provided.
     pub fn path(&self) -> Option<PathBuf> {
         match self {
-            Self::Path(path) => Some(path.to_path_buf()),
+            Self::Path(path) => Some(path.clone()),
             Self::ContractInfo(info) => info.path.as_ref().map(PathBuf::from),
         }
     }
@@ -658,6 +729,46 @@ mod tests {
                 path: None,
                 name: "Counter".to_string()
             })
+        );
+    }
+
+    #[test]
+    fn size_report_uses_configured_limits() {
+        let mut contracts = BTreeMap::new();
+        contracts.insert(
+            "LargeContract".to_string(),
+            ContractInfo { runtime_size: 30_000, init_size: 60_000, is_dev_contract: false },
+        );
+
+        let default_report =
+            SizeReport { contracts: contracts.clone(), limits: ContractSizeLimits::default() };
+        assert!(default_report.exceeds_runtime_size_limit());
+        assert!(default_report.exceeds_initcode_size_limit());
+
+        let custom_report =
+            SizeReport { contracts, limits: ContractSizeLimits::new(131_072, 262_144) };
+        assert!(!custom_report.exceeds_runtime_size_limit());
+        assert!(!custom_report.exceeds_initcode_size_limit());
+        let output: serde_json::Value =
+            serde_json::from_str(&custom_report.format_json_output()).unwrap();
+        assert_eq!(
+            output,
+            serde_json::json!({
+                "LargeContract": {
+                    "runtime_size": 30000,
+                    "init_size": 60000,
+                    "runtime_margin": 101072,
+                    "init_margin": 202144,
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn contract_size_limits_derive_initcode_limit_from_runtime_limit() {
+        assert_eq!(
+            ContractSizeLimits::with_runtime_limit(50_000),
+            ContractSizeLimits::new(50_000, 100_000)
         );
     }
 }

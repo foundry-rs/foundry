@@ -46,7 +46,7 @@ pub struct FilterArgs {
 
 impl FilterArgs {
     /// Returns true if the filter is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.test_pattern.is_none()
             && self.test_pattern_inverse.is_none()
             && self.contract_pattern.is_none()
@@ -176,22 +176,22 @@ pub struct ProjectPathsAwareFilter {
 
 impl ProjectPathsAwareFilter {
     /// Returns true if the filter is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.args_filter.is_empty()
     }
 
     /// Returns the CLI arguments.
-    pub fn args(&self) -> &FilterArgs {
+    pub const fn args(&self) -> &FilterArgs {
         &self.args_filter
     }
 
     /// Returns the CLI arguments mutably.
-    pub fn args_mut(&mut self) -> &mut FilterArgs {
+    pub const fn args_mut(&mut self) -> &mut FilterArgs {
         &mut self.args_filter
     }
 
     /// Returns the project paths.
-    pub fn paths(&self) -> &ProjectPathsConfig {
+    pub const fn paths(&self) -> &ProjectPathsConfig {
         &self.paths
     }
 }

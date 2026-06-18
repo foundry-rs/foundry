@@ -1,10 +1,13 @@
 use std::str::FromStr;
 
+use super::TempoOpts;
 use crate::utils::{parse_ether_value, parse_json};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, hex};
 use alloy_rlp::Decodable;
 use clap::Parser;
+use foundry_common::FoundryTransactionBuilder;
 
 /// CLI helper to parse a EIP-7702 authorization list.
 /// Can be either a hex-encoded signed authorization or an address.
@@ -76,11 +79,18 @@ pub struct TransactionOpts {
     #[arg(long)]
     pub legacy: bool,
 
-    /// Send a EIP-4844 blob transaction.
+    /// Send a blob transaction using EIP-7594 (PeerDAS) format.
+    ///
+    /// Note: Use with `--eip4844` for the legacy EIP-4844 format.
     #[arg(long, conflicts_with = "legacy")]
     pub blob: bool,
 
-    /// Gas price for EIP-4844 blob transaction.
+    /// Send a blob transaction using EIP-4844 (legacy) format instead of EIP-7594. Must be used
+    /// with `--blob`.
+    #[arg(long, conflicts_with = "legacy", requires = "blob")]
+    pub eip4844: bool,
+
+    /// Gas price for EIP-7594/EIP-4844 blob transaction.
     #[arg(long, conflicts_with = "legacy", value_parser = parse_ether_value, env = "ETH_BLOB_GAS_PRICE", value_name = "BLOB_PRICE")]
     pub blob_gas_price: Option<U256>,
 
@@ -97,6 +107,44 @@ pub struct TransactionOpts {
     /// the `cast access-list` command.
     #[arg(long, value_parser = parse_json::<AccessList>)]
     pub access_list: Option<Option<AccessList>>,
+
+    #[command(flatten)]
+    pub tempo: TempoOpts,
+}
+
+impl TransactionOpts {
+    /// Applies gas, value, fee, and network-specific options to a transaction request.
+    pub fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        if let Some(gas_limit) = self.gas_limit {
+            tx.set_gas_limit(gas_limit.to());
+        }
+
+        if let Some(value) = self.value {
+            tx.set_value(value);
+        }
+
+        if let Some(gas_price) = self.gas_price {
+            if legacy {
+                tx.set_gas_price(gas_price.to());
+            } else {
+                tx.set_max_fee_per_gas(gas_price.to());
+            }
+        }
+
+        if !legacy && let Some(priority_fee) = self.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
+        }
+
+        if let Some(max_blob_fee) = self.blob_gas_price {
+            tx.set_max_fee_per_blob_gas(max_blob_fee.to())
+        }
+
+        // set network-specific options
+        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
+    }
 }
 
 #[cfg(test)]

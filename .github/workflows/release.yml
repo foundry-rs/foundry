@@ -6,7 +6,7 @@ on:
   push:
     tags:
       - "stable-monad"
-      - "v*.*.*-monad.*"
+      - "v*.*.*-monad-v*.*.*"
   workflow_dispatch:
 
 env:

@@ -5,7 +5,10 @@ mod uint;
 pub use uint::UintStrategy;
 
 mod param;
-pub use param::{fuzz_param, fuzz_param_from_state, fuzz_param_with_fixtures, mutate_param_value};
+pub use param::{
+    fuzz_param, fuzz_param_from_state, fuzz_param_with_fixtures, mutate_param_value,
+    mutate_param_value_with_senders,
+};
 
 mod calldata;
 pub use calldata::{fuzz_calldata, fuzz_calldata_from_state};

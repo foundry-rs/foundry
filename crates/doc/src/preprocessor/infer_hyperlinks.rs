@@ -203,7 +203,7 @@ struct InlineLinkTarget<'a> {
 }
 
 impl<'a> InlineLinkTarget<'a> {
-    fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
+    const fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
         Self { section: Cow::Borrowed(section), target_path }
     }
 }
@@ -261,22 +261,8 @@ impl<'a> InlineLink<'a> {
         self.exact_identifier().split('-').next().unwrap()
     }
 
-    fn exact_identifier(&self) -> &str {
-        let mut name = self.identifier;
-        if let Some(part) = self.part {
-            name = part;
-        }
-        name
-    }
-
-    /// Returns the name of the referenced item and its arguments, if any.
-    ///
-    /// Eg: `safeMint-address-uint256-` returns `("safeMint", ["address", "uint256"])`
-    #[expect(unused)]
-    fn ref_name_exact(&self) -> (&str, impl Iterator<Item = &str> + '_) {
-        let identifier = self.exact_identifier();
-        let mut iter = identifier.split('-');
-        (iter.next().unwrap(), iter.filter(|s| !s.is_empty()))
+    const fn exact_identifier(&self) -> &str {
+        if let Some(part) = self.part { part } else { self.identifier }
     }
 
     /// Returns the content of the matched link.
@@ -285,7 +271,7 @@ impl<'a> InlineLink<'a> {
     }
 
     /// Returns true if the link is external.
-    fn is_external(&self) -> bool {
+    const fn is_external(&self) -> bool {
         self.part.is_some()
     }
 }

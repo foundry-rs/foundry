@@ -210,13 +210,13 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
 
         cmd.forge_fuse().arg("verify-contract").root_arg().args([
             "--rpc-url".to_string(),
-            info.rpc.to_string(),
+            info.rpc.clone(),
             address,
             contract_path.to_string(),
             "--etherscan-api-key".to_string(),
-            info.etherscan.to_string(),
+            info.etherscan.clone(),
             "--verifier".to_string(),
-            info.verifier.to_string(),
+            info.verifier.clone(),
             "--guess-constructor-args".to_string(),
         ]);
 

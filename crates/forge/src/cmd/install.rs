@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{CommandUtils, Git, LoadConfig},
+    utils::{Git, LoadConfig},
 };
 use foundry_common::fs;
 use foundry_config::{Config, impl_figment_convert_basic};
@@ -189,15 +189,12 @@ impl DependencyInstallOpts {
                         && dep_id.as_ref().is_some_and(|id| id.is_branch())
                     {
                         // always work with relative paths when directly modifying submodules
-                        git.cmd()
-                            .args(["submodule", "set-branch", "-b", tag_or_branch])
-                            .arg(rel_path)
-                            .exec()?;
+                        git.set_submodule_branch(rel_path, tag_or_branch)?;
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
                         dep_id = Some(DepIdentifier::Branch {
-                            name: tag_or_branch.to_string(),
+                            name: tag_or_branch.clone(),
                             rev,
                             r#override: false,
                         });
@@ -327,8 +324,10 @@ impl Installer<'_> {
             dep.tag = self.last_tag(path);
         }
 
-        // checkout the tag if necessary
-        self.git_checkout(&dep, path, false)?;
+        // checkout the tag if necessary, using recursive checkout to properly clean up
+        // nested submodules that may exist on the default branch but not on the target tag.
+        // See: https://github.com/foundry-rs/foundry/issues/13688
+        self.git_checkout(&dep, path, true)?;
 
         trace!("updating dependency submodules recursively");
         self.git.root(path).submodule_update(
@@ -339,10 +338,49 @@ impl Installer<'_> {
             std::iter::empty::<PathBuf>(),
         )?;
 
+        // remove nested .git directories from submodules before removing the top-level .git
+        Self::remove_nested_git_dirs(path)?;
+
         // remove git artifacts
         fs::remove_dir_all(path.join(".git"))?;
 
         Ok(dep.tag)
+    }
+
+    /// Recursively removes `.git` files/directories from nested submodules within `root`.
+    ///
+    /// Submodules typically have a `.git` file (not a directory) pointing to the parent's
+    /// `.git/modules/` directory. This cleans those up so the result is a plain folder tree.
+    fn remove_nested_git_dirs(root: &Path) -> Result<()> {
+        Self::remove_nested_git_dirs_inner(root, root)
+    }
+
+    fn remove_nested_git_dirs_inner(root: &Path, dir: &Path) -> Result<()> {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return Ok(()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let ft = entry.file_type()?;
+
+            // never follow symlinks
+            if ft.is_symlink() {
+                continue;
+            }
+
+            let path = entry.path();
+            if path.file_name() == Some(".git".as_ref()) && path.parent() != Some(root) {
+                if ft.is_dir() {
+                    fs::remove_dir_all(&path)?;
+                } else {
+                    fs::remove_file(&path)?;
+                }
+            } else if ft.is_dir() {
+                Self::remove_nested_git_dirs_inner(root, &path)?;
+            }
+        }
+        Ok(())
     }
 
     /// Installs the dependency as new submodule.
@@ -526,14 +564,14 @@ impl Installer<'_> {
                     sh_println!("[{i}] {c} selected")?;
                     return Ok(c.clone());
                 }
-                _ => continue,
+                _ => {}
             }
         }
     }
 
     fn match_branch(self, tag: &str, path: &Path) -> Result<Option<String>> {
         // fetch remote branches and check for tag
-        let output = self.git.root(path).cmd().args(["branch", "-r"]).get_stdout_lossy()?;
+        let output = self.git.root(path).remote_branches()?;
 
         let mut candidates = output
             .lines()

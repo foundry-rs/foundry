@@ -214,7 +214,7 @@ impl SelectorsSubcommands {
                     .filter_map(|(k1, v1)| {
                         second_method_map
                             .iter()
-                            .find_map(|(k2, v2)| if **v2 == *v1 { Some((k2, v2)) } else { None })
+                            .find_map(|(k2, v2)| (**v2 == *v1).then_some((k2, v2)))
                             .map(|(k2, v2)| (v2, k1, k2))
                     })
                     .collect();
@@ -286,7 +286,7 @@ impl SelectorsSubcommands {
                         .collect()
                 };
 
-                let mut artifacts = artifacts.into_iter().peekable();
+                let mut artifacts = artifacts.into_iter();
 
                 #[derive(PartialEq, PartialOrd, Eq, Ord)]
                 enum SelectorType {
@@ -356,7 +356,7 @@ impl SelectorsSubcommands {
                                     selector_type.to_string(),
                                     sig,
                                     selector,
-                                    contract.to_string(),
+                                    contract.clone(),
                                 ]);
                             }
                         }
@@ -416,11 +416,11 @@ impl SelectorsSubcommands {
 
                 table.set_header(["Type", "Signature", "Selector", "Contract"]);
 
+                let selector_str = selector.strip_prefix("0x").unwrap_or(selector.as_str());
+                let selector_bytes = hex::decode(selector_str)?;
+
                 for (_file, contract, artifact) in artifacts {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
-
-                    let selector_bytes =
-                        hex::decode(selector.strip_prefix("0x").unwrap_or(&selector))?;
 
                     for func in abi.functions() {
                         if func.selector().as_slice().starts_with(selector_bytes.as_slice()) {

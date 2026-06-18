@@ -37,18 +37,6 @@ impl FromStr for Numeric {
     }
 }
 
-/// Deserializes the input into an `Option<U256>`, using [`from_int_or_hex`] to deserialize the
-/// inner value.
-pub fn from_int_or_hex_opt<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    match Option::<NumberOrHexU256>::deserialize(deserializer)? {
-        Some(val) => val.try_into_u256().map(Some),
-        None => Ok(None),
-    }
-}
-
 /// An enum that represents either a [serde_json::Number] integer, or a hex [U256].
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]

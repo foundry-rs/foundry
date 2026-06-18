@@ -328,8 +328,6 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     assert_eq!(function_config.test_isolated_function, contract_config.test_isolated_contract);
 });
 
-// Monad starts with MONAD_EIGHT spec which is Prague-compatible, so inline evm_version
-// overrides are ignored. blobbasefee is always available regardless of inline config annotations.
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.add_test(
         "inline.sol",
@@ -351,7 +349,7 @@ forgetest_init!(config_inline_evm_version, |prj, cmd| {
 
             /// forge-config: default.evm_version = "shanghai"
             function test_old() public {
-                // On Monad, blobbasefee is always available (MONAD_EIGHT is Prague-compatible).
+                vm.expectRevert();
                 dummy.getBlobBaseFee();
             }
 
@@ -369,7 +367,7 @@ forgetest_init!(config_inline_evm_version, |prj, cmd| {
             }
 
             function test_old() public {
-                // On Monad, blobbasefee is always available (MONAD_EIGHT is Prague-compatible).
+                vm.expectRevert();
                 dummy.getBlobBaseFee();
             }
 
@@ -394,6 +392,36 @@ Ran 2 tests for test/inline.sol:FunctionConfig
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+});
+
+forgetest_init!(config_inline_hardfork_same_network_family, |prj, cmd| {
+    prj.write_config(foundry_config::Config {
+        hardfork: Some("tempo:T2".parse::<foundry_config::FoundryHardfork>().unwrap()),
+        ..foundry_config::Config::default()
+    });
+    prj.add_test(
+        "inline.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract InlineHardfork is Test {
+            /// forge-config: default.hardfork = "tempo:T3"
+            function test_inline_hardfork() public {
+                assertTrue(true);
+            }
+        }
+    "#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/inline.sol:InlineHardfork
+[PASS] test_inline_hardfork() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });

@@ -1,4 +1,4 @@
-<svg width="2322px" height="488px" xmlns="http://www.w3.org/2000/svg">
+<svg width="2322px" height="524px" xmlns="http://www.w3.org/2000/svg">
   <style>
     .fg { fill: #AAAAAA }
     .bg { fill: #000000 }
@@ -10,7 +10,7 @@
       padding: 0 10px;
       line-height: 18px;
     }
-    .dimmed { opacity: 0.7; }
+    .dimmed { opacity: 0.4; }
     tspan {
       font: 14px SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace;
       white-space: pre;
@@ -72,6 +72,10 @@
     <tspan x="10px" y="460px"><tspan>Tip: Run </tspan><tspan class="fg-cyan">`forge test --rerun`</tspan><tspan> to retry only the 1 failed test</tspan>
 </tspan>
     <tspan x="10px" y="478px">
+</tspan>
+    <tspan x="10px" y="496px"><tspan>Fuzz seed: </tspan><tspan class="fg-cyan">0x64</tspan><tspan> (use </tspan><tspan class="fg-cyan">`--fuzz-seed`</tspan><tspan> to reproduce)</tspan>
+</tspan>
+    <tspan x="10px" y="514px">
 </tspan>
   </text>
 

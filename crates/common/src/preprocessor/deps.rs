@@ -182,6 +182,7 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
+        #[allow(clippy::collapsible_match)]
         match &expr.kind {
             ExprKind::Call(call_expr, call_args, named_args) => {
                 if let Some(dependency) = handle_call_expr(
@@ -462,7 +463,7 @@ interface {vm_interface_name} {{
     function deployCode(string memory _artifact, uint256 _value, bytes32 _salt) external returns (address);
     function deployCode(string memory _artifact, bytes memory _args, uint256 _value) external returns (address);
     function deployCode(string memory _artifact, bytes memory _args, uint256 _value, bytes32 _salt) external returns (address);
-    function getCode(string memory _artifact) external returns (bytes memory);
+    function getCode(string memory _artifact) external view returns (bytes memory);
 }}"#
             ),
         ));

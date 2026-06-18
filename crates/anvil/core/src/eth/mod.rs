@@ -1,5 +1,8 @@
 use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
-use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U256};
+use alloy_primitives::{
+    Address, B64, B256, Bytes, TxHash, U256,
+    map::{HashMap, HashSet},
+};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
     anvil::{Forking, MineOptions},
@@ -10,6 +13,7 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
+        parity::TraceType,
     },
 };
 use alloy_serde::WithOtherFields;
@@ -27,7 +31,7 @@ use self::serde_helpers::*;
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
-pub struct Params<T: Default> {
+pub struct Params<T> {
     #[serde(default)]
     pub params: T,
 }
@@ -90,6 +94,10 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockId>),
+
+    /// Returns storage values for multiple accounts and slots in a single call.
+    #[serde(rename = "eth_getStorageValues")]
+    EthGetStorageValues(HashMap<Address, Vec<B256>>, Option<BlockId>),
 
     #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(B256, bool),
@@ -201,16 +209,12 @@ pub enum EthRequest {
     #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
     GetBlobByTransactionHash(TxHash),
 
-    /// Returns the blobs for a given transaction hash.
-    #[serde(rename = "anvil_getBlobSidecarsByBlockId", with = "sequence")]
-    GetBlobSidecarsByBlockId(BlockId),
-
     /// Returns the genesis time for the chain
     #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
     GetGenesisTime(()),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
-    EthGetTransactionByBlockHashAndIndex(TxHash, Index),
+    EthGetTransactionByBlockHashAndIndex(B256, Index),
 
     #[serde(rename = "eth_getTransactionByBlockNumberAndIndex")]
     EthGetTransactionByBlockNumberAndIndex(BlockNumber, Index),
@@ -219,7 +223,7 @@ pub enum EthRequest {
     EthGetRawTransactionByHash(TxHash),
 
     #[serde(rename = "eth_getRawTransactionByBlockHashAndIndex")]
-    EthGetRawTransactionByBlockHashAndIndex(TxHash, Index),
+    EthGetRawTransactionByBlockHashAndIndex(B256, Index),
 
     #[serde(rename = "eth_getRawTransactionByBlockNumberAndIndex")]
     EthGetRawTransactionByBlockNumberAndIndex(BlockNumber, Index),
@@ -314,6 +318,14 @@ pub enum EthRequest {
     #[serde(rename = "debug_dbGet")]
     DebugDbGet(String),
 
+    /// geth's `debug_traceBlockByHash` endpoint
+    #[serde(rename = "debug_traceBlockByHash")]
+    DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
+
+    /// geth's `debug_traceBlockByNumber` endpoint
+    #[serde(rename = "debug_traceBlockByNumber")]
+    DebugTraceBlockByNumber(BlockNumber, #[serde(default)] GethDebugTracingOptions),
+
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
     TraceTransaction(B256),
@@ -328,6 +340,13 @@ pub enum EthRequest {
     // Return filtered traces over blocks
     #[serde(rename = "trace_filter", with = "sequence")]
     TraceFilter(TraceFilter),
+
+    /// Trace transaction endpoint for parity's `trace_replayBlockTransactions`
+    #[serde(rename = "trace_replayBlockTransactions")]
+    TraceReplayBlockTransactions(
+        #[serde(deserialize_with = "lenient_block_number::lenient_block_number")] BlockNumber,
+        HashSet<TraceType>,
+    ),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
@@ -582,11 +601,6 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendUnsignedTransaction", with = "sequence")]
     EthSendUnsignedTransaction(Box<WithOtherFields<TransactionRequest>>),
 
-    /// Turn on call traces for transactions that are returned to the user when they execute a
-    /// transaction (instead of just txhash/receipt)
-    #[serde(rename = "anvil_enableTraces", with = "empty_params")]
-    EnableTraces(()),
-
     /// Returns the number of transactions currently pending for inclusion in the next block(s), as
     /// well as the ones that are being scheduled for future execution only.
     /// Ref: <https://geth.ethereum.org/docs/rpc/ns-txpool#txpool_status>
@@ -711,17 +725,25 @@ pub enum EthRequest {
     #[serde(rename = "anvil_rollback", with = "sequence")]
     Rollback(Option<u64>),
 
-    /// Wallet
-    #[serde(rename = "wallet_getCapabilities", with = "empty_params")]
-    WalletGetCapabilities(()),
+    /// Sets the fee token for a user (Tempo-only)
+    #[serde(rename = "anvil_setFeeToken")]
+    SetFeeToken(Address, Address),
 
-    /// Add an address to the delegation capability of the wallet
-    #[serde(rename = "anvil_addCapability", with = "sequence")]
-    AnvilAddCapability(Address),
+    /// Sets the fee token for a validator (Tempo-only)
+    #[serde(rename = "anvil_setValidatorFeeToken")]
+    SetValidatorFeeToken(Address, Address),
 
-    /// Set the executor (sponsor) wallet
-    #[serde(rename = "anvil_setExecutor", with = "sequence")]
-    AnvilSetExecutor(String),
+    /// Mints FeeAMM liquidity for a token pair (Tempo-only)
+    #[serde(rename = "anvil_setFeeAmmLiquidity")]
+    SetFeeAmmLiquidity(
+        /// user_token
+        Address,
+        /// validator_token
+        Address,
+        /// amount
+        #[serde(deserialize_with = "deserialize_number")]
+        U256,
+    ),
 }
 
 /// Represents ethereum JSON-RPC API

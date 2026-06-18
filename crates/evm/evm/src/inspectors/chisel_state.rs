@@ -1,10 +1,7 @@
 use alloy_primitives::U256;
-use foundry_evm_core::backend::DatabaseError;
 use revm::{
-    Database, Inspector,
-    context::ContextTr,
-    inspector::JournalExt,
-    interpreter::{Interpreter, interpreter::EthInterpreter, interpreter_types::Jumps},
+    Inspector,
+    interpreter::{Interpreter, interpreter_types::Jumps},
 };
 
 /// An inspector for Chisel
@@ -19,17 +16,12 @@ pub struct ChiselState {
 impl ChiselState {
     /// Create a new Chisel state inspector.
     #[inline]
-    pub fn new(final_pc: usize) -> Self {
+    pub const fn new(final_pc: usize) -> Self {
         Self { final_pc, state: None }
     }
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for ChiselState
-where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
-{
+impl<CTX> Inspector<CTX> for ChiselState {
     #[cold]
     fn step_end(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         // If we are at the final pc of the REPL contract execution, set the state.

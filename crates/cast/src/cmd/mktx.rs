@@ -1,16 +1,20 @@
 use crate::tx::{self, CastTxBuilder};
+use alloy_consensus::{SignableTransaction, Signed};
+use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{EthereumWallet, TransactionBuilder, eip2718::Encodable2718};
+use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
-use alloy_signer::Signer;
+use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{LoadConfig, get_provider},
+    utils::LoadConfig,
 };
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use std::{path::PathBuf, str::FromStr};
+use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast mktx`.
 #[derive(Debug, Parser)]
@@ -77,7 +81,22 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
+        if self.tx.tempo.is_tempo() {
+            self.run_generic::<TempoNetwork>().await
+        } else {
+            self.run_generic::<Ethereum>().await
+        }
+    }
+
+    pub async fn run_generic<N: Network>(self) -> Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
+
+        let print_sponsor_hash = tx.tempo.print_sponsor_hash;
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -96,7 +115,7 @@ impl MakeTxArgs {
 
         let config = eth.load_config()?;
 
-        let provider = get_provider(&config)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
 
         let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
             .await?
@@ -105,6 +124,20 @@ impl MakeTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
+
+        // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
+        if print_sponsor_hash {
+            // Resolve the signer to derive the actual sender address, since the
+            // sponsor hash commits to the sender.
+            let signer = eth.wallet.signer().await?;
+            let from = signer.address();
+            let (tx, _) = tx_builder.build(from).await?;
+            let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
+                eyre::eyre!("This network does not support sponsored transactions")
+            })?;
+            sh_println!("{hash:?}")?;
+            return Ok(());
+        }
 
         if raw_unsigned {
             // Build unsigned raw tx
@@ -119,7 +152,8 @@ impl MakeTxArgs {
             // Use zero address as placeholder for unsigned transactions
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
 
-            let raw_tx = tx_builder.build_unsigned_raw(from).await?;
+            let (tx, _) = tx_builder.build(from).await?;
+            let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             sh_println!("{raw_tx}")?;
             return Ok(());

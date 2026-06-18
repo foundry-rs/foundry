@@ -45,8 +45,6 @@ fn sablier_v2_core() {
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
             .args(["--gas-limit", &u64::MAX.to_string()])
-            // These oversized count tests hit Monad memory limits before Sablier's custom errors.
-            .args(["--nmt", "SegmentCountExceedsMaxValue|TrancheCountExceedsMaxValue|SegmentCountTooHigh|TrancheCountTooHigh"])
             // Run tests without optimizations.
             .env("FOUNDRY_PROFILE", "lite")
             .install_command(&["bun", "install", "--prefer-offline"])
@@ -66,11 +64,17 @@ fn sablier_v2_core() {
 // <https://github.com/Vectorized/solady>
 #[test]
 fn solady() {
-    ExtTester::new("Vectorized", "solady", "cbcfe0009477aa329574f17e8db0a05703bb8bdd")
-        // Skip testPermit2OnDAI — reverts with Permit2Failed() due to Monad gas repricing
-        // causing the low-level call gas stipend to be insufficient.
-        .args(["--nmt", "testPermit2OnDAI"])
-        .run();
+    let mut tester =
+        ExtTester::new("Vectorized", "solady", "cbcfe0009477aa329574f17e8db0a05703bb8bdd");
+
+    // This test expects the mover contract created via CREATE2 to be selfdestructed within the
+    // same transaction. In isolation mode, each top-level call runs as a separate transaction
+    // context, so the selfdestruct doesn't clear the code as expected by the test.
+    if cfg!(feature = "isolate-by-default") {
+        tester = tester.args(["--nmt", "testSafeMoveETHViaMover"]);
+    }
+
+    tester.run();
 }
 
 // <https://github.com/pcaversaccio/snekmate>

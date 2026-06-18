@@ -7,8 +7,9 @@ yanked = "warn"
 ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
     "RUSTSEC-2024-0436",
-    # https://rustsec.org/advisories/RUSTSEC-2025-0119 number_prefix! is unmaintained
-    "RUSTSEC-2025-0119",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0173 proc-macro-error2 is unmaintained.
+    # Pulled through alloy-sol-macro/alloy-sol-types; no safe upgrade is available for this branch.
+    "RUSTSEC-2026-0173",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -63,11 +64,12 @@ exceptions = [
     # CC0 is a permissive license but somewhat unclear status for source code
     # so we prefer to not have dependencies using it
     # https://tldrlegal.com/license/creative-commons-cc0-1.0-universal
-    { allow = ["CC0-1.0"], name = "tiny-keccak" },
     { allow = ["CC0-1.0"], name = "trezor-client" },
     { allow = ["CC0-1.0"], name = "notify" },
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
+    # Rendered mdBook HTML source code includes attribution as required by CC-BY-4.0
+    { allow = ["CC-BY-4.0", "MIT"], name = "font-awesome-as-a-crate" },
 ]
 # copyleft = "deny"
 
@@ -96,17 +98,22 @@ unknown-registry = "warn"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
-    "https://github.com/foundry-rs/compilers",
-    "https://github.com/foundry-rs/foundry-fork-db",
+    "https://github.com/alloy-rs/evm",
+    "https://github.com/foundry-rs/foundry-core",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/paradigmxyz/solar",
     "https://github.com/bluealloy/revm",
     # Only for tests.
     "https://github.com/rust-cli/rexpect",
-    # Monad forks
-    "https://github.com/haythemsellami/evm",
-    "https://github.com/haythemsellami/foundry-fork-db",
-    "https://github.com/haythemsellami/revm-inspectors",
-    "https://github.com/category-labs/monad-revm",
+    # Tempo
+    "https://github.com/tempoxyz/tempo",
+    "https://github.com/tempoxyz/mpp-rs",
+    # Monad
     "https://github.com/category-labs/alloy-monad-evm",
+    "https://github.com/category-labs/monad-revm",
+    # Transitive dependency of Tempo
+    "https://github.com/paradigmxyz/reth",
+    "https://github.com/paradigmxyz/reth-core",
+    # Temporary: upstream OP crates until release is published.
+    "https://github.com/ethereum-optimism/optimism",
 ]
