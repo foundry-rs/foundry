@@ -285,7 +285,7 @@ fn main() -> Result<()> {
 }
 
 #[cfg(unix)]
-fn ensure_supported_platform() -> Result<()> {
+const fn ensure_supported_platform() -> Result<()> {
     Ok(())
 }
 
