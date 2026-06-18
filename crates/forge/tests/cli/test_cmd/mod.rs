@@ -98,12 +98,7 @@ forgetest!(testdata, |_prj, cmd| {
     let nmc_isolate = format!(
         "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount|{FLAKY_TESTDATA_CONTRACTS})",
     );
-    let nmc_default = format!("--nmc=({FLAKY_TESTDATA_CONTRACTS})");
-    if cfg!(feature = "isolate-by-default") {
-        args.push(&nmc_isolate);
-    } else {
-        args.push(&nmc_default);
-    }
+    args.push(&nmc_isolate);
 
     let orig_assert = cmd.args(args).assert();
     if orig_assert.get_output().status.success() {
@@ -390,7 +385,6 @@ contract SimpleContractTest is DSTest {
 }
    "#;
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
@@ -452,7 +446,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // checks that forge test repeatedly produces the same output
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_test_repeatedly, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
@@ -545,7 +538,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests that libraries are handled correctly in multiforking mode
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(
         "Contract.sol",
@@ -1466,7 +1458,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests internal functions trace
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace, |prj, cmd| {
     prj.clear();
 
@@ -1539,7 +1530,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests internal functions trace with memory decoding
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
     prj.clear();
 
@@ -1828,7 +1818,6 @@ contract ATest is Test {
 });
 
 // tests `pauseTracing` and `resumeTracing` functions
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -3381,7 +3370,6 @@ Ran 1 test for test/ForkTest.t.sol:ForkTest
 });
 
 // Tests that test traces display state changes when running with verbosity.
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--no-dynamic-test-linking"])
@@ -3481,7 +3469,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args([
@@ -3499,7 +3486,6 @@ forgetest_init!(colored_traces, |prj, cmd| {
 
 // Tests that traces for successful tests can be suppressed by using `-s` flag.
 // <https://github.com/foundry-rs/foundry/issues/9864>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
@@ -4357,7 +4343,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(detailed_revert_when_calling_non_contract_address, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
@@ -4489,7 +4474,6 @@ Tip: Run `forge test --rerun` to retry only the 3 failed tests
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(detailed_revert_when_delegatecalling_unlinked_library, |prj, cmd| {
     prj.add_test(
         "NonContractDelegateCallRevertTest.t.sol",
@@ -4688,7 +4672,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // tests proper reverts in fork mode for contracts with non-existent linked libraries.
 // <https://github.com/foundry-rs/foundry/issues/11185>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_fork_test_with_non_existent_linked_library, |prj, cmd| {
     prj.update_config(|config| {
         config.libraries =
@@ -4773,7 +4756,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11632>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(invariant_consistent_output, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
