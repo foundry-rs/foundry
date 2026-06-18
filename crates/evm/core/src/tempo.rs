@@ -28,10 +28,11 @@ pub use foundry_evm_networks::{
     TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
 };
 pub use tempo_contracts::precompiles::{
-    ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IFeeManager, ISignatureVerifier, IStablecoinDEX,
-    ITIP20ChannelReserve, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, IAccountKeychain, IAddressRegistry,
+    IFeeManager, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, ITIP20ChannelReserve,
+    ITIP403Registry, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
     STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
-    TIP20_FACTORY_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 pub use tempo_precompiles::{
     address_registry::{AddressRegistry, IMPLICIT_APPROVAL_LIST, is_implicitly_approved},

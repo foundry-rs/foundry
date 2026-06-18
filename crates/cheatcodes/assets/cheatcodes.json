@@ -5626,6 +5626,46 @@
     },
     {
       "func": {
+        "id": "expectKeychainAdminVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainAdminVerified(address,bytes32,bytes)",
+        "selector": "0xcbe45e4f",
+        "selectorBytes": [
+          203,
+          228,
+          94,
+          79
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectKeychainVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.",
+        "declaration": "function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainVerified(address,bytes32,bytes)",
+        "selector": "0x3040e515",
+        "selectorBytes": [
+          48,
+          64,
+          229,
+          21
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectLogoURIUpdated",
         "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
         "declaration": "function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
@@ -10404,6 +10444,46 @@
           96,
           156,
           101
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychain",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.",
+        "declaration": "function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychain(uint256,address,bytes32)",
+        "selector": "0x5804c690",
+        "selectorBytes": [
+          88,
+          4,
+          198,
+          144
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychainAdmin",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychainAdmin(uint256,address,bytes32)",
+        "selector": "0xbc5fb2f7",
+        "selectorBytes": [
+          188,
+          95,
+          178,
+          247
         ]
       },
       "group": "crypto",
