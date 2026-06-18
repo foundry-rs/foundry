@@ -454,6 +454,7 @@ pub fn ethereum_hardfork_from_block_tag(block: impl Into<BlockNumberOrTag>) -> E
 mod tests {
     use super::*;
     use alloy_hardforks::ethereum::mainnet::*;
+    use tempo_chainspec::constants::{mainnet::*, moderato::*};
 
     #[test]
     fn test_ethereum_spec_id_mapping() {
@@ -487,6 +488,23 @@ mod tests {
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(42431, u64::MAX),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+        );
+
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T6_TIMESTAMP - 1),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T5))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MAINNET_CHAIN_ID, MAINNET_T6_TIMESTAMP),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T6))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T6_TIMESTAMP - 1),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T5))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(MODERATO_CHAIN_ID, MODERATO_T6_TIMESTAMP),
             Some(FoundryHardfork::Tempo(TempoHardfork::T6))
         );
     }
