@@ -1584,6 +1584,61 @@ Traces:
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/15224>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(internal_functions_trace_calldata_bytes, |prj, cmd| {
+    prj.clear();
+
+    prj.add_test(
+        "DecodeInternalCalldata",
+        r#"
+contract DecodeInternalCalldataTraceTest {
+    function test_decodeInternalCalldataBytes() public {
+        DecodeInternalTarget target = new DecodeInternalTarget();
+
+        bytes[] memory wrappedSignatures = new bytes[](1);
+        wrappedSignatures[0] = hex"11223344556677889900";
+
+        bytes32 expectedDigest = keccak256("digest that should appear in the internal trace");
+
+        bool ok = target.outer(wrappedSignatures, expectedDigest);
+        require(ok, "target returned false");
+    }
+}
+
+contract DecodeInternalTarget {
+    function outer(bytes[] calldata signatures, bytes32 digest) external pure returns (bool) {
+        bytes calldata signature = signatures[0];
+        return _internalValidate(digest, signature);
+    }
+
+    function _internalValidate(bytes32 digest, bytes calldata signature)
+        internal
+        pure
+        returns (bool)
+    {
+        return digest == keccak256("digest that should appear in the internal trace")
+            && signature.length == 10;
+    }
+}
+     "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "-vvvv", "--decode-internal"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        stdout.contains(
+            "DecodeInternalTarget::_internalValidate(bytes32,bytes)(\
+             0x9a707a44f6e6038d2b03f3947e82f6403612c5d5b923868f6a759e9c38e16a28, \
+             0x11223344556677889900)"
+        ),
+        "{stdout}"
+    );
+});
+
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
 forgetest_init!(deterministic_randomness_with_seed, |prj, cmd| {
     prj.add_test(
