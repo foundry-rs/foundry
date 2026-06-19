@@ -1206,9 +1206,20 @@ contract SymbolicArtifactFailOnRevert is Test {
     });
     std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
 
-    cmd.forge_fuse()
-        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
-        .assert_failure();
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noop()");
+    assert_eq!(result["status"], "Failure");
+    assert!(result["kind"].get("Invariant").is_some(), "{result}");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 2);
+    assert_eq!(result["kind"]["Invariant"]["reverts"], 1);
+    assert!(result["kind"].get("Unit").is_none(), "{result}");
 
     let fixed_artifact_path = prj.root().join("fixed-artifact.json");
     let mut fixed_artifact = artifact;

@@ -1916,12 +1916,14 @@ impl TestResult {
         replayed_entirely: bool,
         invariant_name: &String,
         replay_reason: Option<String>,
+        calls: usize,
+        reverts: usize,
         call_sequence: Vec<BaseCounterExample>,
     ) {
         self.kind = TestKind::Invariant {
             runs: 1,
-            calls: 1,
-            reverts: 1,
+            calls,
+            reverts,
             workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,

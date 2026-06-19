@@ -1512,14 +1512,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         rd: Some(self.revert_decoder()),
                     },
                 ) {
-                    Ok((success, replayed_entirely, reason, reverts)) => {
+                    Ok((success, replayed_entirely, reason, calls_count, reverts)) => {
                         if success {
-                            self.result.invariant_replay_success(txes.len(), reverts);
+                            self.result.invariant_replay_success(calls_count, reverts);
                         } else {
                             self.result.invariant_replay_fail(
                                 replayed_entirely,
                                 &invariant.signature(),
                                 reason.or_else(|| artifact.replay.reason.clone()),
+                                calls_count,
+                                reverts,
                                 calls,
                             );
                         }
@@ -1883,7 +1885,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &mut call_sequence,
                 assertion_failure,
             );
-            if let Ok((success, replayed_entirely, replay_reason, _)) = replay
+            if let Ok((success, replayed_entirely, replay_reason, calls_count, reverts)) = replay
                 && !success
             {
                 let warn =
@@ -1939,6 +1941,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     replayed_entirely,
                     &invariant_contract.anchor().name,
                     replay_reason,
+                    calls_count,
+                    reverts,
                     call_sequence.clone(),
                 );
                 if let Some(artifact) = self.persist_invariant_sequence_counterexample_artifact(
@@ -2670,8 +2674,8 @@ struct InvariantPersistedFailure {
 }
 
 /// Mirrors `check_sequence`'s return:
-/// `(success, replayed_entirely, optional_reason, reverts)`.
-type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>, usize)>;
+/// `(success, replayed_entirely, optional_reason, calls, reverts)`.
+type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>, usize, usize)>;
 
 /// Borrowed context shared by primary-invariant and handler-side replay helpers.
 struct ReplayContext<'a> {

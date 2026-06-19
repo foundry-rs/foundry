@@ -255,7 +255,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         // do not roll back the removal.
         ShrinkErrorPolicy::KeepRemoved,
         |shrinker| {
-            let (success, _, _, _) = check_sequence(
+            let (success, _, _, _, _) = check_sequence(
                 executor.clone(),
                 calls,
                 shrinker.current().collect(),
@@ -357,14 +357,14 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     test_address: Address,
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
-) -> eyre::Result<(bool, bool, Option<String>, usize)> {
+) -> eyre::Result<(bool, bool, Option<String>, usize, usize)> {
     let mut reverts = 0;
     let early = replay_sequence(
         &mut executor,
         calls,
         &sequence,
         options.accumulate_warp_roll,
-        |_idx, call_result| {
+        |idx, call_result| {
             // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed
             // scenarios that are replayed with a modified version of test driver (that use
             // new `vm.assume` cheatcodes).
@@ -379,17 +379,19 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                     false,
                     false,
                     assertion_failure_reason(call_result, options.rd),
+                    idx + 1,
                     reverts,
                 )));
             }
             if call_result.reverted && options.fail_on_revert {
                 if options.expect_assertion_failure {
-                    return Ok(ReplayDecision::Stop((true, false, None, reverts)));
+                    return Ok(ReplayDecision::Stop((true, false, None, idx + 1, reverts)));
                 }
                 return Ok(ReplayDecision::Stop((
                     false,
                     false,
                     call_failure_reason(call_result, options.rd),
+                    idx + 1,
                     reverts,
                 )));
             }
@@ -404,7 +406,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     // invariant call: those delays would not be representable in the final shrunk sequence.
     let (success, replayed_entirely, reason) =
         finish_sequence_check(&executor, test_address, calldata, &options)?;
-    Ok((success, replayed_entirely, reason, reverts))
+    Ok((success, replayed_entirely, reason, sequence.len(), reverts))
 }
 
 fn finish_sequence_check<FEN: FoundryEvmNetwork>(
