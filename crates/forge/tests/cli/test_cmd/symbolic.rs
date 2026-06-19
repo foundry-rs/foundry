@@ -1179,7 +1179,7 @@ contract SymbolicArtifactFailOnRevert is Test {
             {
                 "warp": null,
                 "roll": null,
-                "sender": "0x0000000000000000000000000000000000000000",
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
                 "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
                 "calldata": "0x1d2aa5b3",
                 "value": null,
@@ -1192,7 +1192,7 @@ contract SymbolicArtifactFailOnRevert is Test {
             {
                 "warp": null,
                 "roll": null,
-                "sender": "0x0000000000000000000000000000000000000000",
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
                 "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
                 "calldata": "0xe25fe175",
                 "value": null,
@@ -1315,7 +1315,7 @@ contract SymbolicArtifactStaleTarget is Test {
         "calls": [{
             "warp": null,
             "roll": null,
-            "sender": "0x0000000000000000000000000000000000000000",
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
             "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
             "calldata": "0xffffffff",
             "value": null,
@@ -1458,6 +1458,25 @@ contract SymbolicArtifactForbiddenSender is Test {
     let stdout = cmd
         .forge_fuse()
         .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("uses forbidden sender"), "{stdout}");
+
+    let zero_sender_artifact_path = prj.root().join("zero-sequence-sender-artifact.json");
+    let mut zero_sender_artifact = artifact;
+    zero_sender_artifact["calls"][0]["sender"] =
+        serde_json::json!("0x0000000000000000000000000000000000000000");
+    std::fs::write(
+        &zero_sender_artifact_path,
+        serde_json::to_vec_pretty(&zero_sender_artifact).unwrap(),
+    )
+    .unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", zero_sender_artifact_path.to_str().unwrap()])
         .assert_failure()
         .get_output()
         .stdout_lossy();
@@ -1693,7 +1712,7 @@ contract SymbolicArtifactNetworkReplay is Test {
         "calls": [{
             "warp": null,
             "roll": null,
-            "sender": "0x0000000000000000000000000000000000000000",
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
             "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
             "calldata": "0xe25fe175",
             "value": null,

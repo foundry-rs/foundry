@@ -1466,8 +1466,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                         if (!sender_filters.targeted.is_empty()
                             && !sender_filters.targeted.contains(&tx.sender))
-                            || (tx.sender != Address::ZERO
-                                && sender_filters.excluded.contains(&tx.sender))
+                            || sender_filters.excluded.contains(&tx.sender)
                         {
                             self.result.single_fail(Some(format!(
                                 "sequence symbolic artifact call {} uses forbidden sender {}",
