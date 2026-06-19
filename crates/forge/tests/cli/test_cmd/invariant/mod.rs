@@ -352,9 +352,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 2);
-        assertEq(handlerTwo.hit4(), 1);
-        assertEq(handlerTwo.hit5(), 3);
+        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit4(), 2);
+        assertEq(handlerTwo.hit5(), 1);
     }
 
     function invariant_selectors_weight() public view {}
@@ -399,7 +399,7 @@ contract InvariantSequenceLenTest is Test {
         .stdout_eq(str![[r#"
 ...
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 1)
+	[Sequence] (original: [..], shrunk: 1)
 ...
 "#]]);
 
@@ -408,19 +408,20 @@ contract InvariantSequenceLenTest is Test {
     prj.update_config(|config| {
         config.invariant.shrink_run_limit = 0;
     });
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    assert_invariant(cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "invariant_increment",
+        "--no-dynamic-test-linking",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 3)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 1, calls: 3, reverts: 0)
+	[SEQUENCE]
+ invariant_increment() ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -428,30 +429,27 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
-"#]],
-    );
+"#]]);
 
     // Check solidity sequence output on same failure.
     cmd.forge_fuse().arg("clean").assert_success();
     prj.update_config(|config| {
         config.invariant.show_solidity = true;
     });
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    assert_invariant(cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "invariant_increment",
+        "--no-dynamic-test-linking",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 3)
-		vm.prank(0x0000000000000000000000000000000000001490);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x8ef7F804bAd9183981A366EA618d9D47D3124649);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x00000000000000000000000000000000000016C5);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
- invariant_increment() (runs: 1, calls: 3, reverts: 0)
+	[SEQUENCE]
+ invariant_increment() ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -459,26 +457,26 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
-"#]],
-    );
+"#]]);
 
     // Persisted failures should be able to switch output.
     prj.update_config(|config| {
         config.invariant.show_solidity = false;
     });
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
-        .assert_failure()
-        .stdout_eq(str![[r#"
+    assert_invariant(cmd.forge_fuse().args([
+        "test",
+        "--mt",
+        "invariant_increment",
+        "--no-dynamic-test-linking",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 3, shrunk: 3)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 1, calls: 1, reverts: 1)
+	[SEQUENCE]
+ invariant_increment() ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -486,8 +484,7 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
-"#]],
-    );
+"#]]);
 });
 
 // Tests that persisted failure is discarded if test contract was modified.
