@@ -1,6 +1,6 @@
 use crate::{
-    cmd::test::{FilterArgs, TestArgs},
-    multi_runner::{FuzzMinimizeConfig, ShowmapConfig},
+    cmd::test::{FilterArgs, FuzzMinimizeReplaySession, TestArgs},
+    multi_runner::ShowmapConfig,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Function, JsonAbi};
@@ -220,6 +220,7 @@ impl FuzzCminArgs {
         let mut test = minimizer_test_args(self.filter);
         test.enable_fuzz_only();
         test.reject_machine_unsupported_flags()?;
+        let session = prepare_minimize_session(&mut test).await?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let mut kept = 0usize;
         let mut total = 0usize;
@@ -234,8 +235,7 @@ impl FuzzCminArgs {
                 skipped += 1;
                 continue;
             };
-            let observation =
-                replay_candidate(&mut test, evm_edge_indices.clone(), sequence).await?;
+            let observation = replay_candidate(&session, evm_edge_indices.clone(), sequence)?;
             replayed += observation.replayed;
             skipped += observation.skipped;
             let keep = merge_new_edges(&mut cumulative, &observation);
@@ -295,9 +295,9 @@ impl FuzzTminArgs {
         let mut test = minimizer_test_args(self.filter);
         test.enable_fuzz_only();
         test.reject_machine_unsupported_flags()?;
+        let session = prepare_minimize_session(&mut test).await?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
-        let original =
-            replay_candidate(&mut test, evm_edge_indices.clone(), sequence.clone()).await?;
+        let original = replay_candidate(&session, evm_edge_indices.clone(), sequence.clone())?;
         if original.replayed == 0 && !original.has_coverage() && original.failure.is_none() {
             bail!(
                 "replayed 0 transactions from {}; check that --mc/--mt match the corpus entry",
@@ -306,14 +306,13 @@ impl FuzzTminArgs {
         }
         let mut attempts = 0usize;
         minimize_sequence(
-            &mut test,
-            evm_edge_indices.clone(),
+            &session,
+            evm_edge_indices,
             &original,
             &mut sequence,
             self.max_attempts,
             &mut attempts,
-        )
-        .await?;
+        )?;
 
         if self.out.extension() == Some("gz".as_ref()) {
             fs::write_json_gzip_file(&self.out, &sequence)?;
@@ -489,35 +488,18 @@ impl Drop for QuietShellGuard {
     }
 }
 
-async fn replay_candidate(
-    test: &mut TestArgs,
+async fn prepare_minimize_session(test: &mut TestArgs) -> Result<FuzzMinimizeReplaySession> {
+    let _quiet = QuietShellGuard::new();
+    test.prepare_fuzz_minimize_replay().await
+}
+
+fn replay_candidate(
+    session: &FuzzMinimizeReplaySession,
     evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
     sequence: Vec<BasicTxDetails>,
 ) -> Result<ReplayObservation> {
-    let observations = Arc::new(Mutex::new(Vec::new()));
-    test.set_fuzz_minimize_override(FuzzMinimizeConfig {
-        input: sequence,
-        evm_edge_indices,
-        observations: observations.clone(),
-    });
     let _quiet = QuietShellGuard::new();
-    let _ = test.compile_and_run().await?;
-    let observations = observations.lock().expect("minimize observations lock").clone();
-    Ok(merge_observations(observations))
-}
-
-fn merge_observations(observations: Vec<ReplayObservation>) -> ReplayObservation {
-    let mut merged = ReplayObservation::default();
-    for observation in observations {
-        merge_edge_vec(&mut merged.evm_edges, &observation.evm_edges);
-        merge_edge_vec(&mut merged.sancov_edges, &observation.sancov_edges);
-        merged.replayed += observation.replayed;
-        merged.skipped += observation.skipped;
-        if merged.failure.is_none() {
-            merged.failure = observation.failure;
-        }
-    }
-    merged
+    session.replay(sequence, evm_edge_indices)
 }
 
 fn merge_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
@@ -541,8 +523,8 @@ fn count_edges(observation: &ReplayObservation) -> usize {
         + observation.sancov_edges.iter().filter(|&&edge| edge != 0).count()
 }
 
-async fn minimize_sequence(
-    test: &mut TestArgs,
+fn minimize_sequence(
+    session: &FuzzMinimizeReplaySession,
     evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
     original: &ReplayObservation,
     sequence: &mut Vec<BasicTxDetails>,
@@ -554,15 +536,13 @@ async fn minimize_sequence(
         let mut candidate = sequence.clone();
         candidate.remove(idx);
         if accepts_candidate(
-            test,
+            session,
             evm_edge_indices.clone(),
             original,
             candidate.clone(),
             max_attempts,
             attempts,
-        )
-        .await?
-        {
+        )? {
             *sequence = candidate;
         } else {
             idx += 1;
@@ -574,15 +554,13 @@ async fn minimize_sequence(
         let mut candidate = sequence.clone();
         cleanup_metadata(&mut candidate[idx]);
         if accepts_candidate(
-            test,
+            session,
             evm_edge_indices.clone(),
             original,
             candidate.clone(),
             max_attempts,
             attempts,
-        )
-        .await?
-        {
+        )? {
             *sequence = candidate;
         }
         idx += 1;
@@ -597,15 +575,13 @@ async fn minimize_sequence(
             let mut candidate = sequence.clone();
             candidate[tx_idx].call_details.calldata = calldata.into();
             if accepts_candidate(
-                test,
+                session,
                 evm_edge_indices.clone(),
                 original,
                 candidate.clone(),
                 max_attempts,
                 attempts,
-            )
-            .await?
-            {
+            )? {
                 *sequence = candidate;
             }
         }
@@ -614,8 +590,8 @@ async fn minimize_sequence(
     Ok(())
 }
 
-async fn accepts_candidate(
-    test: &mut TestArgs,
+fn accepts_candidate(
+    session: &FuzzMinimizeReplaySession,
     evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
     original: &ReplayObservation,
     candidate: Vec<BasicTxDetails>,
@@ -626,7 +602,7 @@ async fn accepts_candidate(
         return Ok(false);
     }
     *attempts += 1;
-    let observed = replay_candidate(test, evm_edge_indices, candidate).await?;
+    let observed = replay_candidate(session, evm_edge_indices, candidate)?;
     if let Some(failure) = &original.failure {
         Ok(observed.failure.as_ref() == Some(failure))
     } else {

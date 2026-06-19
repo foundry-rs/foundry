@@ -318,6 +318,68 @@ contract ForgeFuzzCminCoverageTest is Test {
     assert_eq!(std::fs::read_dir(prj.root().join("cmin")).unwrap().count(), 2);
 });
 
+forgetest_init!(forge_fuzz_tmin_reuses_session_across_candidates, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzTminSession.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzTminSessionTest is Test {
+    uint256 public sink;
+
+    function testFuzz_branch(uint256 value) public {
+        if (value == 1) {
+            sink = 1;
+        } else if (value == 2) {
+            sink = 2;
+        } else {
+            sink = 3;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000001",
+  "value":"0x0"
+},{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000002",
+  "value":"0x0"
+},{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0x003919a0000000000000000000000000000000000000000000000000000000000000002a",
+  "value":"0x0"
+}]"#;
+    std::fs::write(corpus.join("multi.json"), entry).unwrap();
+
+    let tmin = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminSessionTest",
+            "corpus/multi.json",
+            "--out",
+            "min-session.json",
+            "--max-attempts",
+            "4",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("after 4 candidate replays"), "{stdout}");
+    assert!(prj.root().join("min-session.json").is_file());
+});
+
 forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
     let worker0 = prj.root().join("corpus/worker0/corpus");
     let worker1 = prj.root().join("corpus/worker1/corpus");

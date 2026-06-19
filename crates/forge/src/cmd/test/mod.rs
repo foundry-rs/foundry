@@ -51,9 +51,10 @@ use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
-    executors::ShowmapDomain,
-    fuzz::CounterExample,
+    executors::{ReplayObservation, ShowmapDomain},
+    fuzz::{BasicTxDetails, CounterExample},
     hardforks::TempoHardfork,
+    inspectors::EdgeIndexMap,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -64,7 +65,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc::channel},
+    sync::{Arc, Mutex, mpsc::channel},
     time::{Duration, Instant},
 };
 use yansi::Paint;
@@ -79,6 +80,89 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+pub(crate) struct FuzzMinimizeReplaySession {
+    filter: ProjectPathsAwareFilter,
+    passes: Vec<FuzzMinimizeRunnerPass>,
+}
+
+impl FuzzMinimizeReplaySession {
+    pub(crate) fn replay(
+        &self,
+        sequence: Vec<BasicTxDetails>,
+        evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
+    ) -> Result<ReplayObservation> {
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let fuzz_minimize = FuzzMinimizeConfig {
+            input: sequence,
+            evm_edge_indices,
+            observations: observations.clone(),
+        };
+
+        for pass in &self.passes {
+            pass.replay(&self.filter, fuzz_minimize.clone())?;
+        }
+
+        let observations = observations.lock().expect("minimize observations lock").clone();
+        Ok(merge_replay_observations(observations))
+    }
+}
+
+enum FuzzMinimizeRunnerPass {
+    Eth(MultiContractRunner<EthEvmNetwork>),
+    Tempo(MultiContractRunner<TempoEvmNetwork>),
+    #[cfg(feature = "optimism")]
+    Op(MultiContractRunner<OpEvmNetwork>),
+}
+
+impl FuzzMinimizeRunnerPass {
+    fn replay(
+        &self,
+        filter: &ProjectPathsAwareFilter,
+        fuzz_minimize: FuzzMinimizeConfig,
+    ) -> Result<()> {
+        match self {
+            Self::Eth(runner) => replay_with_runner(runner, filter, fuzz_minimize),
+            Self::Tempo(runner) => replay_with_runner(runner, filter, fuzz_minimize),
+            #[cfg(feature = "optimism")]
+            Self::Op(runner) => replay_with_runner(runner, filter, fuzz_minimize),
+        }
+    }
+}
+
+fn replay_with_runner<FEN: FoundryEvmNetwork>(
+    runner: &MultiContractRunner<FEN>,
+    filter: &ProjectPathsAwareFilter,
+    fuzz_minimize: FuzzMinimizeConfig,
+) -> Result<()> {
+    let mut runner = runner.clone();
+    runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
+    let _ = runner.test_collect(filter)?;
+    Ok(())
+}
+
+fn merge_replay_observations(observations: Vec<ReplayObservation>) -> ReplayObservation {
+    let mut merged = ReplayObservation::default();
+    for observation in observations {
+        merge_replay_edge_vec(&mut merged.evm_edges, &observation.evm_edges);
+        merge_replay_edge_vec(&mut merged.sancov_edges, &observation.sancov_edges);
+        merged.replayed += observation.replayed;
+        merged.skipped += observation.skipped;
+        if merged.failure.is_none() {
+            merged.failure = observation.failure;
+        }
+    }
+    merged
+}
+
+fn merge_replay_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
+    if dst.len() < src.len() {
+        dst.resize(src.len(), 0);
+    }
+    for (dst, src) in dst.iter_mut().zip(src) {
+        *dst = (*dst).max(*src);
+    }
+}
 
 /// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -490,11 +574,6 @@ impl TestArgs {
         self.showmap_override = Some(showmap);
     }
 
-    /// Overrides fuzz minimization config for callers that replay candidate inputs.
-    pub(crate) fn set_fuzz_minimize_override(&mut self, fuzz_minimize: FuzzMinimizeConfig) {
-        self.fuzz_minimize_override = Some(fuzz_minimize);
-    }
-
     /// Sets test filters for internal callers.
     pub(crate) fn set_filter(&mut self, filter: FilterArgs) {
         self.filter = filter;
@@ -623,6 +702,13 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
+        let (project_root, config, evm_opts, output, filter) = self.compile_project().await?;
+        self.run_tests(&project_root, config, evm_opts, &output, &filter, false).await
+    }
+
+    async fn compile_project(
+        &mut self,
+    ) -> Result<(PathBuf, Config, EvmOpts, ProjectCompileOutput, ProjectPathsAwareFilter)> {
         let machine_mode = foundry_cli::is_machine();
 
         // Merge all configs.
@@ -658,6 +744,7 @@ impl TestArgs {
 
         // Set up the project.
         let project = config.project()?;
+        let project_root = project.paths.root.clone();
 
         let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
@@ -677,7 +764,83 @@ impl TestArgs {
             emit_machine_compile_error(&output);
         }
 
-        self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
+        Ok((project_root, config, evm_opts, output, filter))
+    }
+
+    pub(crate) async fn prepare_fuzz_minimize_replay(
+        &mut self,
+    ) -> Result<FuzzMinimizeReplaySession> {
+        let (_, mut config, mut evm_opts, output, filter) = self.compile_project().await?;
+
+        if config.fuzz.run == Some(0) {
+            bail!("`fuzz.run` must be greater than 0");
+        }
+
+        if self.gas_report {
+            evm_opts.isolate = true;
+        } else {
+            config.fuzz.gas_report_samples = 0;
+            config.invariant.gas_report_samples = 0;
+        }
+
+        config.fuzz.seed = config
+            .fuzz
+            .seed
+            .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
+
+        evm_opts.infer_network_from_fork().await;
+
+        let inline_config = InlineConfig::new_parsed(&output, &config)?;
+        let override_networks = inline_config.referenced_override_networks(&config.profile);
+        let mut passes = Vec::new();
+
+        if override_networks.is_empty() {
+            passes.push(
+                self.dispatch_fuzz_minimize_network(
+                    &evm_opts,
+                    config,
+                    evm_opts.clone(),
+                    &output,
+                    MultiNetworkConfig::default(),
+                )
+                .await?,
+            );
+        } else {
+            let all_override_networks = override_networks.clone();
+            passes.push(
+                self.dispatch_fuzz_minimize_network(
+                    &evm_opts,
+                    config.clone(),
+                    evm_opts.clone(),
+                    &output,
+                    MultiNetworkConfig {
+                        all_override_networks: all_override_networks.clone(),
+                        pass_network: None,
+                    },
+                )
+                .await?,
+            );
+
+            for &network in &override_networks {
+                let mut pass_evm_opts = evm_opts.clone();
+                pass_evm_opts.networks = network.into();
+                passes.push(
+                    self.dispatch_fuzz_minimize_network(
+                        &pass_evm_opts,
+                        config.clone(),
+                        pass_evm_opts.clone(),
+                        &output,
+                        MultiNetworkConfig {
+                            all_override_networks: all_override_networks.clone(),
+                            pass_network: Some(network),
+                        },
+                    )
+                    .await?,
+                );
+            }
+        }
+
+        Ok(FuzzMinimizeReplaySession { filter, passes })
     }
 
     /// Executes all the tests in the project.
@@ -1224,6 +1387,29 @@ impl TestArgs {
         Ok((libraries, outcome))
     }
 
+    async fn build_fuzz_minimize_runner<FEN: FoundryEvmNetwork>(
+        &self,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        multi_network: MultiNetworkConfig,
+    ) -> eyre::Result<MultiContractRunner<FEN>> {
+        let (evm_env, tx_env, fork_block) =
+            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+
+        let config = Arc::new(config);
+        MultiContractRunnerBuilder::new(config.clone())
+            .initial_balance(evm_opts.initial_balance)
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
+            .with_multi_network(multi_network)
+            .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_failure_replay(self.fuzz_failure_replay)
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
+    }
+
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
     #[allow(clippy::too_many_arguments)]
     async fn dispatch_network(
@@ -1277,6 +1463,49 @@ impl TestArgs {
                 multi_network,
             )
             .await
+        }
+    }
+
+    async fn dispatch_fuzz_minimize_network(
+        &self,
+        dispatch_opts: &EvmOpts,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        multi_network: MultiNetworkConfig,
+    ) -> eyre::Result<FuzzMinimizeRunnerPass> {
+        if dispatch_opts.networks.is_tempo() {
+            Ok(FuzzMinimizeRunnerPass::Tempo(
+                self.build_fuzz_minimize_runner::<TempoEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    multi_network,
+                )
+                .await?,
+            ))
+        } else {
+            #[cfg(feature = "optimism")]
+            if dispatch_opts.networks.is_optimism() {
+                return Ok(FuzzMinimizeRunnerPass::Op(
+                    self.build_fuzz_minimize_runner::<OpEvmNetwork>(
+                        config,
+                        evm_opts,
+                        output,
+                        multi_network,
+                    )
+                    .await?,
+                ));
+            }
+            Ok(FuzzMinimizeRunnerPass::Eth(
+                self.build_fuzz_minimize_runner::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    multi_network,
+                )
+                .await?,
+            ))
         }
     }
 
