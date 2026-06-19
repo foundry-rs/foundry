@@ -44,7 +44,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
 use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
-use foundry_config::FuzzCorpusConfig;
+use foundry_config::{FuzzCorpusConfig, FuzzCorpusMutationWeights};
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails, ObservedCall,
@@ -56,8 +56,7 @@ use foundry_evm_fuzz::{
     },
 };
 use proptest::{
-    prelude::{Just, Rng, Strategy},
-    prop_oneof,
+    prelude::{Rng, Strategy},
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
@@ -84,6 +83,35 @@ const FAVORABILITY_THRESHOLD: f64 = 0.3;
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
+
+fn prefer_cmp_mutation(rng: &mut impl Rng, weights: FuzzCorpusMutationWeights) -> bool {
+    let weights = if weights.abi_or_cmp_total() == 0 {
+        FuzzCorpusMutationWeights::default()
+    } else {
+        weights
+    };
+    rng.random_range(0..weights.abi_or_cmp_total()) < u64::from(weights.mutation_weight_cmp)
+}
+
+fn weighted_mutation_type(rng: &mut impl Rng, weights: FuzzCorpusMutationWeights) -> MutationType {
+    let weights = weights.effective();
+    let mut choice = rng.random_range(0..weights.total());
+    for (weight, mutation) in [
+        (u64::from(weights.mutation_weight_splice), MutationType::Splice),
+        (u64::from(weights.mutation_weight_repeat), MutationType::Repeat),
+        (u64::from(weights.mutation_weight_interleave), MutationType::Interleave),
+        (u64::from(weights.mutation_weight_prefix), MutationType::Prefix),
+        (u64::from(weights.mutation_weight_suffix), MutationType::Suffix),
+        (u64::from(weights.mutation_weight_abi), MutationType::Abi),
+        (u64::from(weights.mutation_weight_cmp), MutationType::Cmp),
+    ] {
+        if choice < weight {
+            return mutation;
+        }
+        choice -= weight;
+    }
+    unreachable!("choice is bounded by total mutation weight")
+}
 
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
@@ -486,8 +514,8 @@ pub struct WorkerCorpus {
     pub(crate) metrics: CorpusMetrics,
     /// Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
-    /// Call sequence mutation strategy type generator used by stateful fuzzing.
-    mutation_generator: BoxedStrategy<MutationType>,
+    /// Call sequence mutation weights used by stateful fuzzing.
+    mutation_weights: FuzzCorpusMutationWeights,
     /// Identifier of current mutated entry for this worker.
     current_mutated: Option<Uuid>,
     /// Config
@@ -692,16 +720,7 @@ impl WorkerCorpus {
         tx_generator: BoxedStrategy<BasicTxDetails>,
         seed: WorkerCorpusSeed,
     ) -> Self {
-        let mutation_generator = prop_oneof![
-            Just(MutationType::Splice),
-            Just(MutationType::Repeat),
-            Just(MutationType::Interleave),
-            Just(MutationType::Prefix),
-            Just(MutationType::Suffix),
-            Just(MutationType::Abi),
-            Just(MutationType::Cmp),
-        ]
-        .boxed();
+        let mutation_weights = config.mutation_weights.effective();
 
         let worker_dir = config.corpus_dir.as_ref().map(|corpus_dir| {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
@@ -724,7 +743,7 @@ impl WorkerCorpus {
             failed_replays: seed.failed_replays,
             metrics: seed.metrics,
             tx_generator,
-            mutation_generator,
+            mutation_weights,
             current_mutated: None,
             config: config.into(),
             new_entry_indices: Default::default(),
@@ -949,11 +968,7 @@ impl WorkerCorpus {
         if !self.in_memory_corpus.is_empty() {
             self.evict_oldest_corpus()?;
 
-            let mutation_type = self
-                .mutation_generator
-                .new_tree(test_runner)
-                .map_err(|err| eyre!("Could not generate mutation type {err}"))?
-                .current();
+            let mutation_type = weighted_mutation_type(test_runner.rng(), self.mutation_weights);
 
             let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
@@ -1126,10 +1141,19 @@ impl WorkerCorpus {
             self.current_mutated = Some(corpus.uuid);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
-            if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
-                && !function.inputs.is_empty()
-            {
+            let weights = self.config.mutation_weights.effective();
+            let prefer_cmp = prefer_cmp_mutation(test_runner.rng(), weights);
+            if prefer_cmp {
+                if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
+                    && weights.mutation_weight_abi > 0
+                    && !function.inputs.is_empty()
+                {
+                    self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+                }
+            } else if weights.mutation_weight_abi > 0 && !function.inputs.is_empty() {
                 self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+            } else if weights.mutation_weight_cmp > 0 {
+                let _ = Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?;
             }
             tx
         };
@@ -1279,7 +1303,9 @@ impl WorkerCorpus {
 
         // When running with coverage guided fuzzing enabled then generate new sequence if initial
         // sequence's length is less than depth or randomly, to occasionally intermix new txs.
-        if depth > sequence.len().saturating_sub(1) || test_runner.rng().random_ratio(1, 10) {
+        let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
+        let generate_fresh = fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100);
+        if depth > sequence.len().saturating_sub(1) || generate_fresh {
             return self.new_tx(test_runner);
         }
 
@@ -1859,6 +1885,7 @@ fn unique_corpus_entries<'a>(
 mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolValue;
+    use proptest::prelude::Just;
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {

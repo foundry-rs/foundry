@@ -20,6 +20,7 @@ pub fn override_call_strat(
     contracts: Vec<(Address, Vec<Function>)>,
     target: Arc<RwLock<Address>>,
     fuzz_fixtures: FuzzFixtures,
+    dictionary_weight: u32,
 ) -> impl Strategy<Value = CallDetails> + Send + Sync + 'static {
     let contracts = Arc::new(contracts);
     let contracts_ref = contracts.clone();
@@ -60,7 +61,13 @@ pub fn override_call_strat(
         };
 
         func.prop_flat_map(move |func| {
-            fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, actual_target, func)
+            fuzz_contract_with_calldata(
+                &fuzz_state,
+                &fuzz_fixtures,
+                actual_target,
+                func,
+                dictionary_weight,
+            )
         })
     })
 }
@@ -103,6 +110,7 @@ pub fn invariant_strat(
                 &fuzz_fixtures,
                 *target_address,
                 target_function.clone(),
+                dictionary_weight,
             );
 
             let warp = warp_roll_strat(config.max_time_delay.is_some());
@@ -128,7 +136,7 @@ fn select_random_sender<S: FuzzStateReader>(
     dictionary_weight: u32,
 ) -> impl Strategy<Value = Address> + use<S> {
     if senders.targeted.is_empty() {
-        assert!(dictionary_weight <= 100, "dictionary_weight must be <= 100");
+        let dictionary_weight = dictionary_weight.min(100);
         proptest::prop_oneof![
             100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
             dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state),
@@ -160,15 +168,17 @@ pub fn fuzz_contract_with_calldata<S: FuzzStateReader>(
     fuzz_fixtures: &FuzzFixtures,
     target: Address,
     func: Function,
+    dictionary_weight: u32,
 ) -> impl Strategy<Value = CallDetails> + use<S> {
     let is_payable = func.state_mutability == alloy_json_abi::StateMutability::Payable;
+    let dictionary_weight = dictionary_weight.min(100);
 
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
     let calldata_strategy = prop_oneof![
-        60 => fuzz_calldata(func.clone(), fuzz_fixtures),
-        40 => fuzz_calldata_from_state(func, fuzz_state),
+        100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
+        dictionary_weight => fuzz_calldata_from_state(func, fuzz_state),
     ];
 
     // For payable functions, generate random value using shared strategy.

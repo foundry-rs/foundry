@@ -108,10 +108,10 @@ pub use providers::Remappings;
 use providers::*;
 
 mod fuzz;
-pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
+pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzCorpusMutationWeights, FuzzDictionaryConfig};
 
 mod invariant;
-pub use invariant::{InvariantConfig, InvariantWorkers};
+pub use invariant::{InvariantConfig, InvariantDepthMode, InvariantWorkers};
 
 mod symbolic;
 pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
@@ -5024,12 +5024,16 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [invariant]
                 runs = 512
                 depth = 10
+                min_depth = 2
+                depth_mode = "random"
                 workers = 4
-            ",
+                corpus_random_sequence_weight = 30
+                mutation_weight_cmp = 7
+            "#,
             )?;
 
             let loaded = Config::load().unwrap().sanitized();
@@ -5038,7 +5042,17 @@ mod tests {
                 InvariantConfig {
                     runs: 512,
                     depth: 10,
+                    min_depth: 2,
+                    depth_mode: InvariantDepthMode::Random,
                     workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
+                    corpus: FuzzCorpusConfig {
+                        corpus_random_sequence_weight: 30,
+                        mutation_weights: FuzzCorpusMutationWeights {
+                            mutation_weight_cmp: 7,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
@@ -5064,17 +5078,27 @@ mod tests {
 
             jail.set_env("FOUNDRY_FMT_LINE_LENGTH", "95");
             jail.set_env("FOUNDRY_FUZZ_DICTIONARY_WEIGHT", "99");
+            jail.set_env("FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_VALUES", "max");
             jail.set_env("FOUNDRY_INVARIANT_DEPTH", "5");
+            jail.set_env("FOUNDRY_INVARIANT_MIN_DEPTH", "2");
+            jail.set_env("FOUNDRY_INVARIANT_DEPTH_MODE", "random");
             jail.set_env("FOUNDRY_INVARIANT_WORKERS", "3");
+            jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
+            jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
 
             let config = Config::load().unwrap();
             assert_eq!(config.fmt.line_length, 95);
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
+            assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, usize::MAX);
             assert_eq!(config.invariant.depth, 5);
+            assert_eq!(config.invariant.min_depth, 2);
+            assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
             assert_eq!(
                 config.invariant.workers,
                 InvariantWorkers::Fixed(NonZeroUsize::new(3).unwrap())
             );
+            assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 30);
+            assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
 
             Ok(())
         });
