@@ -1575,7 +1575,6 @@ Traces:
 });
 
 // <https://github.com/foundry-rs/foundry/issues/15224>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_calldata_bytes, |prj, cmd| {
     prj.clear();
 
