@@ -239,11 +239,17 @@ impl NetworkConfigs {
     ///
     /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
     /// at the given timestamp, otherwise returns pre-Canyon parameters.
+    #[cfg(feature = "optimism")]
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
-        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             return self.op_base_fee_params(timestamp);
         }
+        BaseFeeParams::ethereum()
+    }
+
+    /// Returns the base fee parameters for the configured network.
+    #[cfg(not(feature = "optimism"))]
+    pub const fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
         let _ = timestamp;
         BaseFeeParams::ethereum()
     }
