@@ -84,13 +84,12 @@ const FAVORABILITY_THRESHOLD: f64 = 0.3;
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
 
-fn prefer_cmp_mutation(rng: &mut impl Rng, weights: FuzzCorpusMutationWeights) -> bool {
-    let weights = if weights.abi_or_cmp_total() == 0 {
-        FuzzCorpusMutationWeights::default()
-    } else {
-        weights
-    };
-    rng.random_range(0..weights.abi_or_cmp_total()) < u64::from(weights.mutation_weight_cmp)
+fn prefer_cmp_mutation(rng: &mut impl Rng, weights: FuzzCorpusMutationWeights) -> Option<bool> {
+    let total = weights.abi_or_cmp_total();
+    if total == 0 {
+        return None;
+    }
+    Some(rng.random_range(0..total) < u64::from(weights.mutation_weight_cmp))
 }
 
 fn weighted_mutation_type(rng: &mut impl Rng, weights: FuzzCorpusMutationWeights) -> MutationType {
@@ -1096,7 +1095,7 @@ impl WorkerCorpus {
                         }
                     }
 
-                    if !mutated {
+                    if !mutated && self.mutation_weights.mutation_weight_abi > 0 {
                         let tx = new_seq.get_mut(fallback_idx).unwrap();
                         if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
                             && !function.inputs.is_empty()
@@ -1133,7 +1132,12 @@ impl WorkerCorpus {
 
         self.evict_oldest_corpus()?;
 
-        let tx = if self.in_memory_corpus.is_empty() {
+        let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
+        let generate_fresh = self.in_memory_corpus.is_empty()
+            || (fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100));
+
+        let tx = if generate_fresh {
+            self.current_mutated = None;
             self.new_tx(test_runner)?
         } else {
             let corpus = &self.in_memory_corpus
@@ -1142,18 +1146,27 @@ impl WorkerCorpus {
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             let weights = self.config.mutation_weights.effective();
-            let prefer_cmp = prefer_cmp_mutation(test_runner.rng(), weights);
-            if prefer_cmp {
-                if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
-                    && weights.mutation_weight_abi > 0
-                    && !function.inputs.is_empty()
-                {
+            match prefer_cmp_mutation(test_runner.rng(), weights) {
+                Some(true) => {
+                    if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
+                        && weights.mutation_weight_abi > 0
+                        && !function.inputs.is_empty()
+                    {
+                        self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+                    }
+                }
+                Some(false) if weights.mutation_weight_abi > 0 && !function.inputs.is_empty() => {
                     self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
                 }
-            } else if weights.mutation_weight_abi > 0 && !function.inputs.is_empty() {
-                self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
-            } else if weights.mutation_weight_cmp > 0 {
-                let _ = Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?;
+                Some(false) if weights.mutation_weight_cmp > 0 => {
+                    let _ = Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?;
+                }
+                None => {
+                    // Stateless fuzz inputs cannot apply sequence-level mutation strategies.
+                    self.current_mutated = None;
+                    return Ok(self.new_tx(test_runner)?.call_details.calldata);
+                }
+                _ => {}
             }
             tx
         };
@@ -1885,7 +1898,9 @@ fn unique_corpus_entries<'a>(
 mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolValue;
+    use foundry_config::FuzzDictionaryConfig;
     use proptest::prelude::Just;
+    use revm::database::{CacheDB, EmptyDB};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1899,6 +1914,38 @@ mod tests {
                 value: None,
             },
         }
+    }
+
+    fn basic_tx_with_calldata(calldata: impl Into<Bytes>) -> BasicTxDetails {
+        let mut tx = basic_tx();
+        tx.call_details.calldata = calldata.into();
+        tx
+    }
+
+    fn tx_for_function(
+        target: Address,
+        function: &Function,
+        args: &[DynSolValue],
+    ) -> BasicTxDetails {
+        BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: foundry_evm_fuzz::CallDetails {
+                target,
+                calldata: Bytes::from(function.abi_encode_input(args).unwrap()),
+                value: None,
+            },
+        }
+    }
+
+    fn empty_fuzz_state() -> EvmFuzzState {
+        EvmFuzzState::new(
+            &[],
+            &CacheDB::<EmptyDB>::default(),
+            FuzzDictionaryConfig::default(),
+            None,
+        )
     }
 
     fn temp_corpus_dir() -> PathBuf {
@@ -1919,6 +1966,15 @@ mod tests {
 
     fn worker_corpus(id: usize, corpus_root: PathBuf, seed: WorkerCorpusSeed) -> WorkerCorpus {
         WorkerCorpus::from_seed(id, corpus_config(corpus_root), Just(basic_tx()).boxed(), seed)
+    }
+
+    fn worker_corpus_with_config(
+        id: usize,
+        config: FuzzCorpusConfig,
+        generated: BasicTxDetails,
+        seed: WorkerCorpusSeed,
+    ) -> WorkerCorpus {
+        WorkerCorpus::from_seed(id, config, Just(generated).boxed(), seed)
     }
 
     fn empty_worker_corpus(id: usize, corpus_root: PathBuf) -> WorkerCorpus {
@@ -1970,6 +2026,87 @@ mod tests {
         assert!(mutated);
         let decoded = function.abi_decode_input(&tx.call_details.calldata[4..]).unwrap();
         assert_eq!(decoded[0].as_uint().unwrap().0, replacement);
+    }
+
+    #[test]
+    fn stateless_new_input_honors_fresh_sequence_weight() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.corpus_random_sequence_weight = 100;
+        let generated = basic_tx_with_calldata(vec![0x22]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0x11])])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, generated, seed);
+        let mut runner = TestRunner::default();
+        let function = Function::parse("foo()").unwrap();
+
+        let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
+
+        assert_eq!(input, Bytes::from(vec![0x22]));
+        assert!(manager.current_mutated.is_none());
+    }
+
+    #[test]
+    fn stateless_new_input_does_not_fallback_to_disabled_arg_mutators() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.corpus_random_sequence_weight = 0;
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 1,
+            mutation_weight_repeat: 1,
+            mutation_weight_interleave: 1,
+            mutation_weight_prefix: 1,
+            mutation_weight_suffix: 1,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+        };
+        let generated = basic_tx_with_calldata(vec![0x44]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![basic_tx_with_calldata(vec![0x33])])],
+            ..Default::default()
+        };
+        let mut manager = worker_corpus_with_config(0, config, generated, seed);
+        let mut runner = TestRunner::default();
+        let function = Function::parse("foo(uint256)").unwrap();
+
+        let input = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
+
+        assert_eq!(input, Bytes::from(vec![0x44]));
+        assert!(manager.current_mutated.is_none());
+    }
+
+    #[test]
+    fn invariant_cmp_mutation_does_not_fallback_to_disabled_abi_mutation() {
+        let target = Address::from([0x42; 20]);
+        let function = Function::parse("foo(uint256)").unwrap();
+        let original = tx_for_function(target, &function, &[DynSolValue::Uint(U256::from(7), 256)]);
+        let seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![CorpusEntry::new(vec![original.clone()])],
+            ..Default::default()
+        };
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: 0,
+            mutation_weight_repeat: 0,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 1,
+        };
+        let mut manager = worker_corpus_with_config(0, config, basic_tx(), seed);
+        let mut runner = TestRunner::default();
+        let fuzz_state = empty_fuzz_state().into_invariant();
+        let targeted_contracts = targeted_contracts_with_selective_functions(
+            target,
+            vec![function.clone()],
+            [function.selector()],
+        );
+
+        let sequence = manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts).unwrap();
+
+        assert_eq!(sequence.len(), 1);
+        assert_eq!(sequence[0].call_details.calldata, original.call_details.calldata);
     }
 
     fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {

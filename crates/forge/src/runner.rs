@@ -2186,21 +2186,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn build_fuzz_state(&self, invariant: bool) -> EvmFuzzState {
         let config =
             if invariant { self.config.invariant.dictionary } else { self.config.fuzz.dictionary };
+        let literals =
+            if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
         if let Some(db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(
-                &self.setup.deployed_libs,
-                db,
-                config,
-                Some(&self.cr.mcr.fuzz_literals),
-            )
+            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         } else {
             let db = self.executor.backend().mem_db();
-            EvmFuzzState::new(
-                &self.setup.deployed_libs,
-                db,
-                config,
-                Some(&self.cr.mcr.fuzz_literals),
-            )
+            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         }
     }
 }

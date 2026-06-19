@@ -2627,8 +2627,16 @@ mod tests {
             "foundry-cli",
             "--fuzz-dictionary-weight",
             "35",
+            "--fuzz-dictionary-addresses",
+            "max",
             "--fuzz-dictionary-values",
             "1234",
+            "--fuzz-dictionary-literals",
+            "4321",
+            "--fuzz-corpus-random-sequence-weight",
+            "55",
+            "--fuzz-mutation-weight-splice",
+            "4",
             "--fuzz-mutation-weight-abi",
             "3",
             "--fuzz-mutation-weight-cmp",
@@ -2641,8 +2649,12 @@ mod tests {
             "random",
             "--invariant-dictionary-weight",
             "45",
+            "--invariant-dictionary-addresses",
+            "8765",
             "--invariant-dictionary-values",
             "max",
+            "--invariant-dictionary-literals",
+            "6789",
             "--invariant-corpus-random-sequence-weight",
             "25",
             "--invariant-mutation-weight-splice",
@@ -2654,9 +2666,19 @@ mod tests {
         let figment = figment::Figment::from(&args);
         assert_eq!(figment.extract_inner::<u32>("fuzz.dictionary_weight").unwrap(), 35);
         assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_addresses").unwrap(),
+            "max"
+        );
+        assert_eq!(
             figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_values").unwrap(),
             "1234"
         );
+        assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_literals").unwrap(),
+            "4321"
+        );
+        assert_eq!(figment.extract_inner::<u32>("fuzz.corpus_random_sequence_weight").unwrap(), 55);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
         assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
@@ -2667,8 +2689,16 @@ mod tests {
         );
         assert_eq!(figment.extract_inner::<u32>("invariant.dictionary_weight").unwrap(), 45);
         assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_addresses").unwrap(),
+            "8765"
+        );
+        assert_eq!(
             figment.extract_inner::<String>("invariant.max_fuzz_dictionary_values").unwrap(),
             "max"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_literals").unwrap(),
+            "6789"
         );
         assert_eq!(
             figment.extract_inner::<u32>("invariant.corpus_random_sequence_weight").unwrap(),
@@ -2676,6 +2706,26 @@ mod tests {
         );
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
+
+        let config = Config::default().merge_inline_provider(&args).unwrap();
+        assert_eq!(config.fuzz.dictionary.dictionary_weight, 35);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_addresses, usize::MAX);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, 1234);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_literals, 4321);
+        assert_eq!(config.fuzz.corpus.corpus_random_sequence_weight, 55);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
+        assert_eq!(config.invariant.depth, 300);
+        assert_eq!(config.invariant.min_depth, 20);
+        assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
+        assert_eq!(config.invariant.dictionary.dictionary_weight, 45);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_addresses, 8765);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_literals, 6789);
+        assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
     }
 
     #[test]

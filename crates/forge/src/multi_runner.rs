@@ -72,6 +72,8 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub analysis: Arc<solar::sema::Compiler>,
     /// Literals dictionary for fuzzing.
     pub fuzz_literals: LiteralsDictionary,
+    /// Literals dictionary for invariant fuzzing.
+    pub invariant_literals: LiteralsDictionary,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -682,6 +684,11 @@ impl MultiContractRunnerBuilder {
             Some(self.config.project_paths()),
             self.config.fuzz.dictionary.max_fuzz_dictionary_literals,
         );
+        let invariant_literals = LiteralsDictionary::new(
+            Some(analysis.clone()),
+            Some(self.config.project_paths()),
+            self.config.invariant.dictionary.max_fuzz_dictionary_literals,
+        );
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -691,6 +698,7 @@ impl MultiContractRunnerBuilder {
             libraries,
             analysis,
             fuzz_literals,
+            invariant_literals,
 
             tcfg: TestRunnerConfig {
                 evm_opts,

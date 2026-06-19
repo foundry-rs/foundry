@@ -128,7 +128,8 @@ pub fn invariant_strat(
 }
 
 /// Strategy to select a sender address:
-/// * If `senders` is empty, then it's either a random address (10%) or from the dictionary (90%).
+/// * If `senders` is empty, then it's either a random address or one sampled from the dictionary
+///   according to the configured dictionary weight.
 /// * If `senders` is not empty, a random address is chosen from the list of senders.
 fn select_random_sender<S: FuzzStateReader>(
     fuzz_state: &S,

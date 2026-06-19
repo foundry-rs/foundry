@@ -105,6 +105,7 @@ pub enum InvariantDepthMode {
     #[default]
     Fixed,
     /// Sample every invariant run depth uniformly between `min_depth` and `depth`.
+    #[serde(alias = "uniform")]
     Random,
 }
 
@@ -255,6 +256,10 @@ mod tests {
         assert_eq!("uniform".parse::<InvariantDepthMode>().unwrap(), InvariantDepthMode::Random);
         assert_eq!(
             serde_json::from_str::<InvariantDepthMode>(r#""random""#).unwrap(),
+            InvariantDepthMode::Random
+        );
+        assert_eq!(
+            serde_json::from_str::<InvariantDepthMode>(r#""uniform""#).unwrap(),
             InvariantDepthMode::Random
         );
     }
