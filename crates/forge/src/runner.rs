@@ -1455,7 +1455,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             )));
                             return self.result;
                         };
-                        if !targeted.targets().can_replay(tx) {
+                        if !targeted.targets().has_abi_function(tx) {
                             self.result.single_fail(Some(format!(
                                 "sequence symbolic artifact call {} targets unknown function {} on {}",
                                 idx + 1,

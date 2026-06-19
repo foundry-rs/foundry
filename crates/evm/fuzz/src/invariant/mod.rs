@@ -161,6 +161,18 @@ impl TargetedContracts {
         }
     }
 
+    /// Returns whether the given transaction targets a known ABI function.
+    pub fn has_abi_function(&self, tx: &BasicTxDetails) -> bool {
+        match self.inner.get(&tx.call_details.target) {
+            Some(c) => tx
+                .call_details
+                .calldata
+                .get(..4)
+                .is_some_and(|selector| c.abi.functions().any(|f| f.selector() == selector)),
+            None => false,
+        }
+    }
+
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
