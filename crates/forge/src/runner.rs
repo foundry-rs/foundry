@@ -1361,7 +1361,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     ));
                     return self.result;
                 }
-                if let Err(err) = validate_single_call_symbolic_replay(func, call, self.address) {
+                if let Err(err) =
+                    validate_single_call_symbolic_replay(func, call, self.address, self.sender)
+                {
                     self.result.single_fail(Some(err));
                     return self.result;
                 }
@@ -2849,11 +2851,18 @@ fn validate_single_call_symbolic_replay(
     func: &Function,
     call: &SymbolicCounterexampleCall,
     test_address: Address,
+    expected_sender: Address,
 ) -> Result<(), String> {
     if call.target != test_address {
         return Err(format!(
             "single-call symbolic artifact target {} does not match test contract {}",
             call.target, test_address
+        ));
+    }
+    if call.sender != expected_sender {
+        return Err(format!(
+            "single-call symbolic artifact sender {} does not match configured sender {}",
+            call.sender, expected_sender
         ));
     }
     if call.value.is_some_and(|value| !value.is_zero()) {

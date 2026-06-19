@@ -330,6 +330,19 @@ args=[42]
     );
     std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
 
+    let mut invalid_artifact = artifact.clone();
+    invalid_artifact["calls"][0]["sender"] =
+        serde_json::json!("0x0000000000000000000000000000000000000001");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&invalid_artifact).unwrap()).unwrap();
+    let invalid_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(invalid_stdout.contains("single-call symbolic artifact sender"), "{invalid_stdout}");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
     prj.add_test(
         "SymbolicJsonCounterexample.t.sol",
         r#"
