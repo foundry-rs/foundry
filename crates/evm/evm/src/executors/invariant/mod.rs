@@ -1483,6 +1483,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     target_contract_ref.clone(),
                     fuzz_fixtures.clone(),
                     config.dictionary.dictionary_weight,
+                    config.corpus.payable_value_weight,
                 ),
                 target_contract_ref,
             );

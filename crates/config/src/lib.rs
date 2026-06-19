@@ -5032,6 +5032,7 @@ mod tests {
                 depth_mode = "random"
                 workers = 4
                 corpus_random_sequence_weight = 30
+                payable_value_weight = 12
                 mutation_weight_cmp = 7
             "#,
             )?;
@@ -5047,6 +5048,7 @@ mod tests {
                     workers: InvariantWorkers::Fixed(NonZeroUsize::new(4).unwrap()),
                     corpus: FuzzCorpusConfig {
                         corpus_random_sequence_weight: 30,
+                        payable_value_weight: 12,
                         mutation_weights: FuzzCorpusMutationWeights {
                             mutation_weight_cmp: 7,
                             ..Default::default()
@@ -5084,6 +5086,7 @@ mod tests {
             jail.set_env("FOUNDRY_INVARIANT_DEPTH_MODE", "random");
             jail.set_env("FOUNDRY_INVARIANT_WORKERS", "3");
             jail.set_env("FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", "30");
+            jail.set_env("FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", "12");
             jail.set_env("FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", "7");
 
             let config = Config::load().unwrap();
@@ -5098,6 +5101,7 @@ mod tests {
                 InvariantWorkers::Fixed(NonZeroUsize::new(3).unwrap())
             );
             assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 30);
+            assert_eq!(config.invariant.corpus.payable_value_weight, 12);
             assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
 
             Ok(())

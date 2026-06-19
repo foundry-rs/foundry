@@ -240,6 +240,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub fuzz_corpus_random_sequence_weight: Option<u32>,
 
+    /// Percent chance that fuzzed payable calls carry non-zero msg.value.
+    #[arg(long, env = "FOUNDRY_FUZZ_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
+    pub fuzz_payable_value_weight: Option<u32>,
+
     /// Corpus mutation weight for splice.
     #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_SPLICE", value_name = "WEIGHT")]
     pub fuzz_mutation_weight_splice: Option<u32>,
@@ -303,6 +307,10 @@ pub struct TestArgs {
     /// Percent chance that coverage-guided invariant fuzzing generates a fresh sequence.
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub invariant_corpus_random_sequence_weight: Option<u32>,
+
+    /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
+    #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
+    pub invariant_payable_value_weight: Option<u32>,
 
     /// Corpus mutation weight for splice.
     #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_SPLICE", value_name = "WEIGHT")]
@@ -2048,6 +2056,9 @@ impl Provider for TestArgs {
                 fuzz_corpus_random_sequence_weight.into(),
             );
         }
+        if let Some(fuzz_payable_value_weight) = self.fuzz_payable_value_weight {
+            fuzz_dict.insert("payable_value_weight".to_string(), fuzz_payable_value_weight.into());
+        }
         if let Some(weight) = self.fuzz_mutation_weight_splice {
             fuzz_dict.insert("mutation_weight_splice".to_string(), weight.into());
         }
@@ -2117,6 +2128,10 @@ impl Provider for TestArgs {
                 "corpus_random_sequence_weight".to_string(),
                 invariant_corpus_random_sequence_weight.into(),
             );
+        }
+        if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
+            invariant_dict
+                .insert("payable_value_weight".to_string(), invariant_payable_value_weight.into());
         }
         if let Some(weight) = self.invariant_mutation_weight_splice {
             invariant_dict.insert("mutation_weight_splice".to_string(), weight.into());
@@ -2635,6 +2650,8 @@ mod tests {
             "4321",
             "--fuzz-corpus-random-sequence-weight",
             "55",
+            "--fuzz-payable-value-weight",
+            "12",
             "--fuzz-mutation-weight-splice",
             "4",
             "--fuzz-mutation-weight-abi",
@@ -2657,6 +2674,8 @@ mod tests {
             "6789",
             "--invariant-corpus-random-sequence-weight",
             "25",
+            "--invariant-payable-value-weight",
+            "34",
             "--invariant-mutation-weight-splice",
             "2",
             "--invariant-mutation-weight-cmp",
@@ -2678,6 +2697,7 @@ mod tests {
             "4321"
         );
         assert_eq!(figment.extract_inner::<u32>("fuzz.corpus_random_sequence_weight").unwrap(), 55);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.payable_value_weight").unwrap(), 12);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
@@ -2704,6 +2724,7 @@ mod tests {
             figment.extract_inner::<u32>("invariant.corpus_random_sequence_weight").unwrap(),
             25
         );
+        assert_eq!(figment.extract_inner::<u32>("invariant.payable_value_weight").unwrap(), 34);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
 
@@ -2713,6 +2734,7 @@ mod tests {
         assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, 1234);
         assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_literals, 4321);
         assert_eq!(config.fuzz.corpus.corpus_random_sequence_weight, 55);
+        assert_eq!(config.fuzz.corpus.payable_value_weight, 12);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
@@ -2724,6 +2746,7 @@ mod tests {
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_literals, 6789);
         assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
+        assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
     }

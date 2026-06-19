@@ -21,6 +21,7 @@ pub fn override_call_strat(
     target: Arc<RwLock<Address>>,
     fuzz_fixtures: FuzzFixtures,
     dictionary_weight: u32,
+    payable_value_weight: u32,
 ) -> impl Strategy<Value = CallDetails> + Send + Sync + 'static {
     let contracts = Arc::new(contracts);
     let contracts_ref = contracts.clone();
@@ -67,6 +68,7 @@ pub fn override_call_strat(
                 actual_target,
                 func,
                 dictionary_weight,
+                payable_value_weight,
             )
         })
     })
@@ -91,6 +93,7 @@ pub fn invariant_strat(
 ) -> impl Strategy<Value = BasicTxDetails> {
     let senders = Rc::new(senders);
     let dictionary_weight = config.dictionary.dictionary_weight;
+    let payable_value_weight = config.corpus.payable_value_weight;
 
     // Strategy to generate values for tx warp and roll.
     let warp_roll_strat = |cond: bool| {
@@ -111,6 +114,7 @@ pub fn invariant_strat(
                 *target_address,
                 target_function.clone(),
                 dictionary_weight,
+                payable_value_weight,
             );
 
             let warp = warp_roll_strat(config.max_time_delay.is_some());
@@ -170,6 +174,7 @@ pub fn fuzz_contract_with_calldata<S: FuzzStateReader>(
     target: Address,
     func: Function,
     dictionary_weight: u32,
+    payable_value_weight: u32,
 ) -> impl Strategy<Value = CallDetails> + use<S> {
     let is_payable = func.state_mutability == alloy_json_abi::StateMutability::Payable;
     let dictionary_weight = dictionary_weight.min(100);
@@ -183,7 +188,8 @@ pub fn fuzz_contract_with_calldata<S: FuzzStateReader>(
     ];
 
     // For payable functions, generate random value using shared strategy.
-    let value_strategy = if is_payable { fuzz_msg_value().boxed() } else { Just(None).boxed() };
+    let value_strategy =
+        if is_payable { fuzz_msg_value(payable_value_weight).boxed() } else { Just(None).boxed() };
 
     (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| {
         trace!(input=?calldata, ?value);

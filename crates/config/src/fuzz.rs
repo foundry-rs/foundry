@@ -39,6 +39,9 @@ pub struct FuzzConfig {
 
 impl Default for FuzzConfig {
     fn default() -> Self {
+        let mut corpus = FuzzCorpusConfig::default();
+        corpus.payable_value_weight = 0;
+
         Self {
             runs: 256,
             run: None,
@@ -48,7 +51,7 @@ impl Default for FuzzConfig {
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
-            corpus: FuzzCorpusConfig::default(),
+            corpus,
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
@@ -143,6 +146,9 @@ pub struct FuzzCorpusConfig {
     /// corpus sequence during coverage-guided invariant campaigns.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
     pub corpus_random_sequence_weight: u32,
+    /// Percent chance that generated payable calls carry non-zero `msg.value`.
+    #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    pub payable_value_weight: u32,
     /// Weights for coverage-guided corpus mutation strategies.
     #[serde(flatten)]
     pub mutation_weights: FuzzCorpusMutationWeights,
@@ -223,6 +229,7 @@ impl Default for FuzzCorpusConfig {
             sancov_edges: false,
             sancov_trace_cmp: false,
             corpus_random_sequence_weight: 50,
+            payable_value_weight: 15,
             mutation_weights: FuzzCorpusMutationWeights::default(),
         }
     }

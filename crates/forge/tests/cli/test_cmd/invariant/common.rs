@@ -2748,9 +2748,23 @@ contract InvariantMsgValue is Test {
 "#,
     );
 
-    // The test should fail because the fuzzer generates msg.value > 0 for payable functions
+    // The knob should be able to disable payable value generation completely.
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mt",
+            "invariant_value_never_received",
+            "--invariant-payable-value-weight",
+            "0",
+        ])
+        .assert_success();
+    cmd.forge_fuse().arg("clean").assert_success();
+
+    // The default invariant weight should fail because the fuzzer generates msg.value > 0 for
+    // payable functions.
     // First check regular output format shows value=X
-    cmd.args(["test", "--mt", "invariant_value_never_received"])
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_value_never_received"])
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
