@@ -2,7 +2,10 @@
 
 use eyre::{Result, eyre};
 use foundry_evm_fuzz::BasicTxDetails;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 use uuid::Uuid;
 
 const WORKER_DIR_PREFIX: &str = "worker";
@@ -80,10 +83,95 @@ pub fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
     .into_iter()
 }
 
+/// Reads corpus files from a file, corpus directory, worker corpus directory, or generated corpus
+/// root such as `<root>/<contract>/<test>/worker0/corpus`.
+pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
+    if path.is_file() {
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        let (uuid, timestamp) = parse_corpus_filename(name)
+            .map_err(|err| eyre!("failed to parse corpus filename {}: {err}", path.display()))?;
+        return Ok(vec![CorpusDirEntry { path: path.to_path_buf(), uuid, timestamp }]);
+    }
+
+    if !path.is_dir() {
+        return Err(eyre!("corpus path does not exist or is not readable: {}", path.display()));
+    }
+
+    let mut seen_uuids = HashSet::new();
+    let mut entries = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for replay_dir in canonical_replay_dirs(&dir) {
+            entries
+                .extend(read_corpus_dir(&replay_dir).filter(|entry| seen_uuids.insert(entry.uuid)));
+        }
+
+        let children = match std::fs::read_dir(&dir) {
+            Ok(children) => children,
+            Err(err) => {
+                debug!(%err, ?dir, "failed to read corpus tree directory");
+                continue;
+            }
+        };
+        for child in children {
+            let Ok(child) =
+                child.inspect_err(|err| debug!(%err, "failed to read corpus tree entry"))
+            else {
+                continue;
+            };
+            let child_path = child.path();
+            if child_path.is_dir() {
+                stack.push(child_path);
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
+}
+
 /// Parses a corpus filename of the form `<uuid>-<timestamp>.json[.gz]`.
 pub fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
     let name = name.trim_end_matches(".gz").trim_end_matches(".json");
     let (uuid_str, timestamp_str) =
         name.rsplit_once('-').ok_or_else(|| eyre!("invalid corpus filename format: {name}"))?;
     Ok((Uuid::parse_str(uuid_str)?, timestamp_str.parse()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("foundry-corpus-io-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn read_corpus_tree_finds_generated_layout() {
+        let dir = temp_dir();
+        let corpus = dir.join("ExampleTest").join("testFuzz_value").join("worker0").join("corpus");
+        std::fs::create_dir_all(&corpus).unwrap();
+        let entry = corpus.join("00000000-0000-0000-0000-000000000001-1.json");
+        std::fs::write(&entry, "[]").unwrap();
+
+        let entries = read_corpus_tree(&dir).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, entry);
+    }
+
+    #[test]
+    fn read_corpus_tree_dedups_worker_entries_by_uuid() {
+        let dir = temp_dir();
+        let name = "00000000-0000-0000-0000-000000000001-1.json";
+        for worker in ["worker0", "worker1"] {
+            let corpus = dir.join("ExampleTest").join("testFuzz_value").join(worker).join("corpus");
+            std::fs::create_dir_all(&corpus).unwrap();
+            std::fs::write(corpus.join(name), "[]").unwrap();
+        }
+
+        let entries = read_corpus_tree(&dir).unwrap();
+        assert_eq!(entries.len(), 1);
+    }
 }

@@ -284,6 +284,89 @@ forgetest_init!(forge_fuzz_corpus_subcommands_support_machine, |prj, cmd| {
     assert!(prj.root().join("min-machine.json").is_file());
 });
 
+forgetest_init!(forge_fuzz_commands_read_generated_corpus_roots, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| {
+        config.fuzz.runs = 8;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+        config.fuzz.corpus.corpus_gzip = false;
+        config.invariant.runs = 4;
+        config.invariant.depth = 4;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "ForgeFuzzGeneratedCorpus.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract ForgeFuzzGeneratedCorpusTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function test_unit() public pure {}
+
+    function testFuzz_SetNumber(uint256 value) public {
+        counter.setNumber(value);
+        assertEq(counter.number(), value);
+    }
+
+    function invariant_counter_is_reachable() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzGeneratedCorpusTest"]).assert_success();
+
+    let show = cmd.forge_fuse().args(["fuzz", "show", "fuzz_corpus"]).assert_success();
+    let show_stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
+    assert!(
+        show_stdout.contains("fuzz_corpus/ForgeFuzzGeneratedCorpusTest/testFuzz_SetNumber"),
+        "{show_stdout}"
+    );
+
+    let cmin = cmd
+        .forge_fuse()
+        .args(["fuzz", "cmin", "fuzz_corpus", "--out", "cmin-root"])
+        .assert_success();
+    let cmin_stdout = String::from_utf8(cmin.get_output().stdout.clone()).unwrap();
+    assert!(!cmin_stdout.contains("kept 0/0 entries"), "{cmin_stdout}");
+    assert!(std::fs::read_dir(prj.root().join("cmin-root")).unwrap().count() > 0);
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzGeneratedCorpusTest",
+            "--corpus-dir",
+            "fuzz_corpus",
+        ])
+        .assert_success();
+    let replay_stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(
+        replay_stdout.contains("[PASS] testFuzz_SetNumber(uint256) (replay:"),
+        "{replay_stdout}"
+    );
+    assert!(
+        !replay_stdout.contains("[PASS] testFuzz_SetNumber(uint256) (replay: 0 entries"),
+        "{replay_stdout}"
+    );
+
+    let invariant_show =
+        cmd.forge_fuse().args(["fuzz", "show", "invariant_corpus"]).assert_success();
+    let invariant_stdout = String::from_utf8(invariant_show.get_output().stdout.clone()).unwrap();
+    assert!(
+        invariant_stdout.contains("invariant_corpus/ForgeFuzzGeneratedCorpusTest/worker0/corpus"),
+        "{invariant_stdout}"
+    );
+});
+
 // tests that inline max-test-rejects config is properly applied
 forgetest_init!(test_inline_max_test_rejects, |prj, cmd| {
     prj.add_test(

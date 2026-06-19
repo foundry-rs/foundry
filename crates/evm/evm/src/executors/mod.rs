@@ -73,7 +73,7 @@ mod trace;
 
 pub use corpus::DynamicTargetCtx;
 pub use corpus_io::{
-    CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir,
+    CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
 };
 pub use showmap::{ShowmapDomain, ShowmapOpts, ShowmapStats, replay_corpus_to_showmap};
 pub use trace::TracingExecutor;

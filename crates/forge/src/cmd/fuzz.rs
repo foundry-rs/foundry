@@ -4,10 +4,7 @@ use eyre::{Context, Result, bail};
 use foundry_cli::json::{JsonEnvelope, print_json};
 use foundry_common::{fs, sh_println};
 use foundry_evm::{
-    executors::{
-        CorpusDirEntry, ShowmapDomain, canonical_replay_dirs, parse_corpus_filename,
-        read_corpus_dir,
-    },
+    executors::{CorpusDirEntry, ShowmapDomain, read_corpus_tree},
     fuzz::BasicTxDetails,
 };
 use serde::Serialize;
@@ -318,27 +315,10 @@ fn read_entries(path: &Path, limit: Option<usize>) -> Result<Vec<DisplayCorpusEn
 }
 
 fn read_corpus_entries(path: &Path) -> Result<Vec<CorpusDirEntry>> {
-    if path.is_file() {
-        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
-        let (uuid, timestamp) = parse_corpus_filename(name)
-            .with_context(|| format!("failed to parse corpus filename {}", path.display()))?;
-        return Ok(vec![CorpusDirEntry { path: path.to_path_buf(), uuid, timestamp }]);
+    let entries = read_corpus_tree(path)?;
+    if entries.is_empty() {
+        bail!("no corpus entries found under {}", path.display());
     }
-
-    if !path.is_dir() {
-        bail!("corpus path does not exist or is not readable: {}", path.display());
-    }
-
-    let mut seen_uuids = HashSet::new();
-    let mut entries = Vec::new();
-    for entry in canonical_replay_dirs(path)
-        .iter()
-        .flat_map(|dir| read_corpus_dir(dir))
-        .filter(|entry| seen_uuids.insert(entry.uuid))
-    {
-        entries.push(entry);
-    }
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
 }
 
