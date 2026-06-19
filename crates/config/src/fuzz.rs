@@ -39,9 +39,6 @@ pub struct FuzzConfig {
 
 impl Default for FuzzConfig {
     fn default() -> Self {
-        let mut corpus = FuzzCorpusConfig::default();
-        corpus.payable_value_weight = 0;
-
         Self {
             runs: 256,
             run: None,
@@ -51,7 +48,7 @@ impl Default for FuzzConfig {
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
-            corpus,
+            corpus: FuzzCorpusConfig { payable_value_weight: 0, ..Default::default() },
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
