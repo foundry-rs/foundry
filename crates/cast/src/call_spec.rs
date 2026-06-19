@@ -67,10 +67,13 @@ impl CallSpec {
         // Pattern: to:value:sig:args or to::sig:args (empty value) or to:value:0xdata
         let mut idx = 1;
 
-        // Check for value (non-empty, not starting with 0x unless it's a number)
+        // Check for value. Hex-looking parts are ambiguous with raw calldata, so only treat them
+        // as values when a following sig/data field makes this the value position.
         if idx < parts.len() {
             let part = parts[idx];
-            if !part.is_empty() && !part.starts_with("0x") && !part.contains('(') {
+            let is_hex_like = part.starts_with("0x") || part.starts_with("0X");
+            let has_following_field = idx + 1 < parts.len();
+            if !part.is_empty() && !part.contains('(') && (!is_hex_like || has_following_field) {
                 // This looks like a value
                 value = parse_ether_or_wei(part)?;
                 idx += 1;
@@ -215,5 +218,14 @@ mod tests {
         assert_eq!(spec.value, U256::ZERO);
         assert!(spec.sig.is_none());
         assert_eq!(spec.data, Some(Bytes::from(hex::decode("abcdef").unwrap())));
+    }
+
+    #[test]
+    fn test_parse_with_hex_value_and_raw_data() {
+        let spec =
+            CallSpec::parse("0x1234567890123456789012345678901234567890:0x0:0x1234").unwrap();
+        assert_eq!(spec.value, U256::ZERO);
+        assert!(spec.sig.is_none());
+        assert_eq!(spec.data, Some(Bytes::from(hex::decode("1234").unwrap())));
     }
 }
