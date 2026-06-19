@@ -264,10 +264,6 @@ impl FuzzCorpusMutationWeights {
             + self.mutation_weight_cmp as u64
     }
 
-    pub const fn abi_or_cmp_total(&self) -> u64 {
-        self.mutation_weight_abi as u64 + self.mutation_weight_cmp as u64
-    }
-
     /// Returns defaults if every configured weight is zero.
     pub fn effective(self) -> Self {
         if self.total() == 0 { Self::default() } else { self }

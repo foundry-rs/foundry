@@ -60,6 +60,7 @@ use proptest::{
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
+use rand::distr::{Distribution, weighted::WeightedIndex};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -84,32 +85,24 @@ const FAVORABILITY_THRESHOLD: f64 = 0.3;
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
 
-fn prefer_cmp_mutation(rng: &mut impl Rng, weights: FuzzCorpusMutationWeights) -> Option<bool> {
-    let total = weights.abi_or_cmp_total();
-    if total == 0 {
-        return None;
-    }
-    Some(rng.random_range(0..total) < u64::from(weights.mutation_weight_cmp))
+fn weighted_arg_mutation(
+    rng: &mut impl Rng,
+    distribution: Option<&WeightedIndex<u32>>,
+) -> Option<bool> {
+    distribution.map(|distribution| distribution.sample(rng) == 1)
 }
 
-fn weighted_mutation_type(rng: &mut impl Rng, weights: FuzzCorpusMutationWeights) -> MutationType {
-    let weights = weights.effective();
-    let mut choice = rng.random_range(0..weights.total());
-    for (weight, mutation) in [
-        (u64::from(weights.mutation_weight_splice), MutationType::Splice),
-        (u64::from(weights.mutation_weight_repeat), MutationType::Repeat),
-        (u64::from(weights.mutation_weight_interleave), MutationType::Interleave),
-        (u64::from(weights.mutation_weight_prefix), MutationType::Prefix),
-        (u64::from(weights.mutation_weight_suffix), MutationType::Suffix),
-        (u64::from(weights.mutation_weight_abi), MutationType::Abi),
-        (u64::from(weights.mutation_weight_cmp), MutationType::Cmp),
-    ] {
-        if choice < weight {
-            return mutation;
-        }
-        choice -= weight;
+fn weighted_mutation_type(rng: &mut impl Rng, distribution: &WeightedIndex<u32>) -> MutationType {
+    match distribution.sample(rng) {
+        0 => MutationType::Splice,
+        1 => MutationType::Repeat,
+        2 => MutationType::Interleave,
+        3 => MutationType::Prefix,
+        4 => MutationType::Suffix,
+        5 => MutationType::Abi,
+        6 => MutationType::Cmp,
+        _ => unreachable!("mutation distribution only has seven entries"),
     }
-    unreachable!("choice is bounded by total mutation weight")
 }
 
 /// Possible mutation strategies to apply on a call sequence.
@@ -515,6 +508,10 @@ pub struct WorkerCorpus {
     tx_generator: BoxedStrategy<BasicTxDetails>,
     /// Call sequence mutation weights used by stateful fuzzing.
     mutation_weights: FuzzCorpusMutationWeights,
+    /// Weighted stateful sequence mutation distribution.
+    mutation_distribution: WeightedIndex<u32>,
+    /// Weighted ABI/CMP argument mutation distribution used by stateless fuzzing.
+    arg_mutation_distribution: Option<WeightedIndex<u32>>,
     /// Identifier of current mutated entry for this worker.
     current_mutated: Option<Uuid>,
     /// Config
@@ -720,6 +717,21 @@ impl WorkerCorpus {
         seed: WorkerCorpusSeed,
     ) -> Self {
         let mutation_weights = config.mutation_weights.effective();
+        let mutation_distribution = WeightedIndex::new([
+            mutation_weights.mutation_weight_splice,
+            mutation_weights.mutation_weight_repeat,
+            mutation_weights.mutation_weight_interleave,
+            mutation_weights.mutation_weight_prefix,
+            mutation_weights.mutation_weight_suffix,
+            mutation_weights.mutation_weight_abi,
+            mutation_weights.mutation_weight_cmp,
+        ])
+        .expect("effective mutation weights contain at least one non-zero entry");
+        let arg_mutation_distribution = WeightedIndex::new([
+            mutation_weights.mutation_weight_abi,
+            mutation_weights.mutation_weight_cmp,
+        ])
+        .ok();
 
         let worker_dir = config.corpus_dir.as_ref().map(|corpus_dir| {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
@@ -743,6 +755,8 @@ impl WorkerCorpus {
             metrics: seed.metrics,
             tx_generator,
             mutation_weights,
+            mutation_distribution,
+            arg_mutation_distribution,
             current_mutated: None,
             config: config.into(),
             new_entry_indices: Default::default(),
@@ -967,7 +981,8 @@ impl WorkerCorpus {
         if !self.in_memory_corpus.is_empty() {
             self.evict_oldest_corpus()?;
 
-            let mutation_type = weighted_mutation_type(test_runner.rng(), self.mutation_weights);
+            let mutation_type =
+                weighted_mutation_type(test_runner.rng(), &self.mutation_distribution);
 
             let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
@@ -1145,20 +1160,23 @@ impl WorkerCorpus {
             self.current_mutated = Some(corpus.uuid);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
-            let weights = self.config.mutation_weights.effective();
-            match prefer_cmp_mutation(test_runner.rng(), weights) {
+            match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
+            {
                 Some(true) => {
                     if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
-                        && weights.mutation_weight_abi > 0
+                        && self.mutation_weights.mutation_weight_abi > 0
                         && !function.inputs.is_empty()
                     {
                         self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
                     }
                 }
-                Some(false) if weights.mutation_weight_abi > 0 && !function.inputs.is_empty() => {
+                Some(false)
+                    if self.mutation_weights.mutation_weight_abi > 0
+                        && !function.inputs.is_empty() =>
+                {
                     self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
                 }
-                Some(false) if weights.mutation_weight_cmp > 0 => {
+                Some(false) if self.mutation_weights.mutation_weight_cmp > 0 => {
                     let _ = Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?;
                 }
                 None => {
