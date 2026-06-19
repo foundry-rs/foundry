@@ -1098,11 +1098,14 @@ forgetest_init!(symbolic_artifact_replay_uses_stored_fail_on_revert, |prj, cmd| 
 import "forge-std/Test.sol";
 
 contract SymbolicArtifactFailOnRevert is Test {
+    uint256 ignored;
+
     function setUp() public {
         targetContract(address(this));
     }
 
-    function step() external pure {
+    function step() external {
+        ignored = 1;
         revert("boom");
     }
 
