@@ -12,18 +12,24 @@
 //!
 //! Output is consumable by tools like `riesentoaster/differential-coverage`.
 
-use crate::executors::{
-    Executor,
-    corpus::{DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created},
-    corpus_io::read_corpus_tree,
-    invariant::execute_tx,
+use crate::{
+    executors::{
+        Executor,
+        corpus::{
+            DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created,
+        },
+        corpus_io::read_corpus_tree,
+        invariant::{call_invariant_function, execute_tx},
+    },
+    inspectors::EdgeIndexMap,
 };
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, hex};
+use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
-use foundry_evm_core::evm::FoundryEvmNetwork;
+use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::invariant::FuzzRunIdentifiedContracts;
+use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -93,6 +99,28 @@ pub struct ShowmapStats {
     pub sancov_requested: bool,
     /// True if any non-zero sancov hits were observed across the replay.
     pub sancov_observed: bool,
+}
+
+/// Facts observed while replaying one candidate for minimization.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReplayObservation {
+    /// AFL-bucketed EVM edge coverage for the candidate.
+    pub evm_edges: Vec<u8>,
+    /// AFL-bucketed native sancov edge coverage for the candidate.
+    pub sancov_edges: Vec<u8>,
+    /// Comparable failure identity, if replaying this candidate fails.
+    pub failure: Option<String>,
+    /// Number of replayable transactions executed.
+    pub replayed: usize,
+    /// Number of transactions skipped because they do not target this fuzz/invariant context.
+    pub skipped: usize,
+}
+
+impl ReplayObservation {
+    pub fn has_coverage(&self) -> bool {
+        self.evm_edges.iter().any(|&edge| edge != 0)
+            || self.sancov_edges.iter().any(|&edge| edge != 0)
+    }
 }
 
 /// Replay every corpus entry under `corpus_dir` and emit showmap files.
@@ -204,6 +232,112 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     }
 
     Ok(stats)
+}
+
+/// Replay one in-memory candidate and return edge/failure observations.
+pub struct MinimizationReplayInput<'a> {
+    pub sequence: &'a [BasicTxDetails],
+    pub evm_edge_indices: &'a mut EdgeIndexMap,
+}
+
+pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    input: MinimizationReplayInput<'_>,
+    fuzzed_function: Option<&Function>,
+    fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    invariant_address: Option<Address>,
+    invariant_fns: &[&Function],
+    dynamic: Option<&DynamicTargetCtx<'_>>,
+) -> Result<ReplayObservation> {
+    let mut observation = ReplayObservation::default();
+    let mut executor = executor.clone();
+    executor.inspector_mut().collect_edge_coverage(true);
+    executor.inspector_mut().collect_sancov_edges(true);
+
+    let mut created = Vec::new();
+    for tx in input.sequence {
+        if !WorkerCorpus::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
+            observation.skipped += 1;
+            continue;
+        }
+        observation.replayed += 1;
+        let mut call_result = execute_tx(&mut executor, tx)?;
+        let target = tx.call_details.target;
+        let selector =
+            tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
+        let reverter = call_result.reverter;
+        let reverted = call_result.reverted;
+        call_result.merge_all_coverage(
+            &mut observation.evm_edges,
+            input.evm_edge_indices,
+            &mut observation.sancov_edges,
+        );
+
+        register_replay_created(
+            &call_result.state_changeset,
+            dynamic,
+            fuzzed_contracts,
+            &mut created,
+        );
+
+        if fuzzed_contracts.is_some() {
+            if observation.failure.is_none() {
+                observation.failure =
+                    invariant_handler_failure(target, selector, reverter, reverted);
+            }
+            executor.commit(&mut call_result);
+            if observation.failure.is_none()
+                && let Some(address) = invariant_address
+                && let Some(name) = broken_invariant(&executor, address, invariant_fns)?
+            {
+                observation.failure = Some(format!("invariant:{name}"));
+            }
+        } else {
+            let success = if call_result
+                .reverter
+                .is_some_and(|reverter| reverter != target && reverter != CHEATCODE_ADDRESS)
+            {
+                true
+            } else {
+                executor.is_raw_call_mut_success(target, &mut call_result, false)
+            };
+            if !success && observation.failure.is_none() {
+                observation.failure = Some(format!(
+                    "fuzz:{target:?}:{selector:?}:{reverter:?}:{:?}",
+                    call_result.exit_reason
+                ));
+            }
+        }
+    }
+    rollback_replay_created(fuzzed_contracts, created);
+    Ok(observation)
+}
+
+fn invariant_handler_failure(
+    target: Address,
+    selector: Selector,
+    reverter: Option<Address>,
+    reverted: bool,
+) -> Option<String> {
+    reverted.then(|| format!("handler:{target:?}:{selector:?}:{reverter:?}"))
+}
+
+fn broken_invariant<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    invariant_address: Address,
+    invariant_fns: &[&Function],
+) -> Result<Option<String>> {
+    for invariant in invariant_fns {
+        let (_, success) = call_invariant_function(
+            executor,
+            invariant_address,
+            (*invariant).abi_encode_input(&[])?.into(),
+        )?;
+        if !success {
+            return Ok(Some(invariant.name.clone()));
+        }
+    }
+    Ok(None)
 }
 
 /// Saturating-add per-(bytecode, pc) hits from a `HitMaps` snapshot into `dst`.

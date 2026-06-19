@@ -4,7 +4,7 @@ use crate::{
     decode::decode_console_logs,
     diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
-    multi_runner::{MultiNetworkConfig, ShowmapConfig, matches_artifact},
+    multi_runner::{FuzzMinimizeConfig, MultiNetworkConfig, ShowmapConfig, matches_artifact},
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
     traces::{
@@ -111,6 +111,10 @@ pub struct TestArgs {
     /// Internal showmap/replay override used by `forge fuzz replay`.
     #[arg(skip)]
     pub(crate) showmap_override: Option<ShowmapConfig>,
+
+    /// Internal minimization replay override used by `forge fuzz cmin/tmin`.
+    #[arg(skip)]
+    pub(crate) fuzz_minimize_override: Option<FuzzMinimizeConfig>,
 
     /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
     #[arg(skip)]
@@ -484,6 +488,16 @@ impl TestArgs {
     /// `forge test --showmap-*` CLI flags.
     pub(crate) fn set_showmap_override(&mut self, showmap: ShowmapConfig) {
         self.showmap_override = Some(showmap);
+    }
+
+    /// Overrides fuzz minimization config for callers that replay candidate inputs.
+    pub(crate) fn set_fuzz_minimize_override(&mut self, fuzz_minimize: FuzzMinimizeConfig) {
+        self.fuzz_minimize_override = Some(fuzz_minimize);
+    }
+
+    /// Sets test filters for internal callers.
+    pub(crate) fn set_filter(&mut self, filter: FilterArgs) {
+        self.filter = filter;
     }
 
     /// Replays persisted fuzz failures without running a new fuzz campaign.
@@ -1188,6 +1202,7 @@ impl TestArgs {
 
         let config = Arc::new(config);
         let showmap = self.showmap_config();
+        let fuzz_minimize = self.fuzz_minimize_override.clone();
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -1199,6 +1214,7 @@ impl TestArgs {
             .set_coverage(coverage)
             .with_multi_network(multi_network)
             .with_showmap(showmap)
+            .with_fuzz_minimize(fuzz_minimize)
             .with_fuzz_only(self.fuzz_only)
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;

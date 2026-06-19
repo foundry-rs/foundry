@@ -267,6 +267,72 @@ minimized entry: 1 txs -> min.json
     assert!(prj.root().join("min.json").is_file());
 });
 
+forgetest_init!(forge_fuzz_cmin_keeps_coverage_divergent_entries, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzCminCoverage.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzCminCoverageTest is Test {
+    uint256 public sink;
+
+    function testFuzz_branch(uint256 value) public {
+        if (value == 1) {
+            sink = 1;
+        } else if (value == 2) {
+            sink = 2;
+        } else {
+            sink = 3;
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry_one = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000001",
+  "value":"0x0"
+}]"#;
+    let entry_two = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000002",
+  "value":"0x0"
+}]"#;
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry_one).unwrap();
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry_two).unwrap();
+
+    let cmin = cmd
+        .forge_fuse()
+        .args([
+            "--machine",
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminCoverageTest",
+            "corpus",
+            "--out",
+            "cmin",
+        ])
+        .assert_success();
+    let cmin_stdout = String::from_utf8(cmin.get_output().stdout.clone()).unwrap();
+    let cmin: Value = serde_json::from_str(
+        cmin_stdout.lines().rev().find(|line| line.contains("\"schema_version\"")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cmin["success"], true);
+    assert_eq!(cmin["data"]["mode"], "coverage");
+    assert_eq!(cmin["data"]["total"], 2);
+    assert_eq!(cmin["data"]["kept"], 2);
+    assert_eq!(cmin["data"]["removed"], 0);
+    assert_eq!(std::fs::read_dir(prj.root().join("cmin")).unwrap().count(), 2);
+});
+
 forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
     let worker0 = prj.root().join("corpus/worker0/corpus");
     let worker1 = prj.root().join("corpus/worker1/corpus");

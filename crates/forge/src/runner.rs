@@ -24,13 +24,13 @@ use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
-        CallResult, EvmError, Executor, ITest, RawCallResult, ShowmapOpts,
+        CallResult, EvmError, Executor, ITest, MinimizationReplayInput, RawCallResult, ShowmapOpts,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
             check_sequence, replay_error, replay_handler_failure_sequence, replay_run,
         },
-        replay_corpus_to_showmap,
+        replay_corpus_to_showmap, replay_sequence_for_minimization,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -1472,6 +1472,53 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             Cow::Borrowed(func.name.as_str())
         };
 
+        if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.clone() {
+            if let Err(e) = evm.select_contract_artifacts(self.address) {
+                self.result.invariant_setup_fail(e);
+                return self.result;
+            }
+            let targeted = match evm.select_contracts_and_senders(self.address) {
+                Ok((_, t)) => t,
+                Err(e) => {
+                    self.result.invariant_setup_fail(e);
+                    return self.result;
+                }
+            };
+            let dynamic = evm.dynamic_target_ctx();
+            let invariant_fns = invariant_contract
+                .invariant_fns
+                .iter()
+                .map(|(invariant, _)| *invariant)
+                .collect::<Vec<_>>();
+            let mut evm_edge_indices =
+                minimize.evm_edge_indices.lock().expect("minimize edge index lock");
+            match replay_sequence_for_minimization(
+                &evm.executor,
+                MinimizationReplayInput {
+                    sequence: &minimize.input,
+                    evm_edge_indices: &mut evm_edge_indices,
+                },
+                None,
+                Some(&targeted),
+                Some(invariant_contract.address),
+                &invariant_fns,
+                Some(&dynamic),
+            ) {
+                Ok(observation) => {
+                    let replayed = observation.replayed;
+                    let skipped = observation.skipped;
+                    minimize
+                        .observations
+                        .lock()
+                        .expect("minimize observations lock")
+                        .push(observation);
+                    self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
+                }
+                Err(e) => self.result.single_fail(Some(e.to_string())),
+            }
+            return self.result;
+        }
+
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
@@ -1997,6 +2044,39 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let corpus_dir =
                 showmap.corpus_dir.clone().or_else(|| fuzz_config.corpus.corpus_dir.clone());
             return self.run_showmap(func, corpus_dir, &showmap, Some(func), None, None);
+        }
+
+        if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.clone() {
+            let mut executor = self.executor.clone().into_owned();
+            executor.inspector_mut().collect_edge_coverage(true);
+            executor.inspector_mut().collect_sancov_edges(true);
+            let mut evm_edge_indices =
+                minimize.evm_edge_indices.lock().expect("minimize edge index lock");
+            match replay_sequence_for_minimization(
+                &executor,
+                MinimizationReplayInput {
+                    sequence: &minimize.input,
+                    evm_edge_indices: &mut evm_edge_indices,
+                },
+                Some(func),
+                None,
+                None,
+                &[],
+                None,
+            ) {
+                Ok(observation) => {
+                    let replayed = observation.replayed;
+                    let skipped = observation.skipped;
+                    minimize
+                        .observations
+                        .lock()
+                        .expect("minimize observations lock")
+                        .push(observation);
+                    self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
+                }
+                Err(e) => self.result.single_fail(Some(e.to_string())),
+            }
+            return self.result;
         }
 
         // Load persisted counterexample, if any.

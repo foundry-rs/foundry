@@ -1,20 +1,29 @@
-use crate::{cmd::test::TestArgs, multi_runner::ShowmapConfig};
+use crate::{
+    cmd::test::{FilterArgs, TestArgs},
+    multi_runner::{FuzzMinimizeConfig, ShowmapConfig},
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::Selector;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use eyre::{Context, Result, bail};
 use foundry_cli::json::{JsonEnvelope, print_json};
-use foundry_common::{fmt::format_tokens_raw, fs, sh_println};
+use foundry_common::{
+    fmt::format_tokens_raw,
+    fs, sh_println,
+    shell::{OutputMode, Shell},
+};
 use foundry_config::Config;
 use foundry_evm::{
-    executors::{CorpusDirEntry, ShowmapDomain, read_corpus_tree},
+    executors::{CorpusDirEntry, ReplayObservation, ShowmapDomain, read_corpus_tree},
     fuzz::BasicTxDetails,
+    inspectors::EdgeIndexMap,
 };
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -39,11 +48,11 @@ impl FuzzArgs {
                 Ok(crate::result::TestOutcome::empty(None, true))
             }
             FuzzSubcommands::Cmin(args) => {
-                args.run()?;
+                args.run().await?;
                 Ok(crate::result::TestOutcome::empty(None, true))
             }
             FuzzSubcommands::Tmin(args) => {
-                args.run()?;
+                args.run().await?;
                 Ok(crate::result::TestOutcome::empty(None, true))
             }
         }
@@ -62,11 +71,11 @@ impl FuzzArgs {
                 Ok(None)
             }
             FuzzSubcommands::Cmin(args) => {
-                print_json(&JsonEnvelope::success(args.run_machine()?))?;
+                print_json(&JsonEnvelope::success(args.run_machine().await?))?;
                 Ok(None)
             }
             FuzzSubcommands::Tmin(args) => {
-                print_json(&JsonEnvelope::success(args.run_machine()?))?;
+                print_json(&JsonEnvelope::success(args.run_machine().await?))?;
                 Ok(None)
             }
         }
@@ -199,6 +208,8 @@ pub struct FuzzShowData {
 /// Minimize a corpus by removing duplicate transaction sequences.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzCminArgs {
+    #[command(flatten)]
+    filter: FilterArgs,
     /// Input corpus directory.
     #[arg(value_name = "CORPUS_DIR", value_hint = ValueHint::DirPath)]
     corpus_dir: PathBuf,
@@ -208,24 +219,54 @@ pub struct FuzzCminArgs {
 }
 
 impl FuzzCminArgs {
-    fn run_machine(&self) -> Result<FuzzCminData> {
+    async fn run_machine(self) -> Result<FuzzCminData> {
         if self.out.exists() {
             bail!("output corpus directory already exists: {}", self.out.display());
         }
         fs::create_dir_all(&self.out)?;
 
-        let mut seen_sequences = HashSet::new();
+        let structural_only = self.filter.is_empty() && foundry_cli::is_machine();
+        let mut test = (!structural_only).then(|| minimizer_test_args(self.filter));
+        if let Some(test) = &mut test {
+            test.enable_fuzz_only();
+            test.reject_machine_unsupported_flags()?;
+        }
+        let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let mut kept = 0usize;
         let mut total = 0usize;
+        let mut skipped = 0usize;
+        let mut replayed = 0usize;
+        let mut cumulative = ReplayObservation::default();
+        let mut seen_sequences = HashSet::new();
         for entry in read_corpus_entries(&self.corpus_dir)? {
             total += 1;
             let sequence = read_sequence(&entry.path)
-                .with_context(|| format!("failed to read corpus entry {}", entry.path.display()))?;
-            let key = serde_json::to_vec(&sequence)?;
-            if !seen_sequences.insert(key) {
+                .with_context(|| format!("failed to read corpus entry {}", entry.path.display()));
+            let Ok(sequence) = sequence else {
+                skipped += 1;
+                continue;
+            };
+            let structural_key = serde_json::to_vec(&sequence)?;
+            let observation = if let Some(test) = &mut test {
+                replay_candidate(test, evm_edge_indices.clone(), sequence).await?
+            } else {
+                ReplayObservation::default()
+            };
+            replayed += observation.replayed;
+            skipped += observation.skipped;
+            let keep = if observation.replayed == 0 && !observation.has_coverage() {
+                seen_sequences.insert(structural_key)
+            } else {
+                merge_new_edges(&mut cumulative, &observation)
+            };
+            if !keep {
                 continue;
             }
-            let out = self.out.join(entry.path.file_name().expect("corpus entry has file name"));
+            let rel = entry.path.strip_prefix(&self.corpus_dir).unwrap_or(&entry.path);
+            let out = self.out.join(rel);
+            if let Some(parent) = out.parent() {
+                fs::create_dir_all(parent)?;
+            }
             std::fs::copy(&entry.path, &out).with_context(|| {
                 format!("failed to copy {} to {}", entry.path.display(), out.display())
             })?;
@@ -235,14 +276,21 @@ impl FuzzCminArgs {
         Ok(FuzzCminData {
             input: self.corpus_dir.clone(),
             output: self.out.clone(),
+            mode: if structural_only {
+                FuzzMinimizeMode::Structural
+            } else {
+                FuzzMinimizeMode::Coverage
+            },
             total,
             kept,
             removed: total - kept,
+            skipped,
+            replayed,
         })
     }
 
-    fn run(&self) -> Result<()> {
-        let data = self.run_machine()?;
+    async fn run(self) -> Result<()> {
+        let data = self.run_machine().await?;
         sh_println!(
             "minimized corpus: kept {}/{} entries in {}",
             data.kept,
@@ -257,41 +305,66 @@ impl FuzzCminArgs {
 pub struct FuzzCminData {
     input: PathBuf,
     output: PathBuf,
+    mode: FuzzMinimizeMode,
     total: usize,
     kept: usize,
     removed: usize,
+    skipped: usize,
+    replayed: usize,
 }
 
 /// Minimize one corpus entry.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzTminArgs {
+    #[command(flatten)]
+    filter: FilterArgs,
     /// Input corpus file.
     #[arg(value_name = "INPUT", value_hint = ValueHint::FilePath)]
     input: PathBuf,
     /// Output corpus file.
     #[arg(long, short, value_name = "FILE", value_hint = ValueHint::FilePath)]
     out: PathBuf,
+    /// Maximum candidate replays to attempt.
+    #[arg(long, default_value_t = 5000, value_name = "N")]
+    max_attempts: usize,
 }
 
 impl FuzzTminArgs {
-    fn run_machine(&self) -> Result<FuzzTminData> {
+    async fn run_machine(self) -> Result<FuzzTminData> {
         if self.out.exists() {
             bail!("output corpus file already exists: {}", self.out.display());
         }
 
         let mut sequence = read_sequence(&self.input)?;
         let before_txs = sequence.len();
-        sequence.retain(|tx| !tx.call_details.calldata.is_empty());
-        for tx in &mut sequence {
-            if tx.warp == Some(Default::default()) {
-                tx.warp = None;
+        let structural_only = self.filter.is_empty() && foundry_cli::is_machine();
+        let mut test = (!structural_only).then(|| minimizer_test_args(self.filter));
+        if let Some(test) = &mut test {
+            test.enable_fuzz_only();
+            test.reject_machine_unsupported_flags()?;
+        }
+        let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
+        let original = if let Some(test) = &mut test {
+            replay_candidate(test, evm_edge_indices.clone(), sequence.clone()).await?
+        } else {
+            ReplayObservation::default()
+        };
+        let mut attempts = 0usize;
+        if original.replayed == 0 && !original.has_coverage() && original.failure.is_none() {
+            sequence.retain(|tx| !tx.call_details.calldata.is_empty());
+            for tx in &mut sequence {
+                cleanup_metadata(tx);
             }
-            if tx.roll == Some(Default::default()) {
-                tx.roll = None;
-            }
-            if tx.call_details.value == Some(Default::default()) {
-                tx.call_details.value = None;
-            }
+        } else {
+            minimize_sequence(
+                test.as_mut().expect("replay-backed tmin has test args"),
+                evm_edge_indices.clone(),
+                &original,
+                &mut sequence,
+                self.max_attempts,
+                &mut attempts,
+            )
+            .await?;
         }
 
         if self.out.extension() == Some("gz".as_ref()) {
@@ -302,14 +375,21 @@ impl FuzzTminArgs {
         Ok(FuzzTminData {
             input: self.input.clone(),
             output: self.out.clone(),
+            mode: if structural_only {
+                FuzzMinimizeMode::Structural
+            } else {
+                FuzzMinimizeMode::Coverage
+            },
             before_txs,
             after_txs: sequence.len(),
             removed_txs: before_txs - sequence.len(),
+            attempts,
+            failed: original.failure.is_some(),
         })
     }
 
-    fn run(&self) -> Result<()> {
-        let data = self.run_machine()?;
+    async fn run(self) -> Result<()> {
+        let data = self.run_machine().await?;
         sh_println!("minimized entry: {} txs -> {}", data.after_txs, data.output.display())?;
         Ok(())
     }
@@ -319,9 +399,19 @@ impl FuzzTminArgs {
 pub struct FuzzTminData {
     input: PathBuf,
     output: PathBuf,
+    mode: FuzzMinimizeMode,
     before_txs: usize,
     after_txs: usize,
     removed_txs: usize,
+    attempts: usize,
+    failed: bool,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FuzzMinimizeMode {
+    Coverage,
+    Structural,
 }
 
 #[derive(Serialize)]
@@ -454,4 +544,226 @@ fn read_sequence(path: &Path) -> Result<Vec<BasicTxDetails>> {
     } else {
         Ok(fs::read_json_file(path)?)
     }
+}
+
+fn minimizer_test_args(filter: FilterArgs) -> TestArgs {
+    let mut test = TestArgs::parse_from(["test", "-q"]);
+    test.set_filter(filter);
+    test
+}
+
+struct QuietShellGuard {
+    previous: OutputMode,
+}
+
+impl QuietShellGuard {
+    fn new() -> Self {
+        let mut shell = Shell::get();
+        let previous = shell.output_mode();
+        shell.set_output_mode(OutputMode::Quiet);
+        Self { previous }
+    }
+}
+
+impl Drop for QuietShellGuard {
+    fn drop(&mut self) {
+        Shell::get().set_output_mode(self.previous);
+    }
+}
+
+async fn replay_candidate(
+    test: &mut TestArgs,
+    evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
+    sequence: Vec<BasicTxDetails>,
+) -> Result<ReplayObservation> {
+    let observations = Arc::new(Mutex::new(Vec::new()));
+    test.set_fuzz_minimize_override(FuzzMinimizeConfig {
+        input: sequence,
+        evm_edge_indices,
+        observations: observations.clone(),
+    });
+    let _quiet = QuietShellGuard::new();
+    let _ = test.compile_and_run().await?;
+    let observations = observations.lock().expect("minimize observations lock").clone();
+    Ok(merge_observations(observations))
+}
+
+fn merge_observations(observations: Vec<ReplayObservation>) -> ReplayObservation {
+    let mut merged = ReplayObservation::default();
+    for observation in observations {
+        merge_edge_vec(&mut merged.evm_edges, &observation.evm_edges);
+        merge_edge_vec(&mut merged.sancov_edges, &observation.sancov_edges);
+        merged.replayed += observation.replayed;
+        merged.skipped += observation.skipped;
+        if merged.failure.is_none() {
+            merged.failure = observation.failure;
+        }
+    }
+    merged
+}
+
+fn merge_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
+    if dst.len() < src.len() {
+        dst.resize(src.len(), 0);
+    }
+    for (dst, src) in dst.iter_mut().zip(src) {
+        *dst = (*dst).max(*src);
+    }
+}
+
+fn merge_new_edges(cumulative: &mut ReplayObservation, observation: &ReplayObservation) -> bool {
+    let before = count_edges(cumulative);
+    merge_edge_vec(&mut cumulative.evm_edges, &observation.evm_edges);
+    merge_edge_vec(&mut cumulative.sancov_edges, &observation.sancov_edges);
+    count_edges(cumulative) > before
+}
+
+fn count_edges(observation: &ReplayObservation) -> usize {
+    observation.evm_edges.iter().filter(|&&edge| edge != 0).count()
+        + observation.sancov_edges.iter().filter(|&&edge| edge != 0).count()
+}
+
+async fn minimize_sequence(
+    test: &mut TestArgs,
+    evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
+    original: &ReplayObservation,
+    sequence: &mut Vec<BasicTxDetails>,
+    max_attempts: usize,
+    attempts: &mut usize,
+) -> Result<()> {
+    let mut idx = 0;
+    while idx < sequence.len() && *attempts < max_attempts {
+        let mut candidate = sequence.clone();
+        candidate.remove(idx);
+        if accepts_candidate(
+            test,
+            evm_edge_indices.clone(),
+            original,
+            candidate.clone(),
+            max_attempts,
+            attempts,
+        )
+        .await?
+        {
+            *sequence = candidate;
+        } else {
+            idx += 1;
+        }
+    }
+
+    let mut idx = 0;
+    while idx < sequence.len() && *attempts < max_attempts {
+        let mut candidate = sequence.clone();
+        cleanup_metadata(&mut candidate[idx]);
+        if accepts_candidate(
+            test,
+            evm_edge_indices.clone(),
+            original,
+            candidate.clone(),
+            max_attempts,
+            attempts,
+        )
+        .await?
+        {
+            *sequence = candidate;
+        }
+        idx += 1;
+    }
+
+    let mut tx_idx = 0;
+    while tx_idx < sequence.len() && *attempts < max_attempts {
+        for calldata in calldata_candidates(sequence[tx_idx].call_details.calldata.as_ref()) {
+            if *attempts >= max_attempts {
+                break;
+            }
+            let mut candidate = sequence.clone();
+            candidate[tx_idx].call_details.calldata = calldata.into();
+            if accepts_candidate(
+                test,
+                evm_edge_indices.clone(),
+                original,
+                candidate.clone(),
+                max_attempts,
+                attempts,
+            )
+            .await?
+            {
+                *sequence = candidate;
+            }
+        }
+        tx_idx += 1;
+    }
+    Ok(())
+}
+
+async fn accepts_candidate(
+    test: &mut TestArgs,
+    evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
+    original: &ReplayObservation,
+    candidate: Vec<BasicTxDetails>,
+    max_attempts: usize,
+    attempts: &mut usize,
+) -> Result<bool> {
+    if *attempts >= max_attempts {
+        return Ok(false);
+    }
+    *attempts += 1;
+    let observed = replay_candidate(test, evm_edge_indices, candidate).await?;
+    if let Some(failure) = &original.failure {
+        Ok(observed.failure.as_ref() == Some(failure))
+    } else {
+        Ok(observed.failure.is_none() && covers_edges(&observed, original))
+    }
+}
+
+fn covers_edges(candidate: &ReplayObservation, original: &ReplayObservation) -> bool {
+    covers_edge_vec(&candidate.evm_edges, &original.evm_edges)
+        && covers_edge_vec(&candidate.sancov_edges, &original.sancov_edges)
+}
+
+fn covers_edge_vec(candidate: &[u8], original: &[u8]) -> bool {
+    original
+        .iter()
+        .enumerate()
+        .all(|(idx, &edge)| edge == 0 || candidate.get(idx).copied().unwrap_or_default() != 0)
+}
+
+fn cleanup_metadata(tx: &mut BasicTxDetails) {
+    if tx.warp == Some(Default::default()) {
+        tx.warp = None;
+    }
+    if tx.roll == Some(Default::default()) {
+        tx.roll = None;
+    }
+    if tx.call_details.value == Some(Default::default()) {
+        tx.call_details.value = None;
+    }
+}
+
+fn calldata_candidates(calldata: &[u8]) -> Vec<Vec<u8>> {
+    if calldata.len() <= 4 {
+        return Vec::new();
+    }
+    let mut candidates = Vec::new();
+    let mut offset = 4;
+    while offset + 32 <= calldata.len() {
+        for replacement in calldata_word_replacements() {
+            if calldata[offset..offset + 32] == replacement {
+                continue;
+            }
+            let mut candidate = calldata.to_vec();
+            candidate[offset..offset + 32].copy_from_slice(&replacement);
+            candidates.push(candidate);
+        }
+        offset += 32;
+    }
+    candidates
+}
+
+const fn calldata_word_replacements() -> [[u8; 32]; 3] {
+    let zero = [0u8; 32];
+    let mut one = [0u8; 32];
+    one[31] = 1;
+    let minus_one = [0xffu8; 32];
+    [zero, one, minus_one]
 }
