@@ -110,11 +110,11 @@ shadowed by `~/.foundry/bin`. `--foundry-bin` must point to a file named `forge`
 records the canonical path in `manifest.json`.
 
 Optimization campaigns require `--properties-path`, which is passed to scfuzzbench as
-`SCFUZZBENCH_PROPERTIES_PATH` and must be relative to the target repository. If GNU `timeout` is
-unavailable, the runner installs a local `timeout` shim in the work directory and prepends it to the
-campaign `PATH`. On platforms where `date -Is` is unavailable, it also installs a local `date` shim
-for scfuzzbench log timestamps. If `local-run.sh` exits non-zero, the runner stops before analysis so
-a failed setup or campaign cannot be reported as a successful artifact bundle.
+`SCFUZZBENCH_PROPERTIES_PATH` and must be relative to the target repository. If GNU `timeout` or
+GNU-style `sed -i` is unavailable, the runner installs local shims in the work directory and prepends
+it to the campaign `PATH`. On platforms where `date -Is` is unavailable, it also installs a local
+`date` shim for scfuzzbench log timestamps. If `local-run.sh` exits non-zero, the runner stops before
+analysis so a failed setup or campaign cannot be reported as a successful artifact bundle.
 
 The artifact bundle exposes:
 

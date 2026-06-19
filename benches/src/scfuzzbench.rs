@@ -236,6 +236,7 @@ fn main() -> Result<()> {
     dirs.create()?;
     install_date_shim(&dirs.tools_bin)?;
     install_timeout_shim(&dirs.tools_bin)?;
+    install_sed_shim(&dirs.tools_bin)?;
 
     let _ = sh_println!("📦 Cloning scfuzzbench");
     let scfuzzbench_commit =
@@ -521,6 +522,59 @@ def main(argv):
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
+"#
+        .to_string()
+    };
+
+    fs::write(&shim, content).wrap_err_with(|| format!("failed to write {}", shim.display()))?;
+    make_executable(&shim)?;
+    Ok(())
+}
+
+fn install_sed_shim(tools_bin: &Path) -> Result<()> {
+    let native_supports_gnu_in_place = Command::new("sh")
+        .arg("-c")
+        .arg(
+            r#"tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/foundry-scfuzzbench-sed.XXXXXX") || exit 1
+trap 'rm -rf "$tmpdir"' EXIT
+tmp="${tmpdir}/input"
+printf 'foo\n' > "$tmp"
+sed -i 's/foo/bar/' "$tmp" >/dev/null 2>&1 && grep -qx bar "$tmp"
+"#,
+        )
+        .status()
+        .wrap_err("failed to check native sed -i support")?
+        .success();
+    if native_supports_gnu_in_place {
+        return Ok(());
+    }
+
+    fs::create_dir_all(tools_bin)
+        .wrap_err_with(|| format!("failed to create {}", tools_bin.display()))?;
+    let shim = tools_bin.join("sed");
+
+    let content = if command_exists("gsed")? {
+        r#"#!/usr/bin/env bash
+exec gsed "$@"
+"#
+        .to_string()
+    } else {
+        r#"#!/usr/bin/env bash
+native_sed=/usr/bin/sed
+if [[ ! -x "${native_sed}" ]]; then
+  native_sed=/bin/sed
+fi
+
+if "${native_sed}" --version >/dev/null 2>&1; then
+  exec "${native_sed}" "$@"
+fi
+
+if [[ "${1:-}" == "-i" ]]; then
+  shift
+  exec "${native_sed}" -i '' "$@"
+fi
+
+exec "${native_sed}" "$@"
 "#
         .to_string()
     };
@@ -850,18 +904,8 @@ fn validate_differential_coverage(dirs: &Dirs) -> Result<()> {
         eyre::bail!("{} has raw_trials=0", manifest_path.display());
     }
 
-    let combined = manifest
-        .get("campaigns")
-        .and_then(|campaigns| campaigns.get("combined"))
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| {
-            eyre::eyre!("{} does not contain campaigns.combined", manifest_path.display())
-        })?;
-    if combined.is_empty() {
-        eyre::bail!("{} has empty campaigns.combined", manifest_path.display());
-    }
-
-    let has_covered_trial = combined.values().any(|entry| {
+    let approaches = combined_approaches(&manifest_path, &manifest)?;
+    let has_covered_trial = approaches.iter().any(|entry| {
         let trials = entry.get("trials").and_then(serde_json::Value::as_u64).unwrap_or(0);
         let covered_edges =
             entry.get("covered_edges").and_then(serde_json::Value::as_u64).unwrap_or(0);
@@ -874,11 +918,44 @@ fn validate_differential_coverage(dirs: &Dirs) -> Result<()> {
         );
     }
 
-    for csv in ["differential_coverage_relscores.csv", "differential_coverage_relcov.csv"] {
-        let path = dirs.data.join(csv);
-        ensure_csv_has_data_row(&path)?;
+    ensure_csv_has_data_row(&dirs.data.join("differential_coverage_relscores.csv"))?;
+
+    let relcov = dirs.data.join("differential_coverage_relcov.csv");
+    if approaches.len() > 1 {
+        ensure_csv_has_data_row(&relcov)?;
+    } else {
+        ensure_non_empty_file(&relcov, "differential coverage CSV")?;
     }
     Ok(())
+}
+
+fn combined_approaches<'a>(
+    manifest_path: &Path,
+    manifest: &'a serde_json::Value,
+) -> Result<Vec<&'a serde_json::Value>> {
+    let combined = manifest
+        .get("campaigns")
+        .and_then(|campaigns| campaigns.get("combined"))
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            eyre::eyre!("{} does not contain campaigns.combined", manifest_path.display())
+        })?;
+
+    let approaches = match combined.get("approaches") {
+        Some(approaches) => approaches.as_object().ok_or_else(|| {
+            eyre::eyre!(
+                "{} campaigns.combined.approaches is not an object",
+                manifest_path.display()
+            )
+        })?,
+        None => combined,
+    };
+
+    if approaches.is_empty() {
+        eyre::bail!("{} has empty campaigns.combined approaches", manifest_path.display());
+    }
+
+    Ok(approaches.values().collect())
 }
 
 fn ensure_non_empty_file(path: &Path, label: &str) -> Result<()> {
@@ -1328,14 +1405,19 @@ fn find_lcov_like(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
-        if name.contains("lcov") || name.contains("coverage-diff") || name.contains("coverage_diff")
-        {
+        if is_lcov_like_name(&name) {
             out.push(path.clone());
         } else if path.is_dir() {
             find_lcov_like(&path, out)?;
         }
     }
     Ok(())
+}
+
+fn is_lcov_like_name(name: &str) -> bool {
+    name.contains("coverage-diff")
+        || name.contains("coverage_diff")
+        || name.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|part| part == "lcov")
 }
 
 fn list_relative_files(root: &Path) -> Result<Vec<String>> {
@@ -1393,6 +1475,28 @@ mod tests {
         }
     }
 
+    fn temp_dirs() -> (tempfile::TempDir, Dirs) {
+        let temp = tempfile::tempdir().expect("failed to create temp dir");
+        let dirs = Dirs::new(temp.path().join("run"));
+        dirs.create().expect("failed to create scfuzzbench dirs");
+        (temp, dirs)
+    }
+
+    fn write_differential_coverage_inputs(dirs: &Dirs, manifest: serde_json::Value, relcov: &str) {
+        fs::write(
+            dirs.data.join("showmap_campaign_manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("failed to serialize manifest"),
+        )
+        .expect("failed to write manifest");
+        fs::write(
+            dirs.data.join("differential_coverage_relscores.csv"),
+            "approach,score\nfoundry,1\n",
+        )
+        .expect("failed to write relscores");
+        fs::write(dirs.data.join("differential_coverage_relcov.csv"), relcov)
+            .expect("failed to write relcov");
+    }
+
     #[test]
     fn validates_repo_relative_properties_path() {
         let mut cli = base_cli();
@@ -1424,5 +1528,104 @@ mod tests {
             Command::new("sh").arg("-c").arg("exit 7").status().expect("failed to execute shell");
         let err = ensure_campaign_success(&status).expect_err("campaign failure should fail");
         assert!(err.to_string().contains("campaign failed"));
+    }
+
+    #[test]
+    fn installed_sed_shim_accepts_gnu_no_backup_in_place_form() {
+        let temp = tempfile::tempdir().expect("failed to create temp dir");
+        install_sed_shim(temp.path()).expect("failed to install sed shim");
+        let shim = temp.path().join("sed");
+        if !shim.exists() {
+            return;
+        }
+
+        let input = temp.path().join("input");
+        fs::write(&input, "foo\n").expect("failed to write sed input");
+        let status = Command::new(&shim)
+            .args(["-i", "s/foo/bar/"])
+            .arg(&input)
+            .status()
+            .expect("failed to run sed shim");
+        assert!(status.success());
+        assert_eq!(fs::read_to_string(&input).expect("failed to read sed output"), "bar\n");
+    }
+
+    #[test]
+    fn validates_nested_showmap_approaches_with_header_only_single_relcov() {
+        let (_temp, dirs) = temp_dirs();
+        write_differential_coverage_inputs(
+            &dirs,
+            json!({
+                "raw_trials": 1,
+                "campaigns": {
+                    "combined": {
+                        "approaches": {
+                            "foundry": {
+                                "trials": 1,
+                                "covered_edges": 12
+                            }
+                        }
+                    }
+                }
+            }),
+            "approach,relative_coverage\n",
+        );
+
+        validate_differential_coverage(&dirs)
+            .expect("single-approach header-only relcov should be accepted");
+    }
+
+    #[test]
+    fn validates_multi_approach_relcov_rows() {
+        let (_temp, dirs) = temp_dirs();
+        let manifest = json!({
+            "raw_trials": 2,
+            "campaigns": {
+                "combined": {
+                    "approaches": {
+                        "foundry": {
+                            "trials": 1,
+                            "covered_edges": 12
+                        },
+                        "echidna": {
+                            "trials": 1,
+                            "covered_edges": 10
+                        }
+                    }
+                }
+            }
+        });
+        write_differential_coverage_inputs(&dirs, manifest.clone(), "approach,relative_coverage\n");
+
+        let err = validate_differential_coverage(&dirs)
+            .expect_err("multi-approach relcov should require data rows");
+        assert!(err.to_string().contains("has no data rows"));
+
+        write_differential_coverage_inputs(
+            &dirs,
+            manifest,
+            "approach,relative_coverage\nfoundry,1.0\n",
+        );
+        validate_differential_coverage(&dirs)
+            .expect("multi-approach relcov with data rows should be accepted");
+    }
+
+    #[test]
+    fn does_not_collect_relcov_as_lcov_output() {
+        let (_temp, dirs) = temp_dirs();
+        fs::write(dirs.data.join("differential_coverage_relcov.csv"), "header\n")
+            .expect("failed to write relcov");
+        fs::write(dirs.data.join("coverage_diff.csv"), "diff\n")
+            .expect("failed to write coverage diff");
+        fs::create_dir_all(dirs.raw.join("nested")).expect("failed to create raw nested dir");
+        fs::write(dirs.raw.join("nested/run-lcov.info"), "lcov\n")
+            .expect("failed to write lcov file");
+
+        let dest = dirs.artifacts.join("lcov-diff");
+        collect_lcov_outputs(&dirs, &dest).expect("failed to collect lcov outputs");
+
+        assert!(dest.join("coverage_diff.csv").exists());
+        assert!(dest.join("run-lcov.info").exists());
+        assert!(!dest.join("differential_coverage_relcov.csv").exists());
     }
 }

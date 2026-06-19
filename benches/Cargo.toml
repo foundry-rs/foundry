@@ -35,3 +35,6 @@ clap = { version = "4", features = ["derive"] }
 once_cell = "1.21"
 ctrlc = { version = "3", features = ["termination"] }
 libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
