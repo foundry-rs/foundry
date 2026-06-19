@@ -82,7 +82,7 @@ Compiler run successful!
 
 Ran 2 tests for test/ForgeFuzzRun.t.sol:ForgeFuzzRunTest
 [PASS] testFuzz_value(uint256) (runs: 2, [AVG_GAS])
-[SKIP: not runnable in fuzz mode] test_unit() (replay: 0 entries, 0 files)
+[SKIP: not runnable in fuzz mode] test_unit() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 1 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 1 skipped (2 total tests)

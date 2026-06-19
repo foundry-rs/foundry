@@ -922,15 +922,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     | TestFunctionKind::SymbolicTest
             )
         {
-            let mode = self
-                .cr
-                .mcr
-                .tcfg
-                .showmap
-                .as_ref()
-                .map(|showmap| if showmap.emit_files { "showmap" } else { "replay" })
-                .unwrap_or("fuzz");
-            self.result.replay_skip(format!("not runnable in {mode} mode"));
+            if let Some(showmap) = self.cr.mcr.tcfg.showmap.as_ref() {
+                let mode = if showmap.emit_files { "showmap" } else { "replay" };
+                self.result.replay_skip(format!("not runnable in {mode} mode"));
+            } else {
+                self.result.single_skip(SkipReason(Some("not runnable in fuzz mode".to_string())));
+            }
             return self.result;
         }
 
