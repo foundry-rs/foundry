@@ -93,10 +93,11 @@ where
     let fee_payer = fee_payer.or_else(|| tx.from());
     let calls = tx.tempo_calls();
     let has_call_list = tx.has_tempo_call_list();
+    let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
 
     let immediate_user_token =
-        infer_fee_token_from_set_user_token_call(&calls, has_call_list, tx_from, fee_payer);
+        infer_fee_token_from_set_user_token_call(&calls, is_aa, tx_from, fee_payer);
     let stored_fee_token = if immediate_user_token.is_none()
         && let (Some(provider), Some(fee_payer)) = (provider, fee_payer)
     {
@@ -152,16 +153,16 @@ fn infer_fee_token_from_tip20_calls(
     if fee_payer != tx_from {
         return None;
     }
-    Some(target)
+    target.is_tip20().then_some(target)
 }
 
 fn infer_fee_token_from_set_user_token_call(
     calls: &[(TxKind, &[u8])],
-    has_call_list: bool,
+    is_aa: bool,
     tx_from: Option<Address>,
     fee_payer: Option<Address>,
 ) -> Option<Address> {
-    if has_call_list || fee_payer != tx_from {
+    if is_aa || fee_payer != tx_from {
         return None;
     }
 
@@ -206,13 +207,14 @@ fn is_tip20_fee_token_call(input: &[u8]) -> bool {
 
 fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
     let selector = input.get(..4)?;
-    if selector == IStablecoinDEX::swapExactAmountInCall::SELECTOR {
+    let token = if selector == IStablecoinDEX::swapExactAmountInCall::SELECTOR {
         IStablecoinDEX::swapExactAmountInCall::abi_decode(input).ok().map(|call| call.tokenIn)
     } else if selector == IStablecoinDEX::swapExactAmountOutCall::SELECTOR {
         IStablecoinDEX::swapExactAmountOutCall::abi_decode(input).ok().map(|call| call.tokenIn)
     } else {
         None
-    }
+    }?;
+    token.is_tip20().then_some(token)
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.

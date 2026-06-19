@@ -389,6 +389,32 @@ async fn self_paid_set_user_token_overrides_stored_fee_token() -> eyre::Result<(
 }
 
 #[tokio::test]
+async fn aa_set_user_token_is_not_inferred() -> eyre::Result<()> {
+    let sender = Address::repeat_byte(0x11);
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest::default()
+            .with_from(sender)
+            .with_to(TIP_FEE_MANAGER_ADDRESS)
+            .with_input(IFeeManager::setUserTokenCall { token: ALPHA_USD_ADDRESS }.abi_encode()),
+        nonce_key: Some(U256::from(7)),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            None,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            Some(sender),
+        )
+        .await?,
+        None
+    );
+    assert_eq!(tx.fee_token, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn tip20_batch_infers_only_when_calls_match_sender_and_token() -> eyre::Result<()> {
     let sender = Address::repeat_byte(0x11);
     let transfer =
@@ -477,6 +503,32 @@ async fn tip20_batch_infers_only_when_calls_match_sender_and_token() -> eyre::Re
 }
 
 #[tokio::test]
+async fn non_tip20_transfer_is_not_inferred() -> eyre::Result<()> {
+    let sender = Address::repeat_byte(0x11);
+    let erc20 = Address::repeat_byte(0xab);
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest::default().with_from(sender).with_to(erc20).with_input(
+            ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }
+                .abi_encode(),
+        ),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            None,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            Some(sender),
+        )
+        .await?,
+        None
+    );
+    assert_eq!(tx.fee_token, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn tempo_call_inspection_matches_built_aa_call_list() -> eyre::Result<()> {
     let transfer =
         ITIP20::transferCall { to: Address::repeat_byte(0x01), amount: U256::from(1) }.abi_encode();
@@ -506,6 +558,36 @@ async fn tempo_call_inspection_matches_built_aa_call_list() -> eyre::Result<()> 
         Some(ALPHA_USD_ADDRESS)
     );
     assert_eq!(tx.fee_token, Some(ALPHA_USD_ADDRESS));
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_tip20_stablecoin_dex_token_in_is_not_inferred() -> eyre::Result<()> {
+    let erc20 = Address::repeat_byte(0xab);
+    let mut tx = TempoTransactionRequest {
+        inner: TransactionRequest::default().with_to(STABLECOIN_DEX_ADDRESS).with_input(
+            IStablecoinDEX::swapExactAmountInCall {
+                tokenIn: erc20,
+                tokenOut: BETA_USD_ADDRESS,
+                amountIn: 1,
+                minAmountOut: 1,
+            }
+            .abi_encode(),
+        ),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_and_set_fee_token::<TempoNetwork>(
+            None,
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut tx,
+            None,
+        )
+        .await?,
+        None
+    );
+    assert_eq!(tx.fee_token, None);
     Ok(())
 }
 

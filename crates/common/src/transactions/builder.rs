@@ -15,7 +15,7 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_primitives::{
-    TempoSignature,
+    TempoSignature, TempoTxType,
     transaction::{Call, KeychainSignature, PrimitiveSignature, SignedKeyAuthorization},
 };
 
@@ -156,6 +156,11 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
 
     /// Returns true when [`Self::tempo_calls`] came from a Tempo AA `calls` list.
     fn has_tempo_call_list(&self) -> bool {
+        false
+    }
+
+    /// Returns true when this request will be built as a Tempo AA transaction.
+    fn is_tempo_aa(&self) -> bool {
         false
     }
 
@@ -429,6 +434,10 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn has_tempo_call_list(&self) -> bool {
         !self.calls.is_empty()
+    }
+
+    fn is_tempo_aa(&self) -> bool {
+        NetworkTransactionBuilder::<TempoNetwork>::output_tx_type(self) == TempoTxType::AA
     }
 
     fn set_fee_token(&mut self, fee_token: Address) {
