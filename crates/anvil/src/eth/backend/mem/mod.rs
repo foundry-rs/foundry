@@ -1170,7 +1170,7 @@ impl<N: Network> Backend<N> {
         self.networks.inject_precompiles(precompiles);
 
         if let Some(factory) = &self.precompile_factory {
-            precompiles.extend_precompiles(factory.precompiles());
+            factory.install(precompiles);
         }
 
         let cheats = Arc::new(self.cheats.clone());
