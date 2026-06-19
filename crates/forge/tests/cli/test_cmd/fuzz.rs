@@ -368,6 +368,57 @@ forgetest_init!(forge_fuzz_corpus_subcommands_reject_machine, |prj, cmd| {
     }
 });
 
+forgetest_init!(forge_fuzz_cmin_tmin_error_on_zero_replay, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzZeroReplay.t.sol",
+        r#"
+contract ForgeFuzzZeroReplayTest {
+    function testFuzz_matches(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x0000000000000000000000000000000000000002",
+  "calldata":"0x12345678",
+  "value":"0x0"
+}]"#;
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
+
+    let cmin = cmd
+        .forge_fuse()
+        .args(["fuzz", "cmin", "--mc", "ForgeFuzzZeroReplayTest", "corpus", "--out", "cmin"])
+        .assert_failure();
+    let stdout = String::from_utf8(cmin.get_output().stderr.clone()).unwrap();
+    assert!(stdout.contains("replayed 0 transactions from corpus"), "{stdout}");
+
+    let tmin = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--out",
+            "min.json",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(tmin.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains(
+            "replayed 0 transactions from corpus/00000000-0000-0000-0000-000000000001-1.json"
+        ),
+        "{stderr}"
+    );
+});
+
 forgetest_init!(forge_fuzz_commands_read_generated_corpus_roots, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.update_config(|config| {

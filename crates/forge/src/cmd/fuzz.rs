@@ -76,7 +76,10 @@ impl FuzzArgs {
 
 fn reject_machine(subcommand: &str) -> ! {
     foundry_cli::machine::bail_machine_usage_with_details(
-        format!("`forge fuzz {subcommand}` does not support `--machine`; run without `--machine`."),
+        format!(
+            "`forge fuzz {subcommand}` temporarily does not support `--machine`; run without \
+                 `--machine`."
+        ),
         serde_json::json!({ "subcommand": format!("fuzz {subcommand}") }),
     )
 }
@@ -85,22 +88,22 @@ fn reject_machine(subcommand: &str) -> ! {
 pub enum FuzzSubcommands {
     /// Run only fuzz and invariant tests.
     Run(TestArgs),
-    /// Replay persisted fuzz and invariant corpus entries without running a campaign.
+    /// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
     Replay(FuzzReplayArgs),
     /// Print persisted corpus entries.
     Show(FuzzShowArgs),
-    /// Minimize a corpus by removing duplicate transaction sequences.
+    /// Minimize a corpus by keeping entries that contribute new coverage.
     Cmin(FuzzCminArgs),
-    /// Minimize one transaction sequence by trimming no-op metadata and empty calls.
+    /// Minimize one corpus entry while preserving its failure or coverage.
     Tmin(FuzzTminArgs),
 }
 
-/// Replay persisted fuzz/invariant corpus entries.
+/// Replay persisted fuzz failures, or corpus entries with `--corpus-dir`.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzReplayArgs {
     #[command(flatten)]
     test: TestArgs,
-    /// Override the corpus directory to replay.
+    /// Replay corpus entries from this directory instead of persisted fuzz failures.
     #[arg(long, value_name = "PATH", value_hint = ValueHint::DirPath)]
     corpus_dir: Option<PathBuf>,
 }
@@ -194,7 +197,7 @@ impl FuzzShowArgs {
     }
 }
 
-/// Minimize a corpus by removing duplicate transaction sequences.
+/// Minimize a corpus by keeping entries that contribute new coverage.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzCminArgs {
     #[command(flatten)]
@@ -250,18 +253,22 @@ impl FuzzCminArgs {
             kept += 1;
         }
 
+        if total > 0 && replayed == 0 {
+            bail!(
+                "replayed 0 transactions from {}; check that --mc/--mt match the corpus entries",
+                self.corpus_dir.display()
+            );
+        }
+
         sh_println!("minimized corpus: kept {kept}/{total} entries in {}", self.out.display())?;
         if skipped > 0 {
             sh_println!("skipped {skipped} entries or txs that could not be read or replayed")?;
-        }
-        if replayed == 0 && total > 0 {
-            sh_println!("warning: replayed 0 transactions; check --mc/--mt filters")?;
         }
         Ok(())
     }
 }
 
-/// Minimize one corpus entry.
+/// Minimize one corpus entry while preserving its failure or coverage.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzTminArgs {
     #[command(flatten)]
@@ -291,6 +298,12 @@ impl FuzzTminArgs {
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let original =
             replay_candidate(&mut test, evm_edge_indices.clone(), sequence.clone()).await?;
+        if original.replayed == 0 && !original.has_coverage() && original.failure.is_none() {
+            bail!(
+                "replayed 0 transactions from {}; check that --mc/--mt match the corpus entry",
+                self.input.display()
+            );
+        }
         let mut attempts = 0usize;
         minimize_sequence(
             &mut test,
