@@ -1,6 +1,7 @@
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
 use alloy_primitives::Bytes;
 use foundry_evm_hardforks::TempoHardfork;
+use foundry_evm_networks::{NETWORK_ACCOUNT_WARMUP_SENTINEL, NetworkConfigs, NetworkGenesisMode};
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
@@ -27,7 +28,7 @@ use crate::{
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
     evm::{FoundryEvmFactory, NestedEvm},
-    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
+    tempo::{TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
 // Will be removed when the next revm release includes bluealloy/revm#3518.
@@ -48,6 +49,7 @@ pub(crate) fn initialize_tempo_evm<
     evm: &mut TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>,
     is_forked: bool,
 ) {
+    let hooks = NetworkConfigs::with_tempo().genesis_hooks(NetworkGenesisMode::Fork, None);
     let ctx = evm.ctx_mut();
     StorageCtx::enter_evm(
         &mut ctx.journaled_state,
@@ -59,8 +61,10 @@ pub(crate) fn initialize_tempo_evm<
             if is_forked {
                 // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
                 let mut sctx = StorageCtx;
-                let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-                for addr in TEMPO_PRECOMPILE_ADDRESSES
+                let sentinel =
+                    Bytecode::new_legacy(Bytes::from_static(NETWORK_ACCOUNT_WARMUP_SENTINEL));
+                for addr in hooks
+                    .sentinel_code_addresses()
                     .iter()
                     .copied()
                     .chain(TEMPO_TIP20_TOKENS.iter().copied())

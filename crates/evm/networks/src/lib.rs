@@ -43,6 +43,12 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
     ("ReceivePolicyGuard", RECEIVE_POLICY_GUARD_ADDRESS),
 ];
 
+/// Sentinel bytecode used to mark native network accounts in local state.
+///
+/// `0xef` is a reserved code prefix, which makes it a compact marker for accounts whose behavior
+/// is provided by native precompile handlers rather than EVM bytecode.
+pub const NETWORK_ACCOUNT_WARMUP_SENTINEL: &[u8] = &[0xef];
+
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     NONCE_PRECOMPILE_ADDRESS,
@@ -78,6 +84,38 @@ pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterat
         .iter()
         .copied()
         .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
+}
+
+/// Selects which network genesis hooks are being requested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkGenesisMode {
+    /// Local genesis setup may seed required local-only network state.
+    Local,
+    /// Fork setup may only warm/cache known native accounts and must not run local genesis logic.
+    Fork,
+}
+
+/// Network genesis hooks declared by the active network configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NetworkGenesisHooks {
+    sentinel_code_addresses: Vec<Address>,
+}
+
+impl NetworkGenesisHooks {
+    /// Returns whether there are any configured hooks.
+    pub fn is_empty(&self) -> bool {
+        self.sentinel_code_addresses.is_empty()
+    }
+
+    /// Returns native network accounts that should receive sentinel bytecode.
+    pub fn sentinel_code_addresses(&self) -> &[Address] {
+        &self.sentinel_code_addresses
+    }
+
+    /// Adds a native network account that should receive sentinel bytecode.
+    pub fn push_sentinel_code_address(&mut self, address: Address) {
+        self.sentinel_code_addresses.push(address);
+    }
 }
 
 #[derive(
@@ -359,6 +397,35 @@ impl NetworkConfigs {
         }
         precompiles
     }
+
+    /// Returns network genesis hooks for the configured network.
+    ///
+    /// Local mode may declare accounts that a network-specific genesis initializer should seed.
+    /// Fork mode is limited to sentinel account warmups, so callers can avoid clobbering live
+    /// chain state with local genesis state.
+    pub fn genesis_hooks(
+        self,
+        mode: NetworkGenesisMode,
+        tempo_hardfork: Option<TempoHardfork>,
+    ) -> NetworkGenesisHooks {
+        let mut hooks = NetworkGenesisHooks::default();
+
+        if self.is_tempo() {
+            // Tempo test genesis intentionally marks every well-known precompile address with
+            // code, even when the current hardfork would not dispatch that precompile yet. The
+            // hardfork-aware dispatch table remains the source of truth for execution.
+            let addresses: Vec<_> = match mode {
+                NetworkGenesisMode::Local => match tempo_hardfork {
+                    Some(hardfork) => active_tempo_precompile_addresses(hardfork).collect(),
+                    None => TEMPO_PRECOMPILE_ADDRESSES.to_vec(),
+                },
+                NetworkGenesisMode::Fork => TEMPO_PRECOMPILE_ADDRESSES.to_vec(),
+            };
+            hooks.sentinel_code_addresses.extend(addresses)
+        }
+
+        hooks
+    }
 }
 
 impl From<NetworkVariant> for NetworkConfigs {
@@ -425,6 +492,31 @@ mod tests {
             cfg.precompiles_label(Some(TempoHardfork::T6))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
+    }
+
+    #[test]
+    fn tempo_genesis_hooks_are_mode_aware() {
+        let cfg = NetworkConfigs::with_tempo();
+
+        let local_t4 = cfg.genesis_hooks(NetworkGenesisMode::Local, Some(TempoHardfork::T4));
+        let local_t4_addresses = local_t4.sentinel_code_addresses();
+        assert!(local_t4_addresses.contains(&VALIDATOR_CONFIG_ADDRESS));
+        assert!(!local_t4_addresses.contains(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert_eq!(NETWORK_ACCOUNT_WARMUP_SENTINEL, &[0xef]);
+
+        let local_all = cfg.genesis_hooks(NetworkGenesisMode::Local, None);
+        assert!(local_all.sentinel_code_addresses().contains(&TIP20_CHANNEL_RESERVE_ADDRESS));
+
+        let fork_t4 = cfg.genesis_hooks(NetworkGenesisMode::Fork, Some(TempoHardfork::T4));
+        let fork_t4_addresses = fork_t4.sentinel_code_addresses();
+        assert!(fork_t4_addresses.contains(&TIP20_CHANNEL_RESERVE_ADDRESS));
+    }
+
+    #[test]
+    fn default_network_has_no_genesis_hooks() {
+        let hooks = NetworkConfigs::default()
+            .genesis_hooks(NetworkGenesisMode::Local, Some(TempoHardfork::T5));
+        assert!(hooks.is_empty());
     }
 
     // --- resolved() / active_network_name ---
