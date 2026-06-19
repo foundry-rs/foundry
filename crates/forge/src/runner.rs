@@ -1433,13 +1433,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.result.invariant_setup_fail(err);
                     return self.result;
                 }
-                let targeted = match evm.select_contracts_and_senders(self.address) {
-                    Ok((_, targeted)) => targeted,
-                    Err(err) => {
-                        self.result.invariant_setup_fail(err);
-                        return self.result;
-                    }
-                };
+                let (sender_filters, targeted) =
+                    match evm.select_contracts_and_senders(self.address) {
+                        Ok(selected) => selected,
+                        Err(err) => {
+                            self.result.invariant_setup_fail(err);
+                            return self.result;
+                        }
+                    };
                 {
                     let targets = targeted.targets();
                     for (idx, tx) in txes.iter().enumerate() {
@@ -1456,6 +1457,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 idx + 1,
                                 hex::encode_prefixed(selector),
                                 tx.call_details.target
+                            )));
+                            return self.result;
+                        }
+                        if (!sender_filters.targeted.is_empty()
+                            && !sender_filters.targeted.contains(&tx.sender))
+                            || (tx.sender != Address::ZERO
+                                && sender_filters.excluded.contains(&tx.sender))
+                        {
+                            self.result.single_fail(Some(format!(
+                                "sequence symbolic artifact call {} uses forbidden sender {}",
+                                idx + 1,
+                                tx.sender
                             )));
                             return self.result;
                         }
