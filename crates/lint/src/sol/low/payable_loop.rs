@@ -21,15 +21,61 @@ pub(super) fn visit_payable_loop_expressions<'ctx, 's, 'hir, 'cb>(
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     func: &'hir Function<'hir>,
-    mut f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>) + 'cb,
+    f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>) + 'cb,
 ) {
     if !is_payable_entry_point(func) {
         return;
     }
 
+    visit_loop_statements_and_expressions_with_options(
+        ctx,
+        gcx,
+        hir,
+        func,
+        true,
+        true,
+        |_, _, _, _| {},
+        f,
+    );
+}
+
+pub(super) fn visit_loop_statements_and_expressions<'ctx, 's, 'hir, 'cb>(
+    ctx: &'ctx LintContext<'s, 'ctx>,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    func: &'hir Function<'hir>,
+    mut stmt_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Stmt<'hir>)
+    + 'cb,
+    mut expr_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>)
+    + 'cb,
+) {
+    visit_loop_statements_and_expressions_with_options(
+        ctx,
+        gcx,
+        hir,
+        func,
+        false,
+        false,
+        &mut stmt_f,
+        &mut expr_f,
+    );
+}
+
+fn visit_loop_statements_and_expressions_with_options<'ctx, 's, 'hir, 'cb>(
+    ctx: &'ctx LintContext<'s, 'ctx>,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    func: &'hir Function<'hir>,
+    follow_calls_outside_loop: bool,
+    report_local_loops_in_internal_calls: bool,
+    mut stmt_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Stmt<'hir>)
+    + 'cb,
+    mut expr_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>)
+    + 'cb,
+) {
     let Some(body) = func.body else { return };
 
-    let mut checker = PayableLoopChecker {
+    let mut checker = LoopContextChecker {
         ctx,
         hir,
         gcx,
@@ -37,9 +83,13 @@ pub(super) fn visit_payable_loop_expressions<'ctx, 's, 'hir, 'cb>(
         placeholder: None,
         modifier_stack: Vec::new(),
         call_stack: Vec::new(),
+        internal_call_loop_depths: Vec::new(),
         dispatch_contract: func.contract,
         current_contract: func.contract,
-        f: &mut f,
+        follow_calls_outside_loop,
+        report_local_loops_in_internal_calls,
+        stmt_f: &mut stmt_f,
+        expr_f: &mut expr_f,
     };
     checker.visit_modifier_chain(func.modifiers, 0, body, func.contract);
 }
@@ -52,8 +102,10 @@ fn is_payable_entry_point(func: &Function<'_>) -> bool {
 
 type LoopExprCallback<'ctx, 's, 'hir, 'cb> =
     dyn FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>) + 'cb;
+type LoopStmtCallback<'ctx, 's, 'hir, 'cb> =
+    dyn FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Stmt<'hir>) + 'cb;
 
-struct PayableLoopChecker<'ctx, 's, 'hir, 'cb> {
+struct LoopContextChecker<'ctx, 's, 'hir, 'cb> {
     ctx: &'ctx LintContext<'s, 'ctx>,
     hir: &'hir Hir<'hir>,
     gcx: Gcx<'hir>,
@@ -61,14 +113,18 @@ struct PayableLoopChecker<'ctx, 's, 'hir, 'cb> {
     placeholder: Option<ModifierContinuation<'hir>>,
     modifier_stack: Vec<FunctionId>,
     call_stack: Vec<FunctionId>,
+    internal_call_loop_depths: Vec<usize>,
     dispatch_contract: Option<ContractId>,
     current_contract: Option<ContractId>,
-    f: &'cb mut LoopExprCallback<'ctx, 's, 'hir, 'cb>,
+    follow_calls_outside_loop: bool,
+    report_local_loops_in_internal_calls: bool,
+    stmt_f: &'cb mut LoopStmtCallback<'ctx, 's, 'hir, 'cb>,
+    expr_f: &'cb mut LoopExprCallback<'ctx, 's, 'hir, 'cb>,
 }
 
 type ModifierContinuation<'hir> = (&'hir [Modifier<'hir>], usize, Block<'hir>, Option<ContractId>);
 
-impl<'ctx, 's, 'hir, 'cb> PayableLoopChecker<'ctx, 's, 'hir, 'cb> {
+impl<'ctx, 's, 'hir, 'cb> LoopContextChecker<'ctx, 's, 'hir, 'cb> {
     fn visit_modifier_chain(
         &mut self,
         modifiers: &'hir [Modifier<'hir>],
@@ -145,8 +201,18 @@ impl<'ctx, 's, 'hir, 'cb> PayableLoopChecker<'ctx, 's, 'hir, 'cb> {
         let Some(body) = func.body else { return };
 
         self.call_stack.push(func_id);
+        self.internal_call_loop_depths.push(self.loop_depth);
         self.visit_modifier_chain(func.modifiers, 0, body, func.contract);
+        self.internal_call_loop_depths.pop();
         self.call_stack.pop();
+    }
+
+    fn current_loop_context_is_reportable(&self) -> bool {
+        if self.loop_depth == 0 {
+            return false;
+        }
+        self.report_local_loops_in_internal_calls
+            || self.internal_call_loop_depths.last().is_none_or(|&depth| self.loop_depth <= depth)
     }
 
     fn resolved_internal_function_ids(
@@ -347,7 +413,7 @@ impl<'ctx, 's, 'hir, 'cb> PayableLoopChecker<'ctx, 's, 'hir, 'cb> {
     }
 }
 
-impl<'hir> Visit<'hir> for PayableLoopChecker<'_, '_, 'hir, '_> {
+impl<'hir> Visit<'hir> for LoopContextChecker<'_, '_, 'hir, '_> {
     type BreakValue = ();
 
     fn hir(&self) -> &'hir Hir<'hir> {
@@ -355,6 +421,10 @@ impl<'hir> Visit<'hir> for PayableLoopChecker<'_, '_, 'hir, '_> {
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        if self.current_loop_context_is_reportable() {
+            (self.stmt_f)(self.ctx, self.gcx, self.hir, stmt);
+        }
+
         match stmt.kind {
             StmtKind::Loop(block, _) => self.visit_loop_block(block),
             StmtKind::Placeholder => {
@@ -368,8 +438,9 @@ impl<'hir> Visit<'hir> for PayableLoopChecker<'_, '_, 'hir, '_> {
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if self.loop_depth > 0 {
-            (self.f)(self.ctx, self.gcx, self.hir, expr);
+        let reportable_loop_context = self.current_loop_context_is_reportable();
+        if reportable_loop_context {
+            (self.expr_f)(self.ctx, self.gcx, self.hir, expr);
         }
 
         let result = self.walk_expr(expr);
@@ -377,7 +448,9 @@ impl<'hir> Visit<'hir> for PayableLoopChecker<'_, '_, 'hir, '_> {
             return result;
         }
 
-        if let ExprKind::Call(callee, args, _) = &expr.kind {
+        if (self.follow_calls_outside_loop || reportable_loop_context)
+            && let ExprKind::Call(callee, args, _) = &expr.kind
+        {
             for func_id in self.resolved_internal_function_ids(callee, args) {
                 self.visit_internal_call(func_id);
             }
