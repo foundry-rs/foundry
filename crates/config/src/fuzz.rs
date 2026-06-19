@@ -222,7 +222,7 @@ impl Default for FuzzCorpusConfig {
             evm_edge_coverage_include_call_depth: false,
             sancov_edges: false,
             sancov_trace_cmp: false,
-            corpus_random_sequence_weight: 25,
+            corpus_random_sequence_weight: 50,
             mutation_weights: FuzzCorpusMutationWeights::default(),
         }
     }
