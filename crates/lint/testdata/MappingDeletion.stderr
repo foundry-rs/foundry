@@ -1,4 +1,4 @@
-warning[mapping-deletion]: `delete` on a struct containing a mapping does not clear the mapping
+warning[mapping-deletion]: `delete` on a value containing a mapping does not clear the mapping
    ╭▸ ROOT/testdata/MappingDeletion.sol:LL:CC
    │
 LL │         delete s;
@@ -6,7 +6,7 @@ LL │         delete s;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mapping-deletion
 
-warning[mapping-deletion]: `delete` on a struct containing a mapping does not clear the mapping
+warning[mapping-deletion]: `delete` on a value containing a mapping does not clear the mapping
    ╭▸ ROOT/testdata/MappingDeletion.sol:LL:CC
    │
 LL │         delete n;
@@ -14,7 +14,7 @@ LL │         delete n;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mapping-deletion
 
-warning[mapping-deletion]: `delete` on a struct containing a mapping does not clear the mapping
+warning[mapping-deletion]: `delete` on a value containing a mapping does not clear the mapping
    ╭▸ ROOT/testdata/MappingDeletion.sol:LL:CC
    │
 LL │         delete arr;
@@ -22,7 +22,7 @@ LL │         delete arr;
    │
    ╰ help: https://getfoundry.sh/forge/linting/mapping-deletion
 
-warning[mapping-deletion]: `delete` on a struct containing a mapping does not clear the mapping
+warning[mapping-deletion]: `delete` on a value containing a mapping does not clear the mapping
    ╭▸ ROOT/testdata/MappingDeletion.sol:LL:CC
    │
 LL │         delete m[id];
@@ -30,7 +30,7 @@ LL │         delete m[id];
    │
    ╰ help: https://getfoundry.sh/forge/linting/mapping-deletion
 
-warning[mapping-deletion]: `delete` on a struct containing a mapping does not clear the mapping
+warning[mapping-deletion]: `delete` on a value containing a mapping does not clear the mapping
    ╭▸ ROOT/testdata/MappingDeletion.sol:LL:CC
    │
 LL │         delete arr[i];

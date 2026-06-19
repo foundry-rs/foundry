@@ -13,7 +13,7 @@ declare_forge_lint!(
     MAPPING_DELETION,
     Severity::Med,
     "mapping-deletion",
-    "`delete` on a struct containing a mapping does not clear the mapping"
+    "`delete` on a value containing a mapping does not clear the mapping"
 );
 
 impl<'hir> LateLintPass<'hir> for MappingDeletion {

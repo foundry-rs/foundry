@@ -30,27 +30,27 @@ contract MappingDeletion {
 
     // SHOULD FAIL: deleting a struct that directly holds a mapping.
     function badStruct() external {
-        delete s; //~WARN: `delete` on a struct containing a mapping does not clear the mapping
+        delete s; //~WARN: `delete` on a value containing a mapping does not clear the mapping
     }
 
     // SHOULD FAIL: the mapping is reachable through a nested struct.
     function badNested() external {
-        delete n; //~WARN: `delete` on a struct containing a mapping does not clear the mapping
+        delete n; //~WARN: `delete` on a value containing a mapping does not clear the mapping
     }
 
     // SHOULD FAIL: deleting an array of structs that hold a mapping.
     function badArray() external {
-        delete arr; //~WARN: `delete` on a struct containing a mapping does not clear the mapping
+        delete arr; //~WARN: `delete` on a value containing a mapping does not clear the mapping
     }
 
     // SHOULD FAIL: the mapping value is itself a struct with a mapping.
     function badMappingValue(uint256 id) external {
-        delete m[id]; //~WARN: `delete` on a struct containing a mapping does not clear the mapping
+        delete m[id]; //~WARN: `delete` on a value containing a mapping does not clear the mapping
     }
 
     // SHOULD FAIL: a single array element is a struct with a mapping.
     function badArrayElem(uint256 i) external {
-        delete arr[i]; //~WARN: `delete` on a struct containing a mapping does not clear the mapping
+        delete arr[i]; //~WARN: `delete` on a value containing a mapping does not clear the mapping
     }
 
     // OK: plain struct, no mapping reachable.
