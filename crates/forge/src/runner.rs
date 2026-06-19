@@ -1887,7 +1887,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &mut call_sequence,
                 assertion_failure,
             );
-            if let Ok((success, replayed_entirely, replay_reason, calls_count, reverts)) = replay
+            if let Ok((
+                success,
+                mut replayed_entirely,
+                mut replay_reason,
+                mut calls_count,
+                mut reverts,
+            )) = replay
                 && !success
             {
                 let warn =
@@ -1924,6 +1930,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ) {
                     Ok(replayed_call_sequence) if !replayed_call_sequence.is_empty() => {
                         call_sequence = replayed_call_sequence;
+                        let (_txes, replay) = replay_persisted_call_sequence(
+                            &replay_ctx,
+                            self.clone_executor(),
+                            &mut call_sequence,
+                            assertion_failure,
+                        );
+                        if let Ok((
+                            _success,
+                            updated_replayed_entirely,
+                            updated_replay_reason,
+                            updated_calls_count,
+                            updated_reverts,
+                        )) = replay
+                        {
+                            replayed_entirely = updated_replayed_entirely;
+                            replay_reason = updated_replay_reason;
+                            calls_count = updated_calls_count;
+                            reverts = updated_reverts;
+                        }
                         // Persist error in invariant failure dir.
                         record_invariant_failure(
                             failure_dir.as_path(),

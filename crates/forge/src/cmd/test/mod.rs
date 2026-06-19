@@ -534,6 +534,20 @@ impl TestArgs {
         if artifact.calls.is_empty() {
             bail!("symbolic counterexample artifact {} has no calls", path.display());
         }
+        let Some((artifact_path, contract_name)) = artifact.test.contract.rsplit_once(':') else {
+            bail!(
+                "symbolic counterexample artifact {} test.contract must be `path:Contract`, got `{}`",
+                path.display(),
+                artifact.test.contract,
+            );
+        };
+        if artifact_path.is_empty() || contract_name.is_empty() {
+            bail!(
+                "symbolic counterexample artifact {} test.contract must be `path:Contract`, got `{}`",
+                path.display(),
+                artifact.test.contract,
+            );
+        }
 
         Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
     }

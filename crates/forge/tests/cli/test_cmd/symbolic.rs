@@ -1219,6 +1219,19 @@ contract SymbolicArtifactFailOnRevert is Test {
     });
     std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
 
+    let mut bare_contract_artifact = artifact.clone();
+    bare_contract_artifact["test"]["contract"] = serde_json::json!("SymbolicArtifactFailOnRevert");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&bare_contract_artifact).unwrap())
+        .unwrap();
+    let stderr = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("test.contract must be `path:Contract`"), "{stderr}");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
     let output = cmd
         .forge_fuse()
         .args(["test", "--json", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
