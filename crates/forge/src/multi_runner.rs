@@ -405,6 +405,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub showmap: Option<ShowmapConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
+    /// Replay persisted fuzz failures without running a new fuzz campaign.
+    pub fuzz_failure_replay: bool,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -524,6 +526,8 @@ pub struct MultiContractRunnerBuilder {
     pub showmap: Option<ShowmapConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
+    /// Replay persisted fuzz failures without running a new fuzz campaign.
+    pub fuzz_failure_replay: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -541,6 +545,7 @@ impl MultiContractRunnerBuilder {
             multi_network: Default::default(),
             showmap: None,
             fuzz_only: false,
+            fuzz_failure_replay: false,
         }
     }
 
@@ -551,6 +556,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn with_fuzz_only(mut self, fuzz_only: bool) -> Self {
         self.fuzz_only = fuzz_only;
+        self
+    }
+
+    pub const fn with_fuzz_failure_replay(mut self, fuzz_failure_replay: bool) -> Self {
+        self.fuzz_failure_replay = fuzz_failure_replay;
         self
     }
 
@@ -719,6 +729,7 @@ impl MultiContractRunnerBuilder {
                 multi_network: self.multi_network,
                 showmap: self.showmap,
                 fuzz_only: self.fuzz_only,
+                fuzz_failure_replay: self.fuzz_failure_replay,
                 config: self.config,
             },
 

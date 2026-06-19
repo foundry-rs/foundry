@@ -112,6 +112,10 @@ pub struct TestArgs {
     #[arg(skip)]
     pub(crate) showmap_override: Option<ShowmapConfig>,
 
+    /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
+    #[arg(skip)]
+    pub(crate) fuzz_failure_replay: bool,
+
     // Include global options for users of this struct.
     #[command(flatten)]
     pub global: GlobalArgs,
@@ -480,6 +484,11 @@ impl TestArgs {
     /// `forge test --showmap-*` CLI flags.
     pub(crate) fn set_showmap_override(&mut self, showmap: ShowmapConfig) {
         self.showmap_override = Some(showmap);
+    }
+
+    /// Replays persisted fuzz failures without running a new fuzz campaign.
+    pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
+        self.fuzz_failure_replay = true;
     }
 
     /// Reject flags whose stdout shape conflicts with the NDJSON stream
@@ -1191,6 +1200,7 @@ impl TestArgs {
             .with_multi_network(multi_network)
             .with_showmap(showmap)
             .with_fuzz_only(self.fuzz_only)
+            .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();

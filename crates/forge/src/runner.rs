@@ -925,6 +925,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Some(showmap) = self.cr.mcr.tcfg.showmap.as_ref() {
                 let mode = if showmap.emit_files { "showmap" } else { "replay" };
                 self.result.replay_skip(format!("not runnable in {mode} mode"));
+            } else if self.cr.mcr.tcfg.fuzz_failure_replay {
+                self.result
+                    .single_skip(SkipReason(Some("not runnable in replay mode".to_string())));
             } else {
                 self.result.single_skip(SkipReason(Some("not runnable in fuzz mode".to_string())));
             }
@@ -1996,6 +1999,40 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.run_showmap(func, corpus_dir, &showmap, Some(func), None, None);
         }
 
+        // Load persisted counterexample, if any.
+        let persisted_failure =
+            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
+        if self.cr.mcr.tcfg.fuzz_failure_replay {
+            let Some(failure) = persisted_failure.as_ref() else {
+                let result = FuzzTestResult {
+                    skipped: true,
+                    reason: Some(format!(
+                        "no persisted fuzz failure found at {}",
+                        failure_file.display()
+                    )),
+                    ..Default::default()
+                };
+                self.result.fuzz_result(result);
+                return self.result;
+            };
+
+            if !failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector) {
+                let result = FuzzTestResult {
+                    skipped: true,
+                    reason: Some(format!(
+                        "persisted fuzz failure selector does not match {}",
+                        func.name
+                    )),
+                    ..Default::default()
+                };
+                self.result.fuzz_result(result);
+                return self.result;
+            }
+
+            fuzz_config.runs = 1;
+            fuzz_config.corpus.corpus_dir = None;
+        }
+
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
@@ -2014,9 +2051,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_sancov_trace_cmp(fuzz_config.corpus.collect_sancov_trace_cmp());
-        // Load persisted counterexample, if any.
-        let persisted_failure =
-            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
         // Run fuzz test.
         let mut fuzzed_executor =
             FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);

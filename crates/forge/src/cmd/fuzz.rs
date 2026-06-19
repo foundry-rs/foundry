@@ -97,6 +97,11 @@ impl FuzzReplayArgs {
     async fn run(mut self) -> Result<crate::result::TestOutcome> {
         self.test.enable_fuzz_only();
         self.test.reject_machine_unsupported_flags()?;
+        if self.corpus_dir.is_none() {
+            self.test.enable_fuzz_failure_replay();
+            return self.test.run().await;
+        }
+
         let replay_id =
             SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
         self.test.set_showmap_override(ShowmapConfig {

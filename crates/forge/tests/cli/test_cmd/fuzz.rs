@@ -113,14 +113,67 @@ contract ForgeFuzzReplayTest is Test {
 Compiler run successful!
 
 Ran 2 tests for test/ForgeFuzzReplay.t.sol:ForgeFuzzReplayTest
-[SKIP: no corpus_dir configured for this test] testFuzz_value(uint256) (replay: 0 entries, 0 files)
-[SKIP: not runnable in replay mode] test_unit() (replay: 0 entries, 0 files)
+[SKIP: no persisted fuzz failure found at cache/fuzz/failures/ForgeFuzzReplayTest/testFuzz_value] testFuzz_value(uint256) (runs: 0, [AVG_GAS])
+[SKIP: not runnable in replay mode] test_unit() ([GAS])
 Suite result: ok. 0 passed; 0 failed; 2 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
 
 "#
     ]]);
+});
+
+forgetest_init!(forge_fuzz_replay_replays_persisted_fuzz_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplayFailure.t.sol",
+        r#"
+contract ForgeFuzzReplayFailureTest {
+    function test_unit() public pure {}
+
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayFailureTest", "-q"]).assert_failure();
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 2 tests for test/ForgeFuzzReplayFailure.t.sol:ForgeFuzzReplayFailureTest
+[FAIL: EvmError: Revert; counterexample: calldata=0x[..] args=[200]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+Traces:
+  [[..]] ForgeFuzzReplayFailureTest::testFuzz_reverts(200)
+    └─ ← [Revert] EvmError: Revert
+
+Backtrace:
+  at ForgeFuzzReplayFailureTest.testFuzz_reverts
+
+[SKIP: not runnable in replay mode] test_unit() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 1 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForgeFuzzReplayFailure.t.sol:ForgeFuzzReplayFailureTest
+[FAIL: EvmError: Revert; counterexample: calldata=0x[..] args=[200]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
 });
 
 forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
