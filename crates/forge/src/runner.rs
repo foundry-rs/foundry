@@ -31,7 +31,8 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
-            check_sequence, execute_tx, replay_error, replay_handler_failure_sequence, replay_run,
+            check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
+            replay_handler_failure_sequence, replay_run,
         },
         replay_corpus_to_showmap,
     },
@@ -1442,7 +1443,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                     };
                 {
-                    let targets = targeted.targets();
+                    let dynamic_target_ctx = evm.dynamic_target_ctx();
+                    let mut validation_executor =
+                        targeted.is_updatable.then(|| self.clone_executor());
+                    let mut validation_created_contracts = Vec::new();
                     for (idx, tx) in txes.iter().enumerate() {
                         let Some(selector) = tx.call_details.calldata.get(..4) else {
                             self.result.single_fail(Some(format!(
@@ -1451,7 +1455,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             )));
                             return self.result;
                         };
-                        if !targets.can_replay(tx) {
+                        if !targeted.targets().can_replay(tx) {
                             self.result.single_fail(Some(format!(
                                 "sequence symbolic artifact call {} targets unknown function {} on {}",
                                 idx + 1,
@@ -1471,6 +1475,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 tx.sender
                             )));
                             return self.result;
+                        }
+                        if let Some(validation_executor) = validation_executor.as_mut() {
+                            match execute_tx_and_register_created(
+                                validation_executor,
+                                tx,
+                                &targeted,
+                                &dynamic_target_ctx,
+                                &mut validation_created_contracts,
+                            ) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    self.result.single_fail(Some(format!(
+                                        "sequence symbolic artifact call {} failed during target validation: {err}",
+                                        idx + 1
+                                    )));
+                                    return self.result;
+                                }
+                            }
                         }
                     }
                 }

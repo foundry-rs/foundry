@@ -1918,6 +1918,31 @@ pub fn execute_tx<FEN: FoundryEvmNetwork>(
         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }
 
+/// Executes a replay call on a validation executor and registers any created targets.
+///
+/// This mirrors sequence replay's non-reverted commit behavior while allowing callers to update
+/// updatable target sets before validating later calls in the same artifact.
+pub fn execute_tx_and_register_created<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+    targeted_contracts: &FuzzRunIdentifiedContracts,
+    dynamic_target_ctx: &DynamicTargetCtx<'_>,
+    created_contracts: &mut Vec<Address>,
+) -> Result<()> {
+    let mut call_result = execute_tx(executor, tx)?;
+    if !call_result.reverted {
+        targeted_contracts.collect_created_contracts(
+            &call_result.state_changeset,
+            dynamic_target_ctx.project_contracts,
+            dynamic_target_ctx.setup_contracts,
+            dynamic_target_ctx.artifact_filters,
+            created_contracts,
+        )?;
+        executor.commit(&mut call_result);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

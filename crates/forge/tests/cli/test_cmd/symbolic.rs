@@ -1462,6 +1462,153 @@ contract SymbolicArtifactForbiddenSender is Test {
     assert!(stdout.contains("uses forbidden sender"), "{stdout}");
 });
 
+forgetest_init!(symbolic_artifact_replay_accepts_created_sequence_target, |prj, cmd| {
+    prj.add_test(
+        "SymbolicArtifactCreatedTarget.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract CreatedTarget {
+    SymbolicArtifactCreatedTarget invariantTest;
+
+    constructor(SymbolicArtifactCreatedTarget _invariantTest) {
+        invariantTest = _invariantTest;
+    }
+
+    function step() external {
+        invariantTest.trip();
+    }
+}
+
+contract Spawner {
+    SymbolicArtifactCreatedTarget invariantTest;
+
+    constructor(SymbolicArtifactCreatedTarget _invariantTest) {
+        invariantTest = _invariantTest;
+    }
+
+    function step() external {
+        new CreatedTarget(invariantTest);
+    }
+}
+
+contract SymbolicArtifactCreatedTarget is Test {
+    bool tripped;
+
+    function setUp() public {
+        new Spawner(this);
+    }
+
+    function trip() external {
+        tripped = true;
+    }
+
+    function invariant_notTripped() public view {
+        assert(!tripped);
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("created-sequence-target-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactCreatedTarget.t.sol:SymbolicArtifactCreatedTarget",
+            "test": "invariant_notTripped()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 2,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x0000000000000000000000000000000000000b0b",
+                "target": "0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "Spawner",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            },
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x0000000000000000000000000000000000000b0b",
+                "target": "0x104fBc016F4bb334D775a19E8A6510109AC63E00",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "CreatedTarget",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            }
+        ]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("panic: assertion failed"), "{stdout}");
+    assert!(!stdout.contains("targets unknown function"), "{stdout}");
+});
+
 forgetest_init!(symbolic_artifact_replay_ignores_non_target_network_passes, |prj, cmd| {
     prj.add_test(
         "SymbolicArtifactNetworkReplay.t.sol",
