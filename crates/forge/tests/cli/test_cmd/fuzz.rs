@@ -208,11 +208,11 @@ contract ForgeShowmapSymbolicTest is Test {
 });
 
 forgetest_init!(forge_fuzz_show_cmin_tmin_corpus_files, |prj, cmd| {
-    prj.add_source(
-        "ForgeFuzzShowTarget.sol",
+    prj.add_test(
+        "ForgeFuzzShowTarget.t.sol",
         r#"
-contract ForgeFuzzShowTarget {
-    function setNumber(uint256 value) public pure {
+contract ForgeFuzzShowTargetTest {
+    function testFuzz_setNumber(uint256 value) public pure {
         value;
     }
 }
@@ -224,8 +224,8 @@ contract ForgeFuzzShowTarget {
     std::fs::create_dir_all(&corpus).unwrap();
     let entry = r#"[{
   "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x0000000000000000000000000000000000000002",
-  "calldata":"0x3fb5c1cb000000000000000000000000000000000000000000000000000000000000002a",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0x938872f7000000000000000000000000000000000000000000000000000000000000002a",
   "value":"0x0"
 }]"#;
     std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
@@ -236,34 +236,36 @@ contract ForgeFuzzShowTarget {
         .assert_success()
         .stdout_eq(str![[r#"
 corpus/00000000-0000-0000-0000-000000000001-1.json (1 txs)
-  0: ForgeFuzzShowTarget.setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x0000000000000000000000000000000000000002 value=0
+  0: ForgeFuzzShowTargetTest.testFuzz_setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 value=0
 corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
-  0: ForgeFuzzShowTarget.setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x0000000000000000000000000000000000000002 value=0
+  0: ForgeFuzzShowTargetTest.testFuzz_setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496 value=0
 
 "#]]);
 
-    cmd.forge_fuse().args(["fuzz", "cmin", "corpus", "--out", "cmin"]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["fuzz", "cmin", "--mc", "ForgeFuzzShowTargetTest", "corpus", "--out", "cmin"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 minimized corpus: kept 1/2 entries in cmin
 
-"#]],
-    );
+"#]]);
     let cmin_entries = std::fs::read_dir(prj.root().join("cmin")).unwrap().count();
     assert_eq!(cmin_entries, 1);
 
-    cmd.forge_fuse()
+    let tmin = cmd
+        .forge_fuse()
         .args([
             "fuzz",
             "tmin",
+            "--mc",
+            "ForgeFuzzShowTargetTest",
             "corpus/00000000-0000-0000-0000-000000000001-1.json",
             "--out",
             "min.json",
         ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-minimized entry: 1 txs -> min.json
-
-"#]]);
+        .assert_success();
+    let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("minimized entry: 1 txs -> min.json"), "{stdout}");
     assert!(prj.root().join("min.json").is_file());
 });
 
@@ -309,27 +311,10 @@ contract ForgeFuzzCminCoverageTest is Test {
 
     let cmin = cmd
         .forge_fuse()
-        .args([
-            "--machine",
-            "fuzz",
-            "cmin",
-            "--mc",
-            "ForgeFuzzCminCoverageTest",
-            "corpus",
-            "--out",
-            "cmin",
-        ])
+        .args(["fuzz", "cmin", "--mc", "ForgeFuzzCminCoverageTest", "corpus", "--out", "cmin"])
         .assert_success();
-    let cmin_stdout = String::from_utf8(cmin.get_output().stdout.clone()).unwrap();
-    let cmin: Value = serde_json::from_str(
-        cmin_stdout.lines().rev().find(|line| line.contains("\"schema_version\"")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(cmin["success"], true);
-    assert_eq!(cmin["data"]["mode"], "coverage");
-    assert_eq!(cmin["data"]["total"], 2);
-    assert_eq!(cmin["data"]["kept"], 2);
-    assert_eq!(cmin["data"]["removed"], 0);
+    let stdout = String::from_utf8(cmin.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("minimized corpus: kept 2/2 entries in cmin"), "{stdout}");
     assert_eq!(std::fs::read_dir(prj.root().join("cmin")).unwrap().count(), 2);
 });
 
@@ -347,24 +332,12 @@ forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
     std::fs::write(worker0.join(name), entry).unwrap();
     std::fs::write(worker1.join(name), entry).unwrap();
 
-    let show = cmd.args(["--machine", "fuzz", "show", "corpus"]).assert_success();
-    let show: Value = serde_json::from_slice(&show.get_output().stdout).unwrap();
-    assert_eq!(show["success"], true);
-    assert_eq!(show["data"]["entries"].as_array().unwrap().len(), 1);
-
-    let cmin = cmd
-        .forge_fuse()
-        .args(["--machine", "fuzz", "cmin", "corpus", "--out", "cmin-workers"])
-        .assert_success();
-    let cmin: Value = serde_json::from_slice(&cmin.get_output().stdout).unwrap();
-    assert_eq!(cmin["success"], true);
-    assert_eq!(cmin["data"]["total"], 1);
-    assert_eq!(cmin["data"]["kept"], 1);
-    assert_eq!(cmin["data"]["removed"], 0);
-    assert_eq!(std::fs::read_dir(prj.root().join("cmin-workers")).unwrap().count(), 1);
+    let show = cmd.args(["fuzz", "show", "corpus"]).assert_success();
+    let stdout = String::from_utf8(show.get_output().stdout.clone()).unwrap();
+    assert_eq!(stdout.matches("corpus/worker").count(), 1, "{stdout}");
 });
 
-forgetest_init!(forge_fuzz_corpus_subcommands_support_machine, |prj, cmd| {
+forgetest_init!(forge_fuzz_corpus_subcommands_reject_machine, |prj, cmd| {
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
     let entry = r#"[{
@@ -376,44 +349,23 @@ forgetest_init!(forge_fuzz_corpus_subcommands_support_machine, |prj, cmd| {
     std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
     std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry).unwrap();
 
-    let show = cmd.args(["--machine", "fuzz", "show", "corpus"]).assert_success();
-    let show: Value = serde_json::from_slice(&show.get_output().stdout).unwrap();
-    assert_eq!(show["success"], true);
-    assert_eq!(show["data"]["entries"].as_array().unwrap().len(), 2);
-    assert_eq!(show["data"]["entries"][0]["sequence"].as_array().unwrap().len(), 1);
-
-    let cmin = cmd
-        .forge_fuse()
-        .args(["--machine", "fuzz", "cmin", "corpus", "--out", "cmin"])
-        .assert_success();
-    let cmin: Value = serde_json::from_slice(&cmin.get_output().stdout).unwrap();
-    assert_eq!(cmin["success"], true);
-    assert_eq!(cmin["data"]["input"], "corpus");
-    assert_eq!(cmin["data"]["output"], "cmin");
-    assert_eq!(cmin["data"]["total"], 2);
-    assert_eq!(cmin["data"]["kept"], 1);
-    assert_eq!(cmin["data"]["removed"], 1);
-    assert_eq!(std::fs::read_dir(prj.root().join("cmin")).unwrap().count(), 1);
-
-    let tmin = cmd
-        .forge_fuse()
-        .args([
+    for args in [
+        vec!["--machine", "fuzz", "show", "corpus"],
+        vec!["--machine", "fuzz", "cmin", "corpus", "--out", "cmin"],
+        vec![
             "--machine",
             "fuzz",
             "tmin",
             "corpus/00000000-0000-0000-0000-000000000001-1.json",
             "--out",
             "min-machine.json",
-        ])
-        .assert_success();
-    let tmin: Value = serde_json::from_slice(&tmin.get_output().stdout).unwrap();
-    assert_eq!(tmin["success"], true);
-    assert_eq!(tmin["data"]["input"], "corpus/00000000-0000-0000-0000-000000000001-1.json");
-    assert_eq!(tmin["data"]["output"], "min-machine.json");
-    assert_eq!(tmin["data"]["before_txs"], 1);
-    assert_eq!(tmin["data"]["after_txs"], 1);
-    assert_eq!(tmin["data"]["removed_txs"], 0);
-    assert!(prj.root().join("min-machine.json").is_file());
+        ],
+    ] {
+        let result = cmd.forge_fuse().args(args).assert_failure();
+        let output: Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(output["success"], false);
+        assert_eq!(output["errors"][0]["code"], "cli.usage.invalid");
+    }
 });
 
 forgetest_init!(forge_fuzz_commands_read_generated_corpus_roots, |prj, cmd| {

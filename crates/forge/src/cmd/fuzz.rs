@@ -7,7 +7,6 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::Selector;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use eyre::{Context, Result, bail};
-use foundry_cli::json::{JsonEnvelope, print_json};
 use foundry_common::{
     fmt::format_tokens_raw,
     fs, sh_println,
@@ -21,7 +20,7 @@ use foundry_evm::{
 };
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -66,20 +65,20 @@ impl FuzzArgs {
                 Ok(Some(args.run().await?))
             }
             FuzzSubcommands::Replay(args) => Ok(Some(args.run().await?)),
-            FuzzSubcommands::Show(args) => {
-                print_json(&JsonEnvelope::success(args.run_machine()?))?;
-                Ok(None)
-            }
-            FuzzSubcommands::Cmin(args) => {
-                print_json(&JsonEnvelope::success(args.run_machine().await?))?;
-                Ok(None)
-            }
-            FuzzSubcommands::Tmin(args) => {
-                print_json(&JsonEnvelope::success(args.run_machine().await?))?;
-                Ok(None)
-            }
+            // TODO: Reintroduce `--machine` for these corpus subcommands once their
+            // output schema is stable and does not interleave minimizer replay events.
+            FuzzSubcommands::Show(_) => reject_machine("show"),
+            FuzzSubcommands::Cmin(_) => reject_machine("cmin"),
+            FuzzSubcommands::Tmin(_) => reject_machine("tmin"),
         }
     }
+}
+
+fn reject_machine(subcommand: &str) -> ! {
+    foundry_cli::machine::bail_machine_usage_with_details(
+        format!("`forge fuzz {subcommand}` does not support `--machine`; run without `--machine`."),
+        serde_json::json!({ "subcommand": format!("fuzz {subcommand}") }),
+    )
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -153,11 +152,6 @@ pub struct FuzzShowArgs {
 }
 
 impl FuzzShowArgs {
-    fn run_machine(&self) -> Result<FuzzShowData> {
-        let decoder = CorpusDecoder::load();
-        Ok(FuzzShowData { entries: read_entries(&self.corpus, self.limit, &decoder)? })
-    }
-
     fn run(&self) -> Result<()> {
         let decoder = CorpusDecoder::load();
         let entries = read_entries(&self.corpus, self.limit, &decoder)?;
@@ -200,11 +194,6 @@ impl FuzzShowArgs {
     }
 }
 
-#[derive(Serialize)]
-pub struct FuzzShowData {
-    entries: Vec<DisplayCorpusEntry>,
-}
-
 /// Minimize a corpus by removing duplicate transaction sequences.
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzCminArgs {
@@ -219,25 +208,21 @@ pub struct FuzzCminArgs {
 }
 
 impl FuzzCminArgs {
-    async fn run_machine(self) -> Result<FuzzCminData> {
+    async fn run(self) -> Result<()> {
         if self.out.exists() {
             bail!("output corpus directory already exists: {}", self.out.display());
         }
         fs::create_dir_all(&self.out)?;
 
-        let structural_only = self.filter.is_empty() && foundry_cli::is_machine();
-        let mut test = (!structural_only).then(|| minimizer_test_args(self.filter));
-        if let Some(test) = &mut test {
-            test.enable_fuzz_only();
-            test.reject_machine_unsupported_flags()?;
-        }
+        let mut test = minimizer_test_args(self.filter);
+        test.enable_fuzz_only();
+        test.reject_machine_unsupported_flags()?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let mut kept = 0usize;
         let mut total = 0usize;
         let mut skipped = 0usize;
         let mut replayed = 0usize;
         let mut cumulative = ReplayObservation::default();
-        let mut seen_sequences = HashSet::new();
         for entry in read_corpus_entries(&self.corpus_dir)? {
             total += 1;
             let sequence = read_sequence(&entry.path)
@@ -246,19 +231,11 @@ impl FuzzCminArgs {
                 skipped += 1;
                 continue;
             };
-            let structural_key = serde_json::to_vec(&sequence)?;
-            let observation = if let Some(test) = &mut test {
-                replay_candidate(test, evm_edge_indices.clone(), sequence).await?
-            } else {
-                ReplayObservation::default()
-            };
+            let observation =
+                replay_candidate(&mut test, evm_edge_indices.clone(), sequence).await?;
             replayed += observation.replayed;
             skipped += observation.skipped;
-            let keep = if observation.replayed == 0 && !observation.has_coverage() {
-                seen_sequences.insert(structural_key)
-            } else {
-                merge_new_edges(&mut cumulative, &observation)
-            };
+            let keep = merge_new_edges(&mut cumulative, &observation);
             if !keep {
                 continue;
             }
@@ -273,44 +250,15 @@ impl FuzzCminArgs {
             kept += 1;
         }
 
-        Ok(FuzzCminData {
-            input: self.corpus_dir.clone(),
-            output: self.out.clone(),
-            mode: if structural_only {
-                FuzzMinimizeMode::Structural
-            } else {
-                FuzzMinimizeMode::Coverage
-            },
-            total,
-            kept,
-            removed: total - kept,
-            skipped,
-            replayed,
-        })
-    }
-
-    async fn run(self) -> Result<()> {
-        let data = self.run_machine().await?;
-        sh_println!(
-            "minimized corpus: kept {}/{} entries in {}",
-            data.kept,
-            data.total,
-            data.output.display()
-        )?;
+        sh_println!("minimized corpus: kept {kept}/{total} entries in {}", self.out.display())?;
+        if skipped > 0 {
+            sh_println!("skipped {skipped} entries or txs that could not be read or replayed")?;
+        }
+        if replayed == 0 && total > 0 {
+            sh_println!("warning: replayed 0 transactions; check --mc/--mt filters")?;
+        }
         Ok(())
     }
-}
-
-#[derive(Serialize)]
-pub struct FuzzCminData {
-    input: PathBuf,
-    output: PathBuf,
-    mode: FuzzMinimizeMode,
-    total: usize,
-    kept: usize,
-    removed: usize,
-    skipped: usize,
-    replayed: usize,
 }
 
 /// Minimize one corpus entry.
@@ -330,88 +278,45 @@ pub struct FuzzTminArgs {
 }
 
 impl FuzzTminArgs {
-    async fn run_machine(self) -> Result<FuzzTminData> {
+    async fn run(self) -> Result<()> {
         if self.out.exists() {
             bail!("output corpus file already exists: {}", self.out.display());
         }
 
         let mut sequence = read_sequence(&self.input)?;
         let before_txs = sequence.len();
-        let structural_only = self.filter.is_empty() && foundry_cli::is_machine();
-        let mut test = (!structural_only).then(|| minimizer_test_args(self.filter));
-        if let Some(test) = &mut test {
-            test.enable_fuzz_only();
-            test.reject_machine_unsupported_flags()?;
-        }
+        let mut test = minimizer_test_args(self.filter);
+        test.enable_fuzz_only();
+        test.reject_machine_unsupported_flags()?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
-        let original = if let Some(test) = &mut test {
-            replay_candidate(test, evm_edge_indices.clone(), sequence.clone()).await?
-        } else {
-            ReplayObservation::default()
-        };
+        let original =
+            replay_candidate(&mut test, evm_edge_indices.clone(), sequence.clone()).await?;
         let mut attempts = 0usize;
-        if original.replayed == 0 && !original.has_coverage() && original.failure.is_none() {
-            sequence.retain(|tx| !tx.call_details.calldata.is_empty());
-            for tx in &mut sequence {
-                cleanup_metadata(tx);
-            }
-        } else {
-            minimize_sequence(
-                test.as_mut().expect("replay-backed tmin has test args"),
-                evm_edge_indices.clone(),
-                &original,
-                &mut sequence,
-                self.max_attempts,
-                &mut attempts,
-            )
-            .await?;
-        }
+        minimize_sequence(
+            &mut test,
+            evm_edge_indices.clone(),
+            &original,
+            &mut sequence,
+            self.max_attempts,
+            &mut attempts,
+        )
+        .await?;
 
         if self.out.extension() == Some("gz".as_ref()) {
             fs::write_json_gzip_file(&self.out, &sequence)?;
         } else {
             fs::write_json_file(&self.out, &sequence)?;
         }
-        Ok(FuzzTminData {
-            input: self.input.clone(),
-            output: self.out.clone(),
-            mode: if structural_only {
-                FuzzMinimizeMode::Structural
-            } else {
-                FuzzMinimizeMode::Coverage
-            },
-            before_txs,
-            after_txs: sequence.len(),
-            removed_txs: before_txs - sequence.len(),
-            attempts,
-            failed: original.failure.is_some(),
-        })
-    }
-
-    async fn run(self) -> Result<()> {
-        let data = self.run_machine().await?;
-        sh_println!("minimized entry: {} txs -> {}", data.after_txs, data.output.display())?;
+        sh_println!("minimized entry: {} txs -> {}", sequence.len(), self.out.display())?;
+        sh_println!(
+            "removed {} txs after {attempts} candidate replays",
+            before_txs - sequence.len()
+        )?;
+        if original.failure.is_some() {
+            sh_println!("preserved original failure")?;
+        }
         Ok(())
     }
-}
-
-#[derive(Serialize)]
-pub struct FuzzTminData {
-    input: PathBuf,
-    output: PathBuf,
-    mode: FuzzMinimizeMode,
-    before_txs: usize,
-    after_txs: usize,
-    removed_txs: usize,
-    attempts: usize,
-    failed: bool,
-}
-
-#[derive(Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FuzzMinimizeMode {
-    Coverage,
-    Structural,
 }
 
 #[derive(Serialize)]
