@@ -208,24 +208,37 @@ contract ForgeShowmapSymbolicTest is Test {
 });
 
 forgetest_init!(forge_fuzz_show_cmin_tmin_corpus_files, |prj, cmd| {
+    prj.add_source(
+        "ForgeFuzzShowTarget.sol",
+        r#"
+contract ForgeFuzzShowTarget {
+    function setNumber(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
     let entry = r#"[{
   "sender":"0x0000000000000000000000000000000000000001",
   "target":"0x0000000000000000000000000000000000000002",
-  "calldata":"0x12345678",
+  "calldata":"0x3fb5c1cb000000000000000000000000000000000000000000000000000000000000002a",
   "value":"0x0"
 }]"#;
     std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
     std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry).unwrap();
 
-    cmd.args(["fuzz", "show", "corpus"])
+    cmd.forge_fuse()
+        .args(["fuzz", "show", "corpus"])
         .assert_success()
         .stdout_eq(str![[r#"
 corpus/00000000-0000-0000-0000-000000000001-1.json (1 txs)
-  0: target=0x0000000000000000000000000000000000000002 sender=0x0000000000000000000000000000000000000001 calldata=0x12345678 value=0
+  0: ForgeFuzzShowTarget.setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x0000000000000000000000000000000000000002 value=0
 corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
-  0: target=0x0000000000000000000000000000000000000002 sender=0x0000000000000000000000000000000000000001 calldata=0x12345678 value=0
+  0: ForgeFuzzShowTarget.setNumber(42) sender=0x0000000000000000000000000000000000000001 target=0x0000000000000000000000000000000000000002 value=0
 
 "#]]);
 

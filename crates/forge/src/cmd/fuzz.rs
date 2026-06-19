@@ -1,15 +1,19 @@
 use crate::{cmd::test::TestArgs, multi_runner::ShowmapConfig};
+use alloy_dyn_abi::JsonAbiExt;
+use alloy_json_abi::{Function, JsonAbi};
+use alloy_primitives::Selector;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use eyre::{Context, Result, bail};
 use foundry_cli::json::{JsonEnvelope, print_json};
-use foundry_common::{fs, sh_println};
+use foundry_common::{fmt::format_tokens_raw, fs, sh_println};
+use foundry_config::Config;
 use foundry_evm::{
     executors::{CorpusDirEntry, ShowmapDomain, read_corpus_tree},
     fuzz::BasicTxDetails,
 };
 use serde::Serialize;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -141,26 +145,43 @@ pub struct FuzzShowArgs {
 
 impl FuzzShowArgs {
     fn run_machine(&self) -> Result<FuzzShowData> {
-        Ok(FuzzShowData { entries: read_entries(&self.corpus, self.limit)? })
+        let decoder = CorpusDecoder::load();
+        Ok(FuzzShowData { entries: read_entries(&self.corpus, self.limit, &decoder)? })
     }
 
     fn run(&self) -> Result<()> {
-        let entries = read_entries(&self.corpus, self.limit)?;
+        let decoder = CorpusDecoder::load();
+        let entries = read_entries(&self.corpus, self.limit, &decoder)?;
         match self.format {
             CorpusShowFormat::Human => {
                 for entry in entries {
                     sh_println!("{} ({} txs)", entry.path.display(), entry.sequence.len())?;
                     for (idx, tx) in entry.sequence.iter().enumerate() {
-                        sh_println!(
-                            "  {idx}: target={} sender={} calldata={} value={}",
-                            tx.call_details.target,
-                            tx.sender,
-                            tx.call_details.calldata,
-                            tx.call_details
-                                .value
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|| "0".to_string())
-                        )?;
+                        if let Some(decoded) = &tx.decoded {
+                            sh_println!(
+                                "  {idx}: {} sender={} target={} value={}",
+                                decoded.call,
+                                tx.raw.sender,
+                                tx.raw.call_details.target,
+                                tx.raw
+                                    .call_details
+                                    .value
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "0".to_string())
+                            )?;
+                        } else {
+                            sh_println!(
+                                "  {idx}: target={} sender={} calldata={} value={}",
+                                tx.raw.call_details.target,
+                                tx.raw.sender,
+                                tx.raw.call_details.calldata,
+                                tx.raw
+                                    .call_details
+                                    .value
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "0".to_string())
+                            )?;
+                        }
                     }
                 }
             }
@@ -306,14 +327,114 @@ pub struct FuzzTminData {
 #[derive(Serialize)]
 pub struct DisplayCorpusEntry {
     path: PathBuf,
-    sequence: Vec<BasicTxDetails>,
+    sequence: Vec<DisplayTxDetails>,
 }
 
-fn read_entries(path: &Path, limit: Option<usize>) -> Result<Vec<DisplayCorpusEntry>> {
+#[derive(Serialize)]
+struct DisplayTxDetails {
+    #[serde(flatten)]
+    raw: BasicTxDetails,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decoded: Option<DecodedCall>,
+}
+
+#[derive(Serialize)]
+struct DecodedCall {
+    contract: String,
+    signature: String,
+    args: Vec<String>,
+    call: String,
+}
+
+struct IndexedFunction {
+    contract: String,
+    function: Function,
+}
+
+#[derive(Default)]
+struct CorpusDecoder {
+    functions: BTreeMap<Selector, Vec<IndexedFunction>>,
+}
+
+impl CorpusDecoder {
+    fn load() -> Self {
+        Config::load().ok().map(|config| Self::from_artifacts(&config.out)).unwrap_or_default()
+    }
+
+    fn from_artifacts(out: &Path) -> Self {
+        let mut this = Self::default();
+        if !out.is_dir() {
+            return this;
+        }
+
+        for path in fs::json_files(out) {
+            let Ok(artifact) = fs::read_json_file::<serde_json::Value>(&path) else {
+                continue;
+            };
+            let Some(abi_value) = artifact.get("abi").cloned() else {
+                continue;
+            };
+            let Ok(abi) = serde_json::from_value::<JsonAbi>(abi_value) else {
+                continue;
+            };
+            let contract =
+                path.file_stem().and_then(|name| name.to_str()).unwrap_or("<unknown>").to_string();
+
+            for function in abi.functions().cloned() {
+                this.functions
+                    .entry(function.selector())
+                    .or_default()
+                    .push(IndexedFunction { contract: contract.clone(), function });
+            }
+        }
+
+        this
+    }
+
+    fn decode(&self, tx: &BasicTxDetails) -> Option<DecodedCall> {
+        let calldata = tx.call_details.calldata.as_ref();
+        if calldata.len() < 4 {
+            return None;
+        }
+
+        let selector = Selector::from_slice(&calldata[..4]);
+        self.functions.get(&selector).and_then(|functions| {
+            functions.iter().find_map(|indexed| {
+                let decoded_args = indexed.function.abi_decode_input(&calldata[4..]).ok()?;
+                let args = format_tokens_raw(&decoded_args).collect::<Vec<_>>();
+                let signature = indexed.function.signature();
+                Some(DecodedCall {
+                    call: format!(
+                        "{}.{}({})",
+                        indexed.contract,
+                        indexed.function.name,
+                        args.join(", ")
+                    ),
+                    contract: indexed.contract.clone(),
+                    signature,
+                    args,
+                })
+            })
+        })
+    }
+}
+
+fn read_entries(
+    path: &Path,
+    limit: Option<usize>,
+    decoder: &CorpusDecoder,
+) -> Result<Vec<DisplayCorpusEntry>> {
     let iter = read_corpus_entries(path)?.into_iter().take(limit.unwrap_or(usize::MAX));
     iter.map(|entry| {
         let sequence = read_sequence(&entry.path)
             .with_context(|| format!("failed to read corpus entry {}", entry.path.display()))?;
+        let sequence = sequence
+            .into_iter()
+            .map(|raw| {
+                let decoded = decoder.decode(&raw);
+                DisplayTxDetails { raw, decoded }
+            })
+            .collect();
         Ok(DisplayCorpusEntry { path: entry.path, sequence })
     })
     .collect()
