@@ -28,6 +28,8 @@ contract TautologicalCompare {
         require(x <= (x)); //~WARN: comparing an expression with itself is always true or false
         if (arr[0] < arr[0]) {} //~WARN: comparing an expression with itself is always true or false
         if (m[1] != m[1]) {} //~WARN: comparing an expression with itself is always true or false
+        if (address(this) == address(this)) {} //~WARN: comparing an expression with itself is always true or false
+        if (uint256(x) == uint256(x)) {} //~WARN: comparing an expression with itself is always true or false
     }
 
     function ok(uint256 x, uint256 y, uint256 i, uint256 j, uint256[] calldata arr) external view {
@@ -35,6 +37,9 @@ contract TautologicalCompare {
         if (arr[i] < arr[j]) {} // different index
         require(pick(x) == pick(x)); // calls excluded: sides may differ
         require(x + 1 > x); // not a self-comparison
+        require(uint256(x) == uint256(y)); // same cast, different operand
+        // forge-lint: disable-next-line(unsafe-typecast)
+        require(uint256(x) == uint8(x)); // casts to different types: uint8 can truncate, not tautological
     }
 
     // A user-defined `==` (see `using {weirdEq as ==}`) dispatches to `weirdEq`, which may return
