@@ -30,8 +30,8 @@ impl EvmFoldedStackTraceBuilder {
         self.fst.build()
     }
 
-    /// Creates an entry for an EVM CALL in the folded stack trace. This method recursively processes
-    /// all the children nodes of the call node and at the end it exits.
+    /// Creates an entry for an EVM CALL in the folded stack trace. This method recursively
+    /// processes all the children nodes of the call node and at the end it exits.
     pub fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
 
