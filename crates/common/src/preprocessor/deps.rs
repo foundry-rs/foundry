@@ -6,7 +6,10 @@ use foundry_compilers::Updates;
 use itertools::Itertools;
 use solar::sema::{
     Gcx, Hir,
-    hir::{CallArgs, ContractId, Expr, ExprKind, NamedArg, Stmt, StmtKind, TypeKind, Visit},
+    hir::{
+        CallArgs, CallOptions, ContractId, Expr, ExprKind, Function, FunctionKind, StateMutability,
+        Stmt, StmtKind, TypeKind, Visit,
+    },
     interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
 use std::{
@@ -27,6 +30,7 @@ impl PreprocessorDependencies {
     pub fn new(
         gcx: Gcx<'_>,
         paths: &[PathBuf],
+        script_paths: &HashSet<PathBuf>,
         src_dir: &Path,
         root_dir: &Path,
         mocks: &mut HashSet<PathBuf>,
@@ -81,8 +85,17 @@ impl PreprocessorDependencies {
             // which used to be a mock is refactored to a non-mock implementation).
             mocks.remove(&full_path);
 
+            // Treat the contract as a script when its file lives under the configured script
+            // directory, or when it inherits from a `Script` base (forge-std). The inheritance
+            // check covers atypical layouts where script contracts are placed under `src/`.
+            let is_script = script_paths.contains(path)
+                || contract
+                    .linearized_bases
+                    .iter()
+                    .skip(1)
+                    .any(|base_id| gcx.hir.contract(*base_id).name.as_str() == "Script");
             let mut deps_collector =
-                BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir);
+                BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir, is_script);
             // Analyze current contract.
             let _ = deps_collector.walk_contract(contract);
             // Ignore empty test contracts declared in source files with other contracts.
@@ -142,6 +155,13 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     src: &'src str,
     /// Project source dir, used to determine if referenced contract is a source contract.
     src_dir: &'src Path,
+    /// Whether the contract being analyzed lives in a script file.
+    /// Script bytecode references must not be rewritten: native script CREATE/CREATE2 frames
+    /// are handled by the script execution inspector, and `type(Contract).creationCode` must keep
+    /// its native mutability semantics.
+    is_script: bool,
+    /// Whether `type(Contract).creationCode` should keep native Solidity semantics.
+    preserve_native_creation_code: bool,
     /// Dependencies collected for current contract.
     dependencies: Vec<BytecodeDependency>,
     /// Unique HIR ids of contracts referenced from current contract.
@@ -149,14 +169,45 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
 }
 
 impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
-    fn new(gcx: Gcx<'gcx>, src: &'src str, src_dir: &'src Path) -> Self {
-        Self { gcx, src, src_dir, dependencies: vec![], referenced_contracts: HashSet::default() }
+    fn new(gcx: Gcx<'gcx>, src: &'src str, src_dir: &'src Path, is_script: bool) -> Self {
+        Self {
+            gcx,
+            src,
+            src_dir,
+            is_script,
+            preserve_native_creation_code: false,
+            dependencies: vec![],
+            referenced_contracts: HashSet::default(),
+        }
     }
 
     /// Collects reference identified as bytecode dependency of analyzed contract.
     /// Discards any reference that is not in project src directory (e.g. external
     /// libraries or mock contracts that extend source contracts).
     fn collect_dependency(&mut self, dependency: BytecodeDependency) {
+        // Script bytecode references must not be rewritten. See field doc on `is_script`.
+        if self.is_script {
+            match &dependency.kind {
+                BytecodeDependencyKind::CreationCode => {
+                    trace!("skip creationCode in script");
+                    return;
+                }
+                BytecodeDependencyKind::New { .. } => {
+                    trace!("skip new-expression in script");
+                    return;
+                }
+            }
+        }
+
+        // `type(Contract).creationCode` has native `pure` semantics. Rewriting it to a `view`
+        // cheatcode call would make valid pure functions fail to compile.
+        if self.preserve_native_creation_code
+            && matches!(&dependency.kind, BytecodeDependencyKind::CreationCode)
+        {
+            trace!("skip creationCode in native creationCode context");
+            return;
+        }
+
         let contract = self.gcx.hir.contract(dependency.referenced_contract);
         let source = self.gcx.hir.source(contract.source);
         let FileName::Real(path) = &source.file.name else {
@@ -179,6 +230,16 @@ impl<'gcx> Visit<'gcx> for BytecodeDependencyCollector<'gcx, '_> {
 
     fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
+    }
+
+    fn visit_function(&mut self, func: &'gcx Function<'gcx>) -> ControlFlow<Self::BreakValue> {
+        let previous = self.preserve_native_creation_code;
+        self.preserve_native_creation_code = previous
+            || func.state_mutability == StateMutability::Pure
+            || matches!(func.kind, FunctionKind::Modifier);
+        self.walk_function(func)?;
+        self.preserve_native_creation_code = previous;
+        ControlFlow::Continue(())
     }
 
     fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
@@ -262,7 +323,7 @@ fn handle_call_expr(
     parent_expr: &Expr<'_>,
     call_expr: &Expr<'_>,
     call_args: &CallArgs<'_>,
-    named_args: &Option<&[NamedArg<'_>]>,
+    call_options: &Option<&CallOptions<'_>>,
 ) -> Option<BytecodeDependency> {
     if let ExprKind::New(ty_new) = &call_expr.kind
         && let TypeKind::Custom(item_id) = ty_new.kind
@@ -274,7 +335,7 @@ fn handle_call_expr(
         // Calculate offset to remove named args, e.g. for an expression like
         // `new Counter {value: 333} (  address(this))`
         // the offset will be used to replace `{value: 333} (  ` with `(`
-        let call_args_offset = if named_args.is_some() && !call_args.is_empty() {
+        let call_args_offset = if call_options.is_some() && !call_args.is_empty() {
             (call_args.span.lo() - ty_new.span.hi()).to_usize()
         } else {
             0
@@ -286,8 +347,8 @@ fn handle_call_expr(
                 name: name.to_string(),
                 args_length: args_len.to_usize(),
                 call_args_offset,
-                value: named_arg(src, named_args, "value", source_map),
-                salt: named_arg(src, named_args, "salt", source_map),
+                value: named_arg(src, call_options, "value", source_map),
+                salt: named_arg(src, call_options, "salt", source_map),
                 try_stmt: None,
             },
             loc: span_to_range(source_map, call_expr.span),
@@ -300,16 +361,19 @@ fn handle_call_expr(
 /// Helper function to extract value of a given named arg.
 fn named_arg(
     src: &str,
-    named_args: &Option<&[NamedArg<'_>]>,
+    call_options: &Option<&CallOptions<'_>>,
     arg: &str,
     source_map: &SourceMap,
 ) -> Option<String> {
-    named_args.unwrap_or_default().iter().find(|named_arg| named_arg.name.as_str() == arg).map(
-        |named_arg| {
+    call_options
+        .map(|options| options.args)
+        .unwrap_or_default()
+        .iter()
+        .find(|named_arg| named_arg.name.as_str() == arg)
+        .map(|named_arg| {
             let named_arg_loc = span_to_range(source_map, named_arg.value.span);
             src[named_arg_loc].to_string()
-        },
-    )
+        })
 }
 
 /// Goes over all test/script files and replaces bytecode dependencies with cheatcode
@@ -341,7 +405,7 @@ pub(crate) fn remove_bytecode_dependencies(
         let updates = updates.entry(path.clone()).or_default();
         let mut used_helpers = BTreeSet::new();
 
-        let vm_interface_name = format!("VmContractHelper{}", contract_id.get());
+        let vm_interface_name = format!("VmContractHelper{}", contract_id.index());
         // `address(uint160(uint256(keccak256("hevm cheat code"))))`
         let vm = format!("{vm_interface_name}(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D)");
         let mut try_catch_helpers: HashSet<&str> = HashSet::default();
@@ -374,7 +438,7 @@ pub(crate) fn remove_bytecode_dependencies(
                         if *has_ret {
                             // try this.addressToCounter1() returns (Counter c)
                             try_catch_helpers.insert(name);
-                            (format!("this.addressTo{name}{id}(", id = contract_id.get()), "}))")
+                            (format!("this.addressTo{name}{id}(", id = contract_id.index()), "}))")
                         } else {
                             (String::new(), "})")
                         }
@@ -401,7 +465,7 @@ pub(crate) fn remove_bytecode_dependencies(
                         update.push_str(", ");
                         update.push_str(&format!(
                             "_args: encodeArgs{id}(DeployHelper{id}.FoundryPpConstructorArgs",
-                            id = dep.referenced_contract.get()
+                            id = dep.referenced_contract.index()
                         ));
                         updates.insert((dep.loc.start, dep.loc.end + call_args_offset, update));
 
@@ -433,7 +497,7 @@ pub(crate) fn remove_bytecode_dependencies(
                                 return {ty}(addr);
                             }}
                         "#,
-                        id = contract_id.get()
+                        id = contract_id.index()
                     )
                 })
                 .collect::<String>();
@@ -442,7 +506,7 @@ pub(crate) fn remove_bytecode_dependencies(
         }
 
         let helper_imports = used_helpers.into_iter().map(|id| {
-            let id = id.get();
+            let id = id.index();
             format!(
                 "import {{DeployHelper{id}, encodeArgs{id}}} from \"foundry-pp/DeployHelper{id}.sol\";",
             )

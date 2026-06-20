@@ -3,8 +3,8 @@ use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
@@ -12,15 +12,15 @@ use alloy_transport::TransportError;
 use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
+    opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
     utils::{self, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr, shell,
+    FoundryTransactionBuilder, TransactionReceiptWithRevertReason, fmt::*,
+    get_pretty_receipt_w_reason_attr, shell,
 };
 use foundry_config::{Chain, Config};
-use foundry_primitives::FoundryTransactionBuilder;
-use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -57,6 +57,55 @@ pub struct SendTxOpts {
     pub browser: BrowserWalletOpts,
 }
 
+/// Transaction options shared across cast commands that submit on-chain transactions.
+#[derive(Debug, Clone, Args)]
+#[command(next_help_heading = "Transaction options")]
+pub struct TxParams {
+    /// Gas limit for the transaction.
+    #[arg(long, env = "ETH_GAS_LIMIT")]
+    pub gas_limit: Option<U256>,
+
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_GAS_PRICE")]
+    pub gas_price: Option<U256>,
+
+    /// Max priority fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
+    pub priority_gas_price: Option<U256>,
+
+    /// Nonce for the transaction.
+    #[arg(long)]
+    pub nonce: Option<U64>,
+
+    #[command(flatten)]
+    pub tempo: TempoOpts,
+}
+
+impl TxParams {
+    pub(crate) fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        if let Some(gas_limit) = self.gas_limit {
+            tx.set_gas_limit(gas_limit.to());
+        }
+
+        if let Some(gas_price) = self.gas_price {
+            if legacy {
+                tx.set_gas_price(gas_price.to());
+            } else {
+                tx.set_max_fee_per_gas(gas_price.to());
+            }
+        }
+
+        if !legacy && let Some(priority_fee) = self.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
+        }
+
+        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
+    }
+}
+
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
@@ -86,10 +135,10 @@ impl SenderKind<'_> {
     /// If from is not specified, but there is a signer configured, returns the signer's address
     /// If from is not specified and there is no signer configured, returns zero address
     pub async fn from_wallet_opts(opts: WalletOpts) -> Result<Self> {
-        if let Some(from) = opts.from {
-            Ok(from.into())
-        } else if let Ok(signer) = opts.signer().await {
+        if let (Some(signer), _) = opts.maybe_signer().await? {
             Ok(Self::OwnedSigner(Box::new(signer)))
+        } else if let Some(from) = opts.from {
+            Ok(from.into())
         } else {
             Ok(Address::ZERO.into())
         }
@@ -171,20 +220,21 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     /// Creates a new Cast instance responsible for sending transactions.
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
     /// Sends a transaction and waits for receipt synchronously
-    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<String> {
+    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<(B256, String)> {
         let mut receipt = TransactionReceiptWithRevertReason::<N> {
             receipt: self.provider.send_transaction_sync(tx).await?,
             revert_reason: None,
         };
+        let tx_hash = receipt.receipt.transaction_hash();
         // Allow to fail silently
         let _ = receipt.update_revert_reason(&self.provider).await;
 
-        self.format_receipt(receipt, None)
+        self.format_receipt(receipt, None).map(|formatted| (tx_hash, formatted))
     }
 
     /// Sends a transaction to the specified address
@@ -291,13 +341,12 @@ where
                     // try to poll for it
                     if cast_async {
                         eyre::bail!("tx not found: {:?}", tx_hash)
-                    } else {
-                        PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                            .with_required_confirmations(confs)
-                            .with_timeout(timeout.map(Duration::from_secs))
-                            .get_receipt()
-                            .await?
                     }
+                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+                        .with_required_confirmations(confs)
+                        .with_timeout(timeout.map(Duration::from_secs))
+                        .get_receipt()
+                        .await?
                 }
             },
             revert_reason: None,
@@ -334,7 +383,7 @@ where
 #[derive(Debug)]
 pub struct CastTxBuilder<N: Network, P, S> {
     provider: P,
-    tx: N::TransactionRequest,
+    pub(crate) tx: N::TransactionRequest,
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
@@ -343,11 +392,27 @@ pub struct CastTxBuilder<N: Network, P, S> {
     /// Whether to fill gas, fees and nonce. Set to `false` for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
     fill: bool,
+    /// Whether the filled transaction will be submitted through a browser wallet.
+    browser: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
+    etherscan_api_url: Option<String>,
     access_list: Option<Option<AccessList>>,
     state: S,
+}
+
+impl<N: Network, P, S> CastTxBuilder<N, P, S> {
+    /// Returns the resolved chain for this builder.
+    pub const fn chain(&self) -> Chain {
+        self.chain
+    }
+
+    /// Marks this transaction as destined for browser wallet submission.
+    pub const fn with_browser_wallet(mut self) -> Self {
+        self.browser = true;
+        self
+    }
 }
 
 impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InitState>
@@ -360,7 +425,9 @@ where
         let mut tx = N::TransactionRequest::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
+        let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
+        let etherscan_api_url = etherscan_config.map(|c| c.api_url);
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
@@ -374,8 +441,10 @@ where
             blob: tx_opts.blob,
             eip4844: tx_opts.eip4844,
             fill: true,
+            browser: false,
             chain,
             etherscan_api_key,
+            etherscan_api_url,
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
@@ -392,8 +461,10 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            browser: self.browser,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
@@ -422,6 +493,7 @@ where
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
+                self.etherscan_api_url.as_deref(),
             )
             .await?
         } else {
@@ -453,8 +525,10 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            browser: self.browser,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
@@ -473,38 +547,74 @@ where
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         let fill = self.fill;
-        self._build(sender, fill).await
+        self._build(sender, fill, None).await
+    }
+
+    /// Builds a transaction that will be signed by a Tempo access key.
+    ///
+    /// The access-key id is set before gas estimation. If the access key needs on-chain
+    /// provisioning, its authorization is embedded before access-list/gas estimation and before
+    /// any sponsor digest can be computed.
+    pub async fn build_with_access_key(
+        mut self,
+        sender: impl Into<SenderKind<'_>>,
+        access_key: &TempoAccessKeyConfig,
+    ) -> Result<(N::TransactionRequest, Option<Function>)> {
+        self.tx.set_key_id(access_key.key_address);
+        let fill = self.fill;
+        self._build(sender, fill, Some(access_key)).await
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
+        access_key: Option<&TempoAccessKeyConfig>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         // prepare
         let sender = sender.into();
         self.prepare(&sender);
 
+        // For batch transactions with calls, clear `to` and `value` so the node correctly
+        // identifies this as an AA batch transaction. The `calls` field determines the actual
+        // targets. If `to` is set, `build_aa()` would add a spurious extra call.
+        self.tx.clear_batch_to();
+
         // resolve
         let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
         self.resolve_auth(&sender, tx_nonce).await?;
-        self.resolve_access_list().await?;
-
-        // fill
+        if let Some(access_key) = access_key {
+            self.tx
+                .prepare_access_key_authorization(
+                    &self.provider,
+                    access_key.wallet_address,
+                    access_key.key_address,
+                    access_key.key_authorization.as_ref(),
+                )
+                .await?;
+        }
         if fill {
             self.fill_fees().await?;
+        }
+        self.resolve_access_list().await?;
+        if fill {
+            self.fill_gas_limit().await?;
         }
 
         Ok((self.tx, self.state.func))
     }
 
-    /// Sets the core transaction fields from the builder state: kind, input, from, and chain id.
+    /// Sets the core transaction fields from the builder state: kind, input, optional from, and
+    /// chain id.
     fn prepare(&mut self, sender: &SenderKind<'_>) {
         self.tx.set_kind(self.state.kind);
         // We set both fields to the same value because some nodes only accept the legacy
         // `data` field: https://github.com/foundry-rs/foundry/issues/7764#issuecomment-2210453249
         self.tx.set_input_kind(self.state.input.clone(), TransactionInputKind::Both);
-        self.tx.set_from(sender.address());
+        let sender = sender.address();
+        if !sender.is_zero() {
+            self.tx.set_from(sender);
+        }
         self.tx.set_chain_id(self.chain.id());
     }
 
@@ -588,32 +698,19 @@ where
         Ok(())
     }
 
-    /// Fills gas price, EIP-1559 fees, blob fees, and gas limit from the provider.
+    /// Fills gas price, EIP-1559 fees, and blob fees from the provider.
     ///
     /// Only fills values that haven't been explicitly set by the user.
     async fn fill_fees(&mut self) -> Result<()> {
-        if self.legacy && self.tx.gas_price().is_none() {
-            self.tx.set_gas_price(self.provider.get_gas_price().await?);
-        }
-
         if self.blob && self.tx.max_fee_per_blob_gas().is_none() {
             self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
         }
 
-        if !self.legacy
-            && (self.tx.max_fee_per_gas().is_none() || self.tx.max_priority_fee_per_gas().is_none())
-        {
-            let estimate = self.provider.estimate_eip1559_fees().await?;
+        fill_transaction_gas_fees(&self.provider, &mut self.tx, self.legacy, self.browser).await
+    }
 
-            if self.tx.max_fee_per_gas().is_none() {
-                self.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
-
-            if self.tx.max_priority_fee_per_gas().is_none() {
-                self.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-        }
-
+    /// Fills gas limit from the provider.
+    async fn fill_gas_limit(&mut self) -> Result<()> {
         if self.tx.gas_limit().is_none() {
             self.estimate_gas().await?;
         }
@@ -664,10 +761,57 @@ where
 
     /// Skips gas, fee and nonce filling. Use for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
-    pub fn raw(mut self) -> Self {
+    pub const fn raw(mut self) -> Self {
         self.fill = false;
         self
     }
+}
+
+/// Fills gas price or EIP-1559 fee fields from the provider and validates the final pair.
+pub(crate) async fn fill_transaction_gas_fees<N: Network, P: Provider<N>>(
+    provider: &P,
+    tx: &mut N::TransactionRequest,
+    legacy: bool,
+    browser: bool,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if legacy {
+        if tx.gas_price().is_none() {
+            tx.set_gas_price(provider.get_gas_price().await?);
+        }
+        return Ok(());
+    }
+
+    if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
+        let mut estimate = provider.estimate_eip1559_fees().await?;
+        if browser
+            && tx.max_priority_fee_per_gas().is_none()
+            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+            && suggested_tip > estimate.max_priority_fee_per_gas
+        {
+            estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
+            estimate.max_priority_fee_per_gas = suggested_tip;
+        }
+
+        if tx.max_fee_per_gas().is_none() {
+            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+        }
+
+        if tx.max_priority_fee_per_gas().is_none() {
+            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+        }
+    }
+
+    if let (Some(max_fee), Some(priority)) = (tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()) {
+        eyre::ensure!(
+            priority <= max_fee,
+            "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
+        );
+    }
+
+    Ok(())
 }
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.

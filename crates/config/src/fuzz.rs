@@ -10,6 +10,10 @@ use std::path::PathBuf;
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,
+    /// Optional 1-based fuzz run to execute.
+    pub run: Option<u32>,
+    /// Optional fuzz worker ID to pair with `run`.
+    pub worker: Option<u32>,
     /// Fails the fuzzed test if a revert occurs.
     pub fail_on_revert: bool,
     /// The maximum number of test case rejections allowed,
@@ -37,6 +41,8 @@ impl Default for FuzzConfig {
     fn default() -> Self {
         Self {
             runs: 256,
+            run: None,
+            worker: None,
             fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,
@@ -122,6 +128,17 @@ pub struct FuzzCorpusConfig {
     pub corpus_min_size: usize,
     /// Whether to collect and display edge coverage metrics.
     pub show_edge_coverage: bool,
+    /// Whether EVM edge coverage should use collision-free dense IDs.
+    pub evm_edge_coverage_collision_free: bool,
+    /// Whether EVM edge coverage IDs should include call-frame depth.
+    pub evm_edge_coverage_include_call_depth: bool,
+    /// Whether to collect edge coverage from native Rust crates compiled with
+    /// SanitizerCoverage instrumentation (e.g. precompile implementations).
+    /// Requires building forge with a `RUSTC_WRAPPER` that injects sancov flags.
+    pub sancov_edges: bool,
+    /// Whether to capture comparison operands from sancov-instrumented crates
+    /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
+    pub sancov_trace_cmp: bool,
 }
 
 impl FuzzCorpusConfig {
@@ -131,13 +148,57 @@ impl FuzzCorpusConfig {
         }
     }
 
-    /// Whether edge coverage should be collected and displayed.
-    pub fn collect_edge_coverage(&self) -> bool {
-        self.corpus_dir.is_some() || self.show_edge_coverage
+    /// Whether any edge coverage (EVM or sancov) should be collected.
+    pub const fn collect_edge_coverage(&self) -> bool {
+        self.corpus_dir.is_some() || self.show_edge_coverage || self.sancov_edges
+    }
+
+    /// Whether the EVM `EdgeCovInspector` should be enabled.
+    ///
+    /// Disabled when sancov edge coverage is active — sancov provides the
+    /// coverage signal and EVM hits from the Solidity handler would dilute it.
+    /// Trace-cmp-only mode keeps EVM edges enabled since trace-cmp only
+    /// contributes dictionary entries, not edge coverage.
+    pub const fn collect_evm_edge_coverage(&self) -> bool {
+        !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
+    }
+
+    /// Whether EVM comparison operand capture is enabled.
+    ///
+    /// EVM comparison operands are only useful for coverage-guided fuzzing, so they are derived
+    /// from corpus mode. Disabled when sancov edge coverage is active because sancov replaces EVM
+    /// bytecode coverage as the guidance signal.
+    pub const fn collect_evm_cmp_log(&self) -> bool {
+        !self.sancov_edges && self.corpus_dir.is_some()
+    }
+
+    /// Whether EVM edge coverage should use collision-free dense IDs.
+    pub const fn evm_edge_coverage_collision_free(&self) -> bool {
+        self.evm_edge_coverage_collision_free
+    }
+
+    /// Whether EVM edge coverage IDs should include call-frame depth.
+    pub const fn evm_edge_coverage_include_call_depth(&self) -> bool {
+        self.evm_edge_coverage_include_call_depth
+    }
+
+    /// Whether sancov edge coverage collection is enabled.
+    pub const fn collect_sancov_edges(&self) -> bool {
+        self.sancov_edges
+    }
+
+    /// Whether sancov trace-cmp capture is enabled.
+    pub const fn collect_sancov_trace_cmp(&self) -> bool {
+        self.sancov_trace_cmp
+    }
+
+    /// Whether either sancov coverage mode is active.
+    pub const fn sancov_active(&self) -> bool {
+        self.sancov_edges || self.sancov_trace_cmp
     }
 
     /// Whether coverage guided fuzzing is enabled.
-    pub fn is_coverage_guided(&self) -> bool {
+    pub const fn is_coverage_guided(&self) -> bool {
         self.corpus_dir.is_some()
     }
 }
@@ -150,6 +211,10 @@ impl Default for FuzzCorpusConfig {
             corpus_min_mutations: 5,
             corpus_min_size: 0,
             show_edge_coverage: false,
+            evm_edge_coverage_collision_free: true,
+            evm_edge_coverage_include_call_depth: false,
+            sancov_edges: false,
+            sancov_trace_cmp: false,
         }
     }
 }

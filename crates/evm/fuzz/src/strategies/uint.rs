@@ -23,7 +23,7 @@ impl UintValueTree {
     /// # Arguments
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
-    fn new(start: U256, fixed: bool) -> Self {
+    const fn new(start: U256, fixed: bool) -> Self {
         Self { lo: U256::ZERO, curr: start, hi: start, fixed }
     }
 

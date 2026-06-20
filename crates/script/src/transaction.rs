@@ -2,7 +2,7 @@ use super::ScriptResult;
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, TxKind, hex};
+use alloy_primitives::{Address, B256, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
 use foundry_common::{ContractData, SELECTOR_LEN, TransactionMaybeSigned, fmt::format_token_raw};
@@ -33,7 +33,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         decoder: &CallTraceDecoder,
         create2_deployer: Address,
     ) -> Result<()> {
-        if let Some(TxKind::Call(to)) = self.transaction.transaction.to() {
+        if let Some(to) = self.transaction.transaction.to() {
             if to == create2_deployer {
                 if let Some(input) = self.transaction.transaction.input() {
                     let (salt, init_code) = input.split_at(32);
@@ -45,7 +45,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
                     )?;
                 }
             } else {
-                self.transaction.opcode = CallKind::Call;
+                self.transaction.call_kind = CallKind::Call;
                 self.transaction.contract_address = Some(to);
 
                 let Some(data) = self.transaction.transaction.input() else { return Ok(()) };
@@ -97,9 +97,9 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         contracts: &BTreeMap<Address, &ContractData>,
     ) -> Result<()> {
         if is_create2 {
-            self.transaction.opcode = CallKind::Create2;
+            self.transaction.call_kind = CallKind::Create2;
         } else {
-            self.transaction.opcode = CallKind::Create;
+            self.transaction.call_kind = CallKind::Create;
         }
 
         let info = contracts.get(&address);
@@ -146,7 +146,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     /// Populates additional data from the transaction execution result.
     pub fn with_execution_result(
         mut self,
-        result: &ScriptResult,
+        result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
     ) -> Self {

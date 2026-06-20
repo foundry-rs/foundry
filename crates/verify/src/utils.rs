@@ -1,11 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, Bytes, TxKind};
-use alloy_provider::{
-    Provider,
-    network::{AnyNetwork, AnyRpcBlock},
-};
+use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -19,7 +15,11 @@ use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVer
 use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::decode::RevertDecoder,
+    core::{
+        FoundryBlock as _,
+        decode::RevertDecoder,
+        evm::{BlockEnvFor, BlockResponseFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::TraceMode,
@@ -27,7 +27,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{bytecode::Bytecode, context::TxEnv, database::Database, primitives::hardfork::SpecId};
+use revm::{bytecode::Bytecode, context::Block as _, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -43,12 +43,12 @@ pub enum BytecodeType {
 
 impl BytecodeType {
     /// Check if the bytecode type is creation
-    pub fn is_creation(&self) -> bool {
+    pub const fn is_creation(&self) -> bool {
         matches!(self, Self::Creation)
     }
 
     /// Check if the bytecode type is runtime
-    pub fn is_runtime(&self) -> bool {
+    pub const fn is_runtime(&self) -> bool {
         matches!(self, Self::Runtime)
     }
 }
@@ -88,7 +88,7 @@ pub fn build_project(
     config: &Config,
 ) -> Result<CompactContractBytecode> {
     let project = config.project()?;
-    let compiler = ProjectCompiler::new();
+    let compiler = ProjectCompiler::new().quiet(true);
 
     let mut output = compiler.compile(&project)?;
 
@@ -107,15 +107,15 @@ pub fn print_result(
     config: &Config,
 ) {
     if let Some(res) = res {
-        if !shell::is_json() {
+        if shell::is_json() {
+            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
+            json_results.push(json_res);
+        } else {
             let _ = sh_println!(
                 "{} with status {}",
                 format!("{bytecode_type:?} code matched").green().bold(),
                 res.green().bold()
             );
-        } else {
-            let json_res = JsonResult { bytecode_type, match_type: Some(res), message: None };
-            json_results.push(json_res);
         }
     } else if !shell::is_json() {
         let _ = sh_err!(
@@ -263,20 +263,23 @@ pub fn check_args_len(
     Ok(())
 }
 
-pub async fn get_tracing_executor(
+pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
     evm_version: EvmVersion,
     evm_opts: EvmOpts,
-) -> Result<(EvmEnv, TxEnv, TracingExecutor)> {
+) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
+where
+    FEN: FoundryEvmNetwork,
+{
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
     let (evm_env, tx_env, fork, _chain, networks) =
-        TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
+        TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
 
-    let executor = TracingExecutor::new(
+    let executor = TracingExecutor::<FEN>::new(
         (evm_env.clone(), tx_env.clone()),
         fork,
         Some(fork_config.evm_version),
@@ -289,25 +292,33 @@ pub async fn get_tracing_executor(
     Ok((evm_env, tx_env, executor))
 }
 
-pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: NetworkConfigs) {
-    let number = evm_env.block_env.number;
-    evm_env.block_env = block_env_from_header(&block.header);
-    evm_env.block_env.number = number;
-    apply_chain_and_block_specific_env_changes::<AnyNetwork>(evm_env, block, config);
+pub fn configure_env_block<FEN>(
+    evm_env: &mut EvmEnvFor<FEN>,
+    block: &BlockResponseFor<FEN>,
+    config: NetworkConfigs,
+) where
+    FEN: FoundryEvmNetwork,
+{
+    let number = evm_env.block_env.number();
+    evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
+    evm_env.block_env.set_number(number);
+    apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(evm_env, block, config);
 }
 
-pub fn deploy_contract(
-    executor: &mut TracingExecutor,
-    evm_env: &EvmEnv,
-    tx_env: &TxEnv,
-    spec_id: SpecId,
-    to: Option<TxKind>,
-) -> Result<Address, eyre::ErrReport> {
+pub fn deploy_contract<FEN>(
+    executor: &mut TracingExecutor<FEN>,
+    evm_env: &EvmEnvFor<FEN>,
+    tx_env: &TxEnvFor<FEN>,
+    spec_id: SpecFor<FEN>,
+    to: TxKind,
+) -> Result<Address, eyre::ErrReport>
+where
+    FEN: FoundryEvmNetwork,
+{
     let mut evm_env = evm_env.clone();
-    evm_env.cfg_env.set_spec(spec_id);
+    evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
 
-    if to.is_some_and(|to| to.is_call()) {
-        let TxKind::Call(to) = to.unwrap() else { unreachable!() };
+    if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!(
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
@@ -349,13 +360,16 @@ pub fn deploy_contract(
     }
 }
 
-pub async fn get_runtime_codes(
-    executor: &mut TracingExecutor,
-    provider: &impl Provider<AnyNetwork>,
+pub async fn get_runtime_codes<FEN>(
+    executor: &mut TracingExecutor<FEN>,
+    provider: &impl Provider<FEN::Network>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,
-) -> Result<(Bytecode, Bytes)> {
+) -> Result<(Bytecode, Bytes)>
+where
+    FEN: FoundryEvmNetwork,
+{
     let fork_runtime_code = executor
         .backend_mut()
         .basic(fork_address)?
@@ -386,6 +400,35 @@ pub fn is_host_only(url: &Url) -> bool {
     matches!(url.path(), "/" | "")
 }
 
+/// Wraps a failed verification error with guidance when `--verifier-url` looks misconfigured for
+/// the Etherscan provider. Returns `err` untouched when no hint applies.
+///
+/// The hint only fires when the Etherscan verifier is active: it requires an API endpoint
+/// (typically `/api`). Sourcify, Blockscout, etc. accept host-only URLs, so we leave their
+/// errors alone.
+pub fn wrap_verifier_url_error(
+    err: eyre::Error,
+    verifier_url: Option<&str>,
+    using_etherscan: bool,
+) -> eyre::Error {
+    let Some(verifier_url) = verifier_url else { return err };
+    let url = match Url::parse(verifier_url) {
+        Ok(url) => url,
+        Err(url_err) => {
+            return err.wrap_err(format!("Invalid URL {verifier_url} provided: {url_err}"));
+        }
+    };
+    if is_host_only(&url) && using_etherscan {
+        return err.wrap_err(format!(
+            "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{verifier_url}`.\n\
+             Fixes (pick one):\n\
+             - Append the API path, e.g. `--verifier-url {verifier_url}/api`\n\
+             - Switch verifier, e.g. `--verifier sourcify` (works with host-only URLs)"
+        ));
+    }
+    err
+}
+
 /// Given any solc [Version] return a [Version] with build metadata
 ///
 /// # Example
@@ -397,10 +440,10 @@ pub fn is_host_only(url: &Url) -> bool {
 /// assert_ne!(version.build, BuildMetadata::EMPTY);
 /// ```
 pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
-    if version.build != BuildMetadata::EMPTY {
-        Ok(version)
-    } else {
+    if version.build == BuildMetadata::EMPTY {
         Ok(lookup_compiler_version(&version).await?)
+    } else {
+        Ok(version)
     }
 }
 
@@ -413,5 +456,39 @@ mod tests {
         assert!(!is_host_only(&Url::parse("https://blockscout.net/api").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net/").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net").unwrap()));
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_passes_through_when_no_url() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(err, None, true);
+        assert_eq!(wrapped.to_string(), "upstream failure");
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_adds_hint_for_host_only_etherscan_url() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(err, Some("https://contracts.tempo.xyz"), true);
+        let msg = format!("{wrapped:#}");
+        assert!(msg.contains("host-only"), "message: {msg}");
+        assert!(msg.contains("--verifier-url https://contracts.tempo.xyz/api"), "message: {msg}");
+        assert!(msg.contains("--verifier sourcify"), "message: {msg}");
+    }
+
+    /// Sourcify and other non-etherscan verifiers accept host-only URLs; we must not emit the
+    /// hint for them, otherwise we would mislead the user into editing a correct URL.
+    #[test]
+    fn wrap_verifier_url_error_does_not_hint_for_non_etherscan_provider() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(err, Some("https://contracts.tempo.xyz"), false);
+        assert_eq!(wrapped.to_string(), "upstream failure");
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_reports_invalid_url() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(err, Some("not a url"), true);
+        let msg = format!("{wrapped:#}");
+        assert!(msg.contains("Invalid URL"), "message: {msg}");
     }
 }

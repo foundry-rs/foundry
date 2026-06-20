@@ -8,7 +8,7 @@ use std::{
 
 use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip4895::Withdrawals;
-use alloy_evm::block::StateDB;
+use alloy_network::Network;
 use alloy_primitives::{
     Address, B256, Bytes, U256, keccak256,
     map::{AddressMap, HashMap},
@@ -22,7 +22,7 @@ use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
-use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope, FoundryTxEnvelope};
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -84,7 +84,7 @@ where
 
 /// Helper trait to reset the DB if it's forked
 pub trait MaybeForkedDatabase {
-    fn maybe_reset(&mut self, _url: Option<String>, block_number: BlockId) -> Result<(), String>;
+    fn maybe_reset(&mut self, _urls: Vec<String>, block_number: BlockId) -> Result<(), String>;
 
     fn maybe_flush_cache(&self) -> Result<(), String>;
 
@@ -95,18 +95,7 @@ pub trait MaybeForkedDatabase {
 /// blanket impl has an implicit `Sized` bound. Provide an explicit impl.
 impl alloy_evm::Database for dyn Db {}
 
-impl StateDB for dyn Db {
-    fn set_state_clear_flag(&mut self, _has_state_clear: bool) {
-        // Anvil does not use the revm State wrapper, so this is a no-op.
-    }
-}
-
-/// A wrapper around [`CacheDB`] that implements [`StateDB`].
-///
-/// `StateDB` is a foreign trait with an orphan-rule constraint, so we cannot
-/// implement it directly for `CacheDB<T>`.  This newtype sidesteps the orphan
-/// rule while delegating all [`Database`], [`DatabaseCommit`] and
-/// [`DatabaseRef`] calls to the inner `CacheDB`.
+/// A wrapper around [`CacheDB`].
 #[derive(Debug)]
 pub struct AnvilCacheDB<T>(pub CacheDB<T>);
 
@@ -175,12 +164,6 @@ impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> DatabaseCommit for Anvi
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError> + fmt::Debug> StateDB for AnvilCacheDB<T> {
-    fn set_state_clear_flag(&mut self, _has_state_clear: bool) {
-        // Anvil does not use the revm State wrapper, so this is a no-op.
-    }
-}
-
 /// This bundles all required revm traits
 pub trait Db:
     DatabaseRef<Error = DatabaseError>
@@ -220,7 +203,7 @@ pub trait Db:
             B256::from_slice(&keccak256(code.as_ref())[..])
         };
         info.code_hash = code_hash;
-        info.code = Some(Bytecode::new_raw(alloy_primitives::Bytes(code.0)));
+        info.code = Some(Bytecode::new_raw(code));
         self.insert_account(address, info);
         Ok(())
     }
@@ -243,7 +226,7 @@ pub trait Db:
 
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
-        for (addr, account) in state.accounts.into_iter() {
+        for (addr, account) in state.accounts {
             let old_account_nonce = DatabaseRef::basic_ref(self, addr)
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
@@ -260,14 +243,14 @@ pub trait Db:
                     code: if account.code.0.is_empty() {
                         None
                     } else {
-                        Some(Bytecode::new_raw(alloy_primitives::Bytes(account.code.0)))
+                        Some(Bytecode::new_raw(account.code))
                     },
                     nonce,
                     account_id: None,
                 },
             );
 
-            for (k, v) in account.storage.into_iter() {
+            for (k, v) in account.storage {
                 self.set_storage_at(addr, k, v)?;
             }
         }
@@ -392,7 +375,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheD
 }
 
 impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
-    fn maybe_reset(&mut self, _url: Option<String>, _block_number: BlockId) -> Result<(), String> {
+    fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
         Err("not supported".to_string())
     }
 
@@ -521,6 +504,7 @@ impl TryFrom<LegacyBlockEnv> for BlockEnv {
             basefee: legacy.basefee.and_then(|v| v.to_u64()).unwrap_or(0),
             difficulty: legacy.difficulty.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
             prevrandao: legacy.prevrandao.or(Some(B256::ZERO)),
+            slot_num: 0,
             blob_excess_gas_and_price: legacy
                 .blob_excess_gas_and_price
                 .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
@@ -667,7 +651,7 @@ where
 #[serde(untagged)]
 pub enum SerializableTransactionType {
     TypedTransaction(FoundryTxEnvelope),
-    MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
+    MaybeImpersonatedTransaction(MaybeImpersonatedTransaction<FoundryTxEnvelope>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -699,13 +683,13 @@ impl From<SerializableBlock> for Block {
     }
 }
 
-impl From<MaybeImpersonatedTransaction> for SerializableTransactionType {
-    fn from(transaction: MaybeImpersonatedTransaction) -> Self {
+impl From<MaybeImpersonatedTransaction<FoundryTxEnvelope>> for SerializableTransactionType {
+    fn from(transaction: MaybeImpersonatedTransaction<FoundryTxEnvelope>) -> Self {
         Self::MaybeImpersonatedTransaction(transaction)
     }
 }
 
-impl From<SerializableTransactionType> for MaybeImpersonatedTransaction {
+impl From<SerializableTransactionType> for MaybeImpersonatedTransaction<FoundryTxEnvelope> {
     fn from(transaction: SerializableTransactionType) -> Self {
         match transaction {
             SerializableTransactionType::TypedTransaction(tx) => Self::new(tx),
@@ -722,8 +706,10 @@ pub struct SerializableTransaction {
     pub block_number: u64,
 }
 
-impl From<MinedTransaction<FoundryNetwork>> for SerializableTransaction {
-    fn from(transaction: MinedTransaction<FoundryNetwork>) -> Self {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> From<MinedTransaction<N>>
+    for SerializableTransaction
+{
+    fn from(transaction: MinedTransaction<N>) -> Self {
         Self {
             info: transaction.info,
             receipt: transaction.receipt,
@@ -733,7 +719,9 @@ impl From<MinedTransaction<FoundryNetwork>> for SerializableTransaction {
     }
 }
 
-impl From<SerializableTransaction> for MinedTransaction<FoundryNetwork> {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> From<SerializableTransaction>
+    for MinedTransaction<N>
+{
     fn from(transaction: SerializableTransaction) -> Self {
         Self {
             info: transaction.info,

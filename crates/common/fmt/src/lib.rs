@@ -3,7 +3,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod console;
-pub use console::{ConsoleFmt, FormatSpec, console_format};
+pub use console::{ConsoleFmt, FormatSpec, console_format, console_table_format};
 
 mod dynamic;
 pub use dynamic::{

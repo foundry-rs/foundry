@@ -1,8 +1,10 @@
 mod early;
 mod late;
+mod project;
 
 pub use early::{EarlyLintPass, EarlyLintVisitor};
 pub use late::{LateLintPass, LateLintVisitor};
+pub use project::{ProjectLintEmitter, ProjectLintPass, ProjectSource};
 
 use foundry_common::comments::inline_config::InlineConfig;
 use foundry_compilers::Language;
@@ -16,10 +18,11 @@ use solar::{
         diagnostics::{
             Applicability, DiagBuilder, DiagId, DiagMsg, MultiSpan, Style, SuggestionStyle,
         },
+        source_map::SourceFile,
     },
     sema::Compiler,
 };
-use std::path::PathBuf;
+use std::{cell::RefCell, collections::HashSet, path::PathBuf, sync::Arc};
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files.
@@ -54,6 +57,9 @@ pub struct LintContext<'s, 'c> {
     with_json_emitter: bool,
     pub config: LinterConfig<'c>,
     active_lints: Vec<&'static str>,
+    /// The source file currently being linted, when known.
+    source_file: Option<Arc<SourceFile>>,
+    emitted: RefCell<HashSet<(&'static str, Span)>>,
 }
 
 pub struct LinterConfig<'s> {
@@ -68,8 +74,17 @@ impl<'s, 'c> LintContext<'s, 'c> {
         with_json_emitter: bool,
         config: LinterConfig<'c>,
         active_lints: Vec<&'static str>,
+        source_file: Option<Arc<SourceFile>>,
     ) -> Self {
-        Self { sess, with_description, with_json_emitter, config, active_lints }
+        Self {
+            sess,
+            with_description,
+            with_json_emitter,
+            config,
+            active_lints,
+            source_file,
+            emitted: RefCell::default(),
+        }
     }
 
     fn add_help<'a>(&self, diag: DiagBuilder<'a, ()>, help: &'static str) -> DiagBuilder<'a, ()> {
@@ -77,8 +92,13 @@ impl<'s, 'c> LintContext<'s, 'c> {
         if self.with_json_emitter { diag.help(help) } else { diag.help(hyperlink(help)) }
     }
 
-    pub fn session(&self) -> &'s Session {
+    pub const fn session(&self) -> &'s Session {
         self.sess
+    }
+
+    /// Returns the source file currently being linted, if any.
+    pub const fn source_file(&self) -> Option<&Arc<SourceFile>> {
+        self.source_file.as_ref()
     }
 
     // Helper method to check if a lint id is enabled.
@@ -94,6 +114,9 @@ impl<'s, 'c> LintContext<'s, 'c> {
         if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
+        if !self.emitted.borrow_mut().insert((lint.id(), span)) {
+            return;
+        }
 
         let desc = if self.with_description { lint.description() } else { "" };
         let mut diag: DiagBuilder<'_, ()> = self
@@ -106,6 +129,25 @@ impl<'s, 'c> LintContext<'s, 'c> {
         diag = self.add_help(diag, lint.help());
 
         diag.emit();
+    }
+
+    /// Emit a diagnostic with a caller-provided message instead of the lint's description.
+    ///
+    /// Useful when the message must vary per occurrence (e.g. embedding the offending
+    /// codepoint detected by the `rtlo` lint).
+    pub fn emit_with_msg<L: Lint>(&self, lint: &'static L, span: Span, msg: impl Into<DiagMsg>) {
+        if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+            return;
+        }
+
+        let diag: DiagBuilder<'_, ()> = self
+            .sess
+            .dcx
+            .diag(lint.severity().into(), msg.into())
+            .code(DiagId::new_str(lint.id()))
+            .span(MultiSpan::from_span(span));
+
+        self.add_help(diag, lint.help()).emit();
     }
 
     /// Emit a diagnostic with a code suggestion.
@@ -211,14 +253,14 @@ pub struct Suggestion {
 
 impl Suggestion {
     /// Creates a new [`SuggestionKind::Example`] suggestion.
-    pub fn example(content: String) -> Self {
+    pub const fn example(content: String) -> Self {
         Self { desc: None, content, kind: SuggestionKind::Example }
     }
 
     /// Creates a new [`SuggestionKind::Fix`] suggestion.
     ///
     /// When possible, will attempt to inline the suggestion.
-    pub fn fix(content: String, applicability: Applicability) -> Self {
+    pub const fn fix(content: String, applicability: Applicability) -> Self {
         Self {
             desc: None,
             content,
@@ -231,13 +273,13 @@ impl Suggestion {
     }
 
     /// Sets the description for the suggestion.
-    pub fn with_desc(mut self, desc: &'static str) -> Self {
+    pub const fn with_desc(mut self, desc: &'static str) -> Self {
         self.desc = Some(desc);
         self
     }
 
     /// Sets the span for a [`SuggestionKind::Fix`] suggestion.
-    pub fn with_span(mut self, span: Span) -> Self {
+    pub const fn with_span(mut self, span: Span) -> Self {
         if let SuggestionKind::Fix { span: ref mut s, .. } = self.kind {
             *s = Some(span);
         }
@@ -245,7 +287,7 @@ impl Suggestion {
     }
 
     /// Sets the style for a [`SuggestionKind::Fix`] suggestion.
-    pub fn with_style(mut self, style: SuggestionStyle) -> Self {
+    pub const fn with_style(mut self, style: SuggestionStyle) -> Self {
         if let SuggestionKind::Fix { style: ref mut s, .. } = self.kind {
             *s = style;
         }

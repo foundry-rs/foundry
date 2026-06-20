@@ -26,7 +26,7 @@ pub struct TaskManager {
 
 impl TaskManager {
     /// Creates a new instance of the task manager
-    pub fn new(tokio_handle: Handle, on_shutdown: Shutdown) -> Self {
+    pub const fn new(tokio_handle: Handle, on_shutdown: Shutdown) -> Self {
         Self { tokio_handle, on_shutdown }
     }
 

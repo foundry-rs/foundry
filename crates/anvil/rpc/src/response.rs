@@ -49,7 +49,7 @@ impl ResponseResult {
         Self::Success(serde_json::to_value(&content).unwrap())
     }
 
-    pub fn error(error: RpcError) -> Self {
+    pub const fn error(error: RpcError) -> Self {
         Self::Error(error)
     }
 }

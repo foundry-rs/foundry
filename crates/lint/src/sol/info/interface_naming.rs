@@ -3,7 +3,7 @@ use crate::{
     sol::{Severity, SolLint, info::InterfaceFileNaming},
 };
 
-use solar::ast::{self as ast};
+use solar::ast;
 
 declare_forge_lint!(
     INTERFACE_FILE_NAMING,

@@ -120,7 +120,7 @@ pub enum Severity {
 }
 
 impl Severity {
-    fn to_str(self) -> &'static str {
+    const fn to_str(self) -> &'static str {
         match self {
             Self::High => "High",
             Self::Med => "Med",
@@ -131,7 +131,7 @@ impl Severity {
         }
     }
 
-    fn to_str_kebab(self) -> &'static str {
+    const fn to_str_kebab(self) -> &'static str {
         match self {
             Self::High => "high",
             Self::Med => "medium",

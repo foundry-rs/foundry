@@ -1,5 +1,4 @@
 use super::opts::EvmOpts;
-use alloy_evm::EvmEnv;
 
 pub mod database;
 
@@ -13,8 +12,6 @@ pub struct CreateFork {
     pub enable_caching: bool,
     /// The URL to a node for fetching remote state
     pub url: String,
-    /// The EVM environment for this fork (main purpose is to provide some block and cfg metadata).
-    pub evm_env: EvmEnv,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
 }

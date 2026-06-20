@@ -1,8 +1,29 @@
 version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
-    ignore:
-      - dependency-name: "softprops/action-gh-release"
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    cooldown:
+      default-days: 7
+    groups:
+      ci-weekly:
+        patterns:
+          - '*'
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: UTC
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      cargo-weekly:
+        patterns:
+          - '*'

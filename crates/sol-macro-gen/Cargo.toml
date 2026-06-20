@@ -27,3 +27,7 @@ prettyplease.workspace = true
 eyre.workspace = true
 
 heck.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-common/optimism"]

@@ -46,7 +46,7 @@ impl BroadcastReader {
 
     fn matches_filters<N: Network>(&self, tx: &TransactionWithMetadata<N>) -> bool {
         let name_filter = tx.contract_name.as_ref().is_some_and(|cn| *cn == self.contract_name);
-        let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.opcode);
+        let type_filter = self.tx_type.is_empty() || self.tx_type.contains(&tx.call_kind);
         name_filter && type_filter
     }
 
@@ -62,7 +62,7 @@ impl BroadcastReader {
     {
         // 1. Recursively read all .json files in the broadcast directory
         let mut broadcasts = vec![];
-        for entry in walkdir::WalkDir::new(&self.broadcast_path).into_iter() {
+        for entry in walkdir::WalkDir::new(&self.broadcast_path) {
             let entry = entry?;
             let path = entry.path();
 

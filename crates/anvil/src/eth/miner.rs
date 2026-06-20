@@ -2,7 +2,6 @@
 
 use crate::eth::pool::{Pool, transactions::PoolTransaction};
 use alloy_primitives::TxHash;
-use foundry_primitives::FoundryTxEnvelope;
 use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, StreamExt},
@@ -11,13 +10,18 @@ use futures::{
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use std::{
     fmt,
+    pin::Pin,
     sync::Arc,
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
     time::Duration,
 };
-use tokio::time::{Interval, MissedTickBehavior};
+use tokio::time::{Interval, MissedTickBehavior, Sleep};
 
-pub struct Miner<T = FoundryTxEnvelope> {
+/// Window for grouping concurrently-submitted transactions into one instant-mined block.
+/// Scoped to batch/in-process concurrency; not a guarantee for independent external clients.
+const INSTANT_COALESCE_WINDOW: Duration = Duration::from_millis(5);
+
+pub struct Miner<T> {
     /// The mode this miner currently operates in
     mode: Arc<RwLock<MiningMode>>,
     /// used for task wake up when the mining mode was forcefully changed
@@ -108,13 +112,13 @@ impl<T> Miner<T> {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         self.inner.register(cx);
-        let next = ready!(self.mode.write().poll(pool, cx));
         if let Some(mut transactions) = self.force_transactions.take() {
-            transactions.extend(next);
-            Poll::Ready(transactions)
-        } else {
-            Poll::Ready(next)
+            if let Poll::Ready(next) = self.mode.write().poll(pool, cx) {
+                transactions.extend(next);
+            }
+            return Poll::Ready(transactions);
         }
+        self.mode.write().poll(pool, cx)
     }
 }
 
@@ -164,6 +168,7 @@ impl MiningMode {
             max_transactions,
             has_pending_txs: None,
             rx: listener.fuse(),
+            coalesce: None,
         })
     }
 
@@ -173,7 +178,12 @@ impl MiningMode {
 
     pub fn mixed(max_transactions: usize, listener: Receiver<TxHash>, duration: Duration) -> Self {
         Self::Mixed(
-            ReadyTransactionMiner { max_transactions, has_pending_txs: None, rx: listener.fuse() },
+            ReadyTransactionMiner {
+                max_transactions,
+                has_pending_txs: None,
+                rx: listener.fuse(),
+                coalesce: None,
+            },
             FixedBlockTimeMiner::new(duration),
         )
     }
@@ -263,6 +273,8 @@ pub struct ReadyTransactionMiner {
     has_pending_txs: Option<bool>,
     /// Receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
+    /// Active [`INSTANT_COALESCE_WINDOW`] timer; while pending, ready txs are accumulated.
+    coalesce: Option<Pin<Box<Sleep>>>,
 }
 
 impl ReadyTransactionMiner {
@@ -272,13 +284,30 @@ impl ReadyTransactionMiner {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction<T>>>> {
         // always drain the notification stream so that we're woken up as soon as there's a new tx
+        let mut saw_new_ready = false;
         while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
+            saw_new_ready = true;
+        }
+
+        // Arm the coalescing window only on fresh notifications to avoid delaying
+        // consecutive chunks when draining a backlog larger than `max_transactions`.
+        if saw_new_ready {
             self.has_pending_txs = Some(true);
+            if self.coalesce.is_none() {
+                self.coalesce = Some(Box::pin(tokio::time::sleep(INSTANT_COALESCE_WINDOW)));
+            }
         }
 
         if self.has_pending_txs == Some(false) {
             return Poll::Pending;
         }
+
+        if let Some(sleep) = self.coalesce.as_mut()
+            && sleep.as_mut().poll(cx).is_pending()
+        {
+            return Poll::Pending;
+        }
+        self.coalesce = None;
 
         let transactions =
             pool.ready_transactions().take(self.max_transactions).collect::<Vec<_>>();
@@ -287,6 +316,7 @@ impl ReadyTransactionMiner {
         self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
 
         if transactions.is_empty() {
+            self.has_pending_txs = Some(false);
             return Poll::Pending;
         }
 
@@ -299,5 +329,46 @@ impl fmt::Debug for ReadyTransactionMiner {
         f.debug_struct("ReadyTransactionMiner")
             .field("max_transactions", &self.max_transactions)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{Address, hex};
+    use alloy_rlp::Decodable;
+    use anvil_core::eth::transaction::PendingTransaction;
+    use foundry_primitives::FoundryTxEnvelope;
+    use futures::task::noop_waker;
+
+    fn forced_tx() -> PoolTransaction<FoundryTxEnvelope> {
+        let raw = hex::decode("f86b02843b9aca00830186a094d3e8763675e4c425df46cc3b5c0f6cbdac39604687038d7ea4c68000802ba00eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5aea03a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca18").unwrap();
+        let tx = FoundryTxEnvelope::decode(&mut &raw[..]).unwrap();
+        let sender: Address = "0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5".parse().unwrap();
+        let pending = PendingTransaction::with_impersonated(tx, sender);
+        PoolTransaction::new(pending)
+    }
+
+    #[test]
+    fn poll_consumes_forced_transactions_before_mode_is_ready() {
+        let forced = forced_tx();
+        let forced_hash = forced.hash();
+
+        let pool = Arc::new(Pool::default());
+        let mut miner = Miner::new(MiningMode::None).with_forced_transactions(Some(vec![forced]));
+
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        let polled = miner.poll(&pool, &mut cx);
+        let txs = match polled {
+            Poll::Ready(txs) => txs,
+            Poll::Pending => panic!("expected forced transactions to be returned immediately"),
+        };
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].hash(), forced_hash);
+
+        // Forced transactions are consumed exactly once.
+        assert!(miner.poll(&pool, &mut cx).is_pending());
     }
 }

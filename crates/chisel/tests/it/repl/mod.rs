@@ -43,6 +43,14 @@ repl_test!(hex_string_interpretation, |repl| {
     repl.expect("0x1234");
 });
 
+// Hex literals in the generated inspector `abi.encode(...)` call are ABI-encoded as dynamic bytes.
+repl_test!(hex_literal_inspection_type, |repl| {
+    repl.sendln("hex\"6869\"");
+    repl.expect("Type: dynamic bytes");
+    repl.sendln("(hex\"6869\")");
+    repl.expect("Type: dynamic bytes");
+});
+
 // Test cheatcodes availability.
 repl_test!(cheatcodes_available, "", init = true, |repl| {
     repl.sendln("address alice = address(0x1)");
@@ -125,13 +133,37 @@ repl_test!(trailing_whitespace, |repl| {
 // Issue #4652: Test that solc flags are respected.
 repl_test!(solc_flags, "--use 0.8.23", |repl| {
     repl.sendln("pragma solidity 0.8.24;");
-    repl.expect("invalid solc version");
+    repl.expect("invalid compiler version");
 });
 
 // Issue #4915: `chisel eval`
 repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
+
+repl_test!(
+    eval_tempo_network_uses_tempo_executor,
+    "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
+repl_test!(
+    eval_tempo_chain_id_uses_tempo_executor,
+    "--chain 4217 eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
+repl_test!(
+    eval_tempo_named_chain_uses_tempo_executor,
+    "--chain tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
 
 // Issue #4938: Test memory/stack dumps with assembly.
 repl_test!(assembly_memory_dump, |repl| {
@@ -153,8 +185,28 @@ assembly {
     repl.expect("[0x00:0x20]");
 });
 
+// Assembly as the final statement with a return — exercises the path where both
+// `first_yul_return_span` and `trailing_assembly_last_stmt_span` resolve to the same `return(...)`
+// span (no subsequent Solidity statement after the assembly block).
+repl_test!(assembly_return_final, |repl| {
+    repl.sendln("uint x = 0xbeef;");
+    repl.sendln("assembly { mstore(0x0, sload(0)) return(0x0, 0x20) }");
+    repl.sendln("!md");
+    repl.expect("[0x00:0x20]");
+});
+
+// Assembly block without a `return(...)` call as an intermediate statement, exercises
+// `first_yul_return_span` returning `None` while a subsequent Solidity statement is still evaluated
+// correctly.
+repl_test!(assembly_no_return_intermediate, |repl| {
+    repl.sendln("uint x = 1;");
+    repl.sendln("assembly { x := add(x, 1) }");
+    repl.sendln("x");
+    repl.expect("Decimal: 2");
+});
+
 // Issue #5051, #8978: Test EVM version normalization.
-repl_test!(evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
+repl_test!(flaky_evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
     repl.sendln("uint x;\nx");
     repl.expect("Decimal: 0");
 });
@@ -218,7 +270,7 @@ repl_test!(uint256_hex_formatting, |repl| {
 
 // Issue #9377: Test that full words are printed correctly.
 repl_test!(full_word_hex_formatting, |repl| {
-    repl.sendln(r#"keccak256(abi.encode(uint256(keccak256("AgoraStableSwapStorage.OracleStorage")) - 1)) & ~bytes32(uint256(0xff))"#);
+    repl.sendln(r#"uint256(keccak256(abi.encode(uint256(keccak256("AgoraStableSwapStorage.OracleStorage")) - 1))) & ~uint256(0xff)"#);
     repl.expect(
         "Hex (full word): 0x0a6b316b47a0cd26c1b582ae3dcffbd175283c221c3cb3d1c614e3e47f62a700",
     );

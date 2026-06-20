@@ -23,7 +23,7 @@ impl IntValueTree {
     /// # Arguments
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
-    fn new(start: I256, fixed: bool) -> Self {
+    const fn new(start: I256, fixed: bool) -> Self {
         Self { lo: I256::ZERO, curr: start, hi: start, fixed }
     }
 

@@ -3,11 +3,7 @@
 use crate::Config;
 use alloy_primitives::U256;
 use figment::value::Value;
-use foundry_compilers::artifacts::{
-    EvmVersion,
-    remappings::{Remapping, RemappingError},
-};
-use revm::primitives::hardfork::SpecId;
+use foundry_compilers::artifacts::remappings::{Remapping, RemappingError};
 use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
     io,
@@ -120,6 +116,69 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
         _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
     };
     Ok(value)
+}
+
+/// Splits a shell-like argument string into argv parts without invoking a shell.
+///
+/// This supports whitespace separation, single and double quotes, and backslash escaping. It is
+/// intentionally smaller than a shell parser: expansions, redirection, pipelines, and command
+/// separators are treated as plain argument text by callers.
+///
+/// Returns `Err(quote_char)` when the input contains an unterminated quote.
+pub fn split_quoted_args(args: &str) -> Result<Vec<String>, char> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_started = false;
+
+    for ch in args.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            token_started = true;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            token_started = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            token_started = true;
+            continue;
+        }
+        if matches!(ch, '"' | '\'') {
+            quote = Some(ch);
+            token_started = true;
+        } else if ch.is_whitespace() {
+            if token_started {
+                parts.push(std::mem::take(&mut current));
+                token_started = false;
+            }
+        } else {
+            current.push(ch);
+            token_started = true;
+        }
+    }
+
+    if let Some(quote_ch) = quote {
+        return Err(quote_ch);
+    }
+    if escaped {
+        current.push('\\');
+        token_started = true;
+    }
+    if token_started {
+        parts.push(current);
+    }
+
+    Ok(parts)
 }
 
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
@@ -299,25 +358,5 @@ impl FromStr for Numeric {
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
         }
-    }
-}
-
-/// Returns the [SpecId] derived from [EvmVersion]
-pub fn evm_spec_id(evm_version: EvmVersion) -> SpecId {
-    match evm_version {
-        EvmVersion::Homestead => SpecId::HOMESTEAD,
-        EvmVersion::TangerineWhistle => SpecId::TANGERINE,
-        EvmVersion::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
-        EvmVersion::Byzantium => SpecId::BYZANTIUM,
-        EvmVersion::Constantinople => SpecId::CONSTANTINOPLE,
-        EvmVersion::Petersburg => SpecId::PETERSBURG,
-        EvmVersion::Istanbul => SpecId::ISTANBUL,
-        EvmVersion::Berlin => SpecId::BERLIN,
-        EvmVersion::London => SpecId::LONDON,
-        EvmVersion::Paris => SpecId::MERGE,
-        EvmVersion::Shanghai => SpecId::SHANGHAI,
-        EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::PRAGUE,
-        EvmVersion::Osaka => SpecId::OSAKA,
     }
 }

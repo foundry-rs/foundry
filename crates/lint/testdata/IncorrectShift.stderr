@@ -1,40 +1,24 @@
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
    │
-LL │         result = 2 << stateValue;
-   │                  ━━━━━━━━━━━━━━━
+LL │             result := shl(result, 8)
+   │                       ━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
    │
-LL │         result = 8 >> localValue;
-   │                  ━━━━━━━━━━━━━━━
+LL │             result := shr(add(result, 1), 16)
+   │                       ━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
    │
-LL │         result = 16 << (stateValue + 1);
-   │                  ━━━━━━━━━━━━━━━━━━━━━━
+LL │             result := sar(add(result, 1), 8)
+   │                       ━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
-
-warning[incorrect-shift]: the order of args in a shift operation is incorrect
-   ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
-   │
-LL │         result = 32 >> getAmount();
-   │                  ━━━━━━━━━━━━━━━━━
-   │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
-
-warning[incorrect-shift]: the order of args in a shift operation is incorrect
-   ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
-   │
-LL │ …     result = 1 << (localValue > 10 ? localShiftAmount : stateShiftAmount);
-   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 

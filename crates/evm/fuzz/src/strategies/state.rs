@@ -13,12 +13,11 @@ use foundry_common::{
 use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
-use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
 use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc, sync::Arc};
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -26,19 +25,25 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 /// bytecode (as is the case with Solmate).
 const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
 
-/// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
-///
-/// Wrapped in a shareable container.
+/// Immutable fuzz dictionary seed used by parallel stateless fuzz workers.
 #[derive(Clone, Debug)]
 pub struct EvmFuzzState {
-    inner: Arc<RwLock<FuzzDictionary>>,
+    inner: Arc<FuzzDictionary>,
     /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
     pub deployed_libs: Vec<Address>,
-    /// Records mapping accesses. Used to identify storage slots belonging to mappings and sampling
-    /// the values in the [`FuzzDictionary`].
-    ///
-    /// Only needed when [`StorageLayout`] is available.
-    pub(crate) mapping_slots: Option<AddressMap<MappingSlots>>,
+}
+
+/// Worker-local mutable fuzz dictionary used by invariant campaigns.
+#[derive(Clone, Debug)]
+pub struct InvariantFuzzState {
+    inner: Rc<RefCell<FuzzDictionary>>,
+    /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
+    pub deployed_libs: Vec<Address>,
+}
+
+pub trait FuzzStateReader: Clone + 'static {
+    fn deployed_libs(&self) -> &[Address];
+    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R;
 }
 
 impl EvmFuzzState {
@@ -69,27 +74,67 @@ impl EvmFuzzState {
             dictionary.literal_values = literals.clone();
         }
 
-        Self {
-            inner: Arc::new(RwLock::new(dictionary)),
-            deployed_libs: deployed_libs.to_vec(),
-            mapping_slots: None,
+        Self { inner: Arc::new(dictionary), deployed_libs: deployed_libs.to_vec() }
+    }
+
+    pub fn into_invariant(self) -> InvariantFuzzState {
+        InvariantFuzzState {
+            inner: Rc::new(RefCell::new((*self.inner).clone())),
+            deployed_libs: self.deployed_libs,
         }
     }
 
-    pub fn with_mapping_slots(mut self, mapping_slots: AddressMap<MappingSlots>) -> Self {
-        self.mapping_slots = Some(mapping_slots);
-        self
+    pub fn fork(&self) -> Self {
+        Self { inner: Arc::clone(&self.inner), deployed_libs: self.deployed_libs.clone() }
     }
 
-    pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
-        let mut dict = self.inner.write();
+    pub fn collect_values(&mut self, values: impl IntoIterator<Item = B256>) {
+        let dict = Arc::make_mut(&mut self.inner);
         for value in values {
             dict.insert_value(value);
         }
     }
 
-    /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to
-    /// the given [FuzzDictionaryConfig].
+    /// Logs stats about the current state.
+    pub fn log_stats(&self) {
+        self.inner.log_stats();
+    }
+
+    /// Test-only helper to seed the dictionary with literal values.
+    #[cfg(test)]
+    pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
+        Arc::make_mut(&mut self.inner).seed_literals(map);
+    }
+}
+
+impl FuzzStateReader for EvmFuzzState {
+    fn deployed_libs(&self) -> &[Address] {
+        &self.deployed_libs
+    }
+
+    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
+        f(&self.inner)
+    }
+}
+
+impl InvariantFuzzState {
+    pub fn snapshot(&self) -> EvmFuzzState {
+        EvmFuzzState {
+            inner: Arc::new(self.inner.borrow().clone()),
+            deployed_libs: self.deployed_libs.clone(),
+        }
+    }
+
+    pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
+        let mut dict = self.inner.borrow_mut();
+        for value in values {
+            dict.insert_value(value);
+        }
+    }
+
+    /// Collects state changes from a [StateChangeset] and logs into an [InvariantFuzzState]
+    /// according to the given [FuzzDictionaryConfig].
+    #[allow(clippy::too_many_arguments)]
     pub fn collect_values_from_call(
         &self,
         fuzzed_contracts: &FuzzRunIdentifiedContracts,
@@ -98,20 +143,26 @@ impl EvmFuzzState {
         logs: &[Log],
         state_changeset: &StateChangeset,
         run_depth: u32,
+        mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        let mut dict = self.inner.write();
-        {
-            let targets = fuzzed_contracts.targets.lock();
-            let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
-            dict.insert_logs_values(target_abi, logs, run_depth);
-            dict.insert_result_values(target_function, result, run_depth);
-            // Get storage layouts for contracts in the state changeset
-            let storage_layouts = targets.get_storage_layouts();
-            dict.insert_new_state_values(
-                state_changeset,
-                &storage_layouts,
-                self.mapping_slots.as_ref(),
-            );
+        let mut dict = self.inner.borrow_mut();
+        let targets = fuzzed_contracts.targets();
+        let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
+        dict.insert_logs_values(target_abi, logs, run_depth);
+        dict.insert_result_values(target_function, result, run_depth);
+        // Get storage layouts for contracts in the state changeset
+        let storage_layouts = targets.get_storage_layouts();
+        dict.insert_new_state_values(state_changeset, &storage_layouts, mapping_slots);
+    }
+
+    /// Collects typed trace-cmp operands from sancov-instrumented code.
+    /// Values are inserted into both persistent state values (survive reverts) and typed
+    /// sample buckets (for ABI-aware mutation).
+    pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u8, B256)>) {
+        let mut dict = self.inner.borrow_mut();
+        for (width, value) in values {
+            dict.insert_persistent_value(value);
+            dict.insert_typed_cmp_value(width, value);
         }
     }
 
@@ -120,27 +171,37 @@ impl EvmFuzzState {
     /// Should be called between fuzz/invariant runs to avoid accumulating data derived from fuzz
     /// inputs.
     pub fn revert(&self) {
-        self.inner.write().revert();
-    }
-
-    pub fn dictionary_read(&self) -> RwLockReadGuard<'_, RawRwLock, FuzzDictionary> {
-        self.inner.read()
+        self.inner.borrow_mut().revert();
     }
 
     /// Logs stats about the current state.
     pub fn log_stats(&self) {
-        self.inner.read().log_stats();
+        self.inner.borrow().log_stats();
+    }
+}
+
+impl FuzzStateReader for InvariantFuzzState {
+    fn deployed_libs(&self) -> &[Address] {
+        &self.deployed_libs
     }
 
-    /// Test-only helper to seed the dictionary with literal values.
-    #[cfg(test)]
-    pub(crate) fn seed_literals(&self, map: super::LiteralMaps) {
-        self.inner.write().seed_literals(map);
+    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
+        f(&self.inner.borrow())
+    }
+}
+
+impl From<EvmFuzzState> for InvariantFuzzState {
+    fn from(state: EvmFuzzState) -> Self {
+        state.into_invariant()
     }
 }
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
+/// Maximum number of persistent values from sancov trace-cmp.
+const MAX_PERSISTENT_VALUES: usize = 2048;
+
+#[derive(Clone)]
 pub struct FuzzDictionary {
     /// Collected state values.
     state_values: B256IndexSet,
@@ -164,6 +225,8 @@ pub struct FuzzDictionary {
     /// Set to `true` on first call to `seed_samples()`. Before seeding, `samples()` checks both
     /// maps separately. After seeding, literals are merged in, so only `sample_values` is checked.
     samples_seeded: bool,
+    /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
+    persistent_values: B256IndexSet,
 
     misses: usize,
     hits: usize,
@@ -174,6 +237,7 @@ impl fmt::Debug for FuzzDictionary {
         f.debug_struct("FuzzDictionary")
             .field("state_values", &self.state_values.len())
             .field("addresses", &self.addresses)
+            .field("persistent_values", &self.persistent_values.len())
             .finish()
     }
 }
@@ -196,6 +260,7 @@ impl FuzzDictionary {
             db_addresses: Default::default(),
             sample_values: Default::default(),
             literal_values: Default::default(),
+            persistent_values: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
         };
@@ -421,6 +486,50 @@ impl FuzzDictionary {
         insert
     }
 
+    /// Insert a persistent value that survives `revert()` across invariant runs.
+    /// Used for trace-cmp operands that should compound over time.
+    fn insert_persistent_value(&mut self, value: B256) {
+        if self.persistent_values.len() >= MAX_PERSISTENT_VALUES {
+            return;
+        }
+        if self.persistent_values.insert(value) && self.state_values.insert(value) {
+            self.db_state_values += 1;
+        }
+    }
+
+    /// Insert a typed trace-cmp value into the `sample_values` map.
+    /// Maps sancov width to `DynSolType` buckets and promotes to larger types.
+    fn insert_typed_cmp_value(&mut self, width: u8, value: B256) {
+        if !self.samples_seeded {
+            self.seed_samples();
+        }
+
+        const MAX_TYPED_CMP_PER_BUCKET: usize = 1024;
+
+        let native_type = match width {
+            8 => DynSolType::Uint(8),
+            16 => DynSolType::Uint(16),
+            32 => DynSolType::Uint(32),
+            64 => DynSolType::Uint(64),
+            _ => DynSolType::Uint(256),
+        };
+
+        let insert = |map: &mut HashMap<DynSolType, B256IndexSet>, ty: DynSolType, val: B256| {
+            let bucket = map.entry(ty).or_default();
+            if bucket.len() < MAX_TYPED_CMP_PER_BUCKET {
+                bucket.insert(val);
+            }
+        };
+
+        insert(&mut self.sample_values, native_type, value);
+
+        if width <= 64 {
+            insert(&mut self.sample_values, DynSolType::Uint(128), value);
+            insert(&mut self.sample_values, DynSolType::Uint(256), value);
+            insert(&mut self.sample_values, DynSolType::Int(256), value);
+        }
+    }
+
     fn insert_value_u256(&mut self, value: U256) -> bool {
         // Also add the value below and above the push value to the dictionary.
         let one = U256::from(1);
@@ -460,7 +569,7 @@ impl FuzzDictionary {
         }
     }
 
-    pub fn values(&self) -> &B256IndexSet {
+    pub const fn values(&self) -> &B256IndexSet {
         &self.state_values
     }
 
@@ -499,7 +608,7 @@ impl FuzzDictionary {
     }
 
     #[inline]
-    pub fn addresses(&self) -> &AddressIndexSet {
+    pub const fn addresses(&self) -> &AddressIndexSet {
         &self.addresses
     }
 

@@ -23,11 +23,12 @@ use revm_inspectors::tracing::{
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
 };
 
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{U256, map::HashMap};
+use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 
 pub use revm_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
@@ -207,16 +208,88 @@ pub fn render_trace_arena_inner(
         return serde_json::to_string(&arena.resolve_arena()).expect("Failed to serialize traces");
     }
 
+    let resolved = arena.resolve_arena();
     let mut w = TraceWriter::new(Vec::<u8>::new())
         .color_cheatcodes(true)
         .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
-    w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
-    String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
+    w.write_arena(&resolved).expect("Failed to write traces");
+    let mut rendered =
+        String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8");
+    if with_storage_changes {
+        append_tempo_channel_storage_decodes(&mut rendered, &resolved);
+    }
+    rendered
 }
 
-fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+fn append_tempo_channel_storage_decodes(rendered: &mut String, arena: &CallTraceArena) {
+    let decoded_changes = arena
+        .nodes()
+        .iter()
+        .filter(|node| node.trace.address == TIP20_CHANNEL_RESERVE_ADDRESS)
+        .flat_map(compact_channel_storage_changes)
+        .collect::<Vec<_>>();
+
+    if decoded_changes.is_empty() {
+        return;
+    }
+
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    rendered.push_str("Decoded TIP20ChannelReserve storage:\n");
+    for (slot, before, after) in decoded_changes {
+        rendered.push_str(&format!(
+            "  @ {}: {} -> {}\n",
+            format_storage_word(slot),
+            format_channel_state(before),
+            format_channel_state(after),
+        ));
+    }
+}
+
+fn compact_channel_storage_changes(node: &CallTraceNode) -> Vec<(U256, U256, U256)> {
+    let mut changes_map = BTreeMap::new();
+    for step in &node.trace.steps {
+        if let Some(change) = &step.storage_change
+            && change.had_value.is_some()
+        {
+            let (_first, last) = changes_map.entry(change.key).or_insert((&**change, &**change));
+            *last = &**change;
+        }
+    }
+
+    changes_map
+        .into_iter()
+        .filter_map(|(key, (first, last))| {
+            let before = first.had_value.unwrap_or_default();
+            let after = last.value;
+            (before != after).then_some((key, before, after))
+        })
+        .collect()
+}
+
+fn format_channel_state(value: U256) -> String {
+    let (settled, deposit, close_requested_at) = decode_channel_state(value);
+    format!("{{settled: {settled}, deposit: {deposit}, closeRequestedAt: {close_requested_at}}}")
+}
+
+fn decode_channel_state(value: U256) -> (U256, U256, u32) {
+    let mask96 = (U256::from(1) << 96) - U256::from(1);
+    let mask32 = (U256::from(1) << 32) - U256::from(1);
+    let settled: U256 = value & mask96;
+    let deposit: U256 = (value >> 96usize) & mask96;
+    let close_requested_at_word: U256 = (value >> 192usize) & mask32;
+    let close_requested_at = close_requested_at_word.to::<u32>();
+    (settled, deposit, close_requested_at)
+}
+
+fn format_storage_word(value: U256) -> String {
+    if value < U256::from(1_000_000u64) { value.to_string() } else { format!("0x{value:x}") }
+}
+
+const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
     match choice {
         shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
         shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
@@ -237,7 +310,7 @@ impl TraceKind {
     ///
     /// [`Deployment`]: TraceKind::Deployment
     #[must_use]
-    pub fn is_deployment(self) -> bool {
+    pub const fn is_deployment(self) -> bool {
         matches!(self, Self::Deployment)
     }
 
@@ -245,7 +318,7 @@ impl TraceKind {
     ///
     /// [`Setup`]: TraceKind::Setup
     #[must_use]
-    pub fn is_setup(self) -> bool {
+    pub const fn is_setup(self) -> bool {
         matches!(self, Self::Setup)
     }
 
@@ -253,7 +326,7 @@ impl TraceKind {
     ///
     /// [`Execution`]: TraceKind::Execution
     #[must_use]
-    pub fn is_execution(self) -> bool {
+    pub const fn is_execution(self) -> bool {
         matches!(self, Self::Execution)
     }
 }
@@ -321,7 +394,10 @@ pub enum TraceMode {
     ///
     /// Used by debugger.
     Debug,
-    /// Debug trace with storage changes.
+    /// Step trace with storage change recording.
+    ///
+    /// Records JUMP/JUMPDEST steps (like `Steps`) plus storage diffs on SLOAD/SSTORE.
+    /// Does not enable memory/stack snapshots or unfiltered opcode recording.
     RecordStateDiff,
 }
 
@@ -363,16 +439,17 @@ impl TraceMode {
     }
 
     pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes { std::cmp::max(self, Self::RecordStateDiff) } else { self }
+        if yes && !self.is_debug() { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
         match verbosity {
             0..3 => self,
             3..=4 => std::cmp::max(self, Self::Call),
-            // Enable step recording for backtraces when verbosity is 5 or higher.
-            // We need to ensure we're recording JUMP AND JUMPDEST steps.
-            _ => std::cmp::min(self, Self::Steps),
+            // Enable step recording and state diff recording when verbosity is 5 or higher.
+            // This includes backtraces (JUMP/JUMPDEST steps) and storage changes.
+            _ if self.is_debug() => self,
+            _ => std::cmp::max(self, Self::RecordStateDiff),
         }
     }
 
@@ -380,23 +457,145 @@ impl TraceMode {
         if self.is_none() {
             None
         } else {
+            // RecordStateDiff is Steps + state diff recording, not Debug + state diff.
+            // It should not enable memory/stack snapshots.
+            // State diff recording requires all opcodes (no filter) since it needs
+            // SLOAD/SSTORE steps, not just JUMP/JUMPDEST.
+            let record_state_diff = self.record_state_diff() || self.is_debug();
+            let effective = if self.record_state_diff() { Self::Steps } else { self };
             TracingInspectorConfig {
                 record_steps: self >= Self::Steps,
-                record_memory_snapshots: self >= Self::Jump,
-                record_stack_snapshots: if self > Self::Steps {
+                record_memory_snapshots: effective >= Self::Jump,
+                record_stack_snapshots: if effective > Self::Steps {
                     StackSnapshotType::Full
                 } else {
                     StackSnapshotType::None
                 },
                 record_logs: true,
-                record_state_diff: self.record_state_diff(),
-                record_returndata_snapshots: self.is_debug(),
-                record_opcodes_filter: (self.is_steps() || self.is_jump() || self.is_jump_simple())
-                    .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
+                record_state_diff,
+                record_returndata_snapshots: effective.is_debug(),
+                // State diff needs all opcodes recorded to capture SLOAD/SSTORE.
+                record_opcodes_filter: if record_state_diff {
+                    None
+                } else {
+                    (effective.is_steps() || effective.is_jump() || effective.is_jump_simple())
+                        .then(|| {
+                            OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)
+                        })
+                },
                 exclude_precompile_calls: false,
-                record_immediate_bytes: self.is_debug(),
+                record_immediate_bytes: effective.is_debug(),
             }
             .into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_tip1034_packed_channel_state() {
+        let settled = U256::from(123u64);
+        let deposit = U256::from(456u64);
+        let close_requested_at = U256::from(1_780_495_200u64);
+        let packed = settled | (deposit << 96usize) | (close_requested_at << 192usize);
+
+        assert_eq!(decode_channel_state(packed), (settled, deposit, 1_780_495_200));
+        assert_eq!(
+            format_channel_state(packed),
+            "{settled: 123, deposit: 456, closeRequestedAt: 1780495200}"
+        );
+    }
+
+    // -- TraceMode::with_verbosity level tests --
+
+    #[test]
+    fn verbosity_0_through_2_is_noop() {
+        for v in 0..=2 {
+            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::None, "v={v}");
+            assert_eq!(TraceMode::Call.with_verbosity(v), TraceMode::Call, "v={v}");
+            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
+        }
+    }
+
+    #[test]
+    fn verbosity_3_and_4_raises_to_call() {
+        for v in 3..=4 {
+            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::Call, "v={v}");
+            // Already above Call — must not downgrade.
+            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
+            assert_eq!(
+                TraceMode::RecordStateDiff.with_verbosity(v),
+                TraceMode::RecordStateDiff,
+                "v={v}"
+            );
+        }
+    }
+
+    #[test]
+    fn verbosity_5_raises_to_record_state_diff() {
+        assert_eq!(TraceMode::None.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Call.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
+        // Debug mode already records full steps; it must not be downgraded to the lightweight
+        // RecordStateDiff mode when high verbosity is also requested.
+        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::Debug);
+        // Already at the top — stays the same.
+        assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
+    }
+
+    // -- into_config at each verbosity level --
+
+    #[test]
+    fn config_at_verbosity_0_is_none() {
+        let mode = TraceMode::None.with_verbosity(0);
+        assert!(mode.into_config().is_none());
+    }
+
+    #[test]
+    fn config_at_verbosity_3_records_calls_only() {
+        let cfg = TraceMode::None.with_verbosity(3).into_config().unwrap();
+        assert!(!cfg.record_steps, "verbosity 3 should not record steps");
+        assert!(!cfg.record_state_diff, "verbosity 3 should not record state diff");
+        assert!(cfg.record_logs, "verbosity 3 should record logs");
+    }
+
+    #[test]
+    fn config_at_verbosity_5_records_steps_and_state_diff() {
+        let cfg = TraceMode::None.with_verbosity(5).into_config().unwrap();
+        assert!(cfg.record_steps, "verbosity 5 must record steps for backtraces");
+        assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
+        assert!(cfg.record_logs, "verbosity 5 must record logs");
+        // RecordStateDiff should NOT enable expensive debug-level features.
+        assert!(!cfg.record_memory_snapshots, "verbosity 5 should not record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::None,
+            "verbosity 5 should not record stack snapshots"
+        );
+        // State diff requires all opcodes to capture SLOAD/SSTORE, so no filter.
+        assert!(
+            cfg.record_opcodes_filter.is_none(),
+            "verbosity 5 needs unfiltered opcodes for state diff"
+        );
+    }
+
+    #[test]
+    fn config_debug_mode_unchanged() {
+        // Debug mode must still enable full recording for the debugger.
+        let cfg = TraceMode::Debug.into_config().unwrap();
+        assert!(cfg.record_steps);
+        assert!(cfg.record_memory_snapshots, "Debug must record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::Full,
+            "Debug must record full stack snapshots"
+        );
+        assert!(cfg.record_returndata_snapshots, "Debug must record returndata");
+        assert!(cfg.record_immediate_bytes, "Debug must record immediate bytes");
+        assert!(cfg.record_opcodes_filter.is_none(), "Debug must record all opcodes (no filter)");
+        assert!(cfg.record_state_diff, "Debug should record storage accesses for the debugger");
     }
 }

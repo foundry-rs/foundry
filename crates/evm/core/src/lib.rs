@@ -5,11 +5,12 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
-use backend::DatabaseExt;
 use revm::{Inspector, inspector::NoOpInspector, interpreter::CreateInputs};
 use revm_inspectors::access_list::AccessListInspector;
 
@@ -33,7 +34,6 @@ pub mod buffer;
 pub mod bytecode;
 pub mod constants;
 pub mod decode;
-pub mod either_evm;
 pub mod evm;
 pub mod fork;
 pub mod hardfork;
@@ -41,6 +41,7 @@ pub mod ic;
 pub mod opts;
 pub mod precompiles;
 pub mod state_snapshot;
+pub mod tempo;
 pub mod utils;
 
 /// Foundry-specific inspector methods, decoupled from any particular EVM context type.
@@ -49,7 +50,7 @@ pub mod utils;
 /// network config, deployer address). It has no `Inspector<CTX>` supertrait so it can
 /// be used in generic code with `I: FoundryInspectorExt + Inspector<CTX>`.
 #[auto_impl(&mut, Box)]
-pub trait FoundryInspectorExt {
+pub trait InspectorExt {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
@@ -74,19 +75,14 @@ pub trait FoundryInspectorExt {
     }
 }
 
-/// Combined trait: `Inspector<EthEvmContext<...>>` + [`FoundryInspectorExt`].
-///
-/// For generic multi-network code, use `I: FoundryInspectorExt + Inspector<CTX>` instead.
-pub trait EthInspectorExt:
-    for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
-{
-}
+/// A combined inspector trait that integrates revm's [`Inspector`] with Foundry-specific
+/// extensions. Automatically implemented for any type that implements both [`Inspector<CTX>`]
+/// and [`InspectorExt`].
+pub trait FoundryInspectorExt<CTX: FoundryContextExt>: Inspector<CTX> + InspectorExt {}
 
-impl<T> EthInspectorExt for T where
-    T: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> + FoundryInspectorExt
-{
-}
+impl<CTX: FoundryContextExt, T> FoundryInspectorExt<CTX> for T where T: Inspector<CTX> + InspectorExt
+{}
 
-impl FoundryInspectorExt for NoOpInspector {}
+impl InspectorExt for NoOpInspector {}
 
-impl FoundryInspectorExt for AccessListInspector {}
+impl InspectorExt for AccessListInspector {}

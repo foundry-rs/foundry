@@ -116,7 +116,7 @@ impl FmtArgs {
                         );
                     } else if path.is_sol() {
                         // Explicit file paths are always included, even if in a lib
-                        inputs.push(path.to_path_buf());
+                        inputs.push(path.clone());
                     } else {
                         warn!("Cannot process path {}", path.display());
                     }
@@ -189,7 +189,7 @@ impl FmtArgs {
                             Ok(()) => {}
                             Err(e) => return Some(Err(e.into())),
                         }
-                        let _ = sh_println!("Formatted {}", path.display());
+                        let _ = sh_status!("Formatted {}", path.display());
                         None
                     } else {
                         unreachable!()
@@ -216,7 +216,7 @@ impl FmtArgs {
     }
 
     /// Returns whether `FmtArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 }
@@ -238,7 +238,7 @@ impl fmt::Display for Line {
     }
 }
 
-fn format_diff_summary<'a>(name: &str, diff: &'a TextDiff<'a, 'a, '_, str>) -> String {
+fn format_diff_summary<'a>(name: &str, diff: &'a TextDiff<'a, 'a, str>) -> String {
     let cap = 128;
     let mut diff_summary = String::with_capacity(cap);
 

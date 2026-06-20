@@ -20,7 +20,6 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm-core.workspace = true
-foundry-primitives.workspace = true
 foundry-evm-fuzz.workspace = true
 foundry-evm-traces.workspace = true
 foundry-wallets.workspace = true
@@ -69,3 +68,21 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
+
+tempo-chainspec.workspace = true
+tempo-contracts.workspace = true
+tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
+
+[dev-dependencies]
+tempo-precompiles = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm-core/optimism",
+    "foundry-evm-fuzz/optimism",
+    "foundry-evm-traces/optimism",
+    "forge-script-sequence/optimism",
+]

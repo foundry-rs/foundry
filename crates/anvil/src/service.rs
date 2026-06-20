@@ -11,6 +11,7 @@ use crate::{
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
 };
+use alloy_consensus::TxReceipt;
 use alloy_network::Network;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use futures::{FutureExt, Stream, StreamExt};
@@ -28,7 +29,10 @@ use tokio::{task::JoinHandle, time::Interval};
 /// transactions for the next block, then those transactions are handed off to the backend to
 /// construct a new block, if all transactions were successfully included in a new block they get
 /// purged from the `Pool`.
-pub struct NodeService<N: Network> {
+pub struct NodeService<N: Network>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+{
     /// The pool that holds all transactions.
     pool: Arc<Pool<N::TxEnvelope>>,
     /// Creates new blocks.
@@ -36,7 +40,7 @@ pub struct NodeService<N: Network> {
     /// The miner responsible to select transactions from the `pool`.
     miner: Miner<N::TxEnvelope>,
     /// Maintenance task for fee history related tasks.
-    fee_history: FeeHistoryService,
+    fee_history: FeeHistoryService<N>,
     /// Tracks all active filters
     filters: Filters<N>,
     /// The interval at which to check for filters that need to be evicted
@@ -45,14 +49,14 @@ pub struct NodeService<N: Network> {
 
 impl<N: Network> NodeService<N>
 where
-    Backend<N>: TransactionValidator,
+    Backend<N>: TransactionValidator<N::TxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     pub fn new(
         pool: Arc<Pool<N::TxEnvelope>>,
         backend: Arc<Backend<N>>,
         miner: Miner<N::TxEnvelope>,
-        fee_history: FeeHistoryService,
+        fee_history: FeeHistoryService<N>,
         filters: Filters<N>,
     ) -> Self {
         let start = tokio::time::Instant::now() + filters.keep_alive();
@@ -70,7 +74,7 @@ where
 
 impl<N: Network> Future for NodeService<N>
 where
-    Backend<N>: TransactionValidator,
+    Backend<N>: TransactionValidator<N::TxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     type Output = NodeResult<()>;
@@ -126,7 +130,7 @@ struct BlockProducer<N: Network> {
 
 impl<N: Network> BlockProducer<N>
 where
-    Backend<N>: TransactionValidator,
+    Backend<N>: TransactionValidator<N::TxEnvelope>,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     fn new(backend: Arc<Backend<N>>) -> Self {
@@ -136,10 +140,10 @@ where
 
 impl<N: Network> Stream for BlockProducer<N>
 where
-    Backend<N>: TransactionValidator + Send + Sync + 'static,
+    Backend<N>: TransactionValidator<N::TxEnvelope> + Send + Sync + 'static,
     N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static,
 {
-    type Item = MinedBlockOutcome;
+    type Item = MinedBlockOutcome<N::TxEnvelope>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let pin = self.get_mut();
@@ -175,9 +179,8 @@ where
                         panic!("miner task failed: {err}");
                     }
                 };
-            } else {
-                pin.block_mining = Some(mining)
             }
+            pin.block_mining = Some(mining)
         }
 
         Poll::Pending
