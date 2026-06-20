@@ -314,7 +314,12 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     let contract_config: ContractConfig =
         read_snapshot(&prj.root().join("snapshots/ContractConfig.json"));
 
-    assert!(function_config.test_isolated_function > 0);
+    assert!(
+        function_config.test_isolated_function > function_config.test_non_isolated_function,
+        "isolated gas ({}) should be greater than non-isolated gas ({})",
+        function_config.test_isolated_function,
+        function_config.test_non_isolated_function
+    );
     assert_eq!(
         function_config.test_non_isolated_function,
         contract_config.test_non_isolated_contract
