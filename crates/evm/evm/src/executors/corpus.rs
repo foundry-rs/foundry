@@ -202,6 +202,14 @@ pub(crate) struct SharedCorpusEntry {
 }
 
 impl SharedCorpusEntry {
+    pub(crate) fn new(
+        tx_seq: Vec<BasicTxDetails>,
+        cmp_seq: Vec<Vec<CmpOperands>>,
+        dedupe_by_coverage: bool,
+    ) -> Self {
+        Self { tx_seq: tx_seq.into(), cmp_seq: cmp_seq.into(), dedupe_by_coverage }
+    }
+
     fn to_corpus_entry(&self, uuid: Uuid) -> CorpusEntry {
         CorpusEntry::new_with_cmp(
             self.tx_seq.as_ref().to_vec(),
@@ -221,19 +229,6 @@ struct PendingCorpusEntry {
 struct ShadowCorpusCandidate {
     entry: CorpusEntry,
     remaining_mutations: usize,
-}
-
-#[cfg(test)]
-pub(crate) mod test_support {
-    use super::*;
-
-    pub(crate) fn shared_corpus_entry(tx_seq: Vec<BasicTxDetails>) -> SharedCorpusEntry {
-        SharedCorpusEntry {
-            tx_seq: tx_seq.into(),
-            cmp_seq: Vec::<Vec<CmpOperands>>::new().into(),
-            dedupe_by_coverage: true,
-        }
-    }
 }
 
 /// Summary of campaign-local corpus imports accepted by one worker.
@@ -1784,11 +1779,11 @@ impl WorkerCorpus {
         let mut entries = Vec::with_capacity(self.new_entries.len());
         for pending in &self.new_entries {
             let Some(corpus) = self.in_memory_corpus.get(pending.index) else { continue };
-            entries.push(SharedCorpusEntry {
-                tx_seq: corpus.tx_seq.clone().into(),
-                cmp_seq: corpus.cmp_seq.clone().into(),
-                dedupe_by_coverage: pending.dedupe_by_coverage,
-            });
+            entries.push(SharedCorpusEntry::new(
+                corpus.tx_seq.clone(),
+                corpus.cmp_seq.clone(),
+                pending.dedupe_by_coverage,
+            ));
         }
         self.new_entries.clear();
         entries

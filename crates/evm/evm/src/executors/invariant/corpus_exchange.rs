@@ -121,20 +121,23 @@ fn effective_plateau_runs(configured_runs: u32, run_budget: Option<u32>) -> u32 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executors::corpus::test_support::shared_corpus_entry;
     use foundry_evm_fuzz::{BasicTxDetails, CallDetails};
 
     fn entry(sender: u8) -> SharedCorpusEntry {
-        shared_corpus_entry(vec![BasicTxDetails {
-            warp: None,
-            roll: None,
-            sender: alloy_primitives::Address::repeat_byte(sender),
-            call_details: CallDetails {
-                target: alloy_primitives::Address::repeat_byte(sender),
-                calldata: alloy_primitives::Bytes::from(vec![sender]),
-                value: None,
-            },
-        }])
+        SharedCorpusEntry::new(
+            vec![BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender: alloy_primitives::Address::repeat_byte(sender),
+                call_details: CallDetails {
+                    target: alloy_primitives::Address::repeat_byte(sender),
+                    calldata: alloy_primitives::Bytes::from(vec![sender]),
+                    value: None,
+                },
+            }],
+            Vec::new(),
+            true,
+        )
     }
 
     #[test]
