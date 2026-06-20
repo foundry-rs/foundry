@@ -226,6 +226,73 @@ casttest!(receive_policy_receipt_json_and_claim_flow, async |_prj, cmd| {
     assert_eq!(claimed_balance_output["delivery_state"], "not_held");
 });
 
+// The ReceivePolicyGuard precompile is only active from T6, so claim/burn must fail early on a
+// pre-T6 RPC instead of submitting a transaction that would silently succeed as a no-op.
+casttest!(receive_policy_claim_and_burn_require_t6, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+
+    let receipt = IReceivePolicyGuard::ClaimReceiptV1::new(
+        PATH_USD_ADDRESS,
+        Address::ZERO,
+        wallet.address(),
+        Address::with_last_byte(0xbe),
+        1_780_000_000,
+        1,
+        ITIP403Registry::BlockedReason::RECEIVE_POLICY as u8,
+        IReceivePolicyGuard::InboundKind::TRANSFER,
+        B256::ZERO,
+    )
+    .abi_encode();
+    let receipt_arg = format!("0x{}", hex::encode(&receipt));
+
+    let claim_err = cmd
+        .cast_fuse()
+        .args([
+            "receive-policy",
+            "claim",
+            &wallet.address().to_string(),
+            &receipt_arg,
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(
+        claim_err
+            .contains("cast receive-policy claim requires a Tempo T6-capable ReceivePolicy RPC"),
+        "{claim_err}"
+    );
+
+    let burn_err = cmd
+        .cast_fuse()
+        .args([
+            "receive-policy",
+            "receipt",
+            "burn",
+            &receipt_arg,
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(
+        burn_err.contains(
+            "cast receive-policy receipt burn requires a Tempo T6-capable ReceivePolicy RPC"
+        ),
+        "{burn_err}"
+    );
+});
+
 // Exercises the full TIP-403 policy lifecycle: create, inspect, check, and modify membership.
 casttest!(tip403_policy_lifecycle, async |_prj, cmd| {
     let (_, handle) =
