@@ -1,16 +1,17 @@
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
+use alloy_primitives::U256;
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_matching_contract_artifact, find_target_path, shell,
+    erc7201, find_matching_contract_artifact, find_target_path, shell,
 };
 use foundry_compilers::{
     ProjectCompileOutput,
     artifacts::{
-        StorageLayout,
+        Storage, StorageLayout, StorageType,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
             EvmOutputSelection, EwasmOutputSelection,
@@ -21,7 +22,13 @@ use foundry_compilers::{
 use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
-use solar::sema::interface::source_map::FileName;
+use solar::{
+    ast::LitKind,
+    sema::{
+        hir::{ElementaryType, ExprKind, Hir, ItemId, NatSpecKind, TypeKind},
+        interface::source_map::FileName,
+    },
+};
 use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
 
 /// CLI arguments for `forge inspect`.
@@ -115,7 +122,15 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                let mut layout =
+                    artifact.storage_layout.ok_or_else(|| missing_error("storage layout"))?;
+                if is_solidity_source(&target_path) {
+                    let (entries, types) =
+                        collect_erc7201_entries(&mut output, &target_path, contract.name())?;
+                    layout.storage.extend(entries);
+                    layout.types.extend(types);
+                }
+                print_storage_layout(Some(&layout), wrap)?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -425,6 +440,267 @@ fn print_table(
     add_rows(&mut table);
     sh_println!("\n{table}\n")?;
     Ok(())
+}
+
+/// Returns `(label, number_of_bytes, slot_count, encoding)` for a HIR type in storage context.
+///
+/// - `number_of_bytes`: actual data bytes (used in `StorageType.numberOfBytes`)
+/// - `slot_count`: 0 for packable value types; ≥ 1 for slot-boundary types (arrays, structs,
+///   mappings, string, bytes). The packing algorithm advances `current_slot` by this amount.
+fn hir_type_storage_info<'hir>(
+    hir: &Hir<'hir>,
+    kind: &TypeKind<'hir>,
+) -> (String, u64, u64, &'static str) {
+    match kind {
+        TypeKind::Elementary(et) => match et {
+            ElementaryType::Address(_) => ("address".to_string(), 20, 0, "inplace"),
+            ElementaryType::Bool => ("bool".to_string(), 1, 0, "inplace"),
+            ElementaryType::String => ("string".to_string(), 32, 1, "bytes"),
+            ElementaryType::Bytes => ("bytes".to_string(), 32, 1, "bytes"),
+            ElementaryType::Int(size) => {
+                (format!("int{}", size.bits()), size.bytes() as u64, 0, "inplace")
+            }
+            ElementaryType::UInt(size) => {
+                (format!("uint{}", size.bits()), size.bytes() as u64, 0, "inplace")
+            }
+            ElementaryType::FixedBytes(size) => {
+                (format!("bytes{}", size.bytes()), size.bytes() as u64, 0, "inplace")
+            }
+            ElementaryType::Fixed(m, n) => {
+                (format!("fixed{}x{}", m.bits(), n.get()), m.bytes() as u64, 0, "inplace")
+            }
+            ElementaryType::UFixed(m, n) => {
+                (format!("ufixed{}x{}", m.bits(), n.get()), m.bytes() as u64, 0, "inplace")
+            }
+        },
+        TypeKind::Array(arr) => {
+            let (elem_label, elem_bytes, elem_slots, _) =
+                hir_type_storage_info(hir, &arr.element.kind);
+            // Try to evaluate a literal array size for precise slot counting.
+            let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
+                if let ExprKind::Lit(lit) = size_expr.kind {
+                    if let LitKind::Number(n) = lit.kind { n.try_into().ok() } else { None }
+                } else {
+                    None
+                }
+            });
+            match fixed_len {
+                Some(n) if n > 0 => {
+                    let label = format!("{elem_label}[{n}]");
+                    let (number_of_bytes, slot_count) = if elem_slots == 0 {
+                        // Packable element: compute tight packing.
+                        // elements_per_slot = floor(32 / elem_bytes), minimum 1.
+                        let per_slot = (32u64 / elem_bytes).max(1);
+                        let slots = n.div_ceil(per_slot);
+                        (n * elem_bytes, slots)
+                    } else {
+                        // Slot-boundary element (e.g. T is itself an array or struct).
+                        let slots = n * elem_slots;
+                        (slots * 32, slots)
+                    };
+                    (label, number_of_bytes, slot_count, "inplace")
+                }
+                // Dynamic array or unresolvable size: 1 slot base.
+                _ => (format!("{elem_label}[]"), 32, 1, "dynamic_array"),
+            }
+        }
+        TypeKind::Mapping(m) => {
+            let (key_label, ..) = hir_type_storage_info(hir, &m.key.kind);
+            let (val_label, ..) = hir_type_storage_info(hir, &m.value.kind);
+            (format!("mapping({key_label} => {val_label})"), 32, 1, "mapping")
+        }
+        TypeKind::Custom(ItemId::Struct(id)) => {
+            let s = hir.strukt(*id);
+            let label = if let Some(cid) = s.contract {
+                format!("struct {}.{}", hir.contract(cid).name.as_str(), s.name.as_str())
+            } else {
+                format!("struct {}", s.name.as_str())
+            };
+            // Recursively compute the struct's slot count via the same packing rules.
+            let slot_count = struct_slot_count(hir, s.fields);
+            (label, slot_count * 32, slot_count, "inplace")
+        }
+        TypeKind::Custom(ItemId::Enum(id)) => {
+            let e = hir.enumm(*id);
+            let label = if let Some(cid) = e.contract {
+                format!("enum {}.{}", hir.contract(cid).name.as_str(), e.name.as_str())
+            } else {
+                format!("enum {}", e.name.as_str())
+            };
+            (label, 1, 0, "inplace")
+        }
+        TypeKind::Custom(ItemId::Udvt(id)) => {
+            let u = hir.udvt(*id);
+            let (_, bytes, slots, encoding) = hir_type_storage_info(hir, &u.ty.kind);
+            let label = if let Some(cid) = u.contract {
+                format!("{}.{}", hir.contract(cid).name.as_str(), u.name.as_str())
+            } else {
+                u.name.as_str().to_string()
+            };
+            (label, bytes, slots, encoding)
+        }
+        TypeKind::Function(_) => ("function".to_string(), 24, 0, "inplace"),
+        TypeKind::Custom(_) | TypeKind::Err(_) => ("unknown".to_string(), 32, 1, "inplace"),
+    }
+}
+
+/// Computes the number of 32-byte slots consumed by a sequence of struct fields.
+fn struct_slot_count<'hir>(hir: &Hir<'hir>, fields: &[solar::sema::hir::VariableId]) -> u64 {
+    let mut current_slot: u64 = 0;
+    let mut current_offset: u64 = 0;
+    for &var_id in fields {
+        let var = hir.variable(var_id);
+        let (_, byte_size, slot_count, _) = hir_type_storage_info(hir, &var.ty.kind);
+        if slot_count > 0 {
+            if current_offset > 0 {
+                current_slot += 1;
+                current_offset = 0;
+            }
+            current_slot += slot_count;
+        } else {
+            if current_offset + byte_size > 32 {
+                current_slot += 1;
+                current_offset = 0;
+            }
+            current_offset += byte_size;
+        }
+    }
+    // Any partially-filled final slot counts as a full slot.
+    if current_offset > 0 { current_slot + 1 } else { current_slot }
+}
+
+/// Collects ERC-7201 namespaced storage entries for the target contract using Solar HIR.
+///
+/// Scans all structs annotated with `@custom:storage-location erc7201:<namespace>` in the
+/// target contract's linearization chain, computes their base slot via [`erc7201`], and
+/// synthesises [`Storage`] and [`StorageType`] entries using Solidity's packing rules.
+fn collect_erc7201_entries(
+    output: &mut ProjectCompileOutput,
+    target_path: &Path,
+    target_name: Option<&str>,
+) -> Result<(Vec<Storage>, BTreeMap<String, StorageType>)> {
+    let mut entries: Vec<Storage> = Vec::new();
+    let mut types: BTreeMap<String, StorageType> = BTreeMap::new();
+
+    let mut lowered = false;
+    let compiler = output.parser_mut().solc_mut().compiler_mut();
+    compiler.enter_mut(|compiler| -> Result<()> {
+        let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
+        lowered = true;
+
+        let gcx = compiler.gcx();
+        let hir = &gcx.hir;
+
+        // Locate the target contract.
+        let matching: Vec<_> = hir
+            .contract_ids()
+            .filter(|id| {
+                let c = hir.contract(*id);
+                if let Some(name) = target_name
+                    && c.name.as_str() != name
+                {
+                    return false;
+                }
+                matches!(&hir.source(c.source).file.name, FileName::Real(p) if p == target_path)
+            })
+            .collect();
+
+        let target_id = match matching.as_slice() {
+            [id] => *id,
+            _ => return Ok(()),
+        };
+
+        let linearized_bases: Vec<_> = hir.contract(target_id).linearized_bases.to_vec();
+        let target_contract_name = hir.contract(target_id).name.as_str().to_string();
+
+        // Walk every struct in the HIR; keep those that belong to a contract in the
+        // linearization chain and carry an @custom:storage-location erc7201:<ns> annotation.
+        for struct_id in hir.strukt_ids() {
+            let strukt = hir.strukt(struct_id);
+
+            let Some(struct_contract_id) = strukt.contract else { continue };
+            if !linearized_bases.contains(&struct_contract_id) {
+                continue;
+            }
+            if strukt.doc.is_empty() {
+                continue;
+            }
+
+            let docs = gcx.natspec_doc_comments(strukt.doc);
+            let namespace = docs.iter().find_map(|item| {
+                if let NatSpecKind::Custom { name } = item.kind
+                    && name.name.as_str() == "storage-location"
+                {
+                    item.content().trim().strip_prefix("erc7201:")
+                } else {
+                    None
+                }
+            });
+
+            let Some(namespace) = namespace else { continue };
+
+            let base_slot = U256::from_be_bytes(erc7201(namespace).0);
+            let contract_label = format!("{target_contract_name} [erc7201:{namespace}]");
+
+            // Assign slots using Solidity's packing rules.
+            let mut current_slot: u64 = 0;
+            let mut current_offset: u64 = 0; // bytes used in current slot (low-order)
+
+            for &var_id in strukt.fields {
+                let var = hir.variable(var_id);
+                let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
+                let (type_label, byte_size, slot_count, encoding) =
+                    hir_type_storage_info(hir, &var.ty.kind);
+
+                let (field_slot, field_offset) = if slot_count > 0 {
+                    // Slot-boundary type: align to a fresh slot, then consume slot_count slots.
+                    if current_offset > 0 {
+                        current_slot += 1;
+                        current_offset = 0;
+                    }
+                    let s = current_slot;
+                    current_slot += slot_count;
+                    (s, 0u64)
+                } else {
+                    // Packable value type: fit into current slot or advance.
+                    if current_offset + byte_size > 32 {
+                        current_slot += 1;
+                        current_offset = 0;
+                    }
+                    let s = current_slot;
+                    let o = current_offset;
+                    current_offset += byte_size;
+                    (s, o)
+                };
+
+                let slot_value = base_slot + U256::from(field_slot);
+                let slot_str = format!("{slot_value:#066x}");
+
+                entries.push(Storage {
+                    ast_id: 0,
+                    contract: contract_label.clone(),
+                    label: field_name,
+                    offset: field_offset as i64,
+                    slot: slot_str,
+                    storage_type: type_label.clone(),
+                });
+
+                types.entry(type_label.clone()).or_insert_with(|| StorageType {
+                    encoding: encoding.to_string(),
+                    key: None,
+                    label: type_label,
+                    number_of_bytes: byte_size.to_string(),
+                    value: None,
+                    other: BTreeMap::new(),
+                });
+            }
+        }
+
+        Ok(())
+    })?;
+
+    let _ = lowered;
+    Ok((entries, types))
 }
 
 fn print_linearization(
