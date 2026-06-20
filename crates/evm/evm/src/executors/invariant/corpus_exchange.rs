@@ -91,6 +91,11 @@ impl InvariantCorpusSyncState {
         }
     }
 
+    pub(super) const fn record_import_progress(&mut self, now: Instant) {
+        self.runs_since_new_coverage = 0;
+        self.last_new_coverage_at = now;
+    }
+
     pub(super) fn should_sync(&self, config: &InvariantCorpusSyncConfig, now: Instant) -> bool {
         self.should_sync_inner(config, None, now)
     }
@@ -192,6 +197,7 @@ mod tests {
             plateau_runs: 2,
             plateau_seconds: None,
             max_imports_per_sync: 8,
+            ..Default::default()
         };
 
         state.record_completed_run(false, Instant::now());
@@ -200,6 +206,26 @@ mod tests {
         assert!(state.should_sync(&config, Instant::now()));
         state.record_completed_run(true, Instant::now());
         assert!(!state.should_sync(&config, Instant::now()));
+    }
+
+    #[test]
+    fn accepted_import_resets_plateau_state() {
+        let now = Instant::now();
+        let mut state = InvariantCorpusSyncState::new(now);
+        let config = InvariantCorpusSyncConfig {
+            mode: InvariantCorpusSyncMode::Plateau,
+            plateau_runs: 2,
+            plateau_seconds: None,
+            max_imports_per_sync: 8,
+            ..Default::default()
+        };
+
+        state.record_completed_run(false, now);
+        state.record_completed_run(false, now);
+        assert!(state.should_sync(&config, now));
+
+        state.record_import_progress(now);
+        assert!(!state.should_sync(&config, now));
     }
 
     #[test]

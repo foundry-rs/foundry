@@ -255,6 +255,9 @@ check_interval = 1
 mode = "plateau"
 plateau_runs = 64
 max_imports_per_sync = 64
+shadow_imports_per_sync = 0
+shadow_mutations = 0
+shuffle_on_sync = false
 
 [coverage]
 report = ["summary"]
@@ -1489,7 +1492,10 @@ forgetest_init!(test_default_config, |prj, cmd| {
       "mode": "plateau",
       "plateau_runs": 64,
       "plateau_seconds": null,
-      "max_imports_per_sync": 64
+      "max_imports_per_sync": 64,
+      "shadow_imports_per_sync": 0,
+      "shadow_mutations": 0,
+      "shuffle_on_sync": false
     }
   },
   "symbolic": {

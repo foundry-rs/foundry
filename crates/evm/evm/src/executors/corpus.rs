@@ -207,6 +207,12 @@ struct PendingCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
+#[derive(Clone)]
+struct ShadowCorpusCandidate {
+    entry: CorpusEntry,
+    remaining_mutations: usize,
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::*;
@@ -225,6 +231,7 @@ pub(crate) mod test_support {
 pub(crate) struct CorpusImportStats {
     pub(crate) accepted: usize,
     pub(crate) rejected: usize,
+    pub(crate) shadowed: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -528,6 +535,8 @@ pub struct WorkerCorpus {
     config: Arc<FuzzCorpusConfig>,
     /// New entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
     new_entries: Vec<PendingCorpusEntry>,
+    /// Same-coverage imported candidates kept temporarily to escape local coverage shadowing.
+    shadow_candidates: Vec<ShadowCorpusCandidate>,
     /// Last sync timestamp in seconds.
     last_sync_timestamp: u64,
     /// Worker Dir
@@ -762,6 +771,7 @@ impl WorkerCorpus {
             current_mutated: None,
             config: config.into(),
             new_entries: Default::default(),
+            shadow_candidates: Default::default(),
             last_sync_timestamp: 0,
             worker_dir,
             last_sync_metrics: Default::default(),
@@ -918,6 +928,72 @@ impl WorkerCorpus {
         self.in_memory_corpus.push(corpus);
     }
 
+    fn take_shadow_candidate(&mut self, rng: &mut impl Rng) -> Option<CorpusEntry> {
+        if self.shadow_candidates.is_empty() {
+            return None;
+        }
+
+        let index = rng.random_range(0..self.shadow_candidates.len());
+        let candidate = &mut self.shadow_candidates[index];
+        candidate.remaining_mutations = candidate.remaining_mutations.saturating_sub(1);
+        let entry = candidate.entry.clone();
+        if candidate.remaining_mutations == 0 {
+            self.shadow_candidates.swap_remove(index);
+        }
+        Some(entry)
+    }
+
+    fn import_shadow_entries(
+        &mut self,
+        entries: impl IntoIterator<Item = SharedCorpusEntry>,
+        limit: usize,
+        mutation_budget: usize,
+    ) -> CorpusImportStats {
+        let remaining_capacity = limit.saturating_sub(self.shadow_candidates.len());
+        let mut stats = CorpusImportStats::default();
+        for entry in entries {
+            if mutation_budget == 0 || stats.shadowed >= remaining_capacity {
+                stats.rejected += 1;
+                continue;
+            }
+
+            self.shadow_candidates.push(ShadowCorpusCandidate {
+                entry: CorpusEntry::new_with_cmp(
+                    entry.tx_seq.as_ref().to_vec(),
+                    entry.cmp_seq.as_ref().to_vec(),
+                    Uuid::new_v4(),
+                ),
+                remaining_mutations: mutation_budget,
+            });
+            stats.accepted += 1;
+            stats.shadowed += 1;
+        }
+        stats
+    }
+
+    pub(crate) fn shuffle_corpus(&mut self, rng: &mut impl Rng) {
+        if self.in_memory_corpus.len() < 2 {
+            return;
+        }
+
+        let len = self.in_memory_corpus.len();
+        let mut old_indices = (0..len).collect::<Vec<_>>();
+        for idx in (1..len).rev() {
+            let swap = rng.random_range(0..=idx);
+            self.in_memory_corpus.swap(idx, swap);
+            old_indices.swap(idx, swap);
+        }
+
+        let mut old_to_new = vec![0; len];
+        for (new_index, old_index) in old_indices.into_iter().enumerate() {
+            old_to_new[old_index] = new_index;
+        }
+
+        for entry in &mut self.new_entries {
+            entry.index = old_to_new[entry.index];
+        }
+    }
+
     /// Returns the previously persisted optimization best value and sequence (if any).
     pub fn optimization_initial_state(&self) -> (Option<I256>, Vec<BasicTxDetails>) {
         (self.optimization_best_value, self.optimization_best_sequence.clone())
@@ -986,6 +1062,15 @@ impl WorkerCorpus {
             new_seq.push(self.new_tx(test_runner)?);
             return Ok(new_seq);
         };
+
+        if let Some(corpus) = self.take_shadow_candidate(test_runner.rng()) {
+            return self.mutate_shadow_sequence(
+                corpus,
+                test_runner,
+                fuzz_state,
+                targeted_contracts,
+            );
+        }
 
         if !self.in_memory_corpus.is_empty() {
             self.evict_oldest_corpus()?;
@@ -1139,6 +1224,64 @@ impl WorkerCorpus {
             new_seq.push(self.new_tx(test_runner)?);
         }
         trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
+
+        Ok(new_seq)
+    }
+
+    fn mutate_shadow_sequence(
+        &mut self,
+        corpus: CorpusEntry,
+        test_runner: &mut TestRunner,
+        fuzz_state: &InvariantFuzzState,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+    ) -> Result<Vec<BasicTxDetails>> {
+        let mut new_seq = corpus.tx_seq;
+        if new_seq.is_empty() {
+            return Ok(vec![self.new_tx(test_runner)?]);
+        }
+
+        let targets = targeted_contracts.targets();
+        let candidates = corpus
+            .cmp_seq
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
+            .collect::<Vec<_>>();
+        let mut mutated = false;
+        if !candidates.is_empty() {
+            let start = test_runner.rng().random_range(0..candidates.len());
+            for offset in 0..candidates.len() {
+                let idx = candidates[(start + offset) % candidates.len()];
+                let tx = new_seq.get_mut(idx).unwrap();
+                if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
+                    mutated = Self::cmp_mutate(
+                        tx,
+                        function,
+                        corpus.cmp_seq[idx].as_slice(),
+                        test_runner,
+                    )?;
+                    if mutated {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !mutated {
+            let idx = test_runner.rng().random_range(0..new_seq.len());
+            let tx = new_seq.get_mut(idx).unwrap();
+            if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+                && !function.inputs.is_empty()
+            {
+                self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+                mutated = true;
+            }
+        }
+
+        if !mutated {
+            let idx = test_runner.rng().random_range(0..new_seq.len());
+            new_seq[idx] = self.new_tx(test_runner)?;
+        }
 
         Ok(new_seq)
     }
@@ -1643,8 +1786,11 @@ impl WorkerCorpus {
         entries: impl IntoIterator<Item = SharedCorpusEntry>,
         executor: &Executor<FEN>,
         target: ReplayTarget<'_>,
+        shadow_limit: usize,
+        shadow_mutation_budget: usize,
     ) -> Result<CorpusImportStats> {
         let mut stats = CorpusImportStats::default();
+        let mut shadow_candidates = Vec::new();
         for entry in entries {
             if !entry.dedupe_by_coverage {
                 let cmp_seq = entry.cmp_seq.as_ref().to_vec();
@@ -1659,6 +1805,7 @@ impl WorkerCorpus {
             }
 
             let mut executor = executor.clone();
+            let entry_for_shadow = entry.clone();
             if let Some(corpus_entry) = self.try_import_sequence(
                 entry.tx_seq.as_ref(),
                 Some(entry.cmp_seq.as_ref()),
@@ -1670,9 +1817,14 @@ impl WorkerCorpus {
                 self.in_memory_corpus.push(corpus_entry);
                 stats.accepted += 1;
             } else {
-                stats.rejected += 1;
+                shadow_candidates.push(entry_for_shadow);
             }
         }
+        let shadow_stats =
+            self.import_shadow_entries(shadow_candidates, shadow_limit, shadow_mutation_budget);
+        stats.accepted += shadow_stats.accepted;
+        stats.shadowed += shadow_stats.shadowed;
+        stats.rejected += shadow_stats.rejected;
         Ok(stats)
     }
 
@@ -2131,6 +2283,70 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert!(entries[0].dedupe_by_coverage);
         assert!(!entries[1].dedupe_by_coverage);
+    }
+
+    #[test]
+    fn shadow_imports_are_temporary_mutation_candidates() {
+        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
+        let shadow_entry = SharedCorpusEntry {
+            tx_seq: vec![basic_tx()].into(),
+            cmp_seq: Vec::<Vec<CmpOperands>>::new().into(),
+            dedupe_by_coverage: true,
+        };
+
+        let stats = manager.import_shadow_entries([shadow_entry], 1, 1);
+
+        assert_eq!(stats.accepted, 1);
+        assert_eq!(manager.in_memory_corpus.len(), 0);
+        assert_eq!(manager.metrics.corpus_count, 0);
+        assert!(manager.export_for_exchange().is_empty());
+
+        let mut runner = TestRunner::default();
+        let seq = manager.take_shadow_candidate(runner.rng()).unwrap();
+
+        assert_eq!(seq.tx_seq.len(), 1);
+        assert!(manager.shadow_candidates.is_empty());
+    }
+
+    #[test]
+    fn shadow_imports_are_bounded_by_count_and_budget() {
+        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
+        let entries = (0..3).map(|_| SharedCorpusEntry {
+            tx_seq: vec![basic_tx()].into(),
+            cmp_seq: Vec::<Vec<CmpOperands>>::new().into(),
+            dedupe_by_coverage: true,
+        });
+
+        let stats = manager.import_shadow_entries(entries, 2, 3);
+
+        assert_eq!(stats.accepted, 2);
+        assert_eq!(stats.rejected, 1);
+        assert_eq!(manager.shadow_candidates.len(), 2);
+        assert!(
+            manager.shadow_candidates.iter().all(|candidate| candidate.remaining_mutations == 3)
+        );
+    }
+
+    #[test]
+    fn shuffle_corpus_preserves_pending_exchange_entries() {
+        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
+        let first = vec![BasicTxDetails { sender: Address::repeat_byte(1), ..basic_tx() }];
+        let second = vec![BasicTxDetails { sender: Address::repeat_byte(2), ..basic_tx() }];
+
+        manager.process_inputs_for_campaign(&first, &[], true, None).unwrap();
+        manager.process_inputs_for_campaign(&second, &[], true, None).unwrap();
+
+        let mut runner = TestRunner::default();
+        manager.shuffle_corpus(runner.rng());
+        let exported = manager.export_for_exchange();
+
+        let senders = exported
+            .iter()
+            .map(|entry| entry.tx_seq[0].sender)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(senders.len(), 2);
+        assert!(senders.contains(&Address::repeat_byte(1)));
+        assert!(senders.contains(&Address::repeat_byte(2)));
     }
 
     #[test]
