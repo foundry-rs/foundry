@@ -39,7 +39,7 @@ jobs:
           script: |
             const usage = [
               '**Usage:** `derek bench <subcommand> [args]` (also `decofe bench ...`).\n',
-              '- `bench invariant [compare-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`',
+              '- `bench invariant [baseline-ref=REF] [timeout=N] [workers=N] [benchmark-type=property|optimization]`',
             ].join('');
             const actor = context.payload.comment.user.login;
             const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
@@ -143,21 +143,21 @@ jobs:
 
             if (subcommand === 'invariant') {
               const opts = {
-                'compare-ref': 'master',
+                'baseline-ref': 'master',
                 timeout: '3600',
                 workers: '',
                 'benchmark-type': 'property',
               };
               const { unknown, invalid } = parseArgs(
                 opts,
-                new Set(['compare-ref']),
+                new Set(['baseline-ref']),
                 new Set(['timeout', 'workers']),
                 { 'benchmark-type': new Set(['property', 'optimization']) },
               );
 
               const safeRef = /^[A-Za-z0-9._/-]{1,128}$/;
-              if (!safeRef.test(opts['compare-ref'])) {
-                invalid.push("`compare-ref` may only contain letters, numbers, '.', '_', '-', and '/'");
+              if (!safeRef.test(opts['baseline-ref'])) {
+                invalid.push("`baseline-ref` may only contain letters, numbers, '.', '_', '-', and '/'");
               }
               const timeout = Number(opts.timeout);
               if (!Number.isInteger(timeout) || timeout < 60 || timeout > 14400) {
@@ -187,10 +187,10 @@ jobs:
                   pr_number: String(context.issue.number),
                   head_repo: pr.head.repo.full_name,
                   actor,
-                  foundry_git_ref: pr.head.sha,
-                  foundry_label: `pr-${context.issue.number}`,
-                  compare_foundry_git_ref: opts['compare-ref'],
-                  compare_foundry_label: opts['compare-ref'].replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 64),
+                  foundry_git_ref: opts['baseline-ref'],
+                  foundry_label: opts['baseline-ref'].replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 64),
+                  feature_foundry_git_ref: pr.head.sha,
+                  feature_foundry_label: `pr-${context.issue.number}`,
                   benchmark_type: opts['benchmark-type'],
                   timeout_seconds: opts.timeout,
                   workers: opts.workers,
@@ -199,8 +199,8 @@ jobs:
 
               summary = [
                 `subcommand: \`invariant\``,
-                `PR SHA: \`${pr.head.sha.slice(0, 12)}\``,
-                `compare-ref: \`${opts['compare-ref']}\``,
+                `feature SHA: \`${pr.head.sha.slice(0, 12)}\``,
+                `baseline-ref: \`${opts['baseline-ref']}\``,
                 `timeout: \`${opts.timeout}s\``,
                 opts.workers ? `workers: \`${opts.workers}\`` : 'workers: `default`',
                 `benchmark-type: \`${opts['benchmark-type']}\``,
