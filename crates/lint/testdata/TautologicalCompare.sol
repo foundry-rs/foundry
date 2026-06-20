@@ -19,7 +19,15 @@ contract TautologicalCompare {
         return m[v];
     }
 
-    function bad(uint256 x, uint256 y, uint256 i, uint256[] calldata arr) external view {
+    function bad(
+        uint256 x,
+        uint256 y,
+        uint256 i,
+        uint256[] calldata arr,
+        int256 s,
+        bool flag,
+        address addr
+    ) external view {
         require(x >= x); //~WARN: comparing an expression with itself is always true or false
         require(y == y); //~WARN: comparing an expression with itself is always true or false
         if (arr[i] < arr[i]) {} //~WARN: comparing an expression with itself is always true or false
@@ -30,9 +38,20 @@ contract TautologicalCompare {
         if (m[1] != m[1]) {} //~WARN: comparing an expression with itself is always true or false
         if (address(this) == address(this)) {} //~WARN: comparing an expression with itself is always true or false
         if (uint256(x) == uint256(x)) {} //~WARN: comparing an expression with itself is always true or false
+        if (-s == -s) {} //~WARN: comparing an expression with itself is always true or false
+        if (!flag == !flag) {} //~WARN: comparing an expression with itself is always true or false
+        if (~x == ~x) {} //~WARN: comparing an expression with itself is always true or false
+        if ((flag ? x : y) == (flag ? x : y)) {} //~WARN: comparing an expression with itself is always true or false
+        if (payable(addr) == payable(addr)) {} //~WARN: comparing an expression with itself is always true or false
+        if ((x + y) == (x + y)) {} //~WARN: comparing an expression with itself is always true or false
+        if ((x & y) == (x & y)) {} //~WARN: comparing an expression with itself is always true or false
+        if ((x < y) == (x < y)) {} //~WARN: comparing an expression with itself is always true or false
     }
 
-    function ok(uint256 x, uint256 y, uint256 i, uint256 j, uint256[] calldata arr) external view {
+    function ok(uint256 x, uint256 y, uint256 i, uint256 j, uint256[] calldata arr, bool flag)
+        external
+        view
+    {
         require(x >= y); // different identifiers
         if (arr[i] < arr[j]) {} // different index
         require(pick(x) == pick(x)); // calls excluded: sides may differ
@@ -40,6 +59,10 @@ contract TautologicalCompare {
         require(uint256(x) == uint256(y)); // same cast, different operand
         // forge-lint: disable-next-line(unsafe-typecast)
         require(uint256(x) == uint8(x)); // casts to different types: uint8 can truncate, not tautological
+        if (++x == ++x) {} // `++` mutates: not tautological
+        if ((flag ? x : y) == (flag ? y : x)) {} // different ternary branches
+        if ((x + y) == (x - y)) {} // different binary operator
+        if ((pick(x) + y) == (pick(x) + y)) {} // call operand: sides may differ
     }
 
     // A user-defined `==` (see `using {weirdEq as ==}`) dispatches to `weirdEq`, which may return

@@ -58,10 +58,11 @@ fn operand_is_udvt<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
 }
 
 /// Structural equality for the side-effect-free expressions a self-comparison can involve:
-/// identifiers, member access, indexing (by an equal index), and elementary-type casts. Anything
-/// else (notably arbitrary calls, which may return different values or have side effects, and
-/// inc/dec unary ops) is treated as unequal, so the lint never fires on a comparison whose two
-/// sides could legitimately differ.
+/// identifiers, member access, indexing (by an equal index), binary operations, elementary-type
+/// casts, `payable(...)`, the pure unary operators (`-`, `!`, `~`), and the ternary `c ? a : b`.
+/// Anything else (notably arbitrary calls, which may return different values or have side effects,
+/// and the `++`/`--` unary ops, which mutate) is treated as unequal, so the lint never fires on a
+/// comparison whose two sides could legitimately differ.
 fn exprs_equal<'hir>(a: &Expr<'hir>, b: &Expr<'hir>) -> bool {
     match (&a.peel_parens().kind, &b.peel_parens().kind) {
         (ExprKind::Ident(ra), ExprKind::Ident(rb)) => ra == rb,
@@ -71,6 +72,11 @@ fn exprs_equal<'hir>(a: &Expr<'hir>, b: &Expr<'hir>) -> bool {
         }
         (ExprKind::Index(ba, ia), ExprKind::Index(bb, ib)) => {
             exprs_equal(ba, bb) && opt_exprs_equal(*ia, *ib)
+        }
+        // Same binary operator over structurally-equal, side-effect-free operands (`a + b == a +
+        // b`, `x & mask == x & mask`). The operands' purity is enforced by the recursion.
+        (ExprKind::Binary(la, opa, ra), ExprKind::Binary(lb, opb, rb)) => {
+            opa.kind == opb.kind && exprs_equal(la, lb) && exprs_equal(ra, rb)
         }
         // Casts to the *same* elementary type (`uint256(x)`, `address(this)`) are pure conversions,
         // so two such casts of structurally-equal operands are equal. The cast types must match:
@@ -89,6 +95,18 @@ fn exprs_equal<'hir>(a: &Expr<'hir>, b: &Expr<'hir>) -> bool {
                 }
                 _ => false,
             }
+        }
+        // `payable(x)` is a pure conversion to `address payable`; its operand's purity is enforced
+        // by the recursion.
+        (ExprKind::Payable(a), ExprKind::Payable(b)) => exprs_equal(a, b),
+        // Same unary operator, with no side effects: `++`/`--` mutate their operand, so
+        // `++x == ++x` is not tautological and must not be flagged.
+        (ExprKind::Unary(opa, a), ExprKind::Unary(opb, b)) => {
+            opa.kind == opb.kind && !opa.kind.has_side_effects() && exprs_equal(a, b)
+        }
+        // `c ? a : b` is side-effect-free when its three operands are.
+        (ExprKind::Ternary(ca, ta, fa), ExprKind::Ternary(cb, tb, fb)) => {
+            exprs_equal(ca, cb) && exprs_equal(ta, tb) && exprs_equal(fa, fb)
         }
         _ => false,
     }
