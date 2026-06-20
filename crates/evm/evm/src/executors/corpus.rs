@@ -201,6 +201,16 @@ pub(crate) struct SharedCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
+impl SharedCorpusEntry {
+    fn to_corpus_entry(&self, uuid: Uuid) -> CorpusEntry {
+        CorpusEntry::new_with_cmp(
+            self.tx_seq.as_ref().to_vec(),
+            self.cmp_seq.as_ref().to_vec(),
+            uuid,
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PendingCorpusEntry {
     index: usize,
@@ -958,11 +968,7 @@ impl WorkerCorpus {
             }
 
             self.shadow_candidates.push(ShadowCorpusCandidate {
-                entry: CorpusEntry::new_with_cmp(
-                    entry.tx_seq.as_ref().to_vec(),
-                    entry.cmp_seq.as_ref().to_vec(),
-                    Uuid::new_v4(),
-                ),
+                entry: entry.to_corpus_entry(Uuid::new_v4()),
                 remaining_mutations: mutation_budget,
             });
             stats.accepted += 1;
@@ -1153,7 +1159,6 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Abi => {
-                    let targets = targeted_contracts.targets();
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
 
@@ -1162,58 +1167,35 @@ impl WorkerCorpus {
                     new_seq = corpus.tx_seq.clone();
 
                     let idx = rng.random_range(0..new_seq.len());
-                    let tx = new_seq.get_mut(idx).unwrap();
-                    if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        // TODO: add call_value to call details and mutate it as well as sender some
-                        // of the time.
-                        if !function.inputs.is_empty() {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                        }
-                    }
+                    self.try_abi_mutate_at(
+                        &mut new_seq,
+                        idx,
+                        targeted_contracts,
+                        test_runner,
+                        fuzz_state,
+                    )?;
                 }
                 MutationType::Cmp => {
-                    let targets = targeted_contracts.targets();
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "cmp mutate args of {}", corpus.uuid);
 
                     self.current_mutated = Some(corpus.uuid);
 
                     new_seq = corpus.tx_seq.clone();
-                    let candidates = corpus
-                        .cmp_seq
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
-                        .collect::<Vec<_>>();
-
-                    let mut mutated = false;
                     let fallback_idx = rng.random_range(0..new_seq.len());
-                    if !candidates.is_empty() {
-                        let start = rng.random_range(0..candidates.len());
-                        for offset in 0..candidates.len() {
-                            let idx = candidates[(start + offset) % candidates.len()];
-                            let tx = new_seq.get_mut(idx).unwrap();
-                            if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                                mutated = Self::cmp_mutate(
-                                    tx,
-                                    function,
-                                    corpus.cmp_seq[idx].as_slice(),
-                                    test_runner,
-                                )?;
-                                if mutated {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if !mutated {
-                        let tx = new_seq.get_mut(fallback_idx).unwrap();
-                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
-                            && !function.inputs.is_empty()
-                        {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                        }
+                    if !Self::try_cmp_mutate_sequence(
+                        &mut new_seq,
+                        &corpus.cmp_seq,
+                        targeted_contracts,
+                        test_runner,
+                    )? {
+                        self.try_abi_mutate_at(
+                            &mut new_seq,
+                            fallback_idx,
+                            targeted_contracts,
+                            test_runner,
+                            fuzz_state,
+                        )?;
                     }
                 }
             }
@@ -1240,42 +1222,22 @@ impl WorkerCorpus {
             return Ok(vec![self.new_tx(test_runner)?]);
         }
 
-        let targets = targeted_contracts.targets();
-        let candidates = corpus
-            .cmp_seq
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
-            .collect::<Vec<_>>();
-        let mut mutated = false;
-        if !candidates.is_empty() {
-            let start = test_runner.rng().random_range(0..candidates.len());
-            for offset in 0..candidates.len() {
-                let idx = candidates[(start + offset) % candidates.len()];
-                let tx = new_seq.get_mut(idx).unwrap();
-                if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                    mutated = Self::cmp_mutate(
-                        tx,
-                        function,
-                        corpus.cmp_seq[idx].as_slice(),
-                        test_runner,
-                    )?;
-                    if mutated {
-                        break;
-                    }
-                }
-            }
-        }
+        let mut mutated = Self::try_cmp_mutate_sequence(
+            &mut new_seq,
+            &corpus.cmp_seq,
+            targeted_contracts,
+            test_runner,
+        )?;
 
         if !mutated {
             let idx = test_runner.rng().random_range(0..new_seq.len());
-            let tx = new_seq.get_mut(idx).unwrap();
-            if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
-                && !function.inputs.is_empty()
-            {
-                self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                mutated = true;
-            }
+            mutated = self.try_abi_mutate_at(
+                &mut new_seq,
+                idx,
+                targeted_contracts,
+                test_runner,
+                fuzz_state,
+            )?;
         }
 
         if !mutated {
@@ -1284,6 +1246,58 @@ impl WorkerCorpus {
         }
 
         Ok(new_seq)
+    }
+
+    fn try_cmp_mutate_sequence(
+        new_seq: &mut [BasicTxDetails],
+        cmp_seq: &[Vec<CmpOperands>],
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        test_runner: &mut TestRunner,
+    ) -> Result<bool> {
+        let candidates = cmp_seq
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+
+        let targets = targeted_contracts.targets();
+        let start = test_runner.rng().random_range(0..candidates.len());
+        for offset in 0..candidates.len() {
+            let idx = candidates[(start + offset) % candidates.len()];
+            let tx = new_seq.get_mut(idx).unwrap();
+            if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+                && Self::cmp_mutate(tx, function, cmp_seq[idx].as_slice(), test_runner)?
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn try_abi_mutate_at(
+        &self,
+        new_seq: &mut [BasicTxDetails],
+        idx: usize,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        test_runner: &mut TestRunner,
+        fuzz_state: &impl FuzzStateReader,
+    ) -> Result<bool> {
+        let targets = targeted_contracts.targets();
+        let tx = new_seq.get_mut(idx).unwrap();
+        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+            && !function.inputs.is_empty()
+        {
+            // TODO: add call_value to call details and mutate it as well as sender some of the
+            // time.
+            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     /// Generates a new input from the shared in memory corpus.  Evicts oldest corpus mutated more
@@ -1793,19 +1807,13 @@ impl WorkerCorpus {
         let mut shadow_candidates = Vec::new();
         for entry in entries {
             if !entry.dedupe_by_coverage {
-                let cmp_seq = entry.cmp_seq.as_ref().to_vec();
                 self.metrics.corpus_count += 1;
-                self.in_memory_corpus.push(CorpusEntry::new_with_cmp(
-                    entry.tx_seq.as_ref().to_vec(),
-                    cmp_seq,
-                    Uuid::new_v4(),
-                ));
+                self.in_memory_corpus.push(entry.to_corpus_entry(Uuid::new_v4()));
                 stats.accepted += 1;
                 continue;
             }
 
             let mut executor = executor.clone();
-            let entry_for_shadow = entry.clone();
             if let Some(corpus_entry) = self.try_import_sequence(
                 entry.tx_seq.as_ref(),
                 Some(entry.cmp_seq.as_ref()),
@@ -1817,7 +1825,7 @@ impl WorkerCorpus {
                 self.in_memory_corpus.push(corpus_entry);
                 stats.accepted += 1;
             } else {
-                shadow_candidates.push(entry_for_shadow);
+                shadow_candidates.push(entry);
             }
         }
         let shadow_stats =

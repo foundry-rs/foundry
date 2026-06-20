@@ -1347,11 +1347,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let now = Instant::now();
         sync_state.record_completed_run(meta.new_coverage, now);
-        let should_sync = meta.run_budget.map_or_else(
-            || sync_state.should_sync(meta.sync_config, now),
-            |run_budget| sync_state.should_sync_for_run_budget(meta.sync_config, run_budget, now),
-        );
-        if !should_sync {
+        if !sync_state.should_sync(meta.sync_config, meta.run_budget, now) {
             return Ok(());
         }
 

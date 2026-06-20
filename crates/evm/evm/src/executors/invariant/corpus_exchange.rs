@@ -96,20 +96,7 @@ impl InvariantCorpusSyncState {
         self.last_new_coverage_at = now;
     }
 
-    pub(super) fn should_sync(&self, config: &InvariantCorpusSyncConfig, now: Instant) -> bool {
-        self.should_sync_inner(config, None, now)
-    }
-
-    pub(super) fn should_sync_for_run_budget(
-        &self,
-        config: &InvariantCorpusSyncConfig,
-        run_budget: u32,
-        now: Instant,
-    ) -> bool {
-        self.should_sync_inner(config, Some(run_budget), now)
-    }
-
-    fn should_sync_inner(
+    pub(super) fn should_sync(
         &self,
         config: &InvariantCorpusSyncConfig,
         run_budget: Option<u32>,
@@ -201,11 +188,11 @@ mod tests {
         };
 
         state.record_completed_run(false, Instant::now());
-        assert!(!state.should_sync(&config, Instant::now()));
+        assert!(!state.should_sync(&config, None, Instant::now()));
         state.record_completed_run(false, Instant::now());
-        assert!(state.should_sync(&config, Instant::now()));
+        assert!(state.should_sync(&config, None, Instant::now()));
         state.record_completed_run(true, Instant::now());
-        assert!(!state.should_sync(&config, Instant::now()));
+        assert!(!state.should_sync(&config, None, Instant::now()));
     }
 
     #[test]
@@ -222,10 +209,10 @@ mod tests {
 
         state.record_completed_run(false, now);
         state.record_completed_run(false, now);
-        assert!(state.should_sync(&config, now));
+        assert!(state.should_sync(&config, None, now));
 
         state.record_import_progress(now);
-        assert!(!state.should_sync(&config, now));
+        assert!(!state.should_sync(&config, None, now));
     }
 
     #[test]
@@ -235,11 +222,11 @@ mod tests {
 
         for _ in 0..31 {
             state.record_completed_run(false, Instant::now());
-            assert!(!state.should_sync_for_run_budget(&config, 64, Instant::now()));
+            assert!(!state.should_sync(&config, Some(64), Instant::now()));
         }
 
         state.record_completed_run(false, Instant::now());
-        assert!(state.should_sync_for_run_budget(&config, 64, Instant::now()));
+        assert!(state.should_sync(&config, Some(64), Instant::now()));
     }
 
     #[test]
@@ -249,10 +236,10 @@ mod tests {
 
         for _ in 0..63 {
             state.record_completed_run(false, Instant::now());
-            assert!(!state.should_sync_for_run_budget(&config, 256, Instant::now()));
+            assert!(!state.should_sync(&config, Some(256), Instant::now()));
         }
 
         state.record_completed_run(false, Instant::now());
-        assert!(state.should_sync_for_run_budget(&config, 256, Instant::now()));
+        assert!(state.should_sync(&config, Some(256), Instant::now()));
     }
 }
