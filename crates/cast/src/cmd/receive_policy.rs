@@ -1,9 +1,13 @@
 use crate::{
-    cmd::tip20::{resolve_tip20_signer, send_tip20_transaction},
+    cmd::{
+        keychain::is_tempo_hardfork_active,
+        tip20::{resolve_tip20_signer, send_tip20_transaction},
+    },
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
+use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, SolValue};
 use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, ensure};
@@ -13,6 +17,7 @@ use foundry_cli::{
     utils::{LoadConfig, get_provider},
 };
 use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use serde_json::{Value, json};
 use std::str::FromStr;
@@ -380,8 +385,29 @@ async fn receipt_balance(receipt: Bytes, rpc: RpcOpts) -> Result<()> {
     })
 }
 
+// The ReceivePolicyGuard precompile only has code from T6 onwards, so a pre-T6 call would
+// succeed as a silent no-op instead of reverting. Fail early with a clear message.
+async fn ensure_receive_policy_t6<P>(provider: &P, command: &str) -> Result<()>
+where
+    P: Provider<TempoNetwork>,
+{
+    // Prefer the hardfork query, but if it is unavailable (e.g. an older RPC without the method)
+    // fall back to checking whether the guard precompile has code.
+    let active = match is_tempo_hardfork_active(provider, TempoHardfork::T6).await {
+        Ok(active) => active,
+        Err(_) => !provider.get_code_at(RECEIVE_POLICY_GUARD_ADDRESS).await?.is_empty(),
+    };
+    if !active {
+        eyre::bail!("{command} requires a Tempo T6-capable ReceivePolicy RPC");
+    }
+    Ok(())
+}
+
 async fn burn_receipt(receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
     decode_claim_receipt(&receipt)?;
+    let config = send_tx.eth.rpc.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    ensure_receive_policy_t6(&provider, "cast receive-policy receipt burn").await?;
     let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
     send_tip20_transaction(
         NameOrAddress::Address(RECEIVE_POLICY_GUARD_ADDRESS),
@@ -399,6 +425,7 @@ async fn claim(to: NameOrAddress, receipt: Bytes, send_tx: SendTxOpts, tx: TxPar
     decode_claim_receipt(&receipt)?;
     let config = send_tx.eth.rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    ensure_receive_policy_t6(&provider, "cast receive-policy claim").await?;
     let to = to.resolve(&provider).await?;
     let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
     send_tip20_transaction(
