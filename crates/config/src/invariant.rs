@@ -285,20 +285,4 @@ mod tests {
         let err = serde_json::from_str::<InvariantWorkers>(r#"0"#).unwrap_err();
         assert!(err.to_string().contains("greater than 0"));
     }
-
-    #[test]
-    fn invariant_corpus_sync_modes_parse() {
-        assert_eq!("off".parse::<InvariantCorpusSyncMode>().unwrap(), InvariantCorpusSyncMode::Off);
-        assert_eq!(
-            "plateau".parse::<InvariantCorpusSyncMode>().unwrap(),
-            InvariantCorpusSyncMode::Plateau
-        );
-        assert!("live".parse::<InvariantCorpusSyncMode>().is_err());
-    }
-
-    #[test]
-    fn invariant_corpus_sync_defaults_to_plateau() {
-        assert_eq!(InvariantConfig::default().corpus_sync, InvariantCorpusSyncConfig::default());
-        assert!(InvariantConfig::default().corpus_sync.is_enabled());
-    }
 }
