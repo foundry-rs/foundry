@@ -674,11 +674,11 @@ fn inherited_param_name_for_current_function(
     let mut candidates = params.iter().filter_map(|param| {
         let name = param.name?;
         let name = name.as_str();
-        (name.trim_matches('_') == normalized_inherited).then_some(name)
+        (name.trim_matches('_') == normalized_inherited).then(|| name.to_string())
     });
 
     match (candidates.next(), candidates.next()) {
-        (Some(name), None) => name.to_string(),
+        (Some(name), None) => name,
         _ => inherited_name.to_string(),
     }
 }
