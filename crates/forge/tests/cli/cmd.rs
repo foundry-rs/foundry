@@ -4167,6 +4167,81 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(can_inspect_artifact_json, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    );
+
+    let stdout =
+        cmd.args(["inspect", "Counter", "artifact"]).assert_success().get_output().stdout_lossy();
+    let artifact: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("artifact stdout should be valid JSON");
+
+    let abi = artifact["abi"].as_array().expect("artifact should include an ABI array");
+    assert!(abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("increment")
+    }));
+
+    let bytecode =
+        artifact["bytecode"]["object"].as_str().expect("artifact should include creation bytecode");
+    assert!(bytecode.starts_with("0x"));
+
+    let deployed_bytecode = artifact["deployedBytecode"]["object"]
+        .as_str()
+        .expect("artifact should include deployed bytecode");
+    assert!(deployed_bytecode.starts_with("0x"));
+});
+
+forgetest!(can_inspect_artifact_json_with_custom_out_and_duplicate_contract_names, |prj, cmd| {
+    prj.update_config(|config| config.out = "custom-out".into());
+
+    prj.add_source(
+        "Source.sol",
+        r#"
+contract Source {
+    function foo() public {}
+}
+    "#,
+    );
+    prj.add_source(
+        "another/Source.sol",
+        r#"
+contract Source {
+    function bar() public {}
+}
+    "#,
+    );
+
+    let stdout = cmd
+        .args(["inspect", "src/another/Source.sol:Source", "output"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let artifact: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("artifact stdout should be valid JSON");
+
+    let abi = artifact["abi"].as_array().expect("artifact should include an ABI array");
+    assert!(abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("bar")
+    }));
+    assert!(!abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("foo")
+    }));
+    assert!(prj.root().join("custom-out/Source.sol/Source.json").exists());
+});
+
 forgetest_init!(can_inspect_libraries, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_source(
