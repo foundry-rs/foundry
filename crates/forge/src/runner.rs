@@ -1321,7 +1321,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
         executor.inspector_mut().collect_edge_coverage_with_config(&invariant_config.corpus);
-        executor.inspector_mut().collect_evm_cmp_log(invariant_config.corpus.collect_evm_cmp_log());
         executor
             .inspector_mut()
             .collect_sancov_edges(invariant_config.corpus.collect_sancov_edges());
