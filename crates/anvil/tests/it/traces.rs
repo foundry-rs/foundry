@@ -16,7 +16,7 @@ use alloy_provider::{
     ext::{DebugApi, TraceApi},
 };
 use alloy_rpc_types::{
-    TransactionRequest,
+    BlockNumberOrTag, TransactionRequest,
     state::StateOverride,
     trace::{
         filter::{TraceFilter, TraceFilterMode},
@@ -231,6 +231,65 @@ async fn test_call_tracer_debug_trace_call() {
         .unwrap();
 
     match internal_call_only_top_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert!(call_frame.calls.is_empty());
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
+    let receipt = internal_call_tx_builder.send().await.unwrap().get_receipt().await.unwrap();
+    let internal_call_tx_hash = receipt.transaction_hash;
+    let trace_provider = handle.http_provider();
+
+    let internal_call_tx_traces: GethTrace = trace_provider
+        .raw_request(
+            "debug_traceTransaction".into(),
+            (
+                internal_call_tx_hash,
+                serde_json::json!({
+                    "tracer": "callTracer",
+                    "tracerConfig": {
+                        "withLog": true
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_tx_traces {
+        GethTrace::CallTracer(call_frame) => {
+            assert_eq!(call_frame.calls.len(), 1);
+            assert_eq!(
+                call_frame.calls.first().unwrap().to.unwrap(),
+                *simple_storage_contract.address()
+            );
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+
+    let internal_call_only_top_level_call_tx_traces: GethTrace = trace_provider
+        .raw_request(
+            "debug_traceTransaction".into(),
+            (
+                internal_call_tx_hash,
+                serde_json::json!({
+                    "tracer": "callTracer",
+                    "tracerConfig": {
+                        "onlyTopLevelCall": true,
+                        "withLog": true
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+
+    match internal_call_only_top_level_call_tx_traces {
         GethTrace::CallTracer(call_frame) => {
             assert!(call_frame.calls.is_empty());
         }
@@ -1349,5 +1408,89 @@ async fn test_trace_replay_block_transactions_local() {
             amount,
             "Incorrect balance change in state diff"
         );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_by_number() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    let traces = api
+        .backend
+        .debug_trace_block_by_number(
+            BlockNumberOrTag::Number(block_number),
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(traces.len(), 1);
+
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {error}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_by_hash() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(2000);
+
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+
+    let traces = api
+        .backend
+        .debug_trace_block_by_hash(
+            block_hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(traces.len(), 1);
+
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {error}");
+        }
     }
 }

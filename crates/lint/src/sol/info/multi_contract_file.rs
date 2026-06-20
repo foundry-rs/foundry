@@ -3,7 +3,7 @@ use crate::{
     sol::{Severity, SolLint, info::MultiContractFile},
 };
 
-use solar::ast::{self as ast};
+use solar::ast;
 
 declare_forge_lint!(
     MULTI_CONTRACT_FILE,
@@ -36,7 +36,9 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFile {
 
         // Flag all if there's more than one
         if relevant_spans.len() > 1 {
-            relevant_spans.into_iter().for_each(|span| ctx.emit(&MULTI_CONTRACT_FILE, span));
+            for span in relevant_spans {
+                ctx.emit(&MULTI_CONTRACT_FILE, span);
+            }
         }
     }
 }

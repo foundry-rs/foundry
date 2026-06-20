@@ -6,8 +6,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_consensus::{BlockHeader, Header, Transaction};
+use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_network::Network;
 use alloy_primitives::B256;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -17,7 +18,6 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
-use foundry_primitives::FoundryNetwork;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
@@ -84,7 +84,7 @@ impl FeeManager {
     }
 
     /// Returns the base fee params used for EIP-1559 calculations
-    pub fn base_fee_params(&self) -> BaseFeeParams {
+    pub const fn base_fee_params(&self) -> BaseFeeParams {
         self.base_fee_params
     }
 
@@ -93,11 +93,11 @@ impl FeeManager {
     }
 
     /// Returns true for post London
-    pub fn is_eip1559(&self) -> bool {
+    pub const fn is_eip1559(&self) -> bool {
         (self.spec_id as u8) >= (SpecId::LONDON as u8)
     }
 
-    pub fn is_eip4844(&self) -> bool {
+    pub const fn is_eip4844(&self) -> bool {
         (self.spec_id as u8) >= (SpecId::CANCUN as u8)
     }
 
@@ -110,7 +110,7 @@ impl FeeManager {
         if self.is_eip1559() { *self.base_fee.read() } else { 0 }
     }
 
-    pub fn is_min_priority_fee_enforced(&self) -> bool {
+    pub const fn is_min_priority_fee_enforced(&self) -> bool {
         self.is_min_priority_fee_enforced
     }
 
@@ -120,7 +120,7 @@ impl FeeManager {
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        if self.is_eip4844() { Some(*self.blob_excess_gas_and_price.read()) } else { None }
+        self.is_eip4844().then(|| *self.blob_excess_gas_and_price.read())
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
@@ -190,7 +190,10 @@ impl FeeManager {
 }
 
 /// An async service that takes care of the `FeeHistory` cache
-pub struct FeeHistoryService {
+pub struct FeeHistoryService<N: Network>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+{
     /// blob parameters for the current spec
     blob_params: BlobParams,
     /// incoming notifications about new blocks
@@ -200,15 +203,18 @@ pub struct FeeHistoryService {
     /// number of items to consider
     fee_history_limit: u64,
     /// a type that can fetch ethereum-storage data
-    storage_info: StorageInfo<FoundryNetwork>,
+    storage_info: StorageInfo<N>,
 }
 
-impl FeeHistoryService {
-    pub fn new(
+impl<N: Network> FeeHistoryService<N>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+{
+    pub const fn new(
         blob_params: BlobParams,
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
-        storage_info: StorageInfo<FoundryNetwork>,
+        storage_info: StorageInfo<N>,
     ) -> Self {
         Self {
             blob_params,
@@ -220,12 +226,12 @@ impl FeeHistoryService {
     }
 
     /// Returns the configured history limit
-    pub fn fee_history_limit(&self) -> u64 {
+    pub const fn fee_history_limit(&self) -> u64 {
         self.fee_history_limit
     }
 
     /// Inserts a new cache entry for the given block
-    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256, header: &Header) {
+    pub(crate) fn insert_cache_entry_for_block(&self, hash: B256, header: &impl BlockHeader) {
         let (result, block_number) = self.create_cache_entry(hash, header);
         self.insert_cache_entry(result, block_number);
     }
@@ -234,7 +240,7 @@ impl FeeHistoryService {
     fn create_cache_entry(
         &self,
         hash: B256,
-        header: &Header,
+        header: &impl BlockHeader,
     ) -> (FeeHistoryCacheItem, Option<u64>) {
         // percentile list from 0.0 to 100.0 with a 0.5 resolution.
         // this will create 200 percentile points
@@ -250,9 +256,9 @@ impl FeeHistoryService {
         };
 
         let mut block_number: Option<u64> = None;
-        let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
-        let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
+        let base_fee = header.base_fee_per_gas().unwrap_or_default();
+        let excess_blob_gas = header.excess_blob_gas().map(|g| g as u128);
+        let blob_gas_used = header.blob_gas_used().map(|g| g as u128);
         let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
 
         let mut item = FeeHistoryCacheItem {
@@ -344,7 +350,10 @@ impl FeeHistoryService {
 }
 
 // An endless future that listens for new blocks and updates the cache
-impl Future for FeeHistoryService {
+impl<N: Network> Future for FeeHistoryService<N>
+where
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+{
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -383,7 +392,7 @@ pub struct FeeDetails {
 
 impl FeeDetails {
     /// All values zero
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self {
             gas_price: Some(0),
             max_fee_per_gas: Some(0),
@@ -393,7 +402,7 @@ impl FeeDetails {
     }
 
     /// If neither `gas_price` nor `max_fee_per_gas` is `Some`, this will set both to `0`
-    pub fn or_zero_fees(self) -> Self {
+    pub const fn or_zero_fees(self) -> Self {
         let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas } =
             self;
 
@@ -406,7 +415,7 @@ impl FeeDetails {
     }
 
     /// Turns this type into a tuple
-    pub fn split(self) -> (Option<u128>, Option<u128>, Option<u128>, Option<u128>) {
+    pub const fn split(self) -> (Option<u128>, Option<u128>, Option<u128>, Option<u128>) {
         let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas } =
             self;
         (gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas)
@@ -426,22 +435,6 @@ impl FeeDetails {
                     gas_price,
                     max_fee_per_gas: gas_price,
                     max_priority_fee_per_gas: gas_price,
-                    max_fee_per_blob_gas: None,
-                })
-            }
-            (_, max_fee, max_priority, None) => {
-                // eip-1559
-                // Ensure `max_priority_fee_per_gas` is less or equal to `max_fee_per_gas`.
-                if let Some(max_priority) = max_priority {
-                    let max_fee = max_fee.unwrap_or_default();
-                    if max_priority > max_fee {
-                        return Err(BlockchainError::InvalidFeeInput);
-                    }
-                }
-                Ok(Self {
-                    gas_price: max_fee,
-                    max_fee_per_gas: max_fee,
-                    max_priority_fee_per_gas: max_priority,
                     max_fee_per_blob_gas: None,
                 })
             }

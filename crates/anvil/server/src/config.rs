@@ -27,7 +27,7 @@ impl ServerConfig {
     }
 
     /// Whether to enable CORS.
-    pub fn set_cors(mut self, cors: bool) -> Self {
+    pub const fn set_cors(mut self, cors: bool) -> Self {
         self.no_cors = !cors;
         self
     }

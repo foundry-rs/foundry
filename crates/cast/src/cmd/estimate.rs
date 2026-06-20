@@ -1,17 +1,17 @@
 use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    json::print_scalar,
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::WalletOpts;
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
@@ -85,7 +85,7 @@ impl EstimateArgs {
         if self.tx.tempo.is_tempo() {
             self.run_with_network::<TempoNetwork>().await
         } else {
-            self.run_with_network::<AnyNetwork>().await
+            self.run_with_network::<Ethereum>().await
         }
     }
 
@@ -131,9 +131,9 @@ impl EstimateArgs {
             let gas_price_wei = provider.get_gas_price().await?;
             let cost = gas_price_wei * gas as u128;
             let cost_eth = cost as f64 / 1e18;
-            sh_println!("{cost_eth}")?;
+            print_scalar(cost_eth)?;
         } else {
-            sh_println!("{gas}")?;
+            print_scalar(gas)?;
         }
         Ok(())
     }

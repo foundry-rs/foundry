@@ -57,7 +57,7 @@ impl<'gcx> SourceVisitor<'gcx> {
         }
     }
 
-    fn checkpoint(&self) -> SourceVisitorCheckpoint {
+    const fn checkpoint(&self) -> SourceVisitorCheckpoint {
         SourceVisitorCheckpoint {
             items: self.items.len(),
             all_lines: self.all_lines.len(),
@@ -181,7 +181,7 @@ impl<'gcx> SourceVisitor<'gcx> {
         first.line_index as u32 + 1..last.line_index as u32 + 2
     }
 
-    fn next_branch_id(&mut self) -> u32 {
+    const fn next_branch_id(&mut self) -> u32 {
         let id = self.branch_id;
         self.branch_id = id + 1;
         id
@@ -543,7 +543,7 @@ impl SourceAnalysis {
     }
 
     /// Returns all the mutable coverage items.
-    pub fn all_items_mut(&mut self) -> &mut Vec<CoverageItem> {
+    pub const fn all_items_mut(&mut self) -> &mut Vec<CoverageItem> {
         &mut self.all_items
     }
 

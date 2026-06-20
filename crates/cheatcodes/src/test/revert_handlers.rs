@@ -198,7 +198,10 @@ pub(crate) fn handle_expect_revert(
 
         // If we expect no reverts with a specific reason/reverter, but got a revert,
         // we need to check if it matches our criteria
-        if !matches!(status, return_ok!()) {
+        if matches!(status, return_ok!()) {
+            // No revert occurred, which is what we expected
+            Ok(success_return())
+        } else {
             // We got a revert, but we expected 0 reverts
             // We need to check if this revert matches our expected criteria
 
@@ -266,9 +269,6 @@ pub(crate) fn handle_expect_revert(
                     }
                 }
             }
-        } else {
-            // No revert occurred, which is what we expected
-            Ok(success_return())
         }
     } else {
         ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");

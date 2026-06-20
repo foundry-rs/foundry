@@ -1,18 +1,44 @@
+#[cfg(feature = "optimism")]
+use crate::cmd::da_estimate::DAEstimateArgs;
 use crate::cmd::{
-    access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
-    bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
-    creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, erc20::Erc20Subcommand,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    trace::TraceArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    access_list::AccessListArgs,
+    artifact::ArtifactArgs,
+    b2e_payload::B2EPayloadArgs,
+    batch_mktx::BatchMakeTxArgs,
+    batch_send::BatchSendArgs,
+    bind::BindArgs,
+    call::CallArgs,
+    constructor_args::ConstructorArgsArgs,
+    create2::Create2Args,
+    creation_code::CreationCodeArgs,
+    erc20::Erc20Subcommand,
+    estimate::EstimateArgs,
+    find_block::FindBlockArgs,
+    interface::InterfaceArgs,
+    keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
+    logs::LogsArgs,
+    mktx::MakeTxArgs,
+    receive_policy::ReceivePolicySubcommand,
+    rpc::RpcArgs,
+    run::RunArgs,
+    send::SendTxArgs,
+    storage::StorageArgs,
+    tempo::TempoSubcommand,
+    tip20::Tip20Subcommand,
+    tip403::Tip403Subcommand,
+    trace::TraceArgs,
+    txpool::TxPoolSubcommands,
+    vaddr::VaddrSubcommand,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_rpc_types::BlockId;
 use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{EtherscanOpts, GlobalArgs, NetworkVariant, RpcOpts};
+use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
+use foundry_evm_networks::NetworkVariant;
 use std::{path::PathBuf, str::FromStr};
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
@@ -491,6 +517,12 @@ pub enum CastSubcommand {
     #[command(name = "mktx", visible_alias = "m")]
     MakeTx(MakeTxArgs),
 
+    /// Classify a raw transaction as Tempo T5 payment/general lane.
+    Classify {
+        /// The raw signed transaction.
+        raw_tx: Option<String>,
+    },
+
     /// Calculate the ENS namehash of a name.
     #[command(visible_aliases = &["na", "nh"])]
     Namehash { name: Option<String> },
@@ -516,6 +548,10 @@ pub enum CastSubcommand {
         /// Print the raw RLP encoded transaction.
         #[arg(long, conflicts_with = "field")]
         raw: bool,
+
+        /// Classify the transaction as Tempo T5 payment/general lane.
+        #[arg(long, conflicts_with_all = ["field", "raw", "to_request"])]
+        lane: bool,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -553,6 +589,14 @@ pub enum CastSubcommand {
     /// Sign and publish a transaction.
     #[command(name = "send", visible_alias = "s")]
     SendTx(SendTxArgs),
+
+    /// Build and sign a batch transaction (Tempo).
+    #[command(name = "batch-mktx", visible_alias = "bm")]
+    BatchMakeTx(BatchMakeTxArgs),
+
+    /// Sign and publish a batch transaction (Tempo).
+    #[command(name = "batch-send", visible_alias = "bs")]
+    BatchSend(BatchSendArgs),
 
     /// Publish a raw transaction to the network.
     #[command(name = "publish", visible_alias = "p")]
@@ -1006,6 +1050,50 @@ pub enum CastSubcommand {
         rpc: RpcOpts,
     },
 
+    /// Compute a Tempo TIP-20 channel reserve channel ID.
+    #[command(name = "channel-id")]
+    ChannelId {
+        /// Channel payer address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payer: NameOrAddress,
+
+        /// Channel payee address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        payee: NameOrAddress,
+
+        /// TIP-20 token address locked by the channel.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        token: NameOrAddress,
+
+        /// User-supplied channel salt.
+        salt: B256,
+
+        /// Optional relayer allowed to submit settlements for the payee.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        operator: Option<NameOrAddress>,
+
+        /// Optional voucher signer. Defaults to the zero address, meaning the payer signs.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        authorized_signer: Option<NameOrAddress>,
+
+        /// Transaction-derived expiring nonce hash from ChannelOpened.
+        #[arg(long, default_value_t = B256::ZERO)]
+        expiring_nonce_hash: B256,
+
+        /// Channel reserve precompile address.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        reserve: Option<NameOrAddress>,
+
+        /// The block height to query at.
+        ///
+        /// Can also be the tags earliest, finalized, safe, latest, or pending.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Get the source code of a contract from a block explorer.
     #[command(visible_aliases = &["et", "src"])]
     Source {
@@ -1073,6 +1161,7 @@ pub enum CastSubcommand {
         sig: Option<String>,
 
         /// Optimize signature to contain provided amount of leading zeroes in selector.
+        #[arg(conflicts_with = "json")]
         optimize: Option<usize>,
     },
 
@@ -1121,7 +1210,14 @@ pub enum CastSubcommand {
 
     /// Decodes a raw signed EIP 2718 typed transaction
     #[command(visible_aliases = &["dt", "decode-tx"])]
-    DecodeTransaction { tx: Option<String> },
+    DecodeTransaction {
+        /// Encoded transaction
+        tx: Option<String>,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
+    },
 
     /// Recovery an EIP-7702 authority from a Authorization JSON string.
     #[command(visible_aliases = &["decode-auth"])]
@@ -1145,6 +1241,7 @@ pub enum CastSubcommand {
         command: TxPoolSubcommands,
     },
     /// Estimates the data availability size of a given opstack block.
+    #[cfg(feature = "optimism")]
     #[command(name = "da-estimate")]
     DAEstimate(DAEstimateArgs),
 
@@ -1154,6 +1251,55 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: Erc20Subcommand,
     },
+
+    /// TIP-20 token operations (Tempo).
+    #[command(visible_alias = "tip20")]
+    Tip20Token {
+        #[command(subcommand)]
+        command: Tip20Subcommand,
+    },
+
+    /// Account-level receive policy operations (Tempo).
+    #[command(name = "receive-policy")]
+    ReceivePolicy {
+        #[command(subcommand)]
+        command: ReceivePolicySubcommand,
+    },
+
+    /// TIP-403 policy registry operations (Tempo).
+    #[command(name = "tip403")]
+    Tip403 {
+        #[command(subcommand)]
+        command: Tip403Subcommand,
+    },
+
+    /// Tempo keychain (access key) management.
+    #[command(visible_alias = "kc")]
+    Keychain {
+        #[command(subcommand)]
+        command: KeychainSubcommand,
+    },
+
+    /// Tempo key authorization RLP helpers.
+    #[command(name = "key-authorization", visible_alias = "key-auth")]
+    KeyAuthorization {
+        #[command(subcommand)]
+        command: KeyAuthorizationSubcommand,
+    },
+
+    /// Tempo wallet integration (login, etc.).
+    Tempo {
+        #[command(subcommand)]
+        command: TempoSubcommand,
+    },
+
+    /// TIP-1022 virtual address registry operations (Tempo).
+    #[command(visible_alias = "vaddr")]
+    VirtualAddress {
+        #[command(subcommand)]
+        command: VaddrSubcommand,
+    },
+
     #[command(name = "trace")]
     Trace(TraceArgs),
 }

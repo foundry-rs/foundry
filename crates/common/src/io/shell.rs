@@ -38,6 +38,13 @@ pub fn is_quiet() -> bool {
     Shell::get().output_mode().is_quiet()
 }
 
+/// Returns whether stderr is a terminal (tty).
+///
+/// Used to gate progress/spinner output that only makes sense for interactive use.
+pub fn is_err_tty() -> bool {
+    Shell::get().is_err_tty()
+}
+
 /// Returns whether the output format is [`OutputFormat::Json`].
 pub fn is_json() -> bool {
     Shell::get().is_json()
@@ -51,7 +58,7 @@ pub fn is_markdown() -> bool {
 /// The global shell instance.
 static GLOBAL_SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 /// The requested output mode.
 pub enum OutputMode {
     /// Default output
@@ -74,7 +81,7 @@ impl OutputMode {
 }
 
 /// The requested output format.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Plain text output.
     #[default]
@@ -150,10 +157,12 @@ enum ShellOut {
     },
     /// A write object that ignores all output.
     Empty(std::io::Empty),
+    /// Captures stdout and stderr into in-memory buffers. Intended for tests.
+    Captured { stdout: Vec<u8>, stderr: Vec<u8> },
 }
 
 /// Whether messages should use color output.
-#[derive(Debug, Default, PartialEq, Clone, Copy, Serialize, Deserialize, ValueEnum)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy, Serialize, Deserialize, ValueEnum)]
 pub enum ColorChoice {
     /// Intelligently guess whether to use color output (default).
     #[default]
@@ -204,13 +213,44 @@ impl Shell {
     }
 
     /// Creates a shell that ignores all output.
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             output: ShellOut::Empty(std::io::empty()),
             output_format: OutputFormat::Text,
             output_mode: OutputMode::Quiet,
             verbosity: 0,
             needs_clear: AtomicBool::new(false),
+        }
+    }
+
+    /// Creates a shell that captures stdout and stderr into in-memory buffers.
+    ///
+    /// Intended for tests that want to assert how a piece of code routes output
+    /// between stdout and stderr. Use [`Shell::captured_stdout`] and
+    /// [`Shell::captured_stderr`] to read the buffers back.
+    pub const fn captured() -> Self {
+        Self {
+            output: ShellOut::Captured { stdout: Vec::new(), stderr: Vec::new() },
+            output_format: OutputFormat::Text,
+            output_mode: OutputMode::Normal,
+            verbosity: 0,
+            needs_clear: AtomicBool::new(false),
+        }
+    }
+
+    /// Returns the captured stdout buffer, if this shell was created via [`Shell::captured`].
+    pub fn captured_stdout(&self) -> Option<&[u8]> {
+        match &self.output {
+            ShellOut::Captured { stdout, .. } => Some(stdout),
+            _ => None,
+        }
+    }
+
+    /// Returns the captured stderr buffer, if this shell was created via [`Shell::captured`].
+    pub fn captured_stderr(&self) -> Option<&[u8]> {
+        match &self.output {
+            ShellOut::Captured { stderr, .. } => Some(stderr),
+            _ => None,
         }
     }
 
@@ -264,41 +304,46 @@ impl Shell {
     }
 
     /// Gets the output format of the shell.
-    pub fn output_format(&self) -> OutputFormat {
+    pub const fn output_format(&self) -> OutputFormat {
         self.output_format
     }
 
     /// Gets the output mode of the shell.
-    pub fn output_mode(&self) -> OutputMode {
+    pub const fn output_mode(&self) -> OutputMode {
         self.output_mode
     }
 
     /// Gets the verbosity of the shell when [`OutputMode::Normal`] is set.
-    pub fn verbosity(&self) -> Verbosity {
+    pub const fn verbosity(&self) -> Verbosity {
         self.verbosity
     }
 
     /// Sets the verbosity level.
-    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
+    pub const fn set_verbosity(&mut self, verbosity: Verbosity) {
         self.verbosity = verbosity;
+    }
+
+    /// Sets the output mode.
+    pub const fn set_output_mode(&mut self, output_mode: OutputMode) {
+        self.output_mode = output_mode;
     }
 
     /// Gets the current color choice.
     ///
     /// If we are not using a color stream, this will always return `Never`, even if the color
     /// choice has been set to something else.
-    pub fn color_choice(&self) -> ColorChoice {
+    pub const fn color_choice(&self) -> ColorChoice {
         match self.output {
             ShellOut::Stream { color_choice, .. } => color_choice,
-            ShellOut::Empty(_) => ColorChoice::Never,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => ColorChoice::Never,
         }
     }
 
     /// Returns `true` if stderr is a tty.
-    pub fn is_err_tty(&self) -> bool {
+    pub const fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
-            ShellOut::Empty(_) => false,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
         }
     }
 
@@ -306,7 +351,7 @@ impl Shell {
     pub fn err_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stderr, .. } => supports_color(stderr.current_choice()),
-            ShellOut::Empty(_) => false,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
         }
     }
 
@@ -314,7 +359,7 @@ impl Shell {
     pub fn out_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stdout, .. } => supports_color(stdout.current_choice()),
-            ShellOut::Empty(_) => false,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
         }
     }
 
@@ -370,6 +415,10 @@ impl Shell {
     /// Write a styled fragment with the default color. Use the [`sh_print!`] macro instead.
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
+    //
+    // TODO: stdout is the canonical machine-readable result of a command and should NOT be
+    // suppressed by `--quiet` (see `docs/dev/output-channels.md`). Flip this once the major
+    // prose `sh_println!` call sites in forge/script have been migrated to `sh_status!`.
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
         match self.output_mode {
             OutputMode::Quiet => Ok(()),
@@ -450,6 +499,7 @@ impl ShellOut {
         match self {
             Self::Stream { stdout, .. } => stdout,
             Self::Empty(e) => e,
+            Self::Captured { stdout, .. } => stdout,
         }
     }
 
@@ -458,6 +508,7 @@ impl ShellOut {
         match self {
             Self::Stream { stderr, .. } => stderr,
             Self::Empty(e) => e,
+            Self::Captured { stderr, .. } => stderr,
         }
     }
 
@@ -489,7 +540,7 @@ impl ShellOut {
 
 impl ColorChoice {
     /// Converts our color choice to [`anstream`]'s version.
-    fn to_anstream_color_choice(self) -> anstream::ColorChoice {
+    const fn to_anstream_color_choice(self) -> anstream::ColorChoice {
         match self {
             Self::Always => anstream::ColorChoice::Always,
             Self::Never => anstream::ColorChoice::Never,
@@ -498,7 +549,7 @@ impl ColorChoice {
     }
 }
 
-fn supports_color(choice: anstream::ColorChoice) -> bool {
+const fn supports_color(choice: anstream::ColorChoice) -> bool {
     match choice {
         anstream::ColorChoice::Always
         | anstream::ColorChoice::AlwaysAnsi

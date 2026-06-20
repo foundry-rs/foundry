@@ -9,6 +9,10 @@ ignore = [
     "RUSTSEC-2024-0436",
     # https://rustsec.org/advisories/RUSTSEC-2025-0141 bincode is unmaintained
     "RUSTSEC-2025-0141",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0097 rand is unsound with a custom logger
+    "RUSTSEC-2026-0097",
+    # https://rustsec.org/advisories/RUSTSEC-2026-0173 proc-macro-error2 is unmaintained
+    "RUSTSEC-2026-0173",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -98,9 +102,7 @@ unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
     "https://github.com/alloy-rs/evm",
-    "https://github.com/foundry-rs/compilers",
-    "https://github.com/foundry-rs/foundry-fork-db",
-    "https://github.com/foundry-rs/optimism",
+    "https://github.com/foundry-rs/foundry-core",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/paradigmxyz/solar",
     "https://github.com/bluealloy/revm",
@@ -108,6 +110,11 @@ allow-git = [
     "https://github.com/rust-cli/rexpect",
     # Tempo
     "https://github.com/tempoxyz/tempo",
+    "https://github.com/tempoxyz/mpp-rs",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
+    "https://github.com/paradigmxyz/reth-core",
+    # Temporary: OP crates until upstream optimism bumps to revm 40.
+    "https://github.com/foundry-rs/optimism",
+    "https://github.com/foundry-rs/op-revm",
 ]

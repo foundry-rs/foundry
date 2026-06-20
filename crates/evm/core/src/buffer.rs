@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use revm::bytecode::opcode;
 
 /// Used to keep track of which buffer is currently active to be drawn by the debugger.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BufferKind {
     Memory,
     Calldata,
@@ -11,7 +11,7 @@ pub enum BufferKind {
 
 impl BufferKind {
     /// Helper to cycle through the active buffers.
-    pub fn next(&self) -> Self {
+    pub const fn next(&self) -> Self {
         match self {
             Self::Memory => Self::Calldata,
             Self::Calldata => Self::Returndata,
@@ -83,17 +83,12 @@ pub fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
         -2 => Some(1),
         -1 => Some(32),
         0 => None,
-        1.. => {
-            if (stack_index as usize) <= stack_len {
-                Some(stack[stack_len - stack_index as usize].saturating_to())
-            } else {
-                None
-            }
-        }
+        1.. => ((stack_index as usize) <= stack_len)
+            .then(|| stack[stack_len - stack_index as usize].saturating_to()),
         _ => panic!("invalid stack index"),
     };
 
-    if buffer_access.0.is_some() || buffer_access.1.is_some() {
+    (buffer_access.0.is_some() || buffer_access.1.is_some()).then(|| {
         let (read, write) = buffer_access;
         let read_access = read.and_then(|b| {
             let (buffer, offset, len) = b;
@@ -103,8 +98,6 @@ pub fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
             let (offset, len) = b;
             Some(BufferAccess { offset: get_size(offset)?, len: get_size(len)? })
         });
-        Some(BufferAccesses { read: read_access, write: write_access })
-    } else {
-        None
-    }
+        BufferAccesses { read: read_access, write: write_access }
+    })
 }

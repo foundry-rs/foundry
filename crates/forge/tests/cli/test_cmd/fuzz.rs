@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
 
@@ -845,6 +846,8 @@ forgetest_init!(test_fuzz_random_uint_varies_across_runs, |prj, cmd| {
     prj.add_test(
         "RandomFuzzTest.t.sol",
         r#"
+pragma solidity >=0.8.0;
+
 import {Test} from "forge-std/Test.sol";
 
 contract RandomFuzzTest is Test {
@@ -868,3 +871,145 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 ...
 "#]]);
 });
+
+forgetest_init!(test_fuzz_run_replays_random_uint_failure, |prj, cmd| {
+    prj.add_test(
+        "RandomFuzzTest.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import {Test} from "forge-std/Test.sol";
+
+contract RandomFuzzTest is Test {
+    function testFuzz_randomUint_shouldFail(uint256) public {
+        uint256 rand = vm.randomUint(0, 4);
+        assertTrue(rand != 0, "hit value 0");
+    }
+}
+   "#,
+    );
+
+    let expected_output = str![[r#"
+...
+Ran 1 test for test/RandomFuzzTest.t.sol:RandomFuzzTest
+[FAIL: hit value 0; counterexample: [..]] testFuzz_randomUint_shouldFail(uint256) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]];
+
+    cmd.args(["test", "--fuzz-seed", "1", "--mt", "testFuzz_randomUint_shouldFail", "-j1"])
+        .assert_failure()
+        .stdout_eq(expected_output.clone());
+
+    let failure_file =
+        prj.root().join("cache/fuzz/failures/RandomFuzzTest/testFuzz_randomUint_shouldFail");
+    let persisted_failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    assert_eq!(persisted_failure.fuzz.seed, Some(U256::from(1)));
+    assert_eq!(persisted_failure.fuzz.worker, Some(0));
+    let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
+    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--fuzz-seed",
+            "1",
+            "--fuzz-run",
+            &fuzz_run,
+            "--fuzz-worker",
+            &fuzz_worker,
+            "--mt",
+            "testFuzz_randomUint_shouldFail",
+            "-j1",
+        ])
+        .assert_failure()
+        .stdout_eq(expected_output.clone());
+
+    cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure().stdout_eq(expected_output);
+});
+
+forgetest_init!(test_fuzz_rerun_replays_random_uint_failure_without_seed, |prj, cmd| {
+    prj.add_test(
+        "RandomFuzzTest.t.sol",
+        r#"
+pragma solidity >=0.8.0;
+
+import {Test} from "forge-std/Test.sol";
+
+contract RandomFuzzTest is Test {
+    error Random(uint256 value);
+
+    function testFuzz_randomUint_shouldFail(uint256) public {
+        revert Random(vm.randomUint());
+    }
+}
+   "#,
+    );
+
+    let expected_output = str![[r#"
+...
+Ran 1 test for test/RandomFuzzTest.t.sol:RandomFuzzTest
+[FAIL: Random([..]); counterexample: [..]] testFuzz_randomUint_shouldFail(uint256) (runs: [..], [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]];
+
+    let assert = cmd
+        .args(["test", "--mt", "testFuzz_randomUint_shouldFail", "-j1"])
+        .assert_failure()
+        .stdout_eq(expected_output.clone());
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let reason = random_failure_reason(&stdout);
+
+    let failure_file =
+        prj.root().join("cache/fuzz/failures/RandomFuzzTest/testFuzz_randomUint_shouldFail");
+    let persisted_failure: BaseCounterExample =
+        serde_json::from_slice(&std::fs::read(&failure_file).unwrap()).unwrap();
+    let fuzz_seed = format!("{:#x}", persisted_failure.fuzz.seed.unwrap());
+    let fuzz_run = persisted_failure.fuzz.run.unwrap().to_string();
+    let fuzz_worker = persisted_failure.fuzz.worker.unwrap().to_string();
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--fuzz-seed",
+            &fuzz_seed,
+            "--fuzz-run",
+            &fuzz_run,
+            "--fuzz-worker",
+            &fuzz_worker,
+            "--mt",
+            "testFuzz_randomUint_shouldFail",
+            "-j1",
+        ])
+        .assert_failure()
+        .stdout_eq(expected_output.clone());
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
+
+    let assert = cmd
+        .forge_fuse()
+        .args(["test", "--rerun", "-j1"])
+        .assert_failure()
+        .stdout_eq(expected_output);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
+
+    let assert = cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
+});
+
+fn random_failure_reason(stdout: &str) -> String {
+    Regex::new(r"\[FAIL: (Random\([^)]+\))")
+        .unwrap()
+        .captures(stdout)
+        .unwrap_or_else(|| panic!("{stdout}"))[1]
+        .to_string()
+}

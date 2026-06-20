@@ -1,6 +1,7 @@
 use super::{error::BeaconError, utils::must_be_ssz};
 use crate::eth::EthApi;
 use alloy_eips::BlockId;
+use alloy_network::Network;
 use alloy_primitives::{B256, aliases::B32};
 use alloy_rpc_types_beacon::{
     genesis::{GenesisData, GenesisResponse},
@@ -12,7 +13,6 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use foundry_primitives::FoundryNetwork;
 use ssz::Encode;
 use std::{collections::HashMap, str::FromStr as _};
 
@@ -21,8 +21,8 @@ use std::{collections::HashMap, str::FromStr as _};
 /// This endpoint is deprecated. Use `GET /eth/v1/beacon/blobs/{block_id}` instead.
 ///
 /// GET /eth/v1/beacon/blob_sidecars/{block_id}
-pub async fn handle_get_blob_sidecars(
-    State(_api): State<EthApi<FoundryNetwork>>,
+pub async fn handle_get_blob_sidecars<N: Network>(
+    State(_api): State<EthApi<N>>,
     Path(_block_id): Path<String>,
     Query(_params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -33,9 +33,9 @@ pub async fn handle_get_blob_sidecars(
 /// Handles incoming Beacon API requests for blobs
 ///
 /// GET /eth/v1/beacon/blobs/{block_id}
-pub async fn handle_get_blobs(
+pub async fn handle_get_blobs<N: Network>(
     headers: HeaderMap,
-    State(api): State<EthApi<FoundryNetwork>>,
+    State(api): State<EthApi<N>>,
     Path(block_id): Path<String>,
     Query(versioned_hashes): Query<HashMap<String, String>>,
 ) -> Response {
@@ -94,7 +94,7 @@ pub async fn handle_get_blobs(
 /// Only returns the `genesis_time`, other fields are set to zero.
 ///
 /// GET /eth/v1/beacon/genesis
-pub async fn handle_get_genesis(State(api): State<EthApi<FoundryNetwork>>) -> Response {
+pub async fn handle_get_genesis<N: Network>(State(api): State<EthApi<N>>) -> Response {
     match api.anvil_get_genesis_time() {
         Ok(genesis_time) => Json(GenesisResponse {
             data: GenesisData {

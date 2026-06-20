@@ -1,0 +1,80 @@
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function setStored(bytes memory data) public {
+   │              ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function multiArrayConsumer(uint256[] memory xs, address[] memory ys) public {
+   │              ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function structConsumer(Item memory item) public {
+   │              ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function nestedReferenceConsumer(string memory s, uint256 v) public returns (uint256) {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function calledOnlyExternally(bytes memory payload) public {
+   │              ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function localUnaryStillExternal(bytes memory data) public {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function isolatedSuperTarget(bytes memory data) public {
+   │              ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function readsOnly(ItemLib.Item memory item) public {
+   │              ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function modifierWithoutArgs(bytes memory data) public checkValues {
+   │              ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
+LL │     function returnsParam(bytes memory data) public returns (bytes memory) {
+   │              ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+

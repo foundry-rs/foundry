@@ -3,7 +3,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::{Ethereum, Network};
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
@@ -11,8 +11,7 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::LoadConfig,
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::WalletOpts;
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
@@ -63,7 +62,7 @@ impl AccessListArgs {
         if self.tx.tempo.is_tempo() {
             self.run_with_network::<TempoNetwork>().await
         } else {
-            self.run_with_network::<AnyNetwork>().await
+            self.run_with_network::<Ethereum>().await
         }
     }
 

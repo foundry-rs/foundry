@@ -66,7 +66,7 @@ pub struct CurlTransport {
 
 impl CurlTransport {
     /// Create a new curl transport with the given URL.
-    pub fn new(url: Url) -> Self {
+    pub const fn new(url: Url) -> Self {
         Self { url, headers: vec![], jwt: None }
     }
 

@@ -1,12 +1,18 @@
 use super::{install, watch::WatchArgs};
+use crate::diagnostic::build::SOLC_ERROR;
 use clap::Parser;
-use eyre::{Context, Result};
+use eyre::Result;
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
+    ExitCode,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
 };
-use foundry_common::{compile::ProjectCompiler, shell};
+use foundry_common::{
+    compile::{ContractSizeLimits, ProjectCompiler},
+    shell,
+};
 use foundry_compilers::{
     CompilationError, FileFilter, Project, ProjectCompileOutput,
     compilers::{Language, multi::MultiCompilerLanguage},
@@ -14,7 +20,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, SkipBuildFilters,
+    Config, DenyLevel, SkipBuildFilters,
     figment::{
         self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
@@ -23,6 +29,10 @@ use foundry_config::{
     filter::expand_globs,
 };
 use serde::Serialize;
+use solar::{
+    interface::{Session, config::Opts},
+    sema::Compiler,
+};
 use std::path::PathBuf;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
@@ -61,6 +71,14 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub ignore_eip_3860: bool,
 
+    /// Skip the post-build lint step for this invocation.
+    ///
+    /// Equivalent to setting `lint_on_build = false` under `[lint]` in foundry.toml,
+    /// but only for the current command.
+    #[arg(long, visible_alias = "skip-lint")]
+    #[serde(skip)]
+    pub no_lint: bool,
+
     #[command(flatten)]
     #[serde(flatten)]
     pub build: BuildOpts,
@@ -71,17 +89,52 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
+    /// Reject flags whose stdout shape conflicts with the envelope contract.
+    /// Must be called before dispatch so `--watch` is caught before the watch
+    /// loop short-circuits past `BuildArgs::run`.
+    pub fn ensure_machine_compatible(&self) {
+        if !foundry_cli::is_machine() {
+            return;
+        }
+        let unsupported =
+            [("--watch", self.is_watch()), ("--names", self.names), ("--sizes", self.sizes)]
+                .into_iter()
+                .filter_map(|(name, on)| on.then_some(name))
+                .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            foundry_cli::machine::bail_machine_usage_with_details(
+                format!(
+                    "`forge build` under `--machine` does not yet support {}; \
+                     run without `--machine` or omit those flags.",
+                    unsupported.join(", ")
+                ),
+                serde_json::json!({ "unsupported_flags": unsupported }),
+            );
+        }
+    }
+
     pub async fn run(self) -> Result<ProjectCompileOutput> {
+        self.ensure_machine_compatible();
+
+        let machine_mode = foundry_cli::is_machine();
         let mut config = self.load_config()?;
 
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        // Skip implicit dep install under `--machine`: it writes to stdout and mutates the project
+        // behind the agent's back. Missing deps will surface as a typed compile-error envelope.
+        if !machine_mode
+            && install::install_missing_dependencies(&mut config).await
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
 
-        self.check_soldeer_lock_consistency(&config).await;
-        self.check_foundry_lock_consistency(&config);
+        // Lock-consistency checks emit `sh_warn!` to stderr; skip under `--machine` to keep
+        // the agent channel quiet.
+        if !machine_mode {
+            self.check_soldeer_lock_consistency(&config).await;
+            self.check_foundry_lock_consistency(&config);
+        }
 
         let project = config.project()?;
 
@@ -99,27 +152,85 @@ impl BuildArgs {
         }
 
         let format_json = shell::is_json();
-        let compiler = ProjectCompiler::new()
+
+        // Pre-empt the inner `"Nothing to compile" + exit(0)` path so it can't break the
+        // envelope-only stdout contract.
+        if machine_mode && !project.paths.has_input_files() && self.paths.is_none() {
+            let payload = BuildData { artifacts: 0, errors: 0, warnings: 0, unchanged: false };
+            print_json(&JsonEnvelope::success(payload))?;
+            std::process::exit(ExitCode::Success.to_i32());
+        }
+
+        // Under `--machine`: force quiet (envelope-only stdout) and disable `bail` so we can
+        // emit a typed failure envelope instead of a generic eyre error. v1 skips post-build
+        // lint (not yet modeled in the envelope schema).
+        let mut compiler = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
-            .bail(!format_json);
+            .size_limits(
+                config
+                    .code_size_limit
+                    .map(ContractSizeLimits::with_runtime_limit)
+                    .unwrap_or_default(),
+            )
+            .bail(!format_json && !machine_mode);
+        if machine_mode {
+            compiler = compiler.quiet(true);
+        }
 
         let mut output = compiler.compile(&project)?;
+
+        // Under `--machine`, emit the typed envelope *before* `cache_local_signatures` so a
+        // cache-write failure can never mask a compile-error envelope as `cli.unknown`.
+        if machine_mode && output.has_compiler_errors() {
+            let errors: Vec<JsonMessage> = output
+                .output()
+                .errors
+                .iter()
+                .filter(|e| e.is_error())
+                .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
+                .collect();
+            // Best-effort: bubbling via `?` on a broken stdout would demote
+            // the canonical `Build (4)` exit to `GenericError (1)`.
+            let _ = print_json(&JsonEnvelope::<()>::failure(errors));
+            std::process::exit(ExitCode::Build.to_i32());
+        }
 
         // Cache project selectors.
         cache_local_signatures(&output)?;
 
-        if format_json && !self.names && !self.sizes {
+        if format_json && !self.names && !self.sizes && !machine_mode {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
+        if machine_mode {
+            // Lint output isn't modeled in the v1 envelope; refuse configs that would otherwise
+            // diverge human and machine outcomes (deferred until after compile so a failed
+            // build still emits `compiler.solc.error` + `Build (4)`).
+            if !self.no_lint && config.lint.lint_on_build && config.deny != DenyLevel::Never {
+                foundry_cli::machine::bail_machine_usage(
+                    "`forge build --machine` does not model lint diagnostics in v1; \
+                     `lint_on_build = true` with `deny != never` would diverge human and \
+                     machine outcomes. Pass `--no-lint` or set `deny = never`.",
+                );
+            }
+
+            let payload = BuildData::from_output(&output);
+            print_json(&JsonEnvelope::success(payload))?;
+            return Ok(output);
+        }
+
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
-        if config.lint.lint_on_build && !output.output().errors.iter().any(|e| e.is_error()) {
-            self.lint(&project, &config, self.paths.as_deref(), &mut output)
-                .wrap_err("Lint failed")?;
+        if !self.no_lint
+            && config.lint.lint_on_build
+            && !output.output().errors.iter().any(|e| e.is_error())
+            && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
+        {
+            emit_lint_failure_notice();
+            return Err(err.wrap_err("post-build lint step failed"));
         }
 
         Ok(output)
@@ -188,9 +299,10 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            let mut compiler = solar::sema::Compiler::new(
-                solar::interface::Session::builder().with_stderr_emitter().build(),
-            );
+            let mut opts = Opts::default();
+            opts.unstable.typeck = true;
+            let mut compiler =
+                Compiler::new(Session::builder().opts(opts).with_stderr_emitter().build());
 
             // Load the solar-compatible sources to the pcx before linting
             compiler.enter_mut(|compiler| {
@@ -199,6 +311,7 @@ impl BuildArgs {
                 pcx.set_resolve_imports(true);
                 pcx.parse();
             });
+
             linter.lint(&input_files, config.deny, &mut compiler)?;
         }
 
@@ -215,7 +328,7 @@ impl BuildArgs {
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 
@@ -320,6 +433,55 @@ impl BuildArgs {
             }
         }
     }
+}
+
+/// Stable payload emitted in the `forge build` envelope under `--machine`.
+#[derive(Clone, Debug, Serialize)]
+pub struct BuildData {
+    /// Total number of compiled artifacts in the project.
+    pub artifacts: usize,
+    /// Number of compiler errors in the output.
+    pub errors: usize,
+    /// Number of compiler warnings in the output.
+    pub warnings: usize,
+    /// Whether the build was a no-op (no input files changed since the last
+    /// compile). Mirrors `ProjectCompileOutput::is_unchanged`.
+    pub unchanged: bool,
+}
+
+impl BuildData {
+    fn from_output(output: &ProjectCompileOutput) -> Self {
+        let artifacts = output.artifact_ids().count();
+        let mut errors = 0usize;
+        let mut warnings = 0usize;
+        for diag in &output.output().errors {
+            if diag.is_error() {
+                errors += 1;
+            } else {
+                warnings += 1;
+            }
+        }
+        Self { artifacts, errors, warnings, unchanged: output.is_unchanged() }
+    }
+}
+
+/// Notice shown on lint-on-build failure; printed separately so it survives single-line
+/// cause-chain rendering.
+const LINT_FAILURE_NOTICE: &str = "\
+note: internal lint engine failure (compilation itself succeeded).
+note: please file a bug report at
+      https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml
+      and attach the full output above.
+help: rerun with `--no-lint` to skip linting for this build, or consider temporarily
+      disabling forge lint on build:
+      https://getfoundry.sh/forge/linting#disable-linting-on-build
+";
+
+fn emit_lint_failure_notice() {
+    if shell::is_json() {
+        return;
+    }
+    let _ = sh_eprintln!("\n{LINT_FAILURE_NOTICE}");
 }
 
 // Make this args a `figment::Provider` so that it can be merged into the `Config`

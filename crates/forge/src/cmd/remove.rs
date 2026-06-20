@@ -44,7 +44,7 @@ impl RemoveArgs {
         for (Dependency { name, tag, .. }, path) in self.dependencies.iter().zip(&paths) {
             // Get the URL from git submodule config instead of using the parsed dependency URL
             let url = git.submodule_url(path).unwrap_or(None);
-            sh_println!(
+            sh_status!(
                 "Removing '{name}' in {}, (url: {}, tag: {})",
                 path.display(),
                 url.as_deref().unwrap_or("None"),

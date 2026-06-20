@@ -46,7 +46,7 @@ impl InlineConfigItem<Vec<String>> {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
-                Some((id_str, _)) => id_str.split(",").map(|s| s.trim().to_string()).collect(),
+                Some((id_str, _)) => id_str.split(',').map(|s| s.trim().to_string()).collect(),
                 None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };
@@ -216,7 +216,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                 }
             }
             InlineConfigItem::DisableLine(ids) => {
-                let start = src[..comment_range.start].rfind('\n').map_or(0, |i| i);
+                let start = src[..comment_range.start].rfind('\n').unwrap_or(0);
                 let end = src[comment_range.end..]
                     .find('\n')
                     .map_or(src.len(), |i| comment_range.end + i);
@@ -331,7 +331,7 @@ struct NextItemFinder {
 }
 
 impl NextItemFinder {
-    fn new(offset: BytePos) -> Self {
+    const fn new(offset: BytePos) -> Self {
         Self { offset }
     }
 

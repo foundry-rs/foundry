@@ -6,6 +6,7 @@ use foundry_compilers::{
 };
 use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
 use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
@@ -111,8 +112,10 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
-    if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum()
+    let chain = Chain::from(chain_id);
+    if let Some(chain) = chain.named() {
+        return chain.is_tempo()
+            || chain.is_arbitrum()
             || chain.is_elastic()
             || matches!(
                 chain,
@@ -123,8 +126,11 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::EtherlinkShadownet
                     | NamedChain::Karura
                     | NamedChain::KaruraTestnet
+                    | NamedChain::Kusama
                     | NamedChain::Mantle
                     | NamedChain::MantleSepolia
+                    | NamedChain::MegaEth
+                    | NamedChain::MegaEthTestnet
                     | NamedChain::Metis
                     | NamedChain::Monad
                     | NamedChain::MonadTestnet
@@ -132,9 +138,8 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     | NamedChain::Moonbeam
                     | NamedChain::MoonbeamDev
                     | NamedChain::Moonriver
-                    | NamedChain::PolkadotTestnet
-                    | NamedChain::Kusama
                     | NamedChain::Polkadot
+                    | NamedChain::PolkadotTestnet
             );
     }
     false
@@ -191,6 +196,10 @@ pub trait LoadConfig {
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
 
+        if config.networks != Default::default() {
+            evm_opts.networks = config.networks;
+        }
+
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
             trace!(target: "forge::config", ?fork_url, "Update EvmOpts fork url");
@@ -242,22 +251,25 @@ pub struct TraceResult {
 
 impl TraceResult {
     /// Create a new [`TraceResult`] from a [`RawCallResult`].
-    pub fn from_raw(raw: RawCallResult, trace_kind: TraceKind) -> Self {
+    pub fn from_raw<FEN: FoundryEvmNetwork>(
+        raw: RawCallResult<FEN>,
+        trace_kind: TraceKind,
+    ) -> Self {
         let RawCallResult { gas_used, traces, reverted, .. } = raw;
         Self { success: !reverted, traces: traces.map(|arena| vec![(trace_kind, arena)]), gas_used }
     }
 }
 
-impl From<DeployResult> for TraceResult {
-    fn from(result: DeployResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<DeployResult<FEN>> for TraceResult {
+    fn from(result: DeployResult<FEN>) -> Self {
         Self::from_raw(result.raw, TraceKind::Deployment)
     }
 }
 
-impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
-    type Error = EvmError;
+impl<FEN: FoundryEvmNetwork> TryFrom<Result<DeployResult<FEN>, EvmError<FEN>>> for TraceResult {
+    type Error = EvmError<FEN>;
 
-    fn try_from(value: Result<DeployResult, EvmError>) -> Result<Self, Self::Error> {
+    fn try_from(value: Result<DeployResult<FEN>, EvmError<FEN>>) -> Result<Self, Self::Error> {
         match value {
             Ok(result) => Ok(Self::from(result)),
             Err(EvmError::Execution(err)) => Ok(Self::from_raw(err.raw, TraceKind::Deployment)),
@@ -266,20 +278,9 @@ impl TryFrom<Result<DeployResult, EvmError>> for TraceResult {
     }
 }
 
-impl From<RawCallResult> for TraceResult {
-    fn from(result: RawCallResult) -> Self {
+impl<FEN: FoundryEvmNetwork> From<RawCallResult<FEN>> for TraceResult {
+    fn from(result: RawCallResult<FEN>) -> Self {
         Self::from_raw(result, TraceKind::Execution)
-    }
-}
-
-impl TryFrom<Result<RawCallResult>> for TraceResult {
-    type Error = EvmError;
-
-    fn try_from(value: Result<RawCallResult>) -> Result<Self, Self::Error> {
-        match value {
-            Ok(result) => Ok(Self::from(result)),
-            Err(err) => Err(EvmError::from(err)),
-        }
     }
 }
 

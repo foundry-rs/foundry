@@ -4,8 +4,6 @@
   "useTabs": false,
   "excludes": [
     "!dprint.json",
-    "!npm/**/*.{json,md,toml}",
-    "!npm/**/*.{js,cjs,mjs,d.ts,d.cts,d.mts,ts,tsx,jsx}",
     "**/_",
     "**/abi",
     "**/build",

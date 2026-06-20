@@ -4,22 +4,17 @@ use alloy_consensus::{
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Network;
-use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
-use std::fmt::Debug;
+use foundry_primitives::FoundryTxEnvelope;
 
 use crate::eth::transaction::MaybeImpersonatedTransaction;
 
-/// Type alias for Ethereum Block with Anvil's transaction type, generic over the transaction
-/// envelope with a default of [`FoundryTxEnvelope`].
+/// Type alias for a block containing potentially impersonated transactions.
 pub type Block<T = FoundryTxEnvelope> = alloy_consensus::Block<MaybeImpersonatedTransaction<T>>;
-
-/// Anvil's concrete block info type.
-pub type BlockInfo = TypedBlockInfo<FoundryNetwork>;
 
 /// Container type that gathers all block data, generic over a [`Network`].
 #[derive(Clone, Debug)]
-pub struct TypedBlockInfo<N: Network> {
-    pub block: alloy_consensus::Block<MaybeImpersonatedTransaction<N::TxEnvelope>>,
+pub struct BlockInfo<N: Network> {
+    pub block: Block<N::TxEnvelope>,
     pub transactions: Vec<TransactionInfo>,
     pub receipts: Vec<N::ReceiptEnvelope>,
 }
@@ -45,24 +40,6 @@ where
 
     let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
     Block::new(header, body)
-}
-
-/// Generic helper function to create a block with any transaction type that supports encoding.
-pub fn create_typed_block<T>(
-    mut header: Header,
-    transactions: impl IntoIterator<Item = T>,
-) -> alloy_consensus::Block<T>
-where
-    T: Encodable2718,
-{
-    let transactions: Vec<_> = transactions.into_iter().collect();
-    let transactions_root = calculate_transaction_root(&transactions);
-
-    header.transactions_root = transactions_root;
-    header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
-
-    let body = BlockBody { transactions, ommers: Vec::new(), withdrawals: None };
-    alloy_consensus::Block::new(header, body)
 }
 
 #[cfg(test)]
@@ -100,6 +77,8 @@ mod tests {
             parent_beacon_block_root: Default::default(),
             base_fee_per_gas: None,
             requests_hash: None,
+            block_access_list_hash: None,
+            slot_number: None,
         };
 
         let encoded = alloy_rlp::encode(&header);
@@ -141,6 +120,8 @@ mod tests {
             nonce: B64::ZERO,
             base_fee_per_gas: None,
             requests_hash: None,
+            block_access_list_hash: None,
+            slot_number: None,
         };
 
         header.encode(&mut data);
@@ -174,6 +155,8 @@ mod tests {
             parent_beacon_block_root: None,
             base_fee_per_gas: None,
             requests_hash: None,
+            block_access_list_hash: None,
+            slot_number: None,
         };
         let header = Header::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
@@ -206,6 +189,8 @@ mod tests {
             excess_blob_gas: None,
             parent_beacon_block_root: None,
             requests_hash: None,
+            block_access_list_hash: None,
+            slot_number: None,
         };
         assert_eq!(header.hash_slow(), expected_hash);
     }
