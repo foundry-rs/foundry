@@ -226,6 +226,281 @@ casttest!(receive_policy_receipt_json_and_claim_flow, async |_prj, cmd| {
     assert_eq!(claimed_balance_output["delivery_state"], "not_held");
 });
 
+// Exercises the full TIP-403 policy lifecycle: create, inspect, check, and modify membership.
+casttest!(tip403_policy_lifecycle, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let admin = wallet.address();
+    let member = handle.dev_wallets().nth(1).unwrap().address();
+
+    // IDs 0 and 1 are reserved, so the first user policy on a fresh node is ID 2.
+    let create_err = cmd
+        .cast_fuse()
+        .args([
+            "tip403",
+            "create",
+            "whitelist",
+            "--admin",
+            &admin.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .get_output()
+        .stderr_lossy();
+    assert!(create_err.contains("Expected policy ID: 2"), "{create_err}");
+
+    let info = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "info", "2", "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let info = json_success_data(&info);
+    assert_eq!(info["exists"], true);
+    assert_eq!(info["policy_type"], "whitelist");
+    assert_eq!(info["admin"], admin.to_string());
+
+    // Non-member is not authorized by a whitelist policy until added.
+    let before = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "check", "2", &member.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&before)["authorized"], false);
+
+    cmd.cast_fuse()
+        .args([
+            "tip403",
+            "whitelist",
+            "add",
+            "2",
+            &member.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    let after = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "check", "2", &member.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&after)["authorized"], true);
+
+    // Built-in policies are labeled.
+    let allow_all = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "info", "1", "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&allow_all)["builtin"], "allow-all");
+});
+
+casttest!(tip403_create_warns_on_virtual_member, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+    let pk =
+        format!("0x{}", hex::encode(handle.dev_wallets().next().unwrap().credential().to_bytes()));
+
+    // A TIP-1022 virtual address (bytes [4:14] == 0xFD) is rejected on-chain on T3+; cast warns
+    // and lets the chain enforce rather than hard-failing client-side.
+    let virtual_addr = "0x12345678fdfdfdfdfdfdfdfdfdfdaabbccdd0011";
+    let err = cmd
+        .cast_fuse()
+        .args([
+            "tip403",
+            "create",
+            "whitelist",
+            "--admin",
+            "0x0000000000000000000000000000000000000001",
+            "--member",
+            virtual_addr,
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(err.contains("looks like a TIP-1022 virtual address"), "{err}");
+});
+
+casttest!(tip403_blacklist_semantics, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let admin = wallet.address();
+    let member = handle.dev_wallets().nth(1).unwrap().address();
+
+    cmd.cast_fuse()
+        .args([
+            "tip403",
+            "create",
+            "blacklist",
+            "--admin",
+            &admin.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+
+    // A blacklist authorizes everyone until they are explicitly added.
+    let before = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "check", "2", &member.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&before)["authorized"], true);
+
+    cmd.cast_fuse()
+        .args([
+            "tip403",
+            "blacklist",
+            "add",
+            "2",
+            &member.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+    let blocked = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "check", "2", &member.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&blocked)["authorized"], false);
+
+    cmd.cast_fuse()
+        .args([
+            "tip403",
+            "blacklist",
+            "remove",
+            "2",
+            &member.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+    let restored = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "check", "2", &member.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&restored)["authorized"], true);
+});
+
+casttest!(tip403_create_with_members, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T6.into()))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let admin = wallet.address();
+    let member = handle.dev_wallets().nth(1).unwrap().address();
+
+    // `--member` seeds the whitelist via createPolicyWithAccounts, so the member is authorized
+    // immediately without a follow-up modify.
+    cmd.cast_fuse()
+        .args([
+            "tip403",
+            "create",
+            "whitelist",
+            "--admin",
+            &admin.to_string(),
+            "--member",
+            &member.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+    let check = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "check", "2", &member.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&check)["authorized"], true);
+});
+
+casttest!(tip403_works_pre_t6, async |_prj, cmd| {
+    // TIP-403 is a Genesis precompile, so the base policy commands work before T6 activates.
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = format!("0x{}", hex::encode(wallet.credential().to_bytes()));
+    let admin = wallet.address();
+    let member = handle.dev_wallets().nth(1).unwrap().address();
+
+    cmd.cast_fuse()
+        .args([
+            "tip403",
+            "create",
+            "whitelist",
+            "--admin",
+            &admin.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+    let info = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "info", "2", "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&info)["policy_type"], "whitelist");
+
+    cmd.cast_fuse()
+        .args([
+            "tip403",
+            "whitelist",
+            "add",
+            "2",
+            &member.to_string(),
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success();
+    let check = cmd
+        .cast_fuse()
+        .args(["--json", "tip403", "check", "2", &member.to_string(), "--rpc-url", &rpc])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_eq!(json_success_data(&check)["authorized"], true);
+});
+
 casttest!(tip20_logo_create_help_includes_logo_uri, |_prj, cmd| {
     let output = cmd
         .cast_fuse()

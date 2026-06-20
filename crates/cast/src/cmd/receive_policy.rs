@@ -27,6 +27,8 @@ use tempo_primitives::TempoAddressExt;
 #[derive(Debug, Parser, Clone)]
 pub enum ReceivePolicySubcommand {
     /// Set the caller's TIP-403 receive policy.
+    ///
+    /// Create the sender and token-filter policies referenced here with `cast tip403 create`.
     Set {
         /// Sender policy ID to evaluate for inbound transfer originators.
         sender_policy_id: u64,
