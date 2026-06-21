@@ -1,5 +1,7 @@
 use crate::{
-    BasicTxDetails, invariant::FuzzRunIdentifiedContracts, strategies::literals::LiteralsDictionary,
+    BasicTxDetails,
+    invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
+    strategies::literals::LiteralsDictionary,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
@@ -10,7 +12,6 @@ use alloy_primitives::{
 use foundry_common::{
     ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
 };
-use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
 use revm::{
@@ -150,9 +151,7 @@ impl InvariantFuzzState {
         let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
         dict.insert_logs_values(target_abi, logs, run_depth);
         dict.insert_result_values(target_function, result, run_depth);
-        // Get storage layouts for contracts in the state changeset
-        let storage_layouts = targets.get_storage_layouts();
-        dict.insert_new_state_values(state_changeset, &storage_layouts, mapping_slots);
+        dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
     }
 
     /// Collects typed trace-cmp operands from sancov-instrumented code.
@@ -374,7 +373,7 @@ impl FuzzDictionary {
     fn insert_new_state_values(
         &mut self,
         state_changeset: &StateChangeset,
-        storage_layouts: &HashMap<Address, Arc<StorageLayout>>,
+        targets: &TargetedContracts,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         for (address, account) in state_changeset {
@@ -384,8 +383,12 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let slot_identifier =
-                    storage_layouts.get(address).map(|layout| SlotIdentifier::new(layout.clone()));
+                let slot_identifier = targets.get(address).and_then(|contract| {
+                    contract
+                        .storage_layout
+                        .as_ref()
+                        .map(|layout| SlotIdentifier::new(Arc::clone(layout)))
+                });
                 trace!(
                     "{address:?} has mapping_slots {}",
                     mapping_slots.is_some_and(|m| m.contains_key(address))
