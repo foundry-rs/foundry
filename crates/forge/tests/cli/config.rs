@@ -254,10 +254,11 @@ check_interval = 1
 [invariant.corpus_sync]
 mode = "plateau"
 plateau_runs = 64
+plateau_seconds = 60
 max_imports_per_sync = 64
-shadow_imports_per_sync = 0
-shadow_mutations = 0
-shuffle_on_sync = false
+shadow_imports_per_sync = 8
+shadow_mutations = 2
+shuffle_on_sync = true
 
 [coverage]
 report = ["summary"]
@@ -1491,11 +1492,11 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_sync": {
       "mode": "plateau",
       "plateau_runs": 64,
-      "plateau_seconds": null,
+      "plateau_seconds": 60,
       "max_imports_per_sync": 64,
-      "shadow_imports_per_sync": 0,
-      "shadow_mutations": 0,
-      "shuffle_on_sync": false
+      "shadow_imports_per_sync": 8,
+      "shadow_mutations": 2,
+      "shuffle_on_sync": true
     }
   },
   "symbolic": {

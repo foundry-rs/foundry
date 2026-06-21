@@ -146,11 +146,11 @@ impl Default for InvariantCorpusSyncConfig {
         Self {
             mode: InvariantCorpusSyncMode::Plateau,
             plateau_runs: 64,
-            plateau_seconds: None,
+            plateau_seconds: Some(60),
             max_imports_per_sync: 64,
-            shadow_imports_per_sync: 0,
-            shadow_mutations: 0,
-            shuffle_on_sync: false,
+            shadow_imports_per_sync: 8,
+            shadow_mutations: 2,
+            shuffle_on_sync: true,
         }
     }
 }
