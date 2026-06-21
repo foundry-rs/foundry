@@ -1,5 +1,5 @@
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Selector, map::HashMap};
+use alloy_primitives::{Address, Bytes, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -297,13 +297,15 @@ pub struct InvariantContract<'a> {
     pub call_after_invariant: bool,
     /// ABI of the test contract.
     pub abi: &'a JsonAbi,
+    /// ABI calldata for each invariant function.
+    pub invariant_calldata: Vec<Bytes>,
 }
 
 impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
     ///
     /// Caller must ensure `invariant_fns` is non-empty and `anchor_idx < invariant_fns.len()`.
-    pub const fn new(
+    pub fn new(
         address: Address,
         name: &'a str,
         invariant_fns: Vec<(&'a Function, bool)>,
@@ -311,12 +313,32 @@ impl<'a> InvariantContract<'a> {
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        Self { address, name, invariant_fns, anchor_idx, call_after_invariant, abi }
+        let invariant_calldata =
+            invariant_fns.iter().map(|(func, _)| func.selector().to_vec().into()).collect();
+        Self {
+            address,
+            name,
+            invariant_fns,
+            anchor_idx,
+            call_after_invariant,
+            abi,
+            invariant_calldata,
+        }
     }
 
     /// Returns the stable campaign anchor.
     pub fn anchor(&self) -> &'a Function {
         self.invariant_fns[self.anchor_idx].0
+    }
+
+    /// Returns cached calldata for the invariant at `idx`.
+    pub fn invariant_calldata(&self, idx: usize) -> Bytes {
+        self.invariant_calldata[idx].clone()
+    }
+
+    /// Returns cached calldata for the stable campaign anchor.
+    pub fn anchor_calldata(&self) -> Bytes {
+        self.invariant_calldata(self.anchor_idx)
     }
 
     /// Returns true if this is an optimization mode invariant (returns int256).
@@ -450,7 +472,6 @@ impl fmt::Display for InvariantSettings {
 mod tests {
     use super::*;
     use crate::CallDetails;
-    use alloy_primitives::Bytes;
 
     fn targeted_contracts_with_function(target: Address, function: Function) -> TargetedContracts {
         let mut abi = JsonAbi::new();
