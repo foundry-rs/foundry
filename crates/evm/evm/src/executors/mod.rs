@@ -582,6 +582,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        if let Some(edge_coverage) = stack.inner.edge_coverage.as_mut() {
+            edge_coverage.prepare_for_execution();
+        }
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
@@ -616,6 +619,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        if let Some(edge_coverage) = stack.inner.edge_coverage.as_mut() {
+            edge_coverage.prepare_for_execution();
+        }
         let sancov_edges = stack.inner.sancov_edges;
         let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
         let sancov_active = sancov_edges || sancov_trace_cmp;
