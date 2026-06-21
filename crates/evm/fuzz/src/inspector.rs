@@ -127,6 +127,16 @@ impl Fuzzer {
         std::mem::take(&mut self.observed_calls)
     }
 
+    /// Reuses an observed-call buffer after its entries have been processed.
+    pub fn recycle_observed_calls(&mut self, mut observed_calls: Vec<ObservedCall>) {
+        observed_calls.clear();
+        if self.observed_calls.is_empty()
+            && observed_calls.capacity() > self.observed_calls.capacity()
+        {
+            self.observed_calls = observed_calls;
+        }
+    }
+
     fn record_observed_call(
         &mut self,
         caller: Address,
@@ -330,5 +340,24 @@ mod tests {
 
         assert_eq!(fuzzer.take_observed_calls().len(), 1);
         assert!(fuzzer.take_observed_calls().is_empty());
+    }
+
+    #[test]
+    fn recycle_observed_calls_reuses_capacity_without_entries() {
+        let mut fuzzer = fuzzer(true);
+        let mut observed_calls = Vec::with_capacity(4);
+        observed_calls.push(ObservedCall {
+            depth: 1,
+            caller: Address::ZERO,
+            target: Address::with_last_byte(1),
+            calldata: Bytes::from_static(b"abcd"),
+            value: None,
+        });
+        let capacity = observed_calls.capacity();
+
+        fuzzer.recycle_observed_calls(observed_calls);
+
+        assert!(fuzzer.observed_calls.is_empty());
+        assert!(fuzzer.observed_calls.capacity() >= capacity);
     }
 }

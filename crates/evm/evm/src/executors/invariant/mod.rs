@@ -965,6 +965,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 {
                     corpus_entries.push(entry);
                 }
+                if let Some(fuzzer) = current_run.executor.inspector_mut().fuzzer.as_mut() {
+                    fuzzer.recycle_observed_calls(observed_calls);
+                }
 
                 if discarded {
                     current_run.inputs.pop();
