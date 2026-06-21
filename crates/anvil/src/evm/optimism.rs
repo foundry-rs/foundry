@@ -59,7 +59,7 @@ mod tests {
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
+        CustomPrecompileFactory.install(evm.precompiles_mut());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -76,7 +76,7 @@ mod tests {
         assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
+        CustomPrecompileFactory.install(evm.precompiles_mut());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 

@@ -8,7 +8,7 @@ use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::{
-    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters,
+    DebugSourceScope, DebugVariable, SourceData, decode_step_parameters, function_signature,
 };
 use ratatui::{
     Frame,
@@ -17,8 +17,9 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
+use revm::bytecode::opcode;
 use revm_inspectors::tracing::types::{
-    CallKind, CallTraceStep, DecodedInternalCall, DecodedTraceStep,
+    CallKind, DecodedInternalCall, DecodedTraceStep, StorageChange, StorageChangeReason,
 };
 use std::{collections::VecDeque, fmt::Write};
 
@@ -195,7 +196,9 @@ impl TUIContext<'_> {
     }
 
     fn footer_height(&self) -> u16 {
-        let status_or_input = u16::from(self.pc_input.is_some() || self.status.is_some());
+        let status_or_input = u16::from(
+            self.pc_input.is_some() || self.opcode_search_input.is_some() || self.status.is_some(),
+        );
         let shortcuts = if self.show_shortcuts { 2 } else { 0 };
         status_or_input + shortcuts
     }
@@ -216,6 +219,19 @@ impl TUIContext<'_> {
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
+        } else if let Some(input) = &self.opcode_search_input {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Search opcodes: /",
+                    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(input.as_str()),
+                Span::styled("█", Style::new().fg(Color::Cyan)),
+                Span::styled(
+                    "  Enter: jump | Esc: cancel | after search: n/N repeat",
+                    Style::new().add_modifier(Modifier::DIM),
+                ),
+            ]));
         } else if let Some(status) = &self.status {
             let style = match status.kind {
                 StatusKind::Info => Style::new().fg(Color::Green),
@@ -224,8 +240,8 @@ impl TUIContext<'_> {
             lines.push(Line::from(Span::styled(status.text.as_str(), style)));
         }
 
-        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [b]: cycle memory/calldata/returndata buffers";
-        let l2 = "[l]: layout | [t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
+        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [/]: search opcodes | [n/N]: next/prev search";
+        let l2 = "[l]: layout | [b]: cycle buffer | [t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
             lines.push(Line::from(Span::styled(l1, dimmed)));
@@ -471,25 +487,57 @@ impl TUIContext<'_> {
 
     fn draw_variables(&mut self, f: &mut Frame<'_>, area: Rect) {
         let variables = self.scope_variables();
+        let storage_access = self.current_storage_access_line();
         let known = variables.iter().filter(|variable| variable.value.is_some()).count();
-        let title = if variables.is_empty() {
+        let title = if variables.is_empty() && storage_access.is_none() {
             "Variables".to_string()
         } else {
-            format!("Variables: {known}/{}", variables.len())
+            let storage_suffix = if storage_access.is_some() { " | Storage" } else { "" };
+            format!("Variables: {known}/{}{storage_suffix}", variables.len())
         };
 
-        let text = if variables.is_empty() {
-            vec![Line::from(Span::styled(
+        let mut text = variables.into_iter().map(scope_variable_line).collect::<Vec<_>>();
+        if let Some(storage_access) = storage_access {
+            if !text.is_empty() {
+                text.push(Line::from(""));
+            }
+            text.push(storage_access);
+        }
+
+        if text.is_empty() {
+            text.push(Line::from(Span::styled(
                 "No variables in current scope",
                 Style::new().add_modifier(Modifier::DIM),
-            ))]
-        } else {
-            variables.into_iter().map(scope_variable_line).collect()
-        };
+            )));
+        }
 
         let block = Block::default().title(title).borders(Borders::ALL);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
+    }
+
+    fn current_storage_access_line(&self) -> Option<Line<'static>> {
+        let step = self.current_step();
+        if let Some(change) = step.storage_change.as_deref() {
+            return Some(storage_access_line(change));
+        }
+
+        // `revm-inspectors` records `storage_change` from journal entries, so warm `SLOAD`s do not
+        // get one. Debug mode records full stack snapshots before each opcode; the following step's
+        // stack contains the loaded value after this `SLOAD` executes.
+        if step.op.get() == opcode::SLOAD {
+            let key = step.stack.as_deref()?.last().copied()?;
+            let value = self
+                .debug_steps()
+                .get(self.current_step.checked_add(1)?)?
+                .stack
+                .as_deref()?
+                .last()
+                .copied()?;
+            return Some(sload_storage_access_line(key, value));
+        }
+
+        None
     }
 
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
@@ -749,8 +797,13 @@ impl TUIContext<'_> {
         }
 
         let parameters = Parameters::parse(&scope.parameters_src).ok()?;
-        let step = self.step_by_absolute_index(trace_node_idx, entry_step)?;
-        decode_step_parameters(&parameters, step)
+        let node = self.debug_arena().iter().find(|node| {
+            node.trace_node_idx == trace_node_idx
+                && entry_step >= node.step_offset
+                && entry_step < node.step_offset.saturating_add(node.steps.len())
+        })?;
+        let step = node.steps.get(entry_step.checked_sub(node.step_offset)?)?;
+        decode_step_parameters(&parameters, step, Some(node.calldata.as_ref()))
     }
 
     fn active_internal_call(&mut self) -> Option<ActiveInternalCall<'_>> {
@@ -834,17 +887,6 @@ impl TUIContext<'_> {
         })
     }
 
-    fn step_by_absolute_index(
-        &self,
-        trace_node_idx: usize,
-        absolute_step: usize,
-    ) -> Option<&CallTraceStep> {
-        self.debug_arena()
-            .iter()
-            .filter(|node| node.trace_node_idx == trace_node_idx)
-            .find_map(|node| node.steps.get(absolute_step.checked_sub(node.step_offset)?))
-    }
-
     fn absolute_current_step(&self) -> usize {
         self.debug_call().step_offset.saturating_add(self.current_step)
     }
@@ -865,6 +907,36 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
+fn storage_access_line(change: &StorageChange) -> Line<'static> {
+    let op = match change.reason {
+        StorageChangeReason::SLOAD => "SLOAD",
+        StorageChangeReason::SSTORE => "SSTORE",
+    };
+
+    let text = match (change.reason, change.had_value) {
+        (StorageChangeReason::SSTORE, Some(previous)) => format!(
+            "storage {op} slot {}: {} -> {}",
+            hex_u256(change.key),
+            hex_u256(previous),
+            hex_u256(change.value)
+        ),
+        _ => format!("storage {op} slot {} = {}", hex_u256(change.key), hex_u256(change.value)),
+    };
+
+    Line::from(Span::styled(text, Style::new().fg(Color::Yellow)))
+}
+
+fn sload_storage_access_line(key: U256, value: U256) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("storage SLOAD slot {} = {}", hex_u256(key), hex_u256(value)),
+        Style::new().fg(Color::Yellow),
+    ))
+}
+
+fn hex_u256(value: U256) -> String {
+    format!("{value:#x}")
+}
+
 fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) -> String {
     variable
         .name
@@ -876,9 +948,17 @@ fn variable_name(variable: &DebugVariable, index: usize, fallback_prefix: &str) 
 
 fn decoded_internal_name_matches(decoded_name: &str, scope: &DebugSourceScope) -> bool {
     if let Some((contract_name, function_name)) = decoded_name.rsplit_once("::") {
-        return contract_name == scope.contract_name && function_name == scope.function_name;
+        return contract_name == scope.contract_name
+            && decoded_function_matches(function_name, scope);
     }
-    decoded_name == scope.function_name
+    decoded_function_matches(decoded_name, scope)
+}
+
+fn decoded_function_matches(decoded_name: &str, scope: &DebugSourceScope) -> bool {
+    if decoded_name == scope.function_name {
+        return true;
+    }
+    scope_function_signature(scope).as_deref().is_some_and(|signature| decoded_name == signature)
 }
 
 fn decode_external_parameter_values(
@@ -912,20 +992,6 @@ fn scope_function_signature(scope: &DebugSourceScope) -> Option<String> {
 fn function_selector(function_name: &str, types: &[DynSolType]) -> [u8; 4] {
     let signature = function_signature(function_name, types);
     keccak256(signature.as_bytes())[..4].try_into().unwrap()
-}
-
-fn function_signature(function_name: &str, types: &[DynSolType]) -> String {
-    let mut signature = String::new();
-    signature.push_str(function_name);
-    signature.push('(');
-    for (i, ty) in types.iter().enumerate() {
-        if i > 0 {
-            signature.push(',');
-        }
-        signature.push_str(&ty.sol_type_name());
-    }
-    signature.push(')');
-    signature
 }
 
 fn decode_abi_sequence(types: &[DynSolType], data: &[u8]) -> Option<Vec<String>> {
@@ -1075,7 +1141,7 @@ mod tests {
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
     use revm_inspectors::tracing::types::{
         CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
-        DecodedTraceStep,
+        DecodedTraceStep, StorageChange, StorageChangeReason,
     };
 
     fn line_text(line: &Line<'_>) -> String {
@@ -1116,13 +1182,18 @@ mod tests {
     }
 
     fn internal_call_step(end_step: usize, return_data: Vec<String>) -> CallTraceStep {
+        internal_call_step_named("DebugMe::foo", end_step, Some(Vec::new()), Some(return_data))
+    }
+
+    fn internal_call_step_named(
+        func_name: &str,
+        end_step: usize,
+        args: Option<Vec<String>>,
+        return_data: Option<Vec<String>>,
+    ) -> CallTraceStep {
         let mut step = trace_step(Vec::new());
         step.decoded = Some(Box::new(DecodedTraceStep::InternalCall(
-            DecodedInternalCall {
-                func_name: "DebugMe::foo".to_string(),
-                args: Some(Vec::new()),
-                return_data: Some(return_data),
-            },
+            DecodedInternalCall { func_name: func_name.to_string(), args, return_data },
             end_step,
         )));
         step
@@ -1221,7 +1292,7 @@ mod tests {
     fn decode_step_parameters_reads_static_values_from_stack() {
         let step = trace_step(vec![U256::from(42), U256::from(1)]);
         let parameters = Parameters::parse("(uint256 amount, bool ok)").unwrap();
-        let values = super::decode_step_parameters(&parameters, &step).unwrap();
+        let values = super::decode_step_parameters(&parameters, &step, None).unwrap();
 
         assert_eq!(values, ["42", "true"]);
     }
@@ -1240,6 +1311,74 @@ mod tests {
             tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")),
             Some(vec!["42".to_string()])
         );
+    }
+
+    #[test]
+    fn decode_internal_parameter_values_passes_calldata_to_fallback_decoder() {
+        let digest = U256::from(0x1234);
+        let offset = 0x44;
+        let mut calldata = vec![0; offset];
+        calldata.extend_from_slice(&[0x11, 0x22, 0x33]);
+
+        let mut entry_node =
+            debug_node(0, 1, vec![trace_step(vec![digest, U256::from(offset), U256::from(3)])]);
+        entry_node.calldata = Bytes::from(calldata);
+
+        let mut context = context_with_arena(vec![
+            debug_node(0, 0, vec![internal_call_step_without_args(2)]),
+            debug_node(1, 0, vec![trace_step(Vec::new())]),
+            entry_node,
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.draw_memory.inner_call_index = 2;
+
+        assert_eq!(
+            tui.decode_internal_parameter_values(&scope(
+                "foo",
+                "(bytes32 digest, bytes calldata signature)"
+            )),
+            Some(vec![
+                "0x0000000000000000000000000000000000000000000000000000000000001234".to_string(),
+                "0x112233".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn decode_internal_parameter_values_accepts_matching_overload_args() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![internal_call_step_named(
+                "DebugMe::foo(uint256)",
+                2,
+                Some(vec!["42".to_string()]),
+                None,
+            )],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")),
+            Some(vec!["42".to_string()])
+        );
+    }
+
+    #[test]
+    fn decode_internal_parameter_values_rejects_wrong_overload_args() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![internal_call_step_named(
+                "DebugMe::foo(address)",
+                2,
+                Some(vec!["0x000000000000000000000000000000000000002a".to_string()]),
+                None,
+            )],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+
+        assert_eq!(tui.decode_internal_parameter_values(&scope("foo", "(uint256 amount)")), None);
     }
 
     #[test]
@@ -1266,6 +1405,27 @@ mod tests {
         tui.draw_memory.inner_call_index = 2;
 
         assert_eq!(tui.decode_return_values(&scope("foo", "()")), Some(vec!["7".to_string()]));
+    }
+
+    #[test]
+    fn decode_return_values_rejects_wrong_overload() {
+        let mut context = context_with_arena(vec![debug_node(
+            0,
+            0,
+            vec![
+                internal_call_step_named(
+                    "DebugMe::foo(address)",
+                    1,
+                    None,
+                    Some(vec!["99".to_string()]),
+                ),
+                trace_step(Vec::new()),
+            ],
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 1;
+
+        assert_eq!(tui.decode_return_values(&scope("foo", "(uint256 amount)")), None);
     }
 
     #[test]
@@ -1299,6 +1459,15 @@ mod tests {
     }
 
     #[test]
+    fn decoded_internal_name_matches_canonical_signature_for_overloads() {
+        let scope = scope("foo", "(uint256 amount)");
+
+        assert!(super::decoded_internal_name_matches("DebugMe::foo(uint256)", &scope));
+        assert!(!super::decoded_internal_name_matches("DebugMe::foo(address)", &scope));
+        assert!(!super::decoded_internal_name_matches("Other::foo(uint256)", &scope));
+    }
+
+    #[test]
     fn scope_variable_line_marks_unavailable_locals() {
         let variable = super::ScopeVariable {
             kind: super::ScopeVariableKind::Local,
@@ -1307,6 +1476,51 @@ mod tests {
         };
 
         assert_eq!(line_text(&super::scope_variable_line(variable)), "local sum = <unavailable>");
+    }
+
+    #[test]
+    fn storage_access_line_formats_sload() {
+        let change = StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: None,
+            reason: StorageChangeReason::SLOAD,
+        };
+
+        assert_eq!(
+            line_text(&super::storage_access_line(&change)),
+            "storage SLOAD slot 0x1 = 0x2a"
+        );
+    }
+
+    #[test]
+    fn storage_access_line_formats_sstore_with_previous_value() {
+        let change = StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: Some(U256::from(7)),
+            reason: StorageChangeReason::SSTORE,
+        };
+
+        assert_eq!(
+            line_text(&super::storage_access_line(&change)),
+            "storage SSTORE slot 0x1: 0x7 -> 0x2a"
+        );
+    }
+
+    #[test]
+    fn current_storage_access_line_uses_next_stack_snapshot_for_warm_sload() {
+        let mut step = trace_step(vec![U256::from(1)]);
+        step.op = OpCode::SLOAD;
+        step.storage_change = None;
+        let next_step = trace_step(vec![U256::from(42)]);
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![step, next_step])]);
+        let tui = TUIContext::new(&mut context);
+
+        assert_eq!(
+            line_text(&tui.current_storage_access_line().unwrap()),
+            "storage SLOAD slot 0x1 = 0x2a"
+        );
     }
 
     #[test]

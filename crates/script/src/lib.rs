@@ -13,7 +13,6 @@ extern crate foundry_common;
 extern crate tracing;
 
 use crate::{broadcast::BundledState, runner::ScriptRunner};
-use alloy_chains::{Chain, NamedChain};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::Network;
 use alloy_primitives::{
@@ -37,11 +36,10 @@ use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::ContractSizeLimits,
     shell,
-    tempo::resolve_fee_token,
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
-    Config, figment,
+    Config, Eip1559FeeEstimatePreset, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
@@ -129,6 +127,16 @@ pub struct ScriptArgs {
     /// This is auto-enabled for common networks without EIP1559.
     #[arg(long)]
     pub legacy: bool,
+
+    /// How to estimate EIP-1559 fees: `low`, `market` (default), or `aggressive`.
+    ///
+    /// The preset sets the priority-fee percentile and the `maxFeePerGas` buffer
+    /// (`low`: `base_fee * 1.5`, others: `* 2`); `low`'s tighter buffer is more
+    /// likely to stall if the base fee rises. `--with-gas-price` and
+    /// `--priority-gas-price` override only `maxFeePerGas` and
+    /// `maxPriorityFeePerGas` respectively. Ignored for `--legacy`.
+    #[arg(long = "estimate", value_name = "PRESET")]
+    pub eip1559_fee_estimate: Option<Eip1559FeeEstimatePreset>,
 
     /// Broadcasts the transactions.
     #[arg(long)]
@@ -313,10 +321,6 @@ impl ScriptArgs {
         }
 
         tempo.resolve_expires();
-
-        // Resolve the fee token: default only when the active EVM network is Tempo.
-        let chain = evm_opts.networks.is_tempo().then(|| Chain::from_named(NamedChain::Tempo));
-        tempo.fee_token = resolve_fee_token(chain, tempo.fee_token);
 
         let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
         Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
@@ -670,6 +674,13 @@ impl Provider for ScriptArgs {
             dict.insert("transaction_timeout".to_string(), timeout.into());
         }
 
+        if let Some(preset) = self.eip1559_fee_estimate {
+            dict.insert(
+                "eip1559_fee_estimate".to_string(),
+                figment::value::Value::from(preset.to_string()),
+            );
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -888,6 +899,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
@@ -1456,6 +1468,16 @@ mod tests {
         let args =
             ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
         assert!(args.priority_gas_price.is_some());
+    }
+
+    #[test]
+    fn test_eip1559_fee_estimate() {
+        // Defaults to unset (config provides `market`).
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1"]);
+        assert!(args.eip1559_fee_estimate.is_none());
+
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--estimate", "aggressive"]);
+        assert_eq!(args.eip1559_fee_estimate, Some(Eip1559FeeEstimatePreset::Aggressive));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5910>

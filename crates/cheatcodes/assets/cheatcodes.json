@@ -4407,7 +4407,7 @@
     {
       "func": {
         "id": "eip712HashStruct_0",
-        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
@@ -4447,7 +4447,7 @@
     {
       "func": {
         "id": "eip712HashType_0",
-        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
@@ -5618,6 +5618,46 @@
           58,
           236,
           227
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectKeychainAdminVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainAdminVerified(address,bytes32,bytes)",
+        "selector": "0xcbe45e4f",
+        "selectorBytes": [
+          203,
+          228,
+          94,
+          79
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectKeychainVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.",
+        "declaration": "function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainVerified(address,bytes32,bytes)",
+        "selector": "0x3040e515",
+        "selectorBytes": [
+          48,
+          64,
+          229,
+          21
         ]
       },
       "group": "testing",
@@ -10404,6 +10444,46 @@
           96,
           156,
           101
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychain",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.",
+        "declaration": "function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychain(uint256,address,bytes32)",
+        "selector": "0x5804c690",
+        "selectorBytes": [
+          88,
+          4,
+          198,
+          144
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychainAdmin",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychainAdmin(uint256,address,bytes32)",
+        "selector": "0xbc5fb2f7",
+        "selectorBytes": [
+          188,
+          95,
+          178,
+          247
         ]
       },
       "group": "crypto",
