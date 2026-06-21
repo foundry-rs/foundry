@@ -500,7 +500,7 @@ pub struct WorkerCorpus {
     /// Call sequence mutation strategy type generator used by stateful fuzzing.
     mutation_generator: BoxedStrategy<MutationType>,
     /// Identifier of current mutated entry for this worker.
-    current_mutated: Option<Uuid>,
+    current_mutated_index: Option<usize>,
     /// Config
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
@@ -736,7 +736,7 @@ impl WorkerCorpus {
             metrics: seed.metrics,
             tx_generator,
             mutation_generator,
-            current_mutated: None,
+            current_mutated_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -788,11 +788,9 @@ impl WorkerCorpus {
         });
 
         // Update stats of current mutated primary corpus.
-        if let Some(uuid) = &self.current_mutated {
+        if let Some(index) = self.current_mutated_index.take() {
             let should_credit = new_coverage || improved_optimization;
-            if let Some(corpus) =
-                self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid == *uuid)
-            {
+            if let Some(corpus) = self.in_memory_corpus.get_mut(index) {
                 corpus.total_mutations += 1;
                 if should_credit {
                     corpus.new_finds_produced += 1
@@ -808,8 +806,6 @@ impl WorkerCorpus {
                     corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
                 );
             }
-
-            self.current_mutated = None;
         }
 
         if let Some((value, best_seq)) = optimization
@@ -968,14 +964,16 @@ impl WorkerCorpus {
 
             let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
-            let primary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
-            let secondary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
+            let primary_index = rng.random_range(0..corpus_len);
+            let secondary_index = rng.random_range(0..corpus_len);
+            let primary = &self.in_memory_corpus[primary_index];
+            let secondary = &self.in_memory_corpus[secondary_index];
 
             match mutation_type {
                 MutationType::Splice => {
                     trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
 
-                    self.current_mutated = Some(primary.uuid);
+                    self.current_mutated_index = Some(primary_index);
 
                     let start1 = rng.random_range(0..primary.tx_seq.len());
                     let end1 = rng.random_range(start1..primary.tx_seq.len());
@@ -991,10 +989,14 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Repeat => {
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     let start = rng.random_range(0..corpus.tx_seq.len());
@@ -1006,7 +1008,7 @@ impl WorkerCorpus {
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
 
-                    self.current_mutated = Some(primary.uuid);
+                    self.current_mutated_index = Some(primary_index);
 
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
                         // TODO: chunks?
@@ -1015,10 +1017,14 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Prefix => {
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     for i in 0..rng.random_range(0..=new_seq.len()) {
@@ -1026,10 +1032,14 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Suffix => {
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
@@ -1039,10 +1049,14 @@ impl WorkerCorpus {
                 }
                 MutationType::Abi => {
                     let targets = targeted_contracts.targets();
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
 
@@ -1058,10 +1072,14 @@ impl WorkerCorpus {
                 }
                 MutationType::Cmp => {
                     let targets = targeted_contracts.targets();
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "cmp mutate args of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     let candidates = corpus
@@ -1132,9 +1150,9 @@ impl WorkerCorpus {
         let tx = if self.in_memory_corpus.is_empty() {
             self.new_tx(test_runner)?
         } else {
-            let corpus = &self.in_memory_corpus
-                [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
-            self.current_mutated = Some(corpus.uuid);
+            let corpus_index = test_runner.rng().random_range(0..self.in_memory_corpus.len());
+            let corpus = &self.in_memory_corpus[corpus_index];
+            self.current_mutated_index = Some(corpus_index);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
@@ -1960,7 +1978,7 @@ mod tests {
         let corpus = CorpusEntry::new(vec![basic_tx()]);
         let seed_uuid = corpus.uuid;
         let mut manager = seeded_worker_corpus(0, temp_corpus_dir(), vec![corpus]);
-        manager.current_mutated = Some(seed_uuid);
+        manager.current_mutated_index = Some(0);
 
         (manager, seed_uuid)
     }
@@ -2524,7 +2542,7 @@ mod tests {
         assert_eq!(manager.metrics.favored_items, 0);
 
         // Mark this as the currently mutated corpus and process a run with new coverage.
-        manager.current_mutated = Some(uuid);
+        manager.current_mutated_index = Some(0);
         manager.process_inputs(&[basic_tx()], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
@@ -2546,7 +2564,7 @@ mod tests {
         manager.metrics.favored_items = 1;
 
         // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
-        manager.current_mutated = Some(uuid);
+        manager.current_mutated_index = Some(0);
         manager.process_inputs(&[basic_tx()], &[], false, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
@@ -2566,7 +2584,7 @@ mod tests {
         corpus.new_finds_produced = 2;
         corpus.is_favored = false;
 
-        manager.current_mutated = Some(uuid);
+        manager.current_mutated_index = Some(0);
         manager.process_inputs(&[basic_tx()], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
