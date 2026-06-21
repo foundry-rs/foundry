@@ -1,5 +1,6 @@
 use crate::{
-    BasicTxDetails, invariant::FuzzRunIdentifiedContracts, strategies::literals::LiteralsDictionary,
+    BasicTxDetails, Fuzzer, invariant::FuzzRunIdentifiedContracts,
+    strategies::literals::LiteralsDictionary,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
@@ -128,6 +129,13 @@ impl InvariantFuzzState {
     pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
         let mut dict = self.inner.borrow_mut();
         for value in values {
+            dict.insert_value(value);
+        }
+    }
+
+    pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
+        let mut dict = self.inner.borrow_mut();
+        for value in fuzzer.collected_values.drain(..) {
             dict.insert_value(value);
         }
     }
