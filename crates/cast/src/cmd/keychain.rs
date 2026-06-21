@@ -24,8 +24,8 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType,
-        maybe_print_resolved_fee_token, read_tempo_keys_file, tempo_keys_path,
+        self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, maybe_print_fee_token,
+        read_tempo_keys_file, resolve_and_set_fee_token, tempo_keys_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3566,6 +3566,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     before_submit: impl FnOnce() -> Result<()>,
 ) -> Result<KeychainTxOutcome> {
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+    let sponsor_fee_payer = tx_opts.tempo.sponsor;
     let expires_at = tx_opts.tempo.resolve_expires();
     let tempo_sponsor =
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
@@ -3591,7 +3592,17 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     if print_sponsor_hash {
         let from = root_signer.address();
-        let (tx, _) = builder.build(from).await?;
+        let chain = builder.chain();
+        let (mut tx, _) = builder.build(from).await?;
+        if let Some(fee_payer) = sponsor_fee_payer {
+            resolve_and_set_fee_token(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                Some(fee_payer),
+            )
+            .await?;
+        }
         let hash = tx
             .compute_sponsor_hash(from)
             .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
@@ -3615,14 +3626,25 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
                 tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
+            } else {
+                let fee_token = resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(browser.address()),
+                )
+                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
             }
-            maybe_print_resolved_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                tx.fee_token(),
-            )
-            .await?;
 
             before_submit()?;
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
@@ -3636,7 +3658,24 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             let (mut tx, _) = builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
+            } else {
+                let fee_token = resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(from),
+                )
+                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
             }
 
             before_submit()?;
@@ -3648,12 +3687,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             cast_send(
                 provider,
                 tx,
-                Some(chain),
+                tempo_sponsor.is_none().then_some(chain),
+                None,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
-                !config.eth_rpc_curl,
+                tempo_sponsor.is_none() && !config.eth_rpc_curl,
             )
             .await?;
         }
@@ -3693,7 +3733,10 @@ struct AnvilNodeInfo {
     network: Option<String>,
 }
 
-async fn is_tempo_hardfork_active<P>(provider: &P, hardfork: TempoHardfork) -> Result<bool>
+pub(crate) async fn is_tempo_hardfork_active<P>(
+    provider: &P,
+    hardfork: TempoHardfork,
+) -> Result<bool>
 where
     P: Provider<TempoNetwork>,
 {

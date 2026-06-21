@@ -25,6 +25,7 @@ use crate::cmd::{
     storage::StorageArgs,
     tempo::TempoSubcommand,
     tip20::Tip20Subcommand,
+    tip403::Tip403Subcommand,
     trace::TraceArgs,
     txpool::TxPoolSubcommands,
     vaddr::VaddrSubcommand,
@@ -1263,6 +1264,13 @@ pub enum CastSubcommand {
     ReceivePolicy {
         #[command(subcommand)]
         command: ReceivePolicySubcommand,
+    },
+
+    /// TIP-403 policy registry operations (Tempo).
+    #[command(name = "tip403")]
+    Tip403 {
+        #[command(subcommand)]
+        command: Tip403Subcommand,
     },
 
     /// Tempo keychain (access key) management.

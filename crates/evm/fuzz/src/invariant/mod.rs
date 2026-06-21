@@ -131,7 +131,10 @@ impl TargetedContracts {
         match self.inner.get(&tx.call_details.target) {
             Some(c) => (
                 Some(&c.abi),
-                c.abi.functions().find(|f| f.selector() == tx.call_details.calldata[..4]),
+                tx.call_details
+                    .calldata
+                    .get(..4)
+                    .and_then(|selector| c.abi.functions().find(|f| f.selector() == selector)),
             ),
             None => (None, None),
         }
@@ -149,7 +152,11 @@ impl TargetedContracts {
     /// Returns whether the given transaction can be replayed or not with known contracts.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
         match self.inner.get(&tx.call_details.target) {
-            Some(c) => c.abi.functions().any(|f| f.selector() == tx.call_details.calldata[..4]),
+            Some(c) => {
+                tx.call_details.calldata.get(..4).is_some_and(|selector| {
+                    c.abi_fuzzed_functions().any(|f| f.selector() == selector)
+                })
+            }
             None => false,
         }
     }
@@ -158,11 +165,13 @@ impl TargetedContracts {
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
         self.inner.get(&tx.call_details.target).and_then(|contract| {
-            contract
-                .abi
-                .functions()
-                .find(|f| f.selector() == tx.call_details.calldata[..4])
-                .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
+            tx.call_details.calldata.get(..4).and_then(|selector| {
+                contract
+                    .abi
+                    .functions()
+                    .find(|f| f.selector() == selector)
+                    .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
+            })
         })
     }
 
@@ -434,5 +443,40 @@ impl fmt::Display for InvariantSettings {
             self.excluded_senders.len(),
             self.fail_on_revert,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CallDetails;
+    use alloy_primitives::Bytes;
+
+    fn targeted_contracts_with_function(target: Address, function: Function) -> TargetedContracts {
+        let mut abi = JsonAbi::new();
+        abi.functions.entry(function.name.clone()).or_default().push(function);
+        let mut targets = TargetedContracts::new();
+        targets.inner.insert(target, TargetedContract::new("Target".to_string(), abi));
+        targets
+    }
+
+    fn tx(target: Address, calldata: impl Into<Bytes>) -> BasicTxDetails {
+        BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails { target, calldata: calldata.into(), value: None },
+        }
+    }
+
+    #[test]
+    fn targeted_contracts_short_calldata_is_not_replayable_or_decodable() {
+        let target = Address::from([0x42; 20]);
+        let targets = targeted_contracts_with_function(target, Function::parse("foo()").unwrap());
+        let tx = tx(target, vec![0xde, 0xad, 0xbe]);
+
+        assert!(!targets.can_replay(&tx));
+        assert!(targets.fuzzed_artifacts(&tx).1.is_none());
+        assert!(targets.fuzzed_metric_key(&tx).is_none());
     }
 }

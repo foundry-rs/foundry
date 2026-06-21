@@ -1,7 +1,9 @@
 use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
-        corpus::{DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed},
+        corpus::{
+            CorpusInsertionMode, DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
+        },
     },
     inspectors::Fuzzer,
 };
@@ -205,6 +207,14 @@ fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_coun
     let total_samples = total_samples as usize;
     let worker_count = worker_count.max(1);
     total_samples / worker_count + usize::from((worker_id as usize) < total_samples % worker_count)
+}
+
+const fn invariant_worker_collects_evm_cmp_log(
+    config: &InvariantConfig,
+    worker_id: u32,
+    worker_count: usize,
+) -> bool {
+    config.corpus.collect_evm_cmp_log() && (worker_count <= 1 || worker_id == 0)
 }
 
 fn invariant_worker_seed(seed: U256, worker_id: u32) -> U256 {
@@ -670,9 +680,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             campaign_seed.targeted_contracts.clone(),
             campaign_seed.targets_are_updatable,
         );
+        let mut corpus_replay_executor = self.executor.clone();
+        corpus_replay_executor.inspector_mut().collect_evm_cmp_log(
+            invariant_worker_collects_evm_cmp_log(&self.config, 0, actual_worker_count),
+        );
         let corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
-            Some(&self.executor),
+            Some(&corpus_replay_executor),
             None,
             Some(&replay_targets),
             Some(self.dynamic_target_ctx()),
@@ -701,12 +715,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         worker_plan.worker_id,
                         actual_worker_count,
                     );
-                    (worker_plan, worker_runner, gas_report_samples)
+                    let collect_cmp_log = invariant_worker_collects_evm_cmp_log(
+                        &config,
+                        worker_plan.worker_id,
+                        actual_worker_count,
+                    );
+                    (worker_plan, worker_runner, gas_report_samples, collect_cmp_log)
                 })
                 .collect::<Vec<_>>();
             worker_jobs
                 .into_par_iter()
-                .map(|(worker_plan, worker_runner, gas_report_samples)| {
+                .map(|(worker_plan, worker_runner, gas_report_samples, collect_cmp_log)| {
                     let _guard =
                         info_span!("invariant_worker", id = worker_plan.worker_id).entered();
                     let timer = Instant::now();
@@ -723,8 +742,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         progress,
                         &campaign_state,
                         campaign_seed.clone(),
-                        corpus_seed
-                            .clone_for_worker(worker_plan.worker_id as usize, actual_worker_count),
+                        corpus_seed.clone_for_worker(
+                            worker_plan.worker_id as usize,
+                            actual_worker_count,
+                            collect_cmp_log,
+                        ),
                         corpus_persistence,
                         actual_worker_count,
                         gas_report_samples,
@@ -738,6 +760,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let runner =
                 invariant_worker_runner(&mut runner, worker_plan.worker_id, self.fuzz_seed);
             let gas_report_samples = config.gas_report_samples as usize;
+            let collect_cmp_log = invariant_worker_collects_evm_cmp_log(
+                &config,
+                worker_plan.worker_id,
+                actual_worker_count,
+            );
             vec![Self::run_invariant_worker(
                 base_executor,
                 runner,
@@ -751,7 +778,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 progress,
                 &campaign_state,
                 campaign_seed,
-                corpus_seed.clone(),
+                corpus_seed.clone_for_worker(
+                    worker_plan.worker_id as usize,
+                    actual_worker_count,
+                    collect_cmp_log,
+                ),
                 corpus_persistence,
                 actual_worker_count,
                 gas_report_samples,
@@ -813,6 +844,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
             plan,
+            worker_count,
             &invariant_contract,
             fuzz_fixtures,
             fuzz_state,
@@ -914,8 +946,24 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     None
                 };
                 // Collect edge coverage and set the flag in the current run.
-                if corpus_manager.merge_edge_coverage(&mut call_result) {
+                let new_call_coverage = corpus_manager.merge_edge_coverage(&mut call_result);
+                if new_call_coverage {
                     current_run.new_coverage = true;
+                }
+                let observed_calls = std::mem::take(&mut call_result.observed_calls);
+                if new_call_coverage
+                    && let Some(entry) = corpus_manager.hoist_observed_calls(
+                        &observed_calls,
+                        current_run.inputs.last().expect("checked above"),
+                        &invariant_test.targeted_contracts,
+                        if corpus_persistence.is_deferred() {
+                            CorpusInsertionMode::Deferred
+                        } else {
+                            CorpusInsertionMode::Live
+                        },
+                    )
+                {
+                    corpus_entries.push(entry);
                 }
 
                 if discarded {
@@ -1345,6 +1393,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     fn prepare_worker(
         executor: &mut Executor<FEN>,
         plan: InvariantWorkerPlan,
+        worker_count: usize,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
@@ -1358,6 +1407,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             campaign_seed.targeted_contracts.clone(),
             campaign_seed.targets_are_updatable,
         );
+        executor.inspector_mut().collect_evm_cmp_log(invariant_worker_collects_evm_cmp_log(
+            config,
+            plan.worker_id,
+            worker_count,
+        ));
 
         // Creates the invariant strategy.
         let strategy = invariant_strat(
@@ -1380,13 +1434,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
-        executor.inspector_mut().set_fuzzer(Fuzzer {
-            call_generator: None,
-            collected_values: Vec::new(),
-            max_collected_values: config.dictionary.max_fuzz_dictionary_values,
-            mapping_slots,
-            collect: true,
-        });
+        executor.inspector_mut().set_fuzzer(
+            Fuzzer::new(config.dictionary.max_fuzz_dictionary_values, mapping_slots)
+                .with_call_recording(config.corpus.is_coverage_guided()),
+        );
 
         // Let's make sure the invariant is sound before actually starting the run:
         // We'll assert the invariant in its initial state, and if it fails, we'll
@@ -1407,10 +1458,24 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         )?;
         if let Some(fuzzer) = executor.inspector_mut().fuzzer.as_mut() {
             fuzz_state.collect_values(fuzzer.drain_collected_values());
+            let _ = fuzzer.take_observed_calls();
         }
-        // NOW enable call_override after the initial invariant check has passed.
-        // This allows `override_call_strat` to inject calls during actual fuzz runs
-        // for reentrancy vulnerability detection.
+        let mut worker = WorkerCorpus::from_seed(
+            plan.worker_id as usize,
+            config.corpus.clone(),
+            strategy.boxed(),
+            corpus_seed,
+        );
+
+        if let Err(err) =
+            worker.seed_from_test_traces(invariant_contract, &targeted_contracts, executor)
+        {
+            debug!(target: "corpus", %err, "failed to seed corpus from test traces");
+        }
+
+        // NOW enable call_override after the initial invariant check and corpus trace seeding have
+        // passed. This allows `override_call_strat` to inject calls during actual fuzz runs for
+        // reentrancy vulnerability detection.
         if config.call_override {
             let target_contract_ref = Arc::new(RwLock::new(Address::ZERO));
 
@@ -1444,13 +1509,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 fuzzer.call_generator = Some(call_generator);
             }
         }
-
-        let worker = WorkerCorpus::from_seed(
-            plan.worker_id as usize,
-            config.corpus.clone(),
-            strategy.boxed(),
-            corpus_seed,
-        );
 
         let mut invariant_test =
             InvariantTest::new(fuzz_state, targeted_contracts, failures, runner.clone());
@@ -2102,6 +2160,22 @@ mod tests {
 
         config.timeout = Some(1);
         assert_eq!(invariant_worker_count_with_threads(&config, 8, 2), 4);
+    }
+
+    #[test]
+    fn invariant_worker_cmp_log_selection_uses_one_worker_per_campaign() {
+        let mut config = InvariantConfig::default();
+        assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
+
+        config.corpus.corpus_dir = Some("corpus".into());
+        assert!(invariant_worker_collects_evm_cmp_log(&config, 0, 1));
+        assert!(invariant_worker_collects_evm_cmp_log(&config, 0, 4));
+        assert!(!invariant_worker_collects_evm_cmp_log(&config, 1, 4));
+        assert!(!invariant_worker_collects_evm_cmp_log(&config, 3, 4));
+
+        config.corpus.sancov_edges = true;
+        assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 1));
+        assert!(!invariant_worker_collects_evm_cmp_log(&config, 0, 4));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use alloy_evm::precompiles::DynPrecompile;
+use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 use std::fmt::Debug;
 
@@ -10,6 +10,11 @@ mod optimism;
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     /// Returns a set of precompiles to extend the EVM with.
     fn precompiles(&self) -> Vec<(Address, DynPrecompile)>;
+
+    /// Installs precompiles into the EVM precompile map.
+    fn install(&self, precompiles: &mut PrecompilesMap) {
+        precompiles.extend_precompiles(self.precompiles());
+    }
 }
 
 #[cfg(test)]
@@ -45,27 +50,45 @@ mod tests {
     // A custom precompile address and payload for testing.
     pub(super) const PRECOMPILE_ADDR: Address =
         address!("0x0000000000000000000000000000000000000071");
+    const DYNAMIC_PRECOMPILE_ADDR: Address = address!("0xdead000000000000000000000000000000000071");
+    const DYNAMIC_PRECOMPILE_PREFIX: [u8; 2] = [0xde, 0xad];
     pub(super) const PAYLOAD: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
+
+    fn echo_precompile() -> DynPrecompile {
+        use alloy_evm::precompiles::PrecompileInput;
+        DynPrecompile::from(|input: PrecompileInput<'_>| {
+            Ok(PrecompileOutput {
+                status: PrecompileStatus::Success,
+                bytes: Bytes::copy_from_slice(input.data),
+                gas_used: 0,
+                gas_refunded: 0,
+                state_gas_used: 0,
+                reservoir: input.reservoir,
+            })
+        })
+    }
 
     #[derive(Debug)]
     pub(super) struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
         fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
-            use alloy_evm::precompiles::PrecompileInput;
-            vec![(
-                PRECOMPILE_ADDR,
-                DynPrecompile::from(|input: PrecompileInput<'_>| {
-                    Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
-                        bytes: Bytes::copy_from_slice(input.data),
-                        gas_used: 0,
-                        gas_refunded: 0,
-                        state_gas_used: 0,
-                        reservoir: input.reservoir,
-                    })
-                }),
-            )]
+            vec![(PRECOMPILE_ADDR, echo_precompile())]
+        }
+    }
+
+    #[derive(Debug)]
+    struct DynamicLookupPrecompileFactory;
+
+    impl PrecompileFactory for DynamicLookupPrecompileFactory {
+        fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
+            Vec::new()
+        }
+
+        fn install(&self, precompiles: &mut PrecompilesMap) {
+            precompiles.set_precompile_lookup(|address: &Address| {
+                address.as_slice().starts_with(&DYNAMIC_PRECOMPILE_PREFIX).then(echo_precompile)
+            });
         }
     }
 
@@ -117,7 +140,7 @@ mod tests {
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
+        CustomPrecompileFactory.install(evm.precompiles_mut());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -134,7 +157,7 @@ mod tests {
         assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
+        CustomPrecompileFactory.install(evm.precompiles_mut());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
@@ -151,9 +174,27 @@ mod tests {
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
+        CustomPrecompileFactory.install(evm.precompiles_mut());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
+
+        let result = evm.transact(tx_env).unwrap();
+        assert!(result.result.is_success());
+        assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
+    }
+
+    #[test]
+    fn factory_install_supports_dynamic_lookup() {
+        let (mut tx_env, mut evm) = create_eth_evm(SpecId::PRAGUE);
+        tx_env.kind = TxKind::Call(DYNAMIC_PRECOMPILE_ADDR);
+
+        assert!(!evm.precompiles().addresses().contains(&DYNAMIC_PRECOMPILE_ADDR));
+        assert!(evm.precompiles().get(&DYNAMIC_PRECOMPILE_ADDR).is_none());
+
+        DynamicLookupPrecompileFactory.install(evm.precompiles_mut());
+
+        assert!(!evm.precompiles().addresses().contains(&DYNAMIC_PRECOMPILE_ADDR));
+        assert!(evm.precompiles().get(&DYNAMIC_PRECOMPILE_ADDR).is_some());
 
         let result = evm.transact(tx_env).unwrap();
         assert!(result.result.is_success());
