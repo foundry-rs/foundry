@@ -1145,12 +1145,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.depth += 1;
                 }
 
-                current_run.inputs.push(corpus_manager.generate_next_input(
-                    &mut invariant_test.test_data.branch_runner,
-                    &initial_seq,
-                    discarded,
-                    current_run.depth as usize,
-                )?);
+                if current_run.depth < config.depth {
+                    current_run.inputs.push(corpus_manager.generate_next_input(
+                        &mut invariant_test.test_data.branch_runner,
+                        &initial_seq,
+                        discarded,
+                        current_run.depth as usize,
+                    )?);
+                }
             }
 
             // Extend corpus with current run data.
