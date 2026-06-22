@@ -61,6 +61,7 @@ pub(super) fn visit_loop_statements_and_expressions<'ctx, 's, 'hir, 'cb>(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn visit_loop_statements_and_expressions_with_options<'ctx, 's, 'hir, 'cb>(
     ctx: &'ctx LintContext<'s, 'ctx>,
     gcx: Gcx<'hir>,
