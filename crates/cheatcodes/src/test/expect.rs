@@ -773,14 +773,17 @@ fn expect_call<FEN: FoundryEvmNetwork>(
             // Get the expected calls for this target.
             // In this case, as we're using counted expectCalls, we should not be able to set them
             // more than once.
-            ensure!(
-                !expecteds.contains_key(calldata),
-                "counted expected calls can only bet set once"
-            );
-            expecteds.insert(
-                calldata.clone(),
-                (ExpectedCallData { value: value.copied(), gas, min_gas, count, call_type }, 0),
-            );
+            match expecteds.entry(calldata.clone()) {
+                Entry::Occupied(_) => {
+                    ensure!(false, "counted expected calls can only bet set once");
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert((
+                        ExpectedCallData { value: value.copied(), gas, min_gas, count, call_type },
+                        0,
+                    ));
+                }
+            }
         }
         ExpectedCallType::NonCount => {
             // Check if the expected calldata exists.
