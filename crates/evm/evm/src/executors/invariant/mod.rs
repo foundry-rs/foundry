@@ -223,10 +223,13 @@ fn invariant_worker_config(
     worker_id: u32,
     worker_count: usize,
 ) -> InvariantConfig {
-    // Keep single-worker campaigns on the stable default, but let one extra worker explore the
-    // broader fresh-sequence setting when the user has not selected a different value.
-    if worker_count > 1
-        && worker_id == 1
+    // Keep one- and two-worker campaigns on the stable default, but let one extra worker explore
+    // the broader fresh-input setting once the user has enough workers to keep the exploratory
+    // share below half of the campaign. The last worker does not receive remainder runs from
+    // campaign sharding, so this keeps exposure bounded to one worker shard.
+    let exploratory_worker_id = worker_count.saturating_sub(1) as u32;
+    if worker_count > 2
+        && worker_id == exploratory_worker_id
         && !config.corpus_random_sequence_weight_configured
         && config.corpus.corpus_random_sequence_weight
             == FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
@@ -2137,11 +2140,47 @@ mod tests {
         );
         assert_eq!(
             invariant_worker_config(config.clone(), 1, 4).corpus.corpus_random_sequence_weight,
-            FuzzCorpusConfig::ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
         );
         assert_eq!(
-            invariant_worker_config(config, 2, 4).corpus.corpus_random_sequence_weight,
+            invariant_worker_config(config.clone(), 2, 4).corpus.corpus_random_sequence_weight,
             FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+        assert_eq!(
+            invariant_worker_config(config, 3, 4).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+    }
+
+    #[test]
+    fn invariant_worker_config_keeps_two_worker_campaign_on_default() {
+        let config = InvariantConfig::default();
+
+        assert_eq!(
+            invariant_worker_config(config.clone(), 0, 2).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+        assert_eq!(
+            invariant_worker_config(config, 1, 2).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+    }
+
+    #[test]
+    fn invariant_worker_config_uses_last_worker_for_three_worker_campaign() {
+        let config = InvariantConfig::default();
+
+        assert_eq!(
+            invariant_worker_config(config.clone(), 0, 3).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+        assert_eq!(
+            invariant_worker_config(config.clone(), 1, 3).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+        assert_eq!(
+            invariant_worker_config(config, 2, 3).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT
         );
     }
 

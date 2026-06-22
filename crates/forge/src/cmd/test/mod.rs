@@ -236,7 +236,8 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_LITERALS", value_name = "N|max")]
     pub fuzz_dictionary_literals: Option<String>,
 
-    /// Percent chance that coverage-guided fuzzing generates a fresh sequence.
+    /// Percent chance that coverage-guided fuzzing generates fresh input instead of mutating
+    /// corpus input.
     #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub fuzz_corpus_random_sequence_weight: Option<u32>,
 
@@ -304,7 +305,8 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_MAX_FUZZ_DICTIONARY_LITERALS", value_name = "N|max")]
     pub invariant_dictionary_literals: Option<String>,
 
-    /// Percent chance that coverage-guided invariant fuzzing generates a fresh sequence.
+    /// Percent chance that coverage-guided invariant fuzzing injects fresh calls while extending
+    /// corpus sequences.
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub invariant_corpus_random_sequence_weight: Option<u32>,
 

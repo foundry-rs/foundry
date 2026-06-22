@@ -139,8 +139,8 @@ pub struct FuzzCorpusConfig {
     /// Whether to capture comparison operands from sancov-instrumented crates
     /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
     pub sancov_trace_cmp: bool,
-    /// Percent chance of generating a fresh transaction sequence instead of reusing the current
-    /// corpus sequence during coverage-guided invariant campaigns.
+    /// Percent chance of generating fresh transaction input instead of continuing from corpus
+    /// input during coverage-guided campaigns.
     #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
     pub corpus_random_sequence_weight: u32,
     /// Percent chance that generated payable calls carry non-zero `msg.value`.

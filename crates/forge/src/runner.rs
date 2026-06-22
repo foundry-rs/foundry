@@ -175,9 +175,15 @@ fn invariant_suite_configs_match(
     };
     rest.iter().all(|func| {
         inline_config_for(config, inline_config, contract_name, Some(func))
-            .map(|config| config.invariant == anchor_config)
+            .map(|config| invariant_campaign_configs_match(&config.invariant, &anchor_config))
             .unwrap_or(false)
     })
+}
+
+fn invariant_campaign_configs_match(left: &InvariantConfig, right: &InvariantConfig) -> bool {
+    left == right
+        && left.corpus_random_sequence_weight_configured
+            == right.corpus_random_sequence_weight_configured
 }
 
 fn select_invariant_campaigns<'a>(
@@ -277,6 +283,27 @@ mod tests {
                 function: Some("invariantTwo".to_string()),
                 line: "1:1".to_string(),
                 docs: "forge-config: default.invariant.depth = 1".to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(count_anchors(&abi, &inline_config), 2);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_splits_boolean_suite_when_corpus_weight_provenance_differs() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+        ])
+        .unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTwo".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.corpus_random_sequence_weight = 10"
+                    .to_string(),
             })
             .unwrap();
 
