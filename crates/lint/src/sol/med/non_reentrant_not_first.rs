@@ -30,15 +30,13 @@ impl<'hir> LateLintPass<'hir> for NonReentrantNotFirst {
             return;
         }
 
-        if let Some((index, modifier)) = func
-            .modifiers
+        func.modifiers
             .iter()
             .enumerate()
-            .find(|(_, modifier)| modifier_is_named(hir, modifier, "nonReentrant"))
-            && index != 0
-        {
-            ctx.emit(&NON_REENTRANT_NOT_FIRST, modifier.span);
-        }
+            .filter(|(index, modifier)| {
+                *index != 0 && modifier_is_named(hir, modifier, "nonReentrant")
+            })
+            .for_each(|(_, modifier)| ctx.emit(&NON_REENTRANT_NOT_FIRST, modifier.span));
     }
 }
 

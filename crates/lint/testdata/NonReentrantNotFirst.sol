@@ -24,6 +24,10 @@ contract NonReentrantNotFirst {
         amount;
     }
 
+    function badDuplicate(uint256 amount) external nonReentrant onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+        amount;
+    }
+
     function goodFirst(uint256 amount) external nonReentrant onlyOwner {
         amount;
     }
