@@ -81,6 +81,30 @@ fn collect_debug_dump_internal_calls<'a>(
     }
 }
 
+fn collect_debug_dump_storage_changes<'a>(
+    value: &'a serde_json::Value,
+    changes: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_debug_dump_storage_changes(value, changes);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if let Some(change) = map.get("storage_change")
+                && !change.is_null()
+            {
+                changes.push(change);
+            }
+            for value in map.values() {
+                collect_debug_dump_storage_changes(value, changes);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
 /// These are run separately by the `flaky_testdata` test below.
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
@@ -1584,6 +1608,61 @@ Traces:
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/15224>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(internal_functions_trace_calldata_bytes, |prj, cmd| {
+    prj.clear();
+
+    prj.add_test(
+        "DecodeInternalCalldata",
+        r#"
+contract DecodeInternalCalldataTraceTest {
+    function test_decodeInternalCalldataBytes() public {
+        DecodeInternalTarget target = new DecodeInternalTarget();
+
+        bytes[] memory wrappedSignatures = new bytes[](1);
+        wrappedSignatures[0] = hex"11223344556677889900";
+
+        bytes32 expectedDigest = keccak256("digest that should appear in the internal trace");
+
+        bool ok = target.outer(wrappedSignatures, expectedDigest);
+        require(ok, "target returned false");
+    }
+}
+
+contract DecodeInternalTarget {
+    function outer(bytes[] calldata signatures, bytes32 digest) external pure returns (bool) {
+        bytes calldata signature = signatures[0];
+        return _internalValidate(digest, signature);
+    }
+
+    function _internalValidate(bytes32 digest, bytes calldata signature)
+        internal
+        pure
+        returns (bool)
+    {
+        return digest == keccak256("digest that should appear in the internal trace")
+            && signature.length == 10;
+    }
+}
+     "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "-vvvv", "--decode-internal"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        stdout.contains(
+            "DecodeInternalTarget::_internalValidate(bytes32,bytes)(\
+             0x9a707a44f6e6038d2b03f3947e82f6403612c5d5b923868f6a759e9c38e16a28, \
+             0x11223344556677889900)"
+        ),
+        "{stdout}"
+    );
+});
+
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
 forgetest_init!(deterministic_randomness_with_seed, |prj, cmd| {
     prj.add_test(
@@ -2754,6 +2833,45 @@ contract DebugVarsTest {
     assert_eq!(
         address_call["return_data"],
         serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
+});
+
+// Progresses <https://github.com/foundry-rs/foundry/issues/927>: debugger storage view.
+forgetest!(debug_dump_includes_storage_changes, |prj, cmd| {
+    prj.add_source(
+        "DebugStorage",
+        r"
+contract DebugStorageTest {
+    uint256 value;
+    uint256 untouched;
+
+    function testStorage() public {
+        value = 42;
+        uint256 loaded = value;
+        uint256 coldLoaded = untouched;
+        require(loaded == 42 && coldLoaded == 0);
+    }
+}
+",
+    );
+
+    let dump_path = prj.root().join("storage_dump.json");
+
+    cmd.args(["test", "--mt", "testStorage", "--debug", "--dump", dump_path.to_str().unwrap()]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut storage_changes = Vec::new();
+    collect_debug_dump_storage_changes(&dump, &mut storage_changes);
+
+    assert!(
+        storage_changes.iter().any(|change| change["reason"] == "SSTORE"),
+        "debugger dump should include an SSTORE storage change: {storage_changes:#?}"
+    );
+    assert!(
+        storage_changes.iter().any(|change| change["reason"] == "SLOAD"),
+        "debugger dump should include an SLOAD storage access: {storage_changes:#?}"
     );
 });
 

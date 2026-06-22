@@ -78,7 +78,7 @@ regex = { workspace = true, default-features = false }
 revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-similar = { version = "2", features = ["inline"] }
+similar = { version = "3", features = ["inline"] }
 solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
@@ -98,7 +98,7 @@ opener = "0.8"
 # soldeer
 soldeer-commands.workspace = true
 soldeer-core.workspace = true
-quick-junit = "0.5.2"
+quick-junit = "0.6.0"
 tempfile.workspace = true
 
 [dev-dependencies]

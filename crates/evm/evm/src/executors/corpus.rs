@@ -306,13 +306,24 @@ impl WorkerCorpusSeed {
         self
     }
 
-    pub(crate) fn clone_for_worker(&self, worker_id: usize, worker_count: usize) -> Self {
+    pub(crate) fn clone_for_worker(
+        &self,
+        worker_id: usize,
+        worker_count: usize,
+        include_cmp_seq: bool,
+    ) -> Self {
         let in_memory_corpus = self
             .in_memory_corpus
             .iter()
             .enumerate()
             .filter(|(idx, _)| idx % worker_count == worker_id)
-            .map(|(_, entry)| entry.clone())
+            .map(|(_, entry)| {
+                let mut entry = entry.clone();
+                if !include_cmp_seq {
+                    entry.cmp_seq.clear();
+                }
+                entry
+            })
             .collect::<Vec<_>>();
 
         let mut metrics = self.metrics.clone();
@@ -2517,7 +2528,7 @@ mod tests {
 
         let worker_count = 3;
         let shards = (0..worker_count)
-            .map(|worker_id| seed.clone_for_worker(worker_id, worker_count))
+            .map(|worker_id| seed.clone_for_worker(worker_id, worker_count, true))
             .collect::<Vec<_>>();
         let mut sharded_ids = shards
             .iter()
@@ -2556,6 +2567,27 @@ mod tests {
         assert!(shards.iter().all(|shard| shard.sancov_history_map == seed.sancov_history_map));
         assert!(shards.iter().all(|shard| shard.metrics.cumulative_edges_seen == 7));
         assert!(shards.iter().all(|shard| shard.metrics.cumulative_features_seen == 11));
+    }
+
+    #[test]
+    fn clone_for_worker_can_strip_cmp_sequences() {
+        let cmp = CmpOperands {
+            op1: U256::from(1),
+            op2: U256::from(2),
+            pc: 3,
+            address: Address::ZERO,
+            opcode: 0,
+        };
+        let entries = (0..2)
+            .map(|_| CorpusEntry::new_with_cmp(vec![basic_tx()], vec![vec![cmp]], Uuid::new_v4()))
+            .collect::<Vec<_>>();
+        let seed = WorkerCorpusSeed { in_memory_corpus: entries, ..Default::default() };
+
+        let with_cmp = seed.clone_for_worker(0, 1, true);
+        let without_cmp = seed.clone_for_worker(0, 1, false);
+
+        assert!(with_cmp.in_memory_corpus.iter().all(|entry| !entry.cmp_seq[0].is_empty()));
+        assert!(without_cmp.in_memory_corpus.iter().all(|entry| entry.cmp_seq.is_empty()));
     }
 
     #[test]
