@@ -5078,14 +5078,17 @@ dependencies = [
  "chrono",
  "clap",
  "color-eyre",
+ "ctrlc",
  "eyre",
  "foundry-common",
  "foundry-compilers",
  "foundry-test-utils",
+ "libc",
  "once_cell",
  "rayon",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -1709,7 +1709,7 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 3 met]
 	[Sequence] (original: 5, shrunk: 5)
 ...
- invariant_cond3() (runs: 1, calls: 1, reverts: [..])
+ invariant_cond3() (runs: 1, calls: 5, reverts: 0)
 ...
 "#
     ]]);

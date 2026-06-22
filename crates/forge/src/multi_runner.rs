@@ -3,7 +3,7 @@
 use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
-    result::SuiteResult,
+    result::{SuiteResult, SymbolicCounterexampleArtifact},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
         count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
@@ -365,6 +365,15 @@ pub struct ShowmapConfig {
     pub corpus_dir: Option<PathBuf>,
 }
 
+/// CLI-only options for replaying a durable symbolic counterexample artifact.
+#[derive(Clone, Debug)]
+pub struct SymbolicArtifactReplayConfig {
+    /// Artifact payload to replay.
+    pub artifact: SymbolicCounterexampleArtifact,
+    /// Path the artifact was loaded from, used in diagnostics.
+    pub path: PathBuf,
+}
+
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
@@ -403,6 +412,9 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     /// When set, fuzz/invariant tests run in corpus replay mode and emit
     /// AFL-`afl-showmap`-style files instead of running a campaign.
     pub showmap: Option<ShowmapConfig>,
+
+    /// When set, run only the matching test and replay this artifact's concrete payload.
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -520,6 +532,8 @@ pub struct MultiContractRunnerBuilder {
     pub multi_network: MultiNetworkConfig,
     /// Showmap replay mode (CLI-only, off by default).
     pub showmap: Option<ShowmapConfig>,
+    /// Symbolic artifact replay mode (CLI-only, off by default).
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -536,11 +550,20 @@ impl MultiContractRunnerBuilder {
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
+            symbolic_artifact_replay: None,
         }
     }
 
     pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
         self.showmap = showmap;
+        self
+    }
+
+    pub fn with_symbolic_artifact_replay(
+        mut self,
+        replay: Option<SymbolicArtifactReplayConfig>,
+    ) -> Self {
+        self.symbolic_artifact_replay = replay;
         self
     }
 
@@ -714,6 +737,7 @@ impl MultiContractRunnerBuilder {
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
                 showmap: self.showmap,
+                symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },
 

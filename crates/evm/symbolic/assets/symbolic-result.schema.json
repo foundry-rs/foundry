@@ -52,6 +52,9 @@
         { "type": "null" },
         { "$ref": "#/$defs/counterexample" }
       ]
+    },
+    "artifact": {
+      "$ref": "#/$defs/artifact_ref"
     }
   },
   "allOf": [
@@ -448,6 +451,21 @@
         },
         "value": {
           "type": ["string", "null"]
+        }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "path"],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "foundry:symbolic.counterexample@v1"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

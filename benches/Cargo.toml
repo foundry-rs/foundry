@@ -17,6 +17,10 @@ workspace = true
 name = "foundry-bench"
 path = "src/main.rs"
 
+[[bin]]
+name = "foundry-scfuzzbench"
+path = "src/scfuzzbench.rs"
+
 [dependencies]
 foundry-test-utils.workspace = true
 foundry-common.workspace = true
@@ -29,3 +33,8 @@ chrono = { version = "0.4", features = ["serde"] }
 rayon.workspace = true
 clap = { version = "4", features = ["derive"] }
 once_cell = "1.21"
+ctrlc = { version = "3", features = ["termination"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
