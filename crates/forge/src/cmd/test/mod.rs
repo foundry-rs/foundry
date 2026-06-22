@@ -10,7 +10,7 @@ use crate::{
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
-        TestKindReport, TestOutcome, TestResult, TestStatus,
+        SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
     },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -533,6 +533,13 @@ impl TestArgs {
         )?;
         if artifact.calls.is_empty() {
             bail!("symbolic counterexample artifact {} has no calls", path.display());
+        }
+        if artifact.replay.status != SymbolicReplayStatus::Confirmed {
+            bail!(
+                "symbolic counterexample artifact {} replay status must be confirmed, got {:?}",
+                path.display(),
+                artifact.replay.status,
+            );
         }
         let Some((artifact_path, contract_name)) = artifact.test.contract.rsplit_once(':') else {
             bail!(

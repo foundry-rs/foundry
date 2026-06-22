@@ -1934,7 +1934,12 @@ pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
     Ok((call_result, success))
 }
 
-/// Executes a fuzz call and returns the result.
+/// Executes an invariant replay fuzz call and returns the result.
+///
+/// This applies invariant replay semantics: warp/roll deltas are applied before the call and the
+/// requested value is clamped to the sender balance. It is intended for invariant sequence replay,
+/// shrinking, and artifact validation rather than as a general raw-call helper.
+///
 /// Applies any block timestamp (warp) and block number (roll) adjustments before the call.
 pub fn execute_tx<FEN: FoundryEvmNetwork>(
     executor: &mut Executor<FEN>,
@@ -1976,7 +1981,7 @@ pub fn execute_tx<FEN: FoundryEvmNetwork>(
         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }
 
-/// Executes a replay call on a validation executor and registers any created targets.
+/// Executes an invariant replay call on a validation executor and registers created targets.
 ///
 /// This mirrors sequence replay's non-reverted commit behavior while allowing callers to update
 /// updatable target sets before validating later calls in the same artifact.

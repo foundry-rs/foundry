@@ -510,6 +510,40 @@ mod tests {
         assert_eq!(value["calls"][0]["value"], "0x9");
         assert_counterexample_artifact_shape(&value);
     }
+
+    #[test]
+    fn symbolic_counterexample_artifact_serializes_zero_quantities_compactly() {
+        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
+        let call = SymbolicCounterexampleCall {
+            warp: Some(U256::ZERO),
+            roll: Some(U256::ZERO),
+            sender: Address::ZERO,
+            target: Address::ZERO,
+            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            value: Some(U256::ZERO),
+            contract_name: Some("Target".to_string()),
+            function_name: Some("step".to_string()),
+            signature: Some("step()".to_string()),
+            args: Some(String::new()),
+            raw_args: Some(String::new()),
+        };
+        let artifact = SymbolicCounterexampleArtifact::new(
+            SymbolicCounterexampleArtifactKind::Sequence,
+            SymbolicCounterexampleTestIdentity {
+                contract: "InvariantTest".to_string(),
+                test: "invariant_counter()".to_string(),
+            },
+            &symbolic,
+            SymbolicCounterexampleReplaySemantics { fail_on_revert: false },
+            vec![call],
+        );
+
+        let value = serde_json::to_value(artifact).unwrap();
+        assert_eq!(value["calls"][0]["warp"], "0x0");
+        assert_eq!(value["calls"][0]["roll"], "0x0");
+        assert_eq!(value["calls"][0]["value"], "0x0");
+        assert_counterexample_artifact_shape(&value);
+    }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
@@ -1134,6 +1168,7 @@ pub enum SymbolicReplayStatus {
 
 /// Replay metadata for symbolic counterexample candidates.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolicReplayMetadata {
     /// Whether the symbolic outcome required concrete replay.
     pub required: bool,
@@ -1196,6 +1231,7 @@ impl From<&BaseCounterExample> for SymbolicCounterexample {
 
 /// Durable symbolic counterexample artifact.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolicCounterexampleArtifact {
     /// Artifact schema version.
     pub schema_version: u32,
@@ -1248,6 +1284,7 @@ impl SymbolicCounterexampleArtifact {
 
 /// Concrete replay semantics captured when a symbolic artifact is confirmed.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolicCounterexampleReplaySemantics {
     /// Whether an invariant sequence replay treats any target-call revert as a failure.
     pub fail_on_revert: bool,
@@ -1265,6 +1302,7 @@ pub enum SymbolicCounterexampleArtifactKind {
 
 /// Test identity for a symbolic counterexample artifact.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolicCounterexampleTestIdentity {
     /// Contract identifier as reported by Forge.
     pub contract: String,
@@ -1274,6 +1312,7 @@ pub struct SymbolicCounterexampleTestIdentity {
 
 /// One concrete call in a symbolic counterexample artifact.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolicCounterexampleCall {
     /// Amount to increase block timestamp before executing the call.
     pub warp: Option<U256>,
@@ -1403,7 +1442,10 @@ pub struct TestResult {
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
 
-    /// Durable replay artifact for the top-level counterexample, when one was written.
+    /// Legacy durable replay artifact for the top-level counterexample, when one was written.
+    ///
+    /// Prefer [`Self::counterexample_artifacts`] for new consumers; this compatibility field is
+    /// maintained by [`Self::add_counterexample_artifact`] for older JSON readers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counterexample_artifact: Option<SymbolicArtifactRef>,
 
