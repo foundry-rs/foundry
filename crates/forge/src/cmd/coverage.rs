@@ -87,8 +87,11 @@ impl CoverageArgs {
             config = self.load_config()?;
         }
 
-        // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        // Default to a static fuzz seed so coverage reports are deterministic,
+        // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.
+        if config.fuzz.seed.is_none() {
+            config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        }
 
         let (paths, mut output) = {
             let (project, output) = self.build(&config)?;

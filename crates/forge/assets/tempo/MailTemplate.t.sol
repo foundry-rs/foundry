@@ -17,7 +17,7 @@ contract MailTest is Test {
     address public constant BOB = address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
 
     function setUp() public virtual {
-        address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.ALPHA_USD_ADDRESS);
+        address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.PATH_USD_ADDRESS);
         StdPrecompiles.TIP_FEE_MANAGER.setUserToken(feeToken);
 
         token = ITIP20(

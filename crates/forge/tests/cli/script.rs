@@ -3241,7 +3241,7 @@ contract CounterScript is Script {
 error: the following required arguments were not provided:
   --broadcast
 
-Usage: [..] script --broadcast --verify --rpc-url <RPC_URL> <PATH> [ARGS]...
+Usage: [..] script --broadcast --verify --rpc-url <URL> <PATH> [ARGS]...
 
 For more information, try '--help'.
 

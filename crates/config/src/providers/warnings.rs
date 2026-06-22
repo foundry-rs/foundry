@@ -38,7 +38,10 @@ const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "p
 const RESERVED_KEYS: &[&str] = &["extends"];
 
 /// Keys kept for backward compatibility that should not trigger unknown key warnings.
-const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version"];
+///
+/// `tempo`, `optimism`, and `monad` are legacy aliases for canonical `network = "..."`
+/// values - still accepted on input but no longer serialized in the default config.
+const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism", "monad"];
 
 /// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {

@@ -1243,7 +1243,7 @@ interface Vm {
 
     /// Asserts that the given condition is true and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertTrue(bool condition, string calldata error) external pure;
+    function assertTrue(bool condition, string calldata err) external pure;
 
     /// Asserts that the given condition is false.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1251,7 +1251,7 @@ interface Vm {
 
     /// Asserts that the given condition is false and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertFalse(bool condition, string calldata error) external pure;
+    function assertFalse(bool condition, string calldata err) external pure;
 
     /// Asserts that two `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1259,7 +1259,7 @@ interface Vm {
 
     /// Asserts that two `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool left, bool right, string calldata error) external pure;
+    function assertEq(bool left, bool right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1267,7 +1267,7 @@ interface Vm {
 
     /// Asserts that two `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256 left, uint256 right, string calldata error) external pure;
+    function assertEq(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Asserts that two `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1275,7 +1275,7 @@ interface Vm {
 
     /// Asserts that two `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256 left, int256 right, string calldata error) external pure;
+    function assertEq(int256 left, int256 right, string calldata err) external pure;
 
     /// Asserts that two `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1283,7 +1283,7 @@ interface Vm {
 
     /// Asserts that two `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address left, address right, string calldata error) external pure;
+    function assertEq(address left, address right, string calldata err) external pure;
 
     /// Asserts that two `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1291,7 +1291,7 @@ interface Vm {
 
     /// Asserts that two `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32 left, bytes32 right, string calldata error) external pure;
+    function assertEq(bytes32 left, bytes32 right, string calldata err) external pure;
 
     /// Asserts that two `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1299,7 +1299,7 @@ interface Vm {
 
     /// Asserts that two `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string calldata left, string calldata right, string calldata error) external pure;
+    function assertEq(string calldata left, string calldata right, string calldata err) external pure;
 
     /// Asserts that two `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1307,7 +1307,7 @@ interface Vm {
 
     /// Asserts that two `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
+    function assertEq(bytes calldata left, bytes calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bool` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1315,7 +1315,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bool` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
+    function assertEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `uint256 values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1323,7 +1323,7 @@ interface Vm {
 
     /// Asserts that two arrays of `uint256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
+    function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `int256` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1331,7 +1331,7 @@ interface Vm {
 
     /// Asserts that two arrays of `int256` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
+    function assertEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `address` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1339,7 +1339,7 @@ interface Vm {
 
     /// Asserts that two arrays of `address` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
+    function assertEq(address[] calldata left, address[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes32` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1347,7 +1347,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes32` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
+    function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `string` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1355,7 +1355,7 @@ interface Vm {
 
     /// Asserts that two arrays of `string` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
+    function assertEq(string[] calldata left, string[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes` values are equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1363,7 +1363,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes` values are equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
+    function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1372,7 +1372,7 @@ interface Vm {
     /// Asserts that two `uint256` values are equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `int256` values are equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1381,7 +1381,7 @@ interface Vm {
     /// Asserts that two `int256` values are equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1389,7 +1389,7 @@ interface Vm {
 
     /// Asserts that two `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool left, bool right, string calldata error) external pure;
+    function assertNotEq(bool left, bool right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1397,7 +1397,7 @@ interface Vm {
 
     /// Asserts that two `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256 left, uint256 right, string calldata error) external pure;
+    function assertNotEq(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Asserts that two `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1405,7 +1405,7 @@ interface Vm {
 
     /// Asserts that two `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256 left, int256 right, string calldata error) external pure;
+    function assertNotEq(int256 left, int256 right, string calldata err) external pure;
 
     /// Asserts that two `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1413,7 +1413,7 @@ interface Vm {
 
     /// Asserts that two `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address left, address right, string calldata error) external pure;
+    function assertNotEq(address left, address right, string calldata err) external pure;
 
     /// Asserts that two `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1421,7 +1421,7 @@ interface Vm {
 
     /// Asserts that two `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32 left, bytes32 right, string calldata error) external pure;
+    function assertNotEq(bytes32 left, bytes32 right, string calldata err) external pure;
 
     /// Asserts that two `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1429,7 +1429,7 @@ interface Vm {
 
     /// Asserts that two `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string calldata left, string calldata right, string calldata error) external pure;
+    function assertNotEq(string calldata left, string calldata right, string calldata err) external pure;
 
     /// Asserts that two `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1437,7 +1437,7 @@ interface Vm {
 
     /// Asserts that two `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes calldata left, bytes calldata right, string calldata error) external pure;
+    function assertNotEq(bytes calldata left, bytes calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bool` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1445,7 +1445,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bool` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;
+    function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `uint256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1453,7 +1453,7 @@ interface Vm {
 
     /// Asserts that two arrays of `uint256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;
+    function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `int256` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1461,7 +1461,7 @@ interface Vm {
 
     /// Asserts that two arrays of `int256` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;
+    function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `address` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1469,7 +1469,7 @@ interface Vm {
 
     /// Asserts that two arrays of `address` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(address[] calldata left, address[] calldata right, string calldata error) external pure;
+    function assertNotEq(address[] calldata left, address[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes32` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1477,7 +1477,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes32` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;
+    function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `string` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1485,7 +1485,7 @@ interface Vm {
 
     /// Asserts that two arrays of `string` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(string[] calldata left, string[] calldata right, string calldata error) external pure;
+    function assertNotEq(string[] calldata left, string[] calldata right, string calldata err) external pure;
 
     /// Asserts that two arrays of `bytes` values are not equal.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1493,7 +1493,7 @@ interface Vm {
 
     /// Asserts that two arrays of `bytes` values are not equal and includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;
+    function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;
 
     /// Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1502,7 +1502,7 @@ interface Vm {
     /// Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Asserts that two `int256` values are not equal, formatting them with decimals in failure message.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1511,7 +1511,7 @@ interface Vm {
     /// Asserts that two `int256` values are not equal, formatting them with decimals in failure message.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1520,7 +1520,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(uint256 left, uint256 right, string calldata error) external pure;
+    function assertGt(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1529,7 +1529,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGt(int256 left, int256 right, string calldata error) external pure;
+    function assertGt(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message.
@@ -1539,7 +1539,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message.
@@ -1549,7 +1549,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1558,7 +1558,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(uint256 left, uint256 right, string calldata error) external pure;
+    function assertGe(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1567,7 +1567,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGe(int256 left, int256 right, string calldata error) external pure;
+    function assertGe(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1577,7 +1577,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1587,7 +1587,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be greater than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1596,7 +1596,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(uint256 left, uint256 right, string calldata error) external pure;
+    function assertLt(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1605,7 +1605,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLt(int256 left, int256 right, string calldata error) external pure;
+    function assertLt(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message.
@@ -1615,7 +1615,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message.
@@ -1625,7 +1625,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1634,7 +1634,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(uint256 left, uint256 right, string calldata error) external pure;
+    function assertLe(uint256 left, uint256 right, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1643,7 +1643,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLe(int256 left, int256 right, string calldata error) external pure;
+    function assertLe(int256 left, int256 right, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1653,7 +1653,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;
+    function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message.
@@ -1663,7 +1663,7 @@ interface Vm {
     /// Compares two `int256` values. Expects first value to be less than or equal to second.
     /// Formats values with decimals in failure message. Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;
+    function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1672,7 +1672,7 @@ interface Vm {
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     #[cheatcode(group = Testing, safety = Safe)]
@@ -1681,7 +1681,7 @@ interface Vm {
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;
+    function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.
     /// Formats values with decimals in failure message.
@@ -1696,7 +1696,7 @@ interface Vm {
         uint256 right,
         uint256 maxDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.
@@ -1712,7 +1712,7 @@ interface Vm {
         int256 right,
         uint256 maxDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
@@ -1724,7 +1724,7 @@ interface Vm {
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;
+    function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata err) external pure;
 
     /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
@@ -1735,7 +1735,7 @@ interface Vm {
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
     /// Includes error message into revert string on failure.
     #[cheatcode(group = Testing, safety = Safe)]
-    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;
+    function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata err) external pure;
 
     /// Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
     /// `maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%
@@ -1757,7 +1757,7 @@ interface Vm {
         uint256 right,
         uint256 maxPercentDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.
@@ -1780,7 +1780,7 @@ interface Vm {
         int256 right,
         uint256 maxPercentDelta,
         uint256 decimals,
-        string calldata error
+        string calldata err
     ) external pure;
 
     /// Returns true if the current Foundry version is greater than or equal to the given version.
