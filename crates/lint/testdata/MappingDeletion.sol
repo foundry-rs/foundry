@@ -21,12 +21,18 @@ contract MappingDeletion {
         uint256 b;
     }
 
+    struct Tree {
+        Tree[] children;
+        mapping(address => uint256) balances;
+    }
+
     WithMapping internal s;
     Nested internal n;
     Plain internal p;
     WithMapping[] internal arr;
     mapping(uint256 => WithMapping) internal m;
     mapping(uint256 => uint256) internal plainMap;
+    Tree internal root;
 
     // SHOULD FAIL: deleting a struct that directly holds a mapping.
     function badStruct() external {
@@ -51,6 +57,11 @@ contract MappingDeletion {
     // SHOULD FAIL: a single array element is a struct with a mapping.
     function badArrayElem(uint256 i) external {
         delete arr[i]; //~WARN: `delete` on a value containing a mapping does not clear the mapping
+    }
+
+    // SHOULD FAIL: a recursive struct reaches a mapping; exercises the recursion guard.
+    function badRecursive() external {
+        delete root; //~WARN: `delete` on a value containing a mapping does not clear the mapping
     }
 
     // OK: plain struct, no mapping reachable.

@@ -38,3 +38,11 @@ LL │         delete arr[i];
    │
    ╰ help: https://getfoundry.sh/forge/linting/mapping-deletion
 
+warning[mapping-deletion]: `delete` on a value containing a mapping does not clear the mapping
+   ╭▸ ROOT/testdata/MappingDeletion.sol:LL:CC
+   │
+LL │         delete root;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mapping-deletion
+
