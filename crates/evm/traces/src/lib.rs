@@ -439,7 +439,7 @@ impl TraceMode {
     }
 
     pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes { std::cmp::max(self, Self::RecordStateDiff) } else { self }
+        if yes && !self.is_debug() { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
@@ -448,6 +448,7 @@ impl TraceMode {
             3..=4 => std::cmp::max(self, Self::Call),
             // Enable step recording and state diff recording when verbosity is 5 or higher.
             // This includes backtraces (JUMP/JUMPDEST steps) and storage changes.
+            _ if self.is_debug() => self,
             _ => std::cmp::max(self, Self::RecordStateDiff),
         }
     }
@@ -460,6 +461,7 @@ impl TraceMode {
             // It should not enable memory/stack snapshots.
             // State diff recording requires all opcodes (no filter) since it needs
             // SLOAD/SSTORE steps, not just JUMP/JUMPDEST.
+            let record_state_diff = self.record_state_diff() || self.is_debug();
             let effective = if self.record_state_diff() { Self::Steps } else { self };
             TracingInspectorConfig {
                 record_steps: self >= Self::Steps,
@@ -470,10 +472,10 @@ impl TraceMode {
                     StackSnapshotType::None
                 },
                 record_logs: true,
-                record_state_diff: self.record_state_diff(),
+                record_state_diff,
                 record_returndata_snapshots: effective.is_debug(),
                 // State diff needs all opcodes recorded to capture SLOAD/SSTORE.
-                record_opcodes_filter: if self.record_state_diff() {
+                record_opcodes_filter: if record_state_diff {
                     None
                 } else {
                     (effective.is_steps() || effective.is_jump() || effective.is_jump_simple())
@@ -537,7 +539,9 @@ mod tests {
         assert_eq!(TraceMode::None.with_verbosity(5), TraceMode::RecordStateDiff);
         assert_eq!(TraceMode::Call.with_verbosity(5), TraceMode::RecordStateDiff);
         assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
-        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::RecordStateDiff);
+        // Debug mode already records full steps; it must not be downgraded to the lightweight
+        // RecordStateDiff mode when high verbosity is also requested.
+        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::Debug);
         // Already at the top — stays the same.
         assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
     }
@@ -592,6 +596,6 @@ mod tests {
         assert!(cfg.record_returndata_snapshots, "Debug must record returndata");
         assert!(cfg.record_immediate_bytes, "Debug must record immediate bytes");
         assert!(cfg.record_opcodes_filter.is_none(), "Debug must record all opcodes (no filter)");
-        assert!(!cfg.record_state_diff, "Debug alone should not record state diff");
+        assert!(cfg.record_state_diff, "Debug should record storage accesses for the debugger");
     }
 }

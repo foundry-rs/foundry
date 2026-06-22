@@ -35,6 +35,7 @@ use foundry_evm_core::{
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
+use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     bytecode::Bytecode,
@@ -1035,6 +1036,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub edge_coverage: Option<EdgeCoverage>,
     /// EVM comparison operands collected during the call.
     pub evm_cmp_values: Option<Vec<CmpOperands>>,
+    /// Observed sub-calls collected during the call.
+    pub observed_calls: Vec<ObservedCall>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,
@@ -1074,6 +1077,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             line_coverage: None,
             edge_coverage: None,
             evm_cmp_values: None,
+            observed_calls: Vec::new(),
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
@@ -1291,7 +1295,7 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
 fn convert_executed_result<FEN: FoundryEvmNetwork>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
-    inspector: InspectorStack<FEN>,
+    mut inspector: InspectorStack<FEN>,
     ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
@@ -1316,6 +1320,12 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         Some(Output::Call(data)) => data.clone(),
         _ => Bytes::new(),
     };
+    let observed_calls = inspector
+        .inner
+        .fuzzer
+        .as_mut()
+        .map(|fuzzer| fuzzer.take_observed_calls())
+        .unwrap_or_default();
 
     let InspectorData {
         mut logs,
@@ -1354,6 +1364,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         line_coverage,
         edge_coverage,
         evm_cmp_values,
+        observed_calls,
         sancov_coverage: None,
         sancov_cmp_values: None,
         transactions,

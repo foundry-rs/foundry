@@ -8,6 +8,7 @@ It helps enforce best practices and improve code quality within Foundry projects
 `forge-lint` includes rules across several categories:
 
 - **High Severity:**
+  - `incorrect-exp`: Flags `^` (bitwise xor) used where `**` (exponentiation) was likely intended.
   - `incorrect-shift`: Warns against shift operations where operands might be in the wrong order.
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.

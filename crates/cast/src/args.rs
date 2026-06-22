@@ -964,6 +964,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
         CastSubcommand::ReceivePolicy { command } => command.run().await?,
+        CastSubcommand::Tip403 { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
         CastSubcommand::KeyAuthorization { command } => command.run().await?,
         CastSubcommand::Tempo { command } => command.run().await?,
