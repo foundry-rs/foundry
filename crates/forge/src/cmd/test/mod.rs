@@ -83,8 +83,10 @@ foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
 
 pub(crate) struct FuzzMinimizeReplaySession {
     filter: ProjectPathsAwareFilter,
-    passes: Vec<FuzzMinimizeRunnerPass>,
+    passes: Vec<FuzzMinimizeReplay>,
 }
+
+type FuzzMinimizeReplay = Box<dyn Fn(&ProjectPathsAwareFilter, FuzzMinimizeConfig) -> Result<()>>;
 
 impl FuzzMinimizeReplaySession {
     pub(crate) fn replay(
@@ -99,34 +101,12 @@ impl FuzzMinimizeReplaySession {
             observations: observations.clone(),
         };
 
-        for pass in &self.passes {
-            pass.replay(&self.filter, fuzz_minimize.clone())?;
+        for replay in &self.passes {
+            replay(&self.filter, fuzz_minimize.clone())?;
         }
 
         let observations = observations.lock().expect("minimize observations lock").clone();
         Ok(merge_replay_observations(observations))
-    }
-}
-
-enum FuzzMinimizeRunnerPass {
-    Eth(MultiContractRunner<EthEvmNetwork>),
-    Tempo(MultiContractRunner<TempoEvmNetwork>),
-    #[cfg(feature = "optimism")]
-    Op(MultiContractRunner<OpEvmNetwork>),
-}
-
-impl FuzzMinimizeRunnerPass {
-    fn replay(
-        &self,
-        filter: &ProjectPathsAwareFilter,
-        fuzz_minimize: FuzzMinimizeConfig,
-    ) -> Result<()> {
-        match self {
-            Self::Eth(runner) => replay_with_runner(runner, filter, fuzz_minimize),
-            Self::Tempo(runner) => replay_with_runner(runner, filter, fuzz_minimize),
-            #[cfg(feature = "optimism")]
-            Self::Op(runner) => replay_with_runner(runner, filter, fuzz_minimize),
-        }
     }
 }
 
@@ -139,6 +119,12 @@ fn replay_with_runner<FEN: FoundryEvmNetwork>(
     runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
     let _ = runner.test_collect(filter)?;
     Ok(())
+}
+
+fn fuzz_minimize_replay<FEN: FoundryEvmNetwork>(
+    runner: MultiContractRunner<FEN>,
+) -> FuzzMinimizeReplay {
+    Box::new(move |filter, fuzz_minimize| replay_with_runner(&runner, filter, fuzz_minimize))
 }
 
 fn merge_replay_observations(observations: Vec<ReplayObservation>) -> ReplayObservation {
@@ -1473,40 +1459,30 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         multi_network: MultiNetworkConfig,
-    ) -> eyre::Result<FuzzMinimizeRunnerPass> {
+    ) -> eyre::Result<FuzzMinimizeReplay> {
         if dispatch_opts.networks.is_tempo() {
-            Ok(FuzzMinimizeRunnerPass::Tempo(
-                self.build_fuzz_minimize_runner::<TempoEvmNetwork>(
+            return self
+                .build_fuzz_minimize_runner::<TempoEvmNetwork>(
                     config,
                     evm_opts,
                     output,
                     multi_network,
                 )
-                .await?,
-            ))
-        } else {
-            #[cfg(feature = "optimism")]
-            if dispatch_opts.networks.is_optimism() {
-                return Ok(FuzzMinimizeRunnerPass::Op(
-                    self.build_fuzz_minimize_runner::<OpEvmNetwork>(
-                        config,
-                        evm_opts,
-                        output,
-                        multi_network,
-                    )
-                    .await?,
-                ));
-            }
-            Ok(FuzzMinimizeRunnerPass::Eth(
-                self.build_fuzz_minimize_runner::<EthEvmNetwork>(
-                    config,
-                    evm_opts,
-                    output,
-                    multi_network,
-                )
-                .await?,
-            ))
+                .await
+                .map(fuzz_minimize_replay);
         }
+
+        #[cfg(feature = "optimism")]
+        if dispatch_opts.networks.is_optimism() {
+            return self
+                .build_fuzz_minimize_runner::<OpEvmNetwork>(config, evm_opts, output, multi_network)
+                .await
+                .map(fuzz_minimize_replay);
+        }
+
+        self.build_fuzz_minimize_runner::<EthEvmNetwork>(config, evm_opts, output, multi_network)
+            .await
+            .map(fuzz_minimize_replay)
     }
 
     /// Run all tests that matches the filter predicate from a test runner
