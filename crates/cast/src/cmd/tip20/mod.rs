@@ -246,31 +246,36 @@ pub(crate) async fn send_tip20_transaction(
     let chain = builder.chain();
 
     if print_sponsor_hash {
-        let (mut tx, from) = if let Some(ref ak) = access_key {
-            let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
-            (tx, ak.wallet_address)
-        } else {
-            let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
-                eyre::eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
+        // Box this branch's future to keep its async state off the parent frame; otherwise
+        // `send_tip20_transaction` trips `clippy::large_stack_frames` by a small margin.
+        return Box::pin(async {
+            let (mut tx, from) = if let Some(ref ak) = access_key {
+                let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
+                (tx, ak.wallet_address)
+            } else {
+                let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
+                    eyre::eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
+                })?;
+                let from = signer.address();
+                let (tx, _) = builder.build(signer).await?;
+                (tx, from)
+            };
+            if let Some(fee_payer) = sponsor_fee_payer {
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(fee_payer),
+                )
+                .await?;
+            }
+            let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
+                eyre::eyre!("This network does not support sponsored transactions")
             })?;
-            let from = signer.address();
-            let (tx, _) = builder.build(signer).await?;
-            (tx, from)
-        };
-        if let Some(fee_payer) = sponsor_fee_payer {
-            resolve_and_set_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                &mut tx,
-                Some(fee_payer),
-            )
-            .await?;
-        }
-        let hash = tx
-            .compute_sponsor_hash(from)
-            .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
-        sh_println!("{hash:?}")?;
-        return Ok(());
+            sh_println!("{hash:?}")?;
+            eyre::Ok(())
+        })
+        .await;
     }
 
     if let Some(ts) = expires_at {

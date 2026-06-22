@@ -105,6 +105,8 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
+    /// Enable mixed mining mode. Blocks are mined on a timer (set by `--block-time`),
+    /// but also whenever a transaction is submitted. Requires `--block-time` to be set.
     #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
 
