@@ -981,12 +981,9 @@ impl WorkerCorpus {
                     let start2 = rng.random_range(0..secondary.tx_seq.len());
                     let end2 = rng.random_range(start2..secondary.tx_seq.len());
 
-                    for tx in primary.tx_seq.iter().take(end1).skip(start1) {
-                        new_seq.push(tx.clone());
-                    }
-                    for tx in secondary.tx_seq.iter().take(end2).skip(start2) {
-                        new_seq.push(tx.clone());
-                    }
+                    new_seq.reserve((end1 - start1) + (end2 - start2));
+                    new_seq.extend_from_slice(&primary.tx_seq[start1..end1]);
+                    new_seq.extend_from_slice(&secondary.tx_seq[start2..end2]);
                 }
                 MutationType::Repeat => {
                     let (corpus_index, corpus) = if rng.random::<bool>() {
@@ -1002,14 +999,17 @@ impl WorkerCorpus {
                     let start = rng.random_range(0..corpus.tx_seq.len());
                     let end = rng.random_range(start..corpus.tx_seq.len());
                     let item_idx = rng.random_range(0..corpus.tx_seq.len());
-                    let repeated = vec![new_seq[item_idx].clone(); end - start];
-                    new_seq.splice(start..end, repeated);
+                    let repeated = new_seq[item_idx].clone();
+                    for tx in &mut new_seq[start..end] {
+                        *tx = repeated.clone();
+                    }
                 }
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
 
                     self.current_mutated_index = Some(primary_index);
 
+                    new_seq.reserve(primary.tx_seq.len().min(secondary.tx_seq.len()));
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
                         // TODO: chunks?
                         let tx = if rng.random::<bool>() { tx1.clone() } else { tx2.clone() };
@@ -1082,25 +1082,27 @@ impl WorkerCorpus {
                     self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
-                    let candidates = corpus
-                        .cmp_seq
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
-                        .collect::<Vec<_>>();
-
                     let mut mutated = false;
                     let fallback_idx = rng.random_range(0..new_seq.len());
-                    if !candidates.is_empty() {
-                        let start = rng.random_range(0..candidates.len());
-                        for offset in 0..candidates.len() {
-                            let idx = candidates[(start + offset) % candidates.len()];
+                    let candidates = || {
+                        corpus
+                            .cmp_seq
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, cmp_values)| !cmp_values.is_empty())
+                    };
+                    let candidate_count = candidates().count();
+                    if candidate_count != 0 {
+                        let start = rng.random_range(0..candidate_count);
+                        for (idx, cmp_values) in
+                            candidates().cycle().skip(start).take(candidate_count)
+                        {
                             let tx = new_seq.get_mut(idx).unwrap();
                             if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
                                 mutated = Self::cmp_mutate(
                                     tx,
                                     function,
-                                    corpus.cmp_seq[idx].as_slice(),
+                                    cmp_values.as_slice(),
                                     test_runner,
                                 )?;
                                 if mutated {
