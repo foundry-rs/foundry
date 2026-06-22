@@ -96,9 +96,9 @@ chrono.workspace = true
 vergen = { workspace = true, features = ["build", "emit_and_set"] }
 
 [dev-dependencies]
-foundry-evm-hardforks.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
+foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
 
 [features]

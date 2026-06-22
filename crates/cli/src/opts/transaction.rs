@@ -9,7 +9,7 @@ use alloy_rlp::Decodable;
 use clap::Parser;
 use foundry_common::FoundryTransactionBuilder;
 
-/// CLI helper to parse a EIP-7702 authorization list.
+/// CLI helper to parse an EIP-7702 authorization list.
 /// Can be either a hex-encoded signed authorization or an address.
 #[derive(Clone, Debug)]
 pub enum CliAuthorizationList {
