@@ -1,5 +1,5 @@
 use crate::{
-    BasicTxDetails,
+    BasicTxDetails, Fuzzer,
     invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
     strategies::literals::LiteralsDictionary,
 };
@@ -133,6 +133,13 @@ impl InvariantFuzzState {
         }
     }
 
+    pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
+        let mut dict = self.inner.borrow_mut();
+        for value in fuzzer.collected_values.drain(..) {
+            dict.insert_value(value);
+        }
+    }
+
     /// Collects state changes from a [StateChangeset] and logs into an [InvariantFuzzState]
     /// according to the given [FuzzDictionaryConfig].
     #[allow(clippy::too_many_arguments)]
@@ -148,9 +155,17 @@ impl InvariantFuzzState {
     ) {
         let mut dict = self.inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
-        let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
-        dict.insert_logs_values(target_abi, logs, run_depth);
-        dict.insert_result_values(target_function, result, run_depth);
+        let (target_abi, target_function) = if logs.is_empty() && result.is_empty() {
+            (None, None)
+        } else {
+            targets.fuzzed_artifacts(tx)
+        };
+        if !logs.is_empty() {
+            dict.insert_logs_values(target_abi, logs, run_depth);
+        }
+        if !result.is_empty() {
+            dict.insert_result_values(target_function, result, run_depth);
+        }
         dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
     }
 
