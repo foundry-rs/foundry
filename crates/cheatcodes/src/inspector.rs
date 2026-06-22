@@ -364,6 +364,16 @@ pub struct GasMetering {
 }
 
 impl GasMetering {
+    #[inline]
+    const fn is_step_inactive(&self) -> bool {
+        !self.paused && !self.reset && !self.recording
+    }
+
+    #[inline]
+    const fn is_step_end_inactive(&self) -> bool {
+        !self.paused && !self.touched
+    }
+
     /// Start the gas recording.
     pub const fn start(&mut self) {
         self.recording = true;
@@ -732,6 +742,24 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             env_overrides_snapshots: Default::default(),
             in_isolation_context: false,
         }
+    }
+
+    #[inline]
+    fn step_hooks_inactive(&self) -> bool {
+        self.broadcast.is_none()
+            && self.gas_metering.is_step_inactive()
+            && !self.recording_accesses
+            && self.recorded_account_diffs_stack.is_none()
+            && self.allowed_mem_writes.is_empty()
+            && self.mapping_slots.is_none()
+            && self.env_overrides.is_empty()
+    }
+
+    #[inline]
+    fn step_end_hooks_inactive(&self) -> bool {
+        self.gas_metering.is_step_end_inactive()
+            && self.arbitrary_storage.is_none()
+            && self.env_overrides.is_empty()
     }
 
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
@@ -1361,6 +1389,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.pc = interpreter.bytecode.pc();
 
+        if self.step_hooks_inactive() {
+            return;
+        }
+
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interpreter);
         }
@@ -1435,6 +1467,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
+        if self.step_end_hooks_inactive() {
+            return;
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
