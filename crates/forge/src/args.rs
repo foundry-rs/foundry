@@ -66,10 +66,7 @@ pub fn run_command(args: Forge) -> Result<()> {
     // process-global `is_machine()` flag without ever emitting a terminal
     // envelope — spoofing `command_id` and leaving the stream unterminated.
     if foundry_cli::is_machine() {
-        let adopted = matches!(
-            args.cmd,
-            ForgeSubcommand::Build(_) | ForgeSubcommand::Test(_) | ForgeSubcommand::Fuzz(_)
-        );
+        let adopted = matches!(args.cmd, ForgeSubcommand::Build(_) | ForgeSubcommand::Test(_));
         if !adopted {
             let name = subcommand_name(&args.cmd);
             foundry_cli::machine::bail_machine_usage_with_details(
@@ -102,14 +99,6 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Fuzz(cmd) => {
-            let machine_mode = foundry_cli::is_machine();
-            let started = std::time::Instant::now();
-            if machine_mode {
-                if let Some(outcome) = global.block_on(cmd.run_machine())? {
-                    return finalize_test_machine_mode(outcome, started.elapsed());
-                }
-                return Ok(());
-            }
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(shell::is_json())
         }

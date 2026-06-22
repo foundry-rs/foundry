@@ -482,7 +482,7 @@ forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
     assert_eq!(stdout.matches("corpus/worker").count(), 1, "{stdout}");
 });
 
-forgetest_init!(forge_fuzz_corpus_subcommands_reject_machine, |prj, cmd| {
+forgetest_init!(forge_fuzz_rejects_machine, |prj, cmd| {
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
     let entry = r#"[{
@@ -495,6 +495,8 @@ forgetest_init!(forge_fuzz_corpus_subcommands_reject_machine, |prj, cmd| {
     std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry).unwrap();
 
     for args in [
+        vec!["--machine", "fuzz", "run"],
+        vec!["--machine", "fuzz", "replay"],
         vec!["--machine", "fuzz", "show", "corpus"],
         vec!["--machine", "fuzz", "cmin", "corpus", "--out", "cmin"],
         vec![
@@ -510,6 +512,7 @@ forgetest_init!(forge_fuzz_corpus_subcommands_reject_machine, |prj, cmd| {
         let output: Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
         assert_eq!(output["success"], false);
         assert_eq!(output["errors"][0]["code"], "cli.usage.invalid");
+        assert_eq!(output["errors"][0]["details"]["subcommand"], "fuzz");
     }
 });
 

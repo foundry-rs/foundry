@@ -39,7 +39,6 @@ impl FuzzArgs {
         match self.command {
             FuzzSubcommands::Run(mut args) => {
                 args.enable_fuzz_only();
-                args.reject_machine_unsupported_flags()?;
                 args.run().await
             }
             FuzzSubcommands::Replay(args) => args.run().await,
@@ -57,32 +56,6 @@ impl FuzzArgs {
             }
         }
     }
-
-    pub async fn run_machine(self) -> Result<Option<crate::result::TestOutcome>> {
-        match self.command {
-            FuzzSubcommands::Run(mut args) => {
-                args.enable_fuzz_only();
-                args.reject_machine_unsupported_flags()?;
-                Ok(Some(args.run().await?))
-            }
-            FuzzSubcommands::Replay(args) => Ok(Some(args.run().await?)),
-            // TODO: Reintroduce `--machine` for these corpus subcommands once their
-            // output schema is stable and does not interleave minimizer replay events.
-            FuzzSubcommands::Show(_) => reject_machine("show"),
-            FuzzSubcommands::Cmin(_) => reject_machine("cmin"),
-            FuzzSubcommands::Tmin(_) => reject_machine("tmin"),
-        }
-    }
-}
-
-fn reject_machine(subcommand: &str) -> ! {
-    foundry_cli::machine::bail_machine_usage_with_details(
-        format!(
-            "`forge fuzz {subcommand}` temporarily does not support `--machine`; run without \
-                 `--machine`."
-        ),
-        serde_json::json!({ "subcommand": format!("fuzz {subcommand}") }),
-    )
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -112,7 +85,6 @@ pub struct FuzzReplayArgs {
 impl FuzzReplayArgs {
     async fn run(mut self) -> Result<crate::result::TestOutcome> {
         self.test.enable_fuzz_only();
-        self.test.reject_machine_unsupported_flags()?;
         if self.corpus_dir.is_none() {
             self.test.enable_fuzz_failure_replay();
             return self.test.run().await;
@@ -249,7 +221,6 @@ impl FuzzCminArgs {
     async fn run_to(&self, out_dir: &Path) -> Result<CminSummary> {
         let mut test = minimizer_test_args(self.filter.clone());
         test.enable_fuzz_only();
-        test.reject_machine_unsupported_flags()?;
         let session = prepare_minimize_session(&mut test).await?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let mut kept = 0usize;
@@ -340,7 +311,6 @@ impl FuzzTminArgs {
         let before_txs = sequence.len();
         let mut test = minimizer_test_args(self.filter);
         test.enable_fuzz_only();
-        test.reject_machine_unsupported_flags()?;
         let session = prepare_minimize_session(&mut test).await?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let original = replay_candidate(&session, evm_edge_indices.clone(), sequence.clone())?;
