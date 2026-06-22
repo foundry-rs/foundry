@@ -25,13 +25,15 @@ use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::invariant::FuzzRunIdentifiedContracts;
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{HashMap, HashSet},
     fmt,
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+
+type EvmShowmap = HashMap<(B256, u32), u64>;
 
 /// Which coverage bitmap(s) to dump.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -120,7 +122,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         ShowmapStats { sancov_requested: opts.domain.includes_sancov(), ..Default::default() };
     // Reused per call. In aggregate mode it accumulates across all entries; in per-input mode it
     // is cleared after each entry's file is written.
-    let mut evm_buf: BTreeMap<(B256, u32), u64> = BTreeMap::new();
+    let mut evm_buf = EvmShowmap::new();
     let mut san_buf: Vec<u64> = Vec::new();
 
     // Dedup hard-linked entries shared across workers.
@@ -212,7 +214,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
 }
 
 /// Saturating-add per-(bytecode, pc) hits from a `HitMaps` snapshot into `dst`.
-fn accumulate_evm(dst: &mut BTreeMap<(B256, u32), u64>, src: Option<&HitMaps>) {
+fn accumulate_evm(dst: &mut EvmShowmap, src: Option<&HitMaps>) {
     let Some(maps) = src else { return };
     for (hash, hitmap) in maps.iter() {
         for (pc, hits) in hitmap.iter() {
@@ -237,7 +239,7 @@ fn accumulate_sancov(dst: &mut Vec<u64>, src: Option<&[u8]>) {
 
 /// Write a single showmap file. Returns 1 if a file was written, 0 if skipped
 /// (no nonzero entries).
-fn write_showmap_file(path: &Path, evm: &BTreeMap<(B256, u32), u64>, san: &[u64]) -> Result<usize> {
+fn write_showmap_file(path: &Path, evm: &EvmShowmap, san: &[u64]) -> Result<usize> {
     // Pre-check so we don't create empty files.
     let has_evm = evm.values().any(|&c| c != 0);
     let has_san = san.iter().any(|&c| c != 0);
@@ -254,11 +256,11 @@ fn write_showmap_file(path: &Path, evm: &BTreeMap<(B256, u32), u64>, san: &[u64]
 /// Each EVM ID is `evm_<bytecode_hash[:16hex]>_<pc:04x>`. The 16-hex prefix
 /// (64 bits) of the keccak256 bytecode hash makes IDs deterministic across
 /// processes while keeping line lengths short.
-fn write_evm<W: Write>(out: &mut W, evm: &BTreeMap<(B256, u32), u64>) -> std::io::Result<()> {
-    for ((hash, pc), count) in evm {
-        if *count == 0 {
-            continue;
-        }
+fn write_evm<W: Write>(out: &mut W, evm: &EvmShowmap) -> std::io::Result<()> {
+    let mut entries = evm.iter().filter(|(_, count)| **count != 0).collect::<Vec<_>>();
+    entries.sort_unstable_by_key(|((hash, pc), _)| (*hash, *pc));
+
+    for ((hash, pc), count) in entries {
         let h = hex::encode(&hash.as_slice()[..8]);
         writeln!(out, "evm_{h}_{pc:04x}:{count}")?;
     }
@@ -297,7 +299,7 @@ mod tests {
     fn write_evm_emits_only_nonzero_deterministic_ids() {
         let mut buf: Vec<u8> = Vec::new();
         let h = B256::with_last_byte(0xab);
-        let mut evm = BTreeMap::new();
+        let mut evm = EvmShowmap::new();
         evm.insert((h, 1u32), 0u64); // skipped (count=0)
         evm.insert((h, 0x2au32), 3u64);
         write_evm(&mut buf, &evm).unwrap();
@@ -316,7 +318,7 @@ mod tests {
     fn write_showmap_file_skips_when_empty() {
         let dir = temp_dir();
         let path = dir.join("trial.txt");
-        let written = write_showmap_file(&path, &BTreeMap::new(), &[]).unwrap();
+        let written = write_showmap_file(&path, &EvmShowmap::new(), &[]).unwrap();
         assert_eq!(written, 0);
         assert!(!path.exists());
     }
@@ -326,7 +328,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.join("trial.txt");
         let h = B256::with_last_byte(0xff);
-        let mut evm = BTreeMap::new();
+        let mut evm = EvmShowmap::new();
         evm.insert((h, 7u32), 5u64);
         let written = write_showmap_file(&path, &evm, &[2]).unwrap();
         assert_eq!(written, 1);
