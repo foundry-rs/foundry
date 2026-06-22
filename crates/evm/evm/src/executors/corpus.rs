@@ -895,6 +895,7 @@ impl WorkerCorpus {
         self.in_memory_corpus.push(corpus);
     }
 
+    /// Selects another non-empty in-memory corpus entry to donate a sequence chunk for crossover.
     fn select_crossover_donor(
         &self,
         primary_uuid: Uuid,
@@ -916,6 +917,7 @@ impl WorkerCorpus {
             .map(|entry| entry.tx_seq.as_slice())
     }
 
+    /// Selects a bounded contiguous transaction chunk from the donor sequence.
     fn random_crossover_chunk<'a>(
         donor: &'a [BasicTxDetails],
         rng: &mut impl Rng,
@@ -930,6 +932,7 @@ impl WorkerCorpus {
         Some(&donor[start..start + len])
     }
 
+    /// Inserts a random donor chunk into the base sequence.
     fn crossover_insert_sequence(
         base: &[BasicTxDetails],
         donor: &[BasicTxDetails],
@@ -944,6 +947,7 @@ impl WorkerCorpus {
         Some(sequence)
     }
 
+    /// Replaces part of the base sequence with a random donor chunk.
     fn crossover_replace_sequence(
         base: &[BasicTxDetails],
         donor: &[BasicTxDetails],
