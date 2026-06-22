@@ -409,7 +409,7 @@ revm-inspectors = { version = "0.41.1", features = ["serde"] }
 op-revm = { version = "20.0.0", default-features = false }
 
 ## cli
-anstream = "0.6"
+anstream = "1.0"
 anstyle = "1.0"
 dialoguer = { version = "0.12", default-features = false, features = [
     "password",
@@ -427,7 +427,7 @@ thiserror = "2"
 
 # allocators
 mimalloc = "0.1"
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 
 # misc
 auto_impl = "1"
@@ -471,15 +471,15 @@ rustls = "0.23"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
-similar-asserts = "1.7"
-soldeer-commands = "=0.10.0"
-soldeer-core = { version = "=0.10.1", features = ["serde"] }
+similar-asserts = "2.0"
+soldeer-commands = "=0.11.0"
+soldeer-core = { version = "=0.11.0", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.23"
 tokio = "1"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
-toml = "0.9"
-toml_edit = "0.24"
+toml = "1.1"
+toml_edit = "0.25"
 tower = "0.5"
 tower-http = "0.6"
 tracing = "0.1"
@@ -507,22 +507,22 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "9de5344a961c13dd4b201
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38", default-features = false, features = [
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # testing
-snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
+snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
@@ -594,9 +594,9 @@ alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = 
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ba6246789fc12cf8fe78aa74aadf31d663f08c1f" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "563fc42578a9920067d129b0f191250e3a616a38" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }

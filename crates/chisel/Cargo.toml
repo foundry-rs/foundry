@@ -44,7 +44,7 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
-rustyline = "17"
+rustyline = "18"
 itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true

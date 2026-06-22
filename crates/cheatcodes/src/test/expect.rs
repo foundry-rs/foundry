@@ -10,7 +10,7 @@ use alloy_primitives::{
     Address, Bytes, LogData as RawLog, U256, hex, keccak256,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use foundry_common::{abi::get_indexed_event, fmt::format_token};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_traces::DecodedCallLog;
@@ -20,6 +20,8 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
     },
 };
+use tempo_contracts::precompiles::ISignatureVerifier;
+use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
@@ -412,11 +414,50 @@ impl Cheatcode for expectTip20LogoURIUpdatedCall {
     }
 }
 
+impl Cheatcode for expectKeychainVerifiedCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { account, digest, signature } = self;
+        expect_keychain_verified(state, *account, *digest, signature.clone(), false)
+    }
+}
+
+impl Cheatcode for expectKeychainAdminVerifiedCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { account, digest, signature } = self;
+        expect_keychain_verified(state, *account, *digest, signature.clone(), true)
+    }
+}
+
 impl Cheatcode for expectLogoURIUpdatedCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { token, updater, newLogoURI } = self;
         expect_logo_uri_updated(ccx, token, updater, newLogoURI)
     }
+}
+
+fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    account: Address,
+    digest: alloy_primitives::B256,
+    signature: Bytes,
+    admin: bool,
+) -> Result {
+    let calldata = if admin {
+        ISignatureVerifier::verifyKeychainAdminCall { account, hash: digest, signature }
+            .abi_encode()
+    } else {
+        ISignatureVerifier::verifyKeychainCall { account, hash: digest, signature }.abi_encode()
+    };
+    expect_call(
+        state,
+        &SIGNATURE_VERIFIER_ADDRESS,
+        &Bytes::from(calldata),
+        None,
+        None,
+        None,
+        1,
+        ExpectedCallType::NonCount,
+    )
 }
 
 fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
