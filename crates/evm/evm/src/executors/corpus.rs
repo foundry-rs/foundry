@@ -78,7 +78,6 @@ const WORKER: &str = "worker";
 const CORPUS_DIR: &str = "corpus";
 const SYNC_DIR: &str = "sync";
 const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
-const CROSSOVER_POOL_MAX_ENTRIES: usize = 256;
 const CROSSOVER_MAX_CHUNK_LEN: usize = 4;
 
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
@@ -491,8 +490,6 @@ pub struct WorkerCorpus {
     /// In-memory corpus entries populated from the persisted files and
     /// runs administered by this worker.
     in_memory_corpus: Vec<CorpusEntry>,
-    /// Evicted corpus entries retained as donors for crossover mutations.
-    crossover_pool: Vec<Vec<BasicTxDetails>>,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
     /// Stable dense EVM edge IDs for this worker's history map.
@@ -739,7 +736,6 @@ impl WorkerCorpus {
         Self {
             id,
             in_memory_corpus: seed.in_memory_corpus,
-            crossover_pool: Vec::new(),
             history_map: seed.history_map,
             edge_indices: seed.edge_indices,
             sancov_history_map: seed.sancov_history_map,
@@ -900,42 +896,25 @@ impl WorkerCorpus {
         self.in_memory_corpus.push(corpus);
     }
 
-    fn push_crossover_donor(&mut self, tx_seq: Vec<BasicTxDetails>) {
-        if tx_seq.is_empty() {
-            return;
-        }
-
-        if self.crossover_pool.len() == CROSSOVER_POOL_MAX_ENTRIES {
-            self.crossover_pool.remove(0);
-        }
-        self.crossover_pool.push(tx_seq);
-    }
-
     fn select_crossover_donor<'a>(
         &'a self,
         primary_uuid: Uuid,
         rng: &mut impl Rng,
     ) -> Option<&'a [BasicTxDetails]> {
-        let in_memory_donor_count = self
+        let donor_count = self
             .in_memory_corpus
             .iter()
             .filter(|entry| entry.uuid != primary_uuid && !entry.tx_seq.is_empty())
             .count();
-        let total_donors = in_memory_donor_count + self.crossover_pool.len();
-        if total_donors == 0 {
+        if donor_count == 0 {
             return None;
         }
 
-        let selected = rng.random_range(0..total_donors);
-        if selected < in_memory_donor_count {
-            self.in_memory_corpus
-                .iter()
-                .filter(|entry| entry.uuid != primary_uuid && !entry.tx_seq.is_empty())
-                .nth(selected)
-                .map(|entry| entry.tx_seq.as_slice())
-        } else {
-            self.crossover_pool.get(selected - in_memory_donor_count).map(Vec::as_slice)
-        }
+        self.in_memory_corpus
+            .iter()
+            .filter(|entry| entry.uuid != primary_uuid && !entry.tx_seq.is_empty())
+            .nth(rng.random_range(0..donor_count))
+            .map(|entry| entry.tx_seq.as_slice())
     }
 
     fn random_crossover_chunk<'a>(
@@ -977,12 +956,11 @@ impl WorkerCorpus {
 
         let chunk = Self::random_crossover_chunk(donor, rng)?;
         let replace_start = rng.random_range(0..base.len());
-        let max_replaced = chunk.len().min(base.len() - replace_start);
-        let replaced_len = rng.random_range(1..=max_replaced);
+        let replaced_len = chunk.len().min(base.len() - replace_start);
         let replace_end = replace_start + replaced_len;
-        let mut sequence = Vec::with_capacity(base.len() - replaced_len + chunk.len());
+        let mut sequence = Vec::with_capacity(base.len());
         sequence.extend_from_slice(&base[..replace_start]);
-        sequence.extend_from_slice(chunk);
+        sequence.extend_from_slice(&chunk[..replaced_len]);
         sequence.extend_from_slice(&base[replace_end..]);
         Some(sequence)
     }
@@ -1268,36 +1246,20 @@ impl WorkerCorpus {
                     } else {
                         (secondary_index, secondary)
                     };
-                    let inserting = matches!(mutation_type, MutationType::CrossoverInsert);
                     trace!(
                         target: "corpus",
-                        mutation = if inserting { "insert" } else { "replace" },
+                        mutation = if matches!(mutation_type, MutationType::CrossoverInsert) {
+                            "insert"
+                        } else {
+                            "replace"
+                        },
                         "crossover mutate {}",
                         corpus.uuid
                     );
 
-                    self.current_mutated_index = Some(corpus_index);
-
-                    new_seq =
-                        self.crossover_sequence(mutation_type, corpus, rng).unwrap_or_default();
-
-                    if new_seq.is_empty() {
-                        new_seq = corpus.tx_seq.clone();
-                        let idx = rng.random_range(0..new_seq.len());
-                        if !self.try_abi_mutate_sequence_at(
-                            &mut new_seq,
-                            idx,
-                            targeted_contracts,
-                            test_runner,
-                            fuzz_state,
-                        )? {
-                            let tx = self.new_tx(test_runner)?;
-                            if inserting {
-                                new_seq.insert(idx, tx);
-                            } else {
-                                new_seq[idx] = tx;
-                            }
-                        }
+                    if let Some(sequence) = self.crossover_sequence(mutation_type, corpus, rng) {
+                        self.current_mutated_index = Some(corpus_index);
+                        new_seq = sequence;
                     }
                 }
             }
@@ -1506,13 +1468,10 @@ impl WorkerCorpus {
             })
         {
             let corpus = &self.in_memory_corpus[index];
-
             trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
-            let tx_seq = corpus.tx_seq.clone();
 
             // Remove corpus from memory.
             self.in_memory_corpus.remove(index);
-            self.push_crossover_donor(tx_seq);
 
             // Adjust the tracked indices.
             self.new_entry_indices.retain_mut(|i| {
@@ -2175,20 +2134,6 @@ mod tests {
     }
 
     #[test]
-    fn evicted_corpus_is_retained_for_crossover() {
-        let evicted = CorpusEntry::new(vec![marked_tx(7)]);
-        let kept = CorpusEntry::new(vec![marked_tx(8)]);
-        let mut manager = seeded_worker_corpus(0, temp_corpus_dir(), vec![evicted, kept]);
-        manager.in_memory_corpus[0].total_mutations = 1;
-
-        manager.evict_oldest_corpus().unwrap();
-
-        assert_eq!(manager.in_memory_corpus.len(), 1);
-        assert_eq!(manager.crossover_pool.len(), 1);
-        assert_eq!(sender_markers(manager.crossover_pool.get(0).unwrap()), vec![7]);
-    }
-
-    #[test]
     fn new_inputs_can_crossover_between_corpus_entries() {
         let target = Address::ZERO;
         let function = Function::parse("run()").unwrap();
@@ -2222,6 +2167,21 @@ mod tests {
         let markers = sender_markers(&sequence);
         assert!(markers.contains(&1));
         assert!(markers.contains(&9));
+    }
+
+    #[test]
+    fn crossover_donor_is_selected_from_other_in_memory_corpus_entries() {
+        let base = CorpusEntry::new(vec![marked_tx(1)]);
+        let base_uuid = base.uuid;
+        let donor = CorpusEntry::new(vec![marked_tx(9)]);
+        let manager = seeded_worker_corpus(0, temp_corpus_dir(), vec![base, donor]);
+        let config =
+            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = TestRunner::new(config);
+
+        let selected = manager.select_crossover_donor(base_uuid, runner.rng()).unwrap();
+
+        assert_eq!(sender_markers(selected), vec![9]);
     }
 
     #[test]
