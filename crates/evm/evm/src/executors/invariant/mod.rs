@@ -1145,6 +1145,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.depth += 1;
                 }
 
+                // Only generate the next input if another iteration will execute it. On
+                // discarded/popped iterations `depth` isn't incremented, so the replacement
+                // is still generated.
                 if current_run.depth < config.depth {
                     current_run.inputs.push(corpus_manager.generate_next_input(
                         &mut invariant_test.test_data.branch_runner,
