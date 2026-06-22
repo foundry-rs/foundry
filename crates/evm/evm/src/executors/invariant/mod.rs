@@ -162,6 +162,11 @@ struct InvariantThroughputMetrics {
 }
 
 impl InvariantThroughputMetrics {
+    fn record_call(&mut self, gas_used: u64) {
+        self.total_txs += 1;
+        self.total_gas += gas_used;
+    }
+
     fn tps(self, elapsed: Duration) -> f64 {
         round_rate_for_progress(rate_per_sec(self.total_txs as f64, elapsed))
     }
@@ -520,6 +525,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     rejects: u32,
     // Whether new coverage was discovered during this run.
     new_coverage: bool,
+    // Per-run throughput totals, flushed to campaign progress after the run completes.
+    throughput: InvariantThroughputMetrics,
     // For optimization mode: the best value found during this run (if any).
     optimization_value: Option<I256>,
     // For optimization mode: the length of the input prefix that produced the best value.
@@ -549,6 +556,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             depth: 0,
             rejects: 0,
             new_coverage: false,
+            throughput: InvariantThroughputMetrics::default(),
             optimization_value: None,
             optimization_prefix_len: 0,
         }
@@ -1022,7 +1030,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run
                         .fuzz_runs
                         .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
-                    campaign_state.record_call(call_result.gas_used);
+                    current_run.throughput.record_call(call_result.gas_used);
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.
@@ -1202,8 +1210,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
+            let throughput = current_run.throughput;
             current_run.drop_corpus_payloads();
             invariant_test.end_run(current_run, gas_report_samples);
+            campaign_state.record_calls(throughput.total_txs, throughput.total_gas);
             runs += 1;
             let total_runs = campaign_state.increment_runs();
             debug_assert!(
