@@ -1,6 +1,7 @@
 use crate::{
     cmd::test::{FilterArgs, FuzzMinimizeReplaySession, TestArgs},
     multi_runner::ShowmapConfig,
+    result::TestOutcome,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Function, JsonAbi};
@@ -35,7 +36,7 @@ pub struct FuzzArgs {
 }
 
 impl FuzzArgs {
-    pub async fn run(self) -> Result<crate::result::TestOutcome> {
+    pub async fn run(self) -> Result<TestOutcome> {
         match self.command {
             FuzzSubcommands::Run(mut args) => {
                 args.enable_fuzz_only();
@@ -44,15 +45,15 @@ impl FuzzArgs {
             FuzzSubcommands::Replay(args) => args.run().await,
             FuzzSubcommands::Show(args) => {
                 args.run()?;
-                Ok(crate::result::TestOutcome::empty(None, true))
+                Ok(TestOutcome::empty(None, true))
             }
             FuzzSubcommands::Cmin(args) => {
                 args.run().await?;
-                Ok(crate::result::TestOutcome::empty(None, true))
+                Ok(TestOutcome::empty(None, true))
             }
             FuzzSubcommands::Tmin(args) => {
                 args.run().await?;
-                Ok(crate::result::TestOutcome::empty(None, true))
+                Ok(TestOutcome::empty(None, true))
             }
         }
     }
@@ -83,7 +84,7 @@ pub struct FuzzReplayArgs {
 }
 
 impl FuzzReplayArgs {
-    async fn run(mut self) -> Result<crate::result::TestOutcome> {
+    async fn run(mut self) -> Result<TestOutcome> {
         self.test.enable_fuzz_only();
         if self.corpus_dir.is_none() {
             self.test.enable_fuzz_failure_replay();

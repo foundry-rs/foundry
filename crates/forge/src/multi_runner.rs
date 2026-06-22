@@ -25,10 +25,10 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
-    executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
+    executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fork::CreateFork,
-    fuzz::strategies::LiteralsDictionary,
-    inspectors::CheatsConfig,
+    fuzz::{BasicTxDetails, strategies::LiteralsDictionary},
+    inspectors::{CheatsConfig, EdgeIndexMap},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
@@ -370,11 +370,11 @@ pub struct ShowmapConfig {
 #[derive(Clone, Debug)]
 pub struct FuzzMinimizeConfig {
     /// Entry to replay.
-    pub input: Vec<foundry_evm::fuzz::BasicTxDetails>,
+    pub input: Vec<BasicTxDetails>,
     /// Shared edge-index assignment for all candidate replays in this minimization invocation.
-    pub evm_edge_indices: Arc<Mutex<foundry_evm::inspectors::EdgeIndexMap>>,
+    pub evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
     /// Shared replay observations collected from matched fuzz/invariant tests.
-    pub observations: Arc<Mutex<Vec<foundry_evm::executors::ReplayObservation>>>,
+    pub observations: Arc<Mutex<Vec<ReplayObservation>>>,
 }
 
 /// CLI-only options for replaying a durable symbolic counterexample artifact.
