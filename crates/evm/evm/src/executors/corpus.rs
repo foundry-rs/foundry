@@ -329,7 +329,17 @@ impl WorkerCorpusSeed {
             seed.in_memory_corpus.iter().map(|entry| entry.uuid).collect::<HashSet<_>>();
         let target = ReplayTarget { fuzzed_function, fuzzed_contracts, dynamic: dynamic.as_ref() };
         for entry in unique_corpus_entries(&canonical_replay_dirs(corpus_dir), &mut seen_entries) {
-            let tx_seq = entry.read_tx_seq()?;
+            // A corrupt or truncated corpus file (e.g. a process killed mid-write, since entries
+            // are persisted non-atomically) must not abort the whole campaign startup: skip it
+            // and keep loading the rest of the corpus.
+            let tx_seq = match entry.read_tx_seq() {
+                Ok(tx_seq) => tx_seq,
+                Err(err) => {
+                    let _ =
+                        sh_warn!("Skipping unreadable corpus file {}: {err}", entry.path.display());
+                    continue;
+                }
+            };
             if tx_seq.is_empty() {
                 continue;
             }
@@ -1487,7 +1497,14 @@ impl WorkerCorpus {
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
-            let tx_seq = entry.read_tx_seq()?;
+            // A corrupt or truncated sync file must not abort the whole sync pass: skip it.
+            let tx_seq = match entry.read_tx_seq() {
+                Ok(tx_seq) => tx_seq,
+                Err(err) => {
+                    warn!(target: "corpus", "skipping unreadable corpus file {}: {err}", entry.path.display());
+                    continue;
+                }
+            };
             if tx_seq.is_empty() {
                 warn!(target: "corpus", "skipping empty corpus entry: {}", entry.path.display());
                 continue;
@@ -1984,6 +2001,38 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.inner.insert(target, contract);
         FuzzRunIdentifiedContracts::new(targets, false)
+    }
+
+    // A corrupt/truncated corpus file (valid name, unparseable content — e.g. a process killed
+    // mid-write, since entries are persisted non-atomically) must surface as a per-entry read
+    // error rather than break directory scanning, so the load/sync loops can skip it instead of
+    // aborting the whole campaign.
+    #[test]
+    fn corrupt_corpus_file_surfaces_as_error_for_load_to_skip() {
+        let dir = temp_corpus_dir();
+
+        // A valid entry round-trips through the on-disk format.
+        let valid = CorpusEntry::new(vec![basic_tx()]);
+        valid.write_to_disk_in(&dir, false).unwrap();
+
+        // A file with a valid corpus name but garbage content.
+        let corrupt_path = dir.join(format!("{}-123.json", Uuid::new_v4()));
+        fs::write(&corrupt_path, b"{ not valid json").unwrap();
+
+        let entries = read_corpus_dir(&dir).collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2, "directory scan should surface both files");
+
+        let (mut ok, mut err) = (0u32, 0u32);
+        for entry in &entries {
+            match entry.read_tx_seq() {
+                Ok(seq) => {
+                    ok += 1;
+                    assert_eq!(seq.len(), 1);
+                }
+                Err(_) => err += 1,
+            }
+        }
+        assert_eq!((ok, err), (1, 1), "the corrupt file must read as Err, the valid one as Ok");
     }
 
     #[test]
