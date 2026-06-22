@@ -1153,33 +1153,38 @@ impl<N: Network> EthApi<N> {
         // range can dip below the fork block while its newest block is post-fork. Local storage
         // has no pre-fork blocks, so resolving them via `backend.get_block` below would fail.
         // Serve the pre-fork portion from the fork provider and compute only post-fork locally.
-        let local_lowest = if let Some(fork) = self.get_fork()
-            && fork.predates_fork_inclusive(lowest)
-        {
+        let local_lowest = if let Some(fork) = self.get_fork() {
+            // Read the fork block once: re-reading it after the range check would race an
+            // `anvil_reset` moving the fork, which could underflow `count_pre` below.
             let fork_block = fork.block_number();
-            let count_pre = fork_block - lowest + 1;
-            let pre = fork
-                .fee_history(count_pre, BlockNumber::Number(fork_block), &reward_percentiles)
-                .await
-                .map_err(BlockchainError::AlloyForkProvider)?;
-            // These per-block arrays cover [lowest..=fork_block]; drop the trailing next-block
-            // base-fee entry since the first post-fork block is computed locally below.
-            let take = count_pre as usize;
-            response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(take));
-            response.gas_used_ratio.extend(pre.gas_used_ratio);
-            if let Some(reward) = pre.reward {
-                rewards.extend(reward);
+            if lowest <= fork_block {
+                let count_pre = fork_block - lowest + 1;
+                let pre = fork
+                    .fee_history(count_pre, BlockNumber::Number(fork_block), &reward_percentiles)
+                    .await
+                    .map_err(BlockchainError::AlloyForkProvider)?;
+                // These per-block arrays cover [lowest..=fork_block]; drop the trailing next-block
+                // base-fee entry since the first post-fork block is computed locally below.
+                let take = count_pre as usize;
+                response.base_fee_per_gas.extend(pre.base_fee_per_gas.into_iter().take(take));
+                response.gas_used_ratio.extend(pre.gas_used_ratio);
+                if let Some(reward) = pre.reward {
+                    rewards.extend(reward);
+                }
+                // The blob-fee arrays are EIP-4844 fields a fork provider may omit (return empty)
+                // for pre-Cancun blocks. These response arrays are still empty here, so extend then
+                // pad to `count_pre` to keep the pre-fork segment aligned with the gas arrays;
+                // otherwise the merged response would come back short and misaligned, the exact
+                // failure this fixes.
+                response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(take));
+                response.base_fee_per_blob_gas.resize(take, 0);
+                response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(take));
+                response.blob_gas_used_ratio.resize(take, 0.0);
+                // Compute only post-fork blocks locally; the pre-fork portion is served above.
+                fork_block + 1
+            } else {
+                lowest
             }
-            // The blob-fee arrays are EIP-4844 fields a fork provider may omit (return empty) for
-            // pre-Cancun blocks. These response arrays are still empty here, so extend then pad to
-            // `count_pre` to keep the pre-fork segment aligned with the gas arrays; otherwise the
-            // merged response would come back short and misaligned, the exact failure this fixes.
-            response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(take));
-            response.base_fee_per_blob_gas.resize(take, 0);
-            response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(take));
-            response.blob_gas_used_ratio.resize(take, 0.0);
-            // Compute only post-fork blocks locally; the pre-fork portion is served above.
-            fork_block + 1
         } else {
             lowest
         };
@@ -1218,9 +1223,12 @@ impl<N: Network> EthApi<N> {
                             &storage_info,
                             blob_params,
                         );
-                        if let Some(block_number) = block_number {
-                            warmed.push((block_number, item.clone()));
-                        }
+                        // The block was found above, but a missing stored block/receipts makes the
+                        // helper hand back a zero-filled item. Error out rather than serve synthetic
+                        // data for a block we already confirmed exists.
+                        let block_number = block_number
+                            .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
+                        warmed.push((block_number, item.clone()));
                         item
                     }
                 };
