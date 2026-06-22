@@ -66,7 +66,7 @@ fn operand_is_udvt<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
 fn exprs_equal<'hir>(a: &Expr<'hir>, b: &Expr<'hir>) -> bool {
     match (&a.peel_parens().kind, &b.peel_parens().kind) {
         (ExprKind::Ident(ra), ExprKind::Ident(rb)) => ra == rb,
-        (ExprKind::Lit(la), ExprKind::Lit(lb)) => lits_equal(la, lb),
+        (ExprKind::Lit(la), ExprKind::Lit(lb)) => literals_equal(la, lb),
         (ExprKind::Member(ba, na), ExprKind::Member(bb, nb)) => {
             na.name == nb.name && exprs_equal(ba, bb)
         }
@@ -121,7 +121,7 @@ fn cast_elem_type<'a>(callee: &'a Expr<'_>) -> Option<&'a ElementaryType> {
     }
 }
 
-fn lits_equal(a: &Lit<'_>, b: &Lit<'_>) -> bool {
+fn literals_equal(a: &Lit<'_>, b: &Lit<'_>) -> bool {
     match (&a.kind, &b.kind) {
         (LitKind::Str(ak, av, _), LitKind::Str(bk, bv, _)) => ak == bk && av == bv,
         (LitKind::Number(a), LitKind::Number(b)) => a == b,
