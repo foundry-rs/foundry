@@ -2073,6 +2073,7 @@ fn get_contract_data<'a, FEN: FoundryEvmNetwork>(
 }
 
 /// Helper function to set / unset cold storage slot of the target address.
+#[inline(always)]
 fn set_cold_slot<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     target: Address,
