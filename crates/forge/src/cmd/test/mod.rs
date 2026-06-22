@@ -2128,6 +2128,8 @@ impl Provider for TestArgs {
                 "corpus_random_sequence_weight".to_string(),
                 invariant_corpus_random_sequence_weight.into(),
             );
+            invariant_dict
+                .insert("corpus_random_sequence_weight_configured".to_string(), true.into());
         }
         if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
             invariant_dict
@@ -2746,6 +2748,7 @@ mod tests {
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_literals, 6789);
         assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
+        assert!(config.invariant.corpus_random_sequence_weight_configured);
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);

@@ -124,7 +124,7 @@ impl FromStr for InvariantDepthMode {
 }
 
 /// Contains for invariant testing
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,
@@ -157,6 +157,10 @@ pub struct InvariantConfig {
     /// The fuzz corpus configuration.
     #[serde(flatten)]
     pub corpus: FuzzCorpusConfig,
+    /// Whether `corpus_random_sequence_weight` was supplied by a config provider.
+    #[serde(default, skip_serializing)]
+    #[doc(hidden)]
+    pub corpus_random_sequence_weight_configured: bool,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
@@ -179,6 +183,32 @@ pub struct InvariantConfig {
     pub check_interval: u32,
 }
 
+impl PartialEq for InvariantConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.runs == other.runs
+            && self.depth == other.depth
+            && self.min_depth == other.min_depth
+            && self.depth_mode == other.depth_mode
+            && self.workers == other.workers
+            && self.fail_on_revert == other.fail_on_revert
+            && self.call_override == other.call_override
+            && self.dictionary == other.dictionary
+            && self.shrink_run_limit == other.shrink_run_limit
+            && self.max_assume_rejects == other.max_assume_rejects
+            && self.gas_report_samples == other.gas_report_samples
+            && self.corpus == other.corpus
+            && self.failure_persist_dir == other.failure_persist_dir
+            && self.show_metrics == other.show_metrics
+            && self.timeout == other.timeout
+            && self.show_solidity == other.show_solidity
+            && self.max_time_delay == other.max_time_delay
+            && self.max_block_delay == other.max_block_delay
+            && self.check_interval == other.check_interval
+    }
+}
+
+impl Eq for InvariantConfig {}
+
 impl Default for InvariantConfig {
     fn default() -> Self {
         Self {
@@ -194,6 +224,7 @@ impl Default for InvariantConfig {
             max_assume_rejects: 65536,
             gas_report_samples: 256,
             corpus: FuzzCorpusConfig::default(),
+            corpus_random_sequence_weight_configured: false,
             failure_persist_dir: None,
             show_metrics: true,
             timeout: None,

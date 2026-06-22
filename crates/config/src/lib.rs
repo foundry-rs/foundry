@@ -830,10 +830,19 @@ impl Config {
     /// Applies an inline provider on top of the current config without reloading external
     /// providers such as `foundry.toml`, env vars, or remappings.
     pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
-        let mut config =
-            self.to_figment(FigmentProviders::None).merge(provider).extract::<Self>()?;
+        let provider = Figment::from(provider);
+        let invariant_corpus_random_sequence_weight_configured =
+            self.invariant.corpus_random_sequence_weight_configured
+                || provider.contains("invariant.corpus_random_sequence_weight")
+                || provider
+                    .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+                    .unwrap_or(false);
+        let figment = self.to_figment(FigmentProviders::None).merge(provider);
+        let mut config = figment.extract::<Self>()?;
         config.profile = self.profile.clone();
         config.profiles = self.profiles.clone();
+        config.invariant.corpus_random_sequence_weight_configured =
+            invariant_corpus_random_sequence_weight_configured;
         config.normalize_hardfork_settings()?;
 
         Ok(config)
@@ -859,7 +868,14 @@ impl Config {
         figment: Figment,
         strict_profile: bool,
     ) -> Result<Self, ExtractConfigError> {
+        let invariant_corpus_random_sequence_weight_configured = figment
+            .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+            .unwrap_or_else(|_| {
+                figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
+            });
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
+        config.invariant.corpus_random_sequence_weight_configured =
+            invariant_corpus_random_sequence_weight_configured;
         let selected_profile = figment.profile().clone();
 
         // The `"profile"` profile contains all the profiles as keys.
@@ -998,6 +1014,9 @@ impl Config {
 
         // normalize defaults
         figment = self.normalize_defaults(figment);
+        if figment.contains("invariant.corpus_random_sequence_weight") {
+            figment = figment.merge(("invariant.corpus_random_sequence_weight_configured", true));
+        }
 
         Figment::from(self).merge(figment).select(profile)
     }
@@ -2543,6 +2562,10 @@ impl FigmentProviders {
     pub const fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
+}
+
+fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
+    figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
 }
 
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
@@ -5055,10 +5078,49 @@ mod tests {
                         },
                         ..Default::default()
                     },
+                    corpus_random_sequence_weight_configured: true,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
                     ..Default::default()
                 }
             );
+            assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_invariant_corpus_random_sequence_weight_provenance() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                depth = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                corpus_random_sequence_weight = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(loaded.invariant.corpus_random_sequence_weight_configured);
 
             Ok(())
         });
@@ -5101,6 +5163,7 @@ mod tests {
                 InvariantWorkers::Fixed(NonZeroUsize::new(3).unwrap())
             );
             assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 30);
+            assert!(config.invariant.corpus_random_sequence_weight_configured);
             assert_eq!(config.invariant.corpus.payable_value_weight, 12);
             assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
 

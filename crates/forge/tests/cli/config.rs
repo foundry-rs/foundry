@@ -220,7 +220,7 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
-corpus_random_sequence_weight = 50
+corpus_random_sequence_weight = 10
 payable_value_weight = 0
 mutation_weight_splice = 1
 mutation_weight_repeat = 1
@@ -257,7 +257,7 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
-corpus_random_sequence_weight = 50
+corpus_random_sequence_weight = 10
 payable_value_weight = 15
 mutation_weight_splice = 1
 mutation_weight_repeat = 1
@@ -1465,7 +1465,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
-    "corpus_random_sequence_weight": 50,
+    "corpus_random_sequence_weight": 10,
     "payable_value_weight": 0,
     "mutation_weight_splice": 1,
     "mutation_weight_repeat": 1,
@@ -1504,7 +1504,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
-    "corpus_random_sequence_weight": 50,
+    "corpus_random_sequence_weight": 10,
     "payable_value_weight": 15,
     "mutation_weight_splice": 1,
     "mutation_weight_repeat": 1,

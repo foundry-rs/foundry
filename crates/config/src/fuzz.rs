@@ -152,6 +152,9 @@ pub struct FuzzCorpusConfig {
 }
 
 impl FuzzCorpusConfig {
+    pub const DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 10;
+    pub const ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 50;
+
     pub fn with_test(&mut self, contract: &str, test: &str) {
         if let Some(corpus_dir) = &self.corpus_dir {
             self.corpus_dir = Some(canonicalized(corpus_dir.join(contract).join(test)));
@@ -225,7 +228,7 @@ impl Default for FuzzCorpusConfig {
             evm_edge_coverage_include_call_depth: false,
             sancov_edges: false,
             sancov_trace_cmp: false,
-            corpus_random_sequence_weight: 50,
+            corpus_random_sequence_weight: Self::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT,
             payable_value_weight: 15,
             mutation_weights: FuzzCorpusMutationWeights::default(),
         }

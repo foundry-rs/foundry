@@ -18,7 +18,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     sh_eprintln, sh_println,
 };
-use foundry_config::{InvariantConfig, InvariantDepthMode, InvariantWorkers};
+use foundry_config::{FuzzCorpusConfig, InvariantConfig, InvariantDepthMode, InvariantWorkers};
 use foundry_evm_core::{
     FoundryBlock,
     constants::{
@@ -216,6 +216,25 @@ fn invariant_worker_count_with_threads(
             }
         }
     }
+}
+
+fn invariant_worker_config(
+    mut config: InvariantConfig,
+    worker_id: u32,
+    worker_count: usize,
+) -> InvariantConfig {
+    // Keep single-worker campaigns on the stable default, but let one extra worker explore the
+    // broader fresh-sequence setting when the user has not selected a different value.
+    if worker_count > 1
+        && worker_id == 1
+        && !config.corpus_random_sequence_weight_configured
+        && config.corpus.corpus_random_sequence_weight
+            == FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+    {
+        config.corpus.corpus_random_sequence_weight =
+            FuzzCorpusConfig::ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT;
+    }
+    config
 }
 
 fn gas_report_samples_for_worker(total_samples: u32, worker_id: u32, worker_count: usize) -> usize {
@@ -826,6 +845,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Note: invariant function signatures (no inputs) are validated upstream in the
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
+        let config = invariant_worker_config(config, plan.worker_id, worker_count);
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
             &mut executor,
@@ -2095,6 +2115,55 @@ mod tests {
         for _ in 0..128 {
             assert!((1..=8).contains(&invariant_run_depth(&config, &mut runner)));
         }
+    }
+
+    #[test]
+    fn invariant_worker_config_keeps_single_worker_default() {
+        let config = InvariantConfig::default();
+
+        assert_eq!(
+            invariant_worker_config(config, 0, 1).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+    }
+
+    #[test]
+    fn invariant_worker_config_uses_one_exploratory_worker_with_default_config() {
+        let config = InvariantConfig::default();
+
+        assert_eq!(
+            invariant_worker_config(config.clone(), 0, 4).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+        assert_eq!(
+            invariant_worker_config(config.clone(), 1, 4).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+        assert_eq!(
+            invariant_worker_config(config, 2, 4).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
+    }
+
+    #[test]
+    fn invariant_worker_config_preserves_explicit_corpus_random_sequence_weight() {
+        let mut config = InvariantConfig::default();
+        config.corpus.corpus_random_sequence_weight = 25;
+        config.corpus_random_sequence_weight_configured = true;
+
+        assert_eq!(
+            invariant_worker_config(config.clone(), 1, 4).corpus.corpus_random_sequence_weight,
+            25
+        );
+        assert_eq!(invariant_worker_config(config, 0, 1).corpus.corpus_random_sequence_weight, 25);
+
+        let mut config = InvariantConfig::default();
+        config.corpus_random_sequence_weight_configured = true;
+
+        assert_eq!(
+            invariant_worker_config(config, 1, 4).corpus.corpus_random_sequence_weight,
+            FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+        );
     }
 
     #[test]
