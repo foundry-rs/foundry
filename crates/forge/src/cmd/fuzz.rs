@@ -215,9 +215,45 @@ impl FuzzCminArgs {
         if self.out.exists() {
             bail!("output corpus directory already exists: {}", self.out.display());
         }
-        fs::create_dir_all(&self.out)?;
 
-        let mut test = minimizer_test_args(self.filter);
+        let staging_out = temporary_cmin_out(&self.out)?;
+        fs::create_dir_all(&staging_out)?;
+        let summary = match self.run_to(&staging_out).await {
+            Ok(summary) => summary,
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&staging_out);
+                return Err(err);
+            }
+        };
+
+        if let Err(err) = std::fs::rename(&staging_out, &self.out) {
+            let _ = std::fs::remove_dir_all(&staging_out);
+            return Err(err).with_context(|| {
+                format!(
+                    "failed to rename minimized corpus {} to {}",
+                    staging_out.display(),
+                    self.out.display()
+                )
+            });
+        }
+
+        sh_println!(
+            "minimized corpus: kept {}/{} entries in {}",
+            summary.kept,
+            summary.total,
+            self.out.display()
+        )?;
+        if summary.skipped > 0 {
+            sh_println!(
+                "skipped {} entries or txs that could not be read or replayed",
+                summary.skipped
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn run_to(&self, out_dir: &Path) -> Result<CminSummary> {
+        let mut test = minimizer_test_args(self.filter.clone());
         test.enable_fuzz_only();
         test.reject_machine_unsupported_flags()?;
         let session = prepare_minimize_session(&mut test).await?;
@@ -243,9 +279,9 @@ impl FuzzCminArgs {
                 continue;
             }
             let out = if self.corpus_dir.is_file() {
-                self.out.join(entry.path.file_name().unwrap_or_default())
+                out_dir.join(entry.path.file_name().unwrap_or_default())
             } else {
-                self.out.join(entry.path.strip_prefix(&self.corpus_dir).unwrap_or(&entry.path))
+                out_dir.join(entry.path.strip_prefix(&self.corpus_dir).unwrap_or(&entry.path))
             };
             if let Some(parent) = out.parent() {
                 fs::create_dir_all(parent)?;
@@ -263,12 +299,34 @@ impl FuzzCminArgs {
             );
         }
 
-        sh_println!("minimized corpus: kept {kept}/{total} entries in {}", self.out.display())?;
-        if skipped > 0 {
-            sh_println!("skipped {skipped} entries or txs that could not be read or replayed")?;
-        }
-        Ok(())
+        Ok(CminSummary { kept, total, skipped })
     }
+}
+
+struct CminSummary {
+    kept: usize,
+    total: usize,
+    skipped: usize,
+}
+
+fn temporary_cmin_out(out: &Path) -> Result<PathBuf> {
+    let parent = out.parent().filter(|parent| !parent.as_os_str().is_empty());
+    let filename =
+        out.file_name().ok_or_else(|| eyre::eyre!("missing output corpus directory name"))?;
+    let ns = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+    let basename = filename.to_string_lossy();
+    for attempt in 0..100 {
+        let candidate_name = format!(".{basename}.tmp-{ns}-{attempt}");
+        let candidate = if let Some(parent) = parent {
+            parent.join(candidate_name)
+        } else {
+            PathBuf::from(candidate_name)
+        };
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    bail!("failed to reserve temporary output directory for {}", out.display())
 }
 
 /// Minimize one corpus entry while preserving its failure or coverage.

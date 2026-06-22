@@ -452,7 +452,7 @@ forgetest_init!(forge_fuzz_cmin_tmin_error_on_zero_replay, |prj, cmd| {
         "ForgeFuzzZeroReplay.t.sol",
         r#"
 contract ForgeFuzzZeroReplayTest {
-    function testFuzz_matches(uint256 value) public pure {
+    function testFuzz_branch(uint256 value) public pure {
         value;
     }
 }
@@ -464,18 +464,44 @@ contract ForgeFuzzZeroReplayTest {
     std::fs::create_dir_all(&corpus).unwrap();
     let entry = r#"[{
   "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x0000000000000000000000000000000000000002",
-  "calldata":"0x12345678",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000001",
   "value":"0x0"
 }]"#;
     std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
 
     let cmin = cmd
         .forge_fuse()
-        .args(["fuzz", "cmin", "--mc", "ForgeFuzzZeroReplayTest", "corpus", "--out", "cmin"])
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_noMatch",
+            "corpus",
+            "--out",
+            "cmin",
+        ])
         .assert_failure();
     let stdout = String::from_utf8(cmin.get_output().stderr.clone()).unwrap();
     assert!(stdout.contains("replayed 0 transactions from corpus"), "{stdout}");
+    assert!(!prj.root().join("cmin").exists());
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_branch",
+            "corpus",
+            "--out",
+            "cmin",
+        ])
+        .assert_success();
+    assert!(prj.root().join("cmin/00000000-0000-0000-0000-000000000001-1.json").is_file());
 
     let tmin = cmd
         .forge_fuse()
@@ -484,6 +510,8 @@ contract ForgeFuzzZeroReplayTest {
             "tmin",
             "--mc",
             "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_noMatch",
             "corpus/00000000-0000-0000-0000-000000000001-1.json",
             "--out",
             "min.json",
