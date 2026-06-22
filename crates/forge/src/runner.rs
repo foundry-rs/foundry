@@ -2110,6 +2110,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &txes,
                     None,
                     assertion_failure,
+                    Some(replay_ctx.revert_decoder),
                     None, // check mode
                     &invariant_contract,
                     invariant_contract.anchor(),
@@ -2124,21 +2125,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &self.tcfg.early_exit,
                     None, // single-invariant replay path; no [i/N] counter
                 ) {
-                    Ok(replayed_call_sequence) if !replayed_call_sequence.is_empty() => {
-                        call_sequence = replayed_call_sequence;
-                        let (_txes, replay) = replay_persisted_call_sequence(
-                            &replay_ctx,
-                            self.clone_executor(),
-                            &mut call_sequence,
-                            assertion_failure,
-                        );
-                        if let Ok((
+                    Ok(replay) if !replay.counterexample_sequence.is_empty() => {
+                        call_sequence = replay.counterexample_sequence;
+                        if let Some((
                             _success,
                             updated_replayed_entirely,
                             updated_replay_reason,
                             updated_calls_count,
                             updated_reverts,
-                        )) = replay
+                        )) = replay.check_result
                         {
                             replayed_entirely = updated_replayed_entirely;
                             replay_reason = updated_replay_reason;
@@ -2221,6 +2216,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &invariant_result.optimization_best_sequence,
                     None,
                     false,
+                    None,
                     Some(best_value),
                     &invariant_contract,
                     invariant_contract.anchor(),
@@ -2235,10 +2231,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &self.tcfg.early_exit,
                     None, // optimization mode is single-invariant; no [i/N] counter
                 ) {
-                    Ok(best_sequence) if !best_sequence.is_empty() => {
+                    Ok(replay) if !replay.counterexample_sequence.is_empty() => {
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
-                            best_sequence,
+                            replay.counterexample_sequence,
                         ));
                     }
                     Err(err) => {
@@ -2287,6 +2283,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             calls,
                             Some(case_data.inner_sequence.clone()),
                             case_data.assertion_failure,
+                            None,
                             None, // check mode
                             &invariant_contract,
                             invariant_contract.anchor(),
@@ -2301,7 +2298,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &self.tcfg.early_exit,
                             Some((1, total_broken)),
                         ) {
-                            Ok(call_sequence) if !call_sequence.is_empty() => {
+                            Ok(replay) if !replay.counterexample_sequence.is_empty() => {
+                                let call_sequence = replay.counterexample_sequence;
                                 record_invariant_failure(
                                     failure_dir.as_path(),
                                     primary_failure_file.as_path(),
@@ -2406,6 +2404,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             calls,
                             Some(case_data.inner_sequence.clone()),
                             case_data.assertion_failure,
+                            None,
                             None, // check mode
                             &invariant_contract,
                             invariant,
@@ -2420,7 +2419,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &self.tcfg.early_exit,
                             Some((position, total_broken)),
                         ) {
-                            Ok(call_sequence) if !call_sequence.is_empty() => {
+                            Ok(replay) if !replay.counterexample_sequence.is_empty() => {
+                                let call_sequence = replay.counterexample_sequence;
                                 record_invariant_failure(
                                     failure_dir.as_path(),
                                     persisted_failure.as_path(),
