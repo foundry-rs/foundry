@@ -78,6 +78,8 @@ const WORKER: &str = "worker";
 const CORPUS_DIR: &str = "corpus";
 const SYNC_DIR: &str = "sync";
 const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
+const CROSSOVER_POOL_MAX_ENTRIES: usize = 256;
+const CROSSOVER_MAX_CHUNK_LEN: usize = 4;
 
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
 
@@ -86,7 +88,7 @@ const FAVORABILITY_THRESHOLD: f64 = 0.3;
 const GZIP_THRESHOLD: usize = 4 * 1024;
 
 /// Possible mutation strategies to apply on a call sequence.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum MutationType {
     /// Splice original call sequence.
     Splice,
@@ -103,6 +105,10 @@ enum MutationType {
     /// Replace input bytes using comparison operands observed for a corpus entry
     /// (input-to-state, LibAFL-style).
     Cmp,
+    /// Insert a transaction slice from another corpus entry into the original sequence.
+    CrossoverInsert,
+    /// Replace part of the original sequence with a transaction slice from another corpus entry.
+    CrossoverReplace,
 }
 
 /// Persisted optimization state: the best value found and the sequence that produced it.
@@ -485,6 +491,8 @@ pub struct WorkerCorpus {
     /// In-memory corpus entries populated from the persisted files and
     /// runs administered by this worker.
     in_memory_corpus: Vec<CorpusEntry>,
+    /// Evicted corpus entries retained as donors for crossover mutations.
+    crossover_pool: Vec<Vec<BasicTxDetails>>,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
     /// Stable dense EVM edge IDs for this worker's history map.
@@ -711,6 +719,8 @@ impl WorkerCorpus {
             Just(MutationType::Suffix),
             Just(MutationType::Abi),
             Just(MutationType::Cmp),
+            Just(MutationType::CrossoverInsert),
+            Just(MutationType::CrossoverReplace),
         ]
         .boxed();
 
@@ -729,6 +739,7 @@ impl WorkerCorpus {
         Self {
             id,
             in_memory_corpus: seed.in_memory_corpus,
+            crossover_pool: Vec::new(),
             history_map: seed.history_map,
             edge_indices: seed.edge_indices,
             sancov_history_map: seed.sancov_history_map,
@@ -887,6 +898,132 @@ impl WorkerCorpus {
         self.new_entry_indices.push(new_index);
         self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
+    }
+
+    fn push_crossover_donor(&mut self, tx_seq: Vec<BasicTxDetails>) {
+        if tx_seq.is_empty() {
+            return;
+        }
+
+        if self.crossover_pool.len() == CROSSOVER_POOL_MAX_ENTRIES {
+            self.crossover_pool.remove(0);
+        }
+        self.crossover_pool.push(tx_seq);
+    }
+
+    fn select_crossover_donor<'a>(
+        &'a self,
+        primary_uuid: Uuid,
+        rng: &mut impl Rng,
+    ) -> Option<&'a [BasicTxDetails]> {
+        let in_memory_donor_count = self
+            .in_memory_corpus
+            .iter()
+            .filter(|entry| entry.uuid != primary_uuid && !entry.tx_seq.is_empty())
+            .count();
+        let total_donors = in_memory_donor_count + self.crossover_pool.len();
+        if total_donors == 0 {
+            return None;
+        }
+
+        let selected = rng.random_range(0..total_donors);
+        if selected < in_memory_donor_count {
+            self.in_memory_corpus
+                .iter()
+                .filter(|entry| entry.uuid != primary_uuid && !entry.tx_seq.is_empty())
+                .nth(selected)
+                .map(|entry| entry.tx_seq.as_slice())
+        } else {
+            self.crossover_pool.get(selected - in_memory_donor_count).map(Vec::as_slice)
+        }
+    }
+
+    fn random_crossover_chunk<'a>(
+        donor: &'a [BasicTxDetails],
+        rng: &mut impl Rng,
+    ) -> Option<&'a [BasicTxDetails]> {
+        if donor.is_empty() {
+            return None;
+        }
+
+        let start = rng.random_range(0..donor.len());
+        let max_len = CROSSOVER_MAX_CHUNK_LEN.min(donor.len() - start);
+        let len = rng.random_range(1..=max_len);
+        Some(&donor[start..start + len])
+    }
+
+    fn crossover_insert_sequence(
+        base: &[BasicTxDetails],
+        donor: &[BasicTxDetails],
+        rng: &mut impl Rng,
+    ) -> Option<Vec<BasicTxDetails>> {
+        let chunk = Self::random_crossover_chunk(donor, rng)?;
+        let insert_at = rng.random_range(0..=base.len());
+        let mut sequence = Vec::with_capacity(base.len() + chunk.len());
+        sequence.extend_from_slice(&base[..insert_at]);
+        sequence.extend_from_slice(chunk);
+        sequence.extend_from_slice(&base[insert_at..]);
+        Some(sequence)
+    }
+
+    fn crossover_replace_sequence(
+        base: &[BasicTxDetails],
+        donor: &[BasicTxDetails],
+        rng: &mut impl Rng,
+    ) -> Option<Vec<BasicTxDetails>> {
+        if base.is_empty() {
+            return Self::crossover_insert_sequence(base, donor, rng);
+        }
+
+        let chunk = Self::random_crossover_chunk(donor, rng)?;
+        let replace_start = rng.random_range(0..base.len());
+        let max_replaced = chunk.len().min(base.len() - replace_start);
+        let replaced_len = rng.random_range(1..=max_replaced);
+        let replace_end = replace_start + replaced_len;
+        let mut sequence = Vec::with_capacity(base.len() - replaced_len + chunk.len());
+        sequence.extend_from_slice(&base[..replace_start]);
+        sequence.extend_from_slice(chunk);
+        sequence.extend_from_slice(&base[replace_end..]);
+        Some(sequence)
+    }
+
+    fn crossover_sequence(
+        &self,
+        mutation_type: MutationType,
+        corpus: &CorpusEntry,
+        rng: &mut impl Rng,
+    ) -> Option<Vec<BasicTxDetails>> {
+        let donor = self.select_crossover_donor(corpus.uuid, rng)?;
+        match mutation_type {
+            MutationType::CrossoverInsert => {
+                Self::crossover_insert_sequence(&corpus.tx_seq, donor, rng)
+            }
+            MutationType::CrossoverReplace => {
+                Self::crossover_replace_sequence(&corpus.tx_seq, donor, rng)
+            }
+            _ => None,
+        }
+    }
+
+    fn try_abi_mutate_sequence_at(
+        &self,
+        sequence: &mut [BasicTxDetails],
+        idx: usize,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        test_runner: &mut TestRunner,
+        fuzz_state: &InvariantFuzzState,
+    ) -> Result<bool> {
+        let targets = targeted_contracts.targets();
+        let tx = sequence.get_mut(idx).unwrap();
+        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+            && !function.inputs.is_empty()
+        {
+            // TODO: add call_value to call details and mutate it as well as sender some of the
+            // time.
+            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -1053,7 +1190,6 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Abi => {
-                    let targets = targeted_contracts.targets();
                     let (corpus_index, corpus) = if rng.random::<bool>() {
                         (primary_index, primary)
                     } else {
@@ -1066,14 +1202,13 @@ impl WorkerCorpus {
                     new_seq = corpus.tx_seq.clone();
 
                     let idx = rng.random_range(0..new_seq.len());
-                    let tx = new_seq.get_mut(idx).unwrap();
-                    if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        // TODO: add call_value to call details and mutate it as well as sender some
-                        // of the time.
-                        if !function.inputs.is_empty() {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
-                        }
-                    }
+                    let _ = self.try_abi_mutate_sequence_at(
+                        &mut new_seq,
+                        idx,
+                        targeted_contracts,
+                        test_runner,
+                        fuzz_state,
+                    )?;
                 }
                 MutationType::Cmp => {
                     let targets = targeted_contracts.targets();
@@ -1118,11 +1253,50 @@ impl WorkerCorpus {
                     }
 
                     if !mutated {
-                        let tx = new_seq.get_mut(fallback_idx).unwrap();
-                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
-                            && !function.inputs.is_empty()
-                        {
-                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+                        let _ = self.try_abi_mutate_sequence_at(
+                            &mut new_seq,
+                            fallback_idx,
+                            targeted_contracts,
+                            test_runner,
+                            fuzz_state,
+                        )?;
+                    }
+                }
+                MutationType::CrossoverInsert | MutationType::CrossoverReplace => {
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
+                    let inserting = matches!(mutation_type, MutationType::CrossoverInsert);
+                    trace!(
+                        target: "corpus",
+                        mutation = if inserting { "insert" } else { "replace" },
+                        "crossover mutate {}",
+                        corpus.uuid
+                    );
+
+                    self.current_mutated_index = Some(corpus_index);
+
+                    new_seq =
+                        self.crossover_sequence(mutation_type, corpus, rng).unwrap_or_default();
+
+                    if new_seq.is_empty() {
+                        new_seq = corpus.tx_seq.clone();
+                        let idx = rng.random_range(0..new_seq.len());
+                        if !self.try_abi_mutate_sequence_at(
+                            &mut new_seq,
+                            idx,
+                            targeted_contracts,
+                            test_runner,
+                            fuzz_state,
+                        )? {
+                            let tx = self.new_tx(test_runner)?;
+                            if inserting {
+                                new_seq.insert(idx, tx);
+                            } else {
+                                new_seq[idx] = tx;
+                            }
                         }
                     }
                 }
@@ -1334,9 +1508,11 @@ impl WorkerCorpus {
             let corpus = &self.in_memory_corpus[index];
 
             trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
+            let tx_seq = corpus.tx_seq.clone();
 
             // Remove corpus from memory.
             self.in_memory_corpus.remove(index);
+            self.push_crossover_donor(tx_seq);
 
             // Adjust the tracked indices.
             self.new_entry_indices.retain_mut(|i| {
@@ -1910,6 +2086,21 @@ mod tests {
         }
     }
 
+    fn marked_tx(marker: u8) -> BasicTxDetails {
+        BasicTxDetails {
+            sender: Address::from([marker; 20]),
+            call_details: foundry_evm_fuzz::CallDetails {
+                calldata: Bytes::from(vec![marker; 4]),
+                ..basic_tx().call_details
+            },
+            ..basic_tx()
+        }
+    }
+
+    fn sender_markers(sequence: &[BasicTxDetails]) -> Vec<u8> {
+        sequence.iter().map(|tx| tx.sender.as_slice()[0]).collect()
+    }
+
     fn temp_corpus_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("foundry-corpus-tests-{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&dir);
@@ -1944,6 +2135,93 @@ mod tests {
             corpus_root,
             WorkerCorpusSeed { in_memory_corpus: entries, ..Default::default() },
         )
+    }
+
+    #[test]
+    fn crossover_insert_grafts_donor_chunk_without_reordering_base() {
+        let base = vec![marked_tx(1), marked_tx(2), marked_tx(3)];
+        let donor = vec![marked_tx(8), marked_tx(9)];
+        let config =
+            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = TestRunner::new(config);
+
+        let mutated = WorkerCorpus::crossover_insert_sequence(&base, &donor, runner.rng()).unwrap();
+
+        assert!(mutated.len() > base.len());
+        assert!(sender_markers(&mutated).iter().any(|marker| [8, 9].contains(marker)));
+        assert_eq!(
+            sender_markers(&mutated)
+                .into_iter()
+                .filter(|marker| [1, 2, 3].contains(marker))
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn crossover_replace_grafts_donor_chunk_without_growing_sequence() {
+        let base = vec![marked_tx(1), marked_tx(2), marked_tx(3), marked_tx(4)];
+        let donor = vec![marked_tx(8), marked_tx(9)];
+        let config =
+            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = TestRunner::new(config);
+
+        let mutated =
+            WorkerCorpus::crossover_replace_sequence(&base, &donor, runner.rng()).unwrap();
+
+        assert!(!mutated.is_empty());
+        assert!(mutated.len() <= base.len());
+        assert!(sender_markers(&mutated).iter().any(|marker| [8, 9].contains(marker)));
+    }
+
+    #[test]
+    fn evicted_corpus_is_retained_for_crossover() {
+        let evicted = CorpusEntry::new(vec![marked_tx(7)]);
+        let kept = CorpusEntry::new(vec![marked_tx(8)]);
+        let mut manager = seeded_worker_corpus(0, temp_corpus_dir(), vec![evicted, kept]);
+        manager.in_memory_corpus[0].total_mutations = 1;
+
+        manager.evict_oldest_corpus().unwrap();
+
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(manager.crossover_pool.len(), 1);
+        assert_eq!(sender_markers(manager.crossover_pool.get(0).unwrap()), vec![7]);
+    }
+
+    #[test]
+    fn new_inputs_can_crossover_between_corpus_entries() {
+        let target = Address::ZERO;
+        let function = Function::parse("run()").unwrap();
+        let selector = function.selector();
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![function], [selector]);
+        let mut base = marked_tx(1);
+        base.call_details.target = target;
+        base.call_details.calldata = Bytes::from(selector.to_vec());
+        let mut donor = marked_tx(9);
+        donor.call_details.target = target;
+        donor.call_details.calldata = Bytes::from(selector.to_vec());
+        let mut manager = seeded_worker_corpus(
+            0,
+            temp_corpus_dir(),
+            vec![CorpusEntry::new(vec![base]), CorpusEntry::new(vec![donor])],
+        );
+        manager.mutation_generator = Just(MutationType::CrossoverInsert).boxed();
+        let config =
+            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = TestRunner::new(config);
+        let db = revm::database::CacheDB::<revm::database::EmptyDB>::default();
+        let fuzz_state =
+            EvmFuzzState::new(&[], &db, foundry_config::FuzzDictionaryConfig::default(), None)
+                .into_invariant();
+
+        let sequence = manager.new_inputs(&mut runner, &fuzz_state, &targeted_contracts);
+
+        let sequence = sequence.unwrap();
+        assert_eq!(sequence.len(), 2);
+        let markers = sender_markers(&sequence);
+        assert!(markers.contains(&1));
+        assert!(markers.contains(&9));
     }
 
     #[test]
