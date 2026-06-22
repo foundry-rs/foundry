@@ -255,7 +255,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         // do not roll back the removal.
         ShrinkErrorPolicy::KeepRemoved,
         |shrinker| {
-            let (success, _, _) = check_sequence(
+            let (success, _, _, _, _) = check_sequence(
                 executor.clone(),
                 calls,
                 shrinker.current().collect(),
@@ -357,34 +357,44 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     test_address: Address,
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
-) -> eyre::Result<(bool, bool, Option<String>)> {
+) -> eyre::Result<(bool, bool, Option<String>, usize, usize)> {
+    let mut calls_executed = 0;
+    let mut reverts = 0;
     let early = replay_sequence(
         &mut executor,
         calls,
         &sequence,
         options.accumulate_warp_roll,
         |_idx, call_result| {
+            calls_executed += 1;
             // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed
             // scenarios that are replayed with a modified version of test driver (that use
             // new `vm.assume` cheatcodes).
             if call_result.result.as_ref() == MAGIC_ASSUME {
                 return Ok(ReplayDecision::Continue(call_result));
             }
+            if call_result.reverted {
+                reverts += 1;
+            }
             if did_fail_on_assert(&call_result, &call_result.state_changeset) {
                 return Ok(ReplayDecision::Stop((
                     false,
                     false,
                     assertion_failure_reason(call_result, options.rd),
+                    calls_executed,
+                    reverts,
                 )));
             }
             if call_result.reverted && options.fail_on_revert {
                 if options.expect_assertion_failure {
-                    return Ok(ReplayDecision::Stop((true, false, None)));
+                    return Ok(ReplayDecision::Stop((true, false, None, calls_executed, reverts)));
                 }
                 return Ok(ReplayDecision::Stop((
                     false,
                     false,
                     call_failure_reason(call_result, options.rd),
+                    calls_executed,
+                    reverts,
                 )));
             }
             Ok(ReplayDecision::Continue(call_result))
@@ -396,7 +406,9 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
 
     // Unlike optimization mode we intentionally do not apply trailing warp/roll before the
     // invariant call: those delays would not be representable in the final shrunk sequence.
-    finish_sequence_check(&executor, test_address, calldata, &options)
+    let (success, replayed_entirely, reason) =
+        finish_sequence_check(&executor, test_address, calldata, &options)?;
+    Ok((success, replayed_entirely, reason, calls_executed, reverts))
 }
 
 fn finish_sequence_check<FEN: FoundryEvmNetwork>(
