@@ -441,13 +441,14 @@ where
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct CmpSiteKey {
     address: Address,
-    pc: usize,
+    pc: u32,
     opcode: u8,
 }
 
 impl CmpSiteKey {
-    const fn new(cmp: &CmpOperands) -> Self {
-        Self { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode }
+    fn new(cmp: &CmpOperands) -> Self {
+        debug_assert!(cmp.pc <= u32::MAX as usize);
+        Self { address: cmp.address, pc: cmp.pc as u32, opcode: cmp.opcode }
     }
 }
 
