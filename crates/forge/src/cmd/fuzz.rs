@@ -242,8 +242,11 @@ impl FuzzCminArgs {
             if !keep {
                 continue;
             }
-            let rel = entry.path.strip_prefix(&self.corpus_dir).unwrap_or(&entry.path);
-            let out = self.out.join(rel);
+            let out = if self.corpus_dir.is_file() {
+                self.out.join(entry.path.file_name().unwrap_or_default())
+            } else {
+                self.out.join(entry.path.strip_prefix(&self.corpus_dir).unwrap_or(&entry.path))
+            };
             if let Some(parent) = out.parent() {
                 fs::create_dir_all(parent)?;
             }

@@ -252,6 +252,23 @@ minimized corpus: kept 1/2 entries in cmin
     let cmin_entries = std::fs::read_dir(prj.root().join("cmin")).unwrap().count();
     assert_eq!(cmin_entries, 1);
 
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzShowTargetTest",
+            "corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--out",
+            "cmin-file",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+minimized corpus: kept 1/1 entries in cmin-file
+
+"#]]);
+    assert!(prj.root().join("cmin-file/00000000-0000-0000-0000-000000000001-1.json").is_file());
+
     let tmin = cmd
         .forge_fuse()
         .args([
