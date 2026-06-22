@@ -164,11 +164,6 @@ impl Fuzzer {
         self.collect = false;
     }
 
-    /// Drains values observed by the inspector since the last call.
-    pub fn drain_collected_values(&mut self) -> Vec<B256> {
-        std::mem::take(&mut self.collected_values)
-    }
-
     /// Overrides an external call to simulate reentrancy attacks.
     ///
     /// This function detects reentrancy vulnerabilities by replacing external calls
