@@ -373,7 +373,7 @@ fn write_showmap_file(path: &Path, evm: &BTreeMap<(B256, u32), u64>, san: &[u64]
     if !has_evm && !has_san {
         return Ok(0);
     }
-    let mut w = BufWriter::new(File::create(path)?);
+    let mut w = BufWriter::new(File::create_new(path)?);
     write_evm(&mut w, evm)?;
     write_sancov(&mut w, san)?;
     w.flush()?;
@@ -464,6 +464,19 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         let h_hex = hex::encode(&h.as_slice()[..8]);
         assert_eq!(body, format!("evm_{h_hex}_0007:5\nsancov_0x0000:2\n"));
+    }
+
+    #[test]
+    fn write_showmap_file_does_not_overwrite_existing_file() {
+        let dir = temp_dir();
+        let path = dir.join("trial.txt");
+        std::fs::write(&path, "keep me").unwrap();
+        let h = B256::with_last_byte(0xff);
+        let mut evm = BTreeMap::new();
+        evm.insert((h, 7u32), 5u64);
+        let err = write_showmap_file(&path, &evm, &[]).unwrap_err();
+        assert!(err.to_string().contains("File exists"), "{err:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me");
     }
 
     #[test]

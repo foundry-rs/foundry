@@ -81,6 +81,21 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
 
+fn validate_showmap_name(kind: &str, name: &str) -> Result<()> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || path.is_absolute()
+        || path.components().count() != 1
+        || name.contains(['/', '\\'])
+        || matches!(name, "." | "..")
+    {
+        bail!(
+            "invalid {kind} `{name}`: expected a single file-name component without path separators"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) struct FuzzMinimizeReplaySession {
     filter: ProjectPathsAwareFilter,
     passes: Vec<FuzzMinimizeReplay>,
@@ -524,9 +539,9 @@ impl TestArgs {
     }
 
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
-    fn showmap_config(&self) -> Option<ShowmapConfig> {
+    fn showmap_config(&self) -> Result<Option<ShowmapConfig>> {
         if let Some(showmap) = self.showmap_override.clone() {
-            return Some(showmap);
+            return Ok(Some(showmap));
         }
 
         // Default trial id uses nanosecond precision so back-to-back invocations
@@ -538,15 +553,18 @@ impl TestArgs {
                 .unwrap_or(0);
             format!("trial-{ns}")
         });
-        Some(ShowmapConfig {
-            out_dir: self.showmap_out.clone()?,
+        let Some(out_dir) = self.showmap_out.clone() else { return Ok(None) };
+        validate_showmap_name("showmap approach", &self.showmap_approach)?;
+        validate_showmap_name("showmap trial", &trial)?;
+        Ok(Some(ShowmapConfig {
+            out_dir,
             approach: self.showmap_approach.clone(),
             trial,
             per_input: self.showmap_per_input,
             domain: self.showmap_domain.into(),
             corpus_dir: self.showmap_corpus_dir.clone(),
             emit_files: true,
-        })
+        }))
     }
 
     /// Restricts this test invocation to fuzz and invariant tests.
@@ -1350,7 +1368,7 @@ impl TestArgs {
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         let config = Arc::new(config);
-        let showmap = self.showmap_config();
+        let showmap = self.showmap_config()?;
         let fuzz_minimize = self.fuzz_minimize_override.clone();
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)

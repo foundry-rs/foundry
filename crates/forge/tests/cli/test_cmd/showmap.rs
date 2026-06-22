@@ -218,4 +218,73 @@ contract ShowmapCounterTest is Test {
     let t2 = approach_dir.join("t2.txt");
     assert!(t1.exists(), "missing trial 1 file {}", t1.display());
     assert!(t2.exists(), "missing trial 2 file {}", t2.display());
+
+    let before = std::fs::read_to_string(&t1).unwrap();
+    let retry = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-trial",
+            "t1",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(retry.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("File exists"), "{stdout}");
+    assert_eq!(std::fs::read_to_string(&t1).unwrap(), before);
+});
+
+forgetest_init!(showmap_replay_rejects_path_component_names, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "ShowmapCounter.t.sol",
+        r#"
+import {Counter} from "../src/Counter.sol";
+
+contract ShowmapCounterTest {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_counter_called() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ShowmapCounterTest"]).assert_success();
+
+    for args in [
+        vec![
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-approach",
+            "../outside",
+        ],
+        vec![
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-trial",
+            "../../victim",
+        ],
+    ] {
+        let result = cmd.forge_fuse().args(args).assert_failure();
+        let stderr = String::from_utf8(result.get_output().stderr.clone()).unwrap();
+        assert!(stderr.contains("expected a single file-name component"), "{stderr}");
+    }
 });
