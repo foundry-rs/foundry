@@ -218,7 +218,7 @@ fn invariant_worker_count_with_threads(
     }
 }
 
-fn invariant_worker_config(
+const fn invariant_worker_config(
     mut config: InvariantConfig,
     worker_id: u32,
     worker_count: usize,
@@ -2186,9 +2186,14 @@ mod tests {
 
     #[test]
     fn invariant_worker_config_preserves_explicit_corpus_random_sequence_weight() {
-        let mut config = InvariantConfig::default();
-        config.corpus.corpus_random_sequence_weight = 25;
-        config.corpus_random_sequence_weight_configured = true;
+        let config = InvariantConfig {
+            corpus: FuzzCorpusConfig {
+                corpus_random_sequence_weight: 25,
+                ..FuzzCorpusConfig::default()
+            },
+            corpus_random_sequence_weight_configured: true,
+            ..InvariantConfig::default()
+        };
 
         assert_eq!(
             invariant_worker_config(config.clone(), 1, 4).corpus.corpus_random_sequence_weight,
@@ -2196,8 +2201,10 @@ mod tests {
         );
         assert_eq!(invariant_worker_config(config, 0, 1).corpus.corpus_random_sequence_weight, 25);
 
-        let mut config = InvariantConfig::default();
-        config.corpus_random_sequence_weight_configured = true;
+        let config = InvariantConfig {
+            corpus_random_sequence_weight_configured: true,
+            ..InvariantConfig::default()
+        };
 
         assert_eq!(
             invariant_worker_config(config, 1, 4).corpus.corpus_random_sequence_weight,
