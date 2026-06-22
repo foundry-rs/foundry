@@ -150,7 +150,7 @@ impl Fuzzer {
     }
 
     #[inline]
-    fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
+    const fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
         self.record_calls && self.call_depth > 1 && matches!(scheme, CallScheme::Call)
     }
 
