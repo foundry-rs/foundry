@@ -1,7 +1,6 @@
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
-use itertools::Either;
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Ref, RefCell},
@@ -77,24 +76,21 @@ impl FuzzRunIdentifiedContracts {
             if code.is_empty() {
                 continue;
             }
-            let Some((artifact, contract)) =
+            let Some((artifact, contract_data)) =
                 project_contracts.find_by_deployed_code(code.original_byte_slice())
             else {
                 continue;
             };
             let Some(functions) =
-                artifact_filters.get_targeted_functions(artifact, &contract.abi)?
+                artifact_filters.get_targeted_functions(artifact, &contract_data.abi)?
             else {
                 continue;
             };
             created_contracts.push(*address);
-            let contract = TargetedContract {
-                identifier: artifact.name.clone(),
-                abi: contract.abi.clone(),
-                targeted_functions: functions,
-                excluded_functions: Vec::new(),
-                storage_layout: contract.storage_layout.as_ref().map(Arc::clone),
-            };
+            let mut contract =
+                TargetedContract::new(artifact.name.clone(), contract_data.abi.clone())
+                    .with_targeted_functions(functions);
+            contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
             targets.insert(*address, contract);
         }
         Ok(())
@@ -226,20 +222,25 @@ pub struct TargetedContract {
     pub targeted_functions: Vec<Function>,
     /// The excluded functions of the contract.
     pub excluded_functions: Vec<Function>,
+    /// Cached functions selected for fuzzing.
+    pub fuzzed_functions: Vec<Function>,
     /// The contract's storage layout, if available.
     pub storage_layout: Option<Arc<StorageLayout>>,
 }
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
-    pub const fn new(identifier: String, abi: JsonAbi) -> Self {
-        Self {
+    pub fn new(identifier: String, abi: JsonAbi) -> Self {
+        let mut contract = Self {
             identifier,
             abi,
             targeted_functions: Vec::new(),
             excluded_functions: Vec::new(),
+            fuzzed_functions: Vec::new(),
             storage_layout: None,
-        }
+        };
+        contract.refresh_fuzzed_functions();
+        contract
     }
 
     /// Determines contract storage layout from project contracts. Needs `storageLayout` to be
@@ -255,20 +256,39 @@ impl TargetedContract {
         self
     }
 
+    /// Sets targeted functions and refreshes the cached fuzzed function list.
+    pub fn with_targeted_functions(mut self, targeted_functions: Vec<Function>) -> Self {
+        self.targeted_functions = targeted_functions;
+        self.refresh_fuzzed_functions();
+        self
+    }
+
+    /// Refreshes the cached functions selected for fuzzing.
+    pub fn refresh_fuzzed_functions(&mut self) {
+        self.fuzzed_functions.clear();
+        if self.targeted_functions.is_empty() {
+            self.fuzzed_functions.extend(
+                self.abi
+                    .functions()
+                    .filter(|&func| {
+                        !matches!(
+                            func.state_mutability,
+                            alloy_json_abi::StateMutability::Pure
+                                | alloy_json_abi::StateMutability::View
+                        ) && !self.excluded_functions.contains(func)
+                    })
+                    .cloned(),
+            );
+        } else {
+            self.fuzzed_functions.clone_from(&self.targeted_functions);
+        }
+    }
+
     /// Helper to retrieve functions to fuzz for specified abi.
     /// Returns specified targeted functions if any, else mutable abi functions that are not
     /// marked as excluded.
     pub fn abi_fuzzed_functions(&self) -> impl Iterator<Item = &Function> {
-        if self.targeted_functions.is_empty() {
-            Either::Right(self.abi.functions().filter(|&func| {
-                !matches!(
-                    func.state_mutability,
-                    alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
-                ) && !self.excluded_functions.contains(func)
-            }))
-        } else {
-            Either::Left(self.targeted_functions.iter())
-        }
+        self.fuzzed_functions.iter()
     }
 
     /// Returns the function for the given selector.
@@ -289,6 +309,7 @@ impl TargetedContract {
                 self.targeted_functions.push(self.get_function(selector)?.clone());
             }
         }
+        self.refresh_fuzzed_functions();
         Ok(())
     }
 }
