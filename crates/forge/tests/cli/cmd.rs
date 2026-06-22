@@ -1695,6 +1695,71 @@ contract Nested {
 "#]]);
 });
 
+// erc7201("test.inherit") = 0x4205ccccaa0e536e6d0f12ee6dec37a75c3d91a331a59600ba29ad2eccd78900
+forgetest!(can_inspect_erc7201_inherited_storage_layout, |prj, cmd| {
+    prj.add_source(
+        "Inherited.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Base {
+    /// @custom:storage-location erc7201:test.inherit
+    struct InheritStorage {
+        uint256 value;
+        address owner;
+    }
+
+    function _storage() private pure returns (InheritStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.inherit")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+
+contract Child is Base {}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Child", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Child [erc7201:test.inherit]",
+      "label": "value",
+      "offset": 0,
+      "slot": "0x4205ccccaa0e536e6d0f12ee6dec37a75c3d91a331a59600ba29ad2eccd78900",
+      "type": "uint256"
+    },
+    {
+      "astId": 0,
+      "contract": "Child [erc7201:test.inherit]",
+      "label": "owner",
+      "offset": 0,
+      "slot": "0x4205ccccaa0e536e6d0f12ee6dec37a75c3d91a331a59600ba29ad2eccd78901",
+      "type": "address"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();
