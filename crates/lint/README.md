@@ -8,6 +8,7 @@ It helps enforce best practices and improve code quality within Foundry projects
 `forge-lint` includes rules across several categories:
 
 - **High Severity:**
+  - `incorrect-exp`: Flags `^` (bitwise xor) used where `**` (exponentiation) was likely intended.
   - `incorrect-shift`: Warns against shift operations where operands might be in the wrong order.
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
@@ -26,6 +27,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `reentrancy-no-eth`: Flags non-ETH external calls followed by writes to state that was read before the call.
+  - `tautological-compare`: Comparing an expression with itself is always true or false.
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
