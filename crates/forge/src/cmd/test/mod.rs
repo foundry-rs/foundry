@@ -730,7 +730,7 @@ impl TestArgs {
             filter_args.contract_pattern =
                 Some(Regex::new(&format!("^{}$", regex::escape(contract)))?);
             if !path.is_empty() {
-                filter_args.path_pattern = Some(path.parse::<GlobMatcher>()?);
+                filter_args.path_pattern = Some(globset::escape(path).parse::<GlobMatcher>()?);
             }
         }
         trace!(target: "forge::test", ?filter, "using filter");
