@@ -358,13 +358,15 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
 ) -> eyre::Result<(bool, bool, Option<String>, usize, usize)> {
+    let mut calls_executed = 0;
     let mut reverts = 0;
     let early = replay_sequence(
         &mut executor,
         calls,
         &sequence,
         options.accumulate_warp_roll,
-        |idx, call_result| {
+        |_idx, call_result| {
+            calls_executed += 1;
             // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed
             // scenarios that are replayed with a modified version of test driver (that use
             // new `vm.assume` cheatcodes).
@@ -379,19 +381,19 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
                     false,
                     false,
                     assertion_failure_reason(call_result, options.rd),
-                    idx + 1,
+                    calls_executed,
                     reverts,
                 )));
             }
             if call_result.reverted && options.fail_on_revert {
                 if options.expect_assertion_failure {
-                    return Ok(ReplayDecision::Stop((true, false, None, idx + 1, reverts)));
+                    return Ok(ReplayDecision::Stop((true, false, None, calls_executed, reverts)));
                 }
                 return Ok(ReplayDecision::Stop((
                     false,
                     false,
                     call_failure_reason(call_result, options.rd),
-                    idx + 1,
+                    calls_executed,
                     reverts,
                 )));
             }
@@ -406,7 +408,7 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
     // invariant call: those delays would not be representable in the final shrunk sequence.
     let (success, replayed_entirely, reason) =
         finish_sequence_check(&executor, test_address, calldata, &options)?;
-    Ok((success, replayed_entirely, reason, sequence.len(), reverts))
+    Ok((success, replayed_entirely, reason, calls_executed, reverts))
 }
 
 fn finish_sequence_check<FEN: FoundryEvmNetwork>(
