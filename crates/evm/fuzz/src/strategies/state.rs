@@ -147,9 +147,17 @@ impl InvariantFuzzState {
     ) {
         let mut dict = self.inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
-        let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
-        dict.insert_logs_values(target_abi, logs, run_depth);
-        dict.insert_result_values(target_function, result, run_depth);
+        let (target_abi, target_function) = if logs.is_empty() && result.is_empty() {
+            (None, None)
+        } else {
+            targets.fuzzed_artifacts(tx)
+        };
+        if !logs.is_empty() {
+            dict.insert_logs_values(target_abi, logs, run_depth);
+        }
+        if !result.is_empty() {
+            dict.insert_result_values(target_function, result, run_depth);
+        }
         // Get storage layouts for contracts in the state changeset
         let storage_layouts = targets.get_storage_layouts();
         dict.insert_new_state_values(state_changeset, &storage_layouts, mapping_slots);
