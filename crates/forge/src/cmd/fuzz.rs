@@ -25,6 +25,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tempfile::{Builder as TempDirBuilder, TempDir};
 
 /// Run and manage Forge fuzzing corpora.
 #[derive(Clone, Debug, Parser)]
@@ -217,21 +218,14 @@ impl FuzzCminArgs {
         }
 
         let staging_out = temporary_cmin_out(&self.out)?;
-        fs::create_dir_all(&staging_out)?;
-        let summary = match self.run_to(&staging_out).await {
-            Ok(summary) => summary,
-            Err(err) => {
-                let _ = std::fs::remove_dir_all(&staging_out);
-                return Err(err);
-            }
-        };
+        let staging_path = staging_out.path().to_path_buf();
+        let summary = self.run_to(&staging_path).await?;
 
-        if let Err(err) = std::fs::rename(&staging_out, &self.out) {
-            let _ = std::fs::remove_dir_all(&staging_out);
+        if let Err(err) = std::fs::rename(&staging_path, &self.out) {
             return Err(err).with_context(|| {
                 format!(
                     "failed to rename minimized corpus {} to {}",
-                    staging_out.display(),
+                    staging_path.display(),
                     self.out.display()
                 )
             });
@@ -309,24 +303,15 @@ struct CminSummary {
     skipped: usize,
 }
 
-fn temporary_cmin_out(out: &Path) -> Result<PathBuf> {
-    let parent = out.parent().filter(|parent| !parent.as_os_str().is_empty());
+fn temporary_cmin_out(out: &Path) -> Result<TempDir> {
+    let parent =
+        out.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let filename =
         out.file_name().ok_or_else(|| eyre::eyre!("missing output corpus directory name"))?;
-    let ns = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
-    let basename = filename.to_string_lossy();
-    for attempt in 0..100 {
-        let candidate_name = format!(".{basename}.tmp-{ns}-{attempt}");
-        let candidate = if let Some(parent) = parent {
-            parent.join(candidate_name)
-        } else {
-            PathBuf::from(candidate_name)
-        };
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    bail!("failed to reserve temporary output directory for {}", out.display())
+    let prefix = format!(".{}.tmp-", filename.to_string_lossy());
+    TempDirBuilder::new().prefix(&prefix).tempdir_in(parent).with_context(|| {
+        format!("failed to create temporary output directory for {}", out.display())
+    })
 }
 
 /// Minimize one corpus entry while preserving its failure or coverage.
@@ -563,19 +548,9 @@ fn replay_candidate(
     session.replay(sequence, evm_edge_indices)
 }
 
-fn merge_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
-    if dst.len() < src.len() {
-        dst.resize(src.len(), 0);
-    }
-    for (dst, src) in dst.iter_mut().zip(src) {
-        *dst = (*dst).max(*src);
-    }
-}
-
 fn merge_new_edges(cumulative: &mut ReplayObservation, observation: &ReplayObservation) -> bool {
     let before = count_edges(cumulative);
-    merge_edge_vec(&mut cumulative.evm_edges, &observation.evm_edges);
-    merge_edge_vec(&mut cumulative.sancov_edges, &observation.sancov_edges);
+    cumulative.merge_edge_coverage(observation);
     count_edges(cumulative) > before
 }
 

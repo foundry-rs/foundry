@@ -19,7 +19,7 @@ use crate::{
             DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created,
         },
         corpus_io::read_corpus_tree,
-        invariant::{call_invariant_function, execute_tx},
+        invariant::{call_invariant_function, did_fail_on_assert, execute_tx},
     },
     inspectors::EdgeIndexMap,
 };
@@ -120,6 +120,20 @@ impl ReplayObservation {
     pub fn has_coverage(&self) -> bool {
         self.evm_edges.iter().any(|&edge| edge != 0)
             || self.sancov_edges.iter().any(|&edge| edge != 0)
+    }
+
+    pub fn merge_edge_coverage(&mut self, other: &Self) {
+        merge_edge_vec(&mut self.evm_edges, &other.evm_edges);
+        merge_edge_vec(&mut self.sancov_edges, &other.sancov_edges);
+    }
+}
+
+fn merge_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
+    if dst.len() < src.len() {
+        dst.resize(src.len(), 0);
+    }
+    for (dst, src) in dst.iter_mut().zip(src) {
+        *dst = (*dst).max(*src);
     }
 }
 
@@ -266,7 +280,6 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         let selector =
             tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
         let reverter = call_result.reverter;
-        let reverted = call_result.reverted;
         call_result.merge_all_coverage(
             &mut observation.evm_edges,
             input.evm_edge_indices,
@@ -282,8 +295,13 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
 
         if fuzzed_contracts.is_some() {
             if observation.failure.is_none() {
-                observation.failure =
-                    invariant_handler_failure(target, selector, reverter, reverted, &call_result);
+                observation.failure = invariant_handler_failure(
+                    target,
+                    selector,
+                    reverter,
+                    did_fail_on_assert(&call_result, &call_result.state_changeset),
+                    &call_result,
+                );
             }
             executor.commit(&mut call_result);
             if observation.failure.is_none()
@@ -318,10 +336,10 @@ fn invariant_handler_failure<FEN: FoundryEvmNetwork>(
     target: Address,
     selector: Selector,
     reverter: Option<Address>,
-    reverted: bool,
+    assertion_failure: bool,
     call_result: &crate::executors::RawCallResult<FEN>,
 ) -> Option<String> {
-    reverted.then(|| {
+    assertion_failure.then(|| {
         format!(
             "handler:{target:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
             call_result.exit_reason,
@@ -421,7 +439,9 @@ fn write_sancov<W: Write>(out: &mut W, bitmap: &[u64]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executors::corpus_io::canonical_replay_dirs;
+    use crate::executors::{RawCallResult, corpus_io::canonical_replay_dirs};
+    use foundry_evm_core::evm::EthEvmNetwork;
+    use revm::interpreter::InstructionResult;
     use uuid::Uuid;
 
     fn temp_dir() -> PathBuf {
@@ -490,6 +510,23 @@ mod tests {
         let err = write_showmap_file(&path, &evm, &[]).unwrap_err();
         assert!(err.to_string().contains("File exists"), "{err:?}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me");
+    }
+
+    #[test]
+    fn invariant_handler_failure_ignores_plain_revert() {
+        let call_result = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
+            exit_reason: Some(InstructionResult::Revert),
+            ..Default::default()
+        };
+        let failure = invariant_handler_failure(
+            Address::with_last_byte(1),
+            Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
+            Some(Address::with_last_byte(2)),
+            did_fail_on_assert(&call_result, &call_result.state_changeset),
+            &call_result,
+        );
+        assert_eq!(failure, None);
     }
 
     #[test]

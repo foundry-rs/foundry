@@ -145,8 +145,7 @@ fn fuzz_minimize_replay<FEN: FoundryEvmNetwork>(
 fn merge_replay_observations(observations: Vec<ReplayObservation>) -> ReplayObservation {
     let mut merged = ReplayObservation::default();
     for observation in observations {
-        merge_replay_edge_vec(&mut merged.evm_edges, &observation.evm_edges);
-        merge_replay_edge_vec(&mut merged.sancov_edges, &observation.sancov_edges);
+        merged.merge_edge_coverage(&observation);
         merged.replayed += observation.replayed;
         merged.skipped += observation.skipped;
         if merged.failure.is_none() {
@@ -154,15 +153,6 @@ fn merge_replay_observations(observations: Vec<ReplayObservation>) -> ReplayObse
         }
     }
     merged
-}
-
-fn merge_replay_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
-    if dst.len() < src.len() {
-        dst.resize(src.len(), 0);
-    }
-    for (dst, src) in dst.iter_mut().zip(src) {
-        *dst = (*dst).max(*src);
-    }
 }
 
 /// CLI mirror of `foundry_evm::executors::ShowmapDomain`.

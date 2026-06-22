@@ -43,7 +43,8 @@ use proptest::{
     test_runner::{RngAlgorithm, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
+pub(crate) use result::did_fail_on_assert;
+use result::{assert_after_invariant, can_continue, invariant_preflight_check};
 use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
