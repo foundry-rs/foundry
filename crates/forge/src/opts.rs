@@ -73,11 +73,11 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "re")]
     Remappings(RemappingArgs),
 
-    /// Verify smart contracts on Etherscan.
+    /// Verify smart contracts on Etherscan and Sourcify.
     #[command(visible_alias = "v")]
     VerifyContract(VerifyArgs),
 
-    /// Check verification status on Etherscan.
+    /// Check verification status on the selected verifier.
     #[command(visible_alias = "vc")]
     VerifyCheck(VerifyCheckArgs),
 

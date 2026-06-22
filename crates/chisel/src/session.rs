@@ -111,26 +111,8 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// Optionally, returns a tuple containing the next cached session's id and file name.
     pub fn next_cached_session() -> Result<(String, String)> {
         let cache_dir = Self::cache_dir()?;
-        let mut entries = std::fs::read_dir(&cache_dir)?;
-
-        // If there are no existing cached sessions, just create the first one: "chisel-0.json"
-        let mut latest = if let Some(e) = entries.next() {
-            e?
-        } else {
-            return Ok((String::from("0"), format!("{cache_dir}chisel-0.json")));
-        };
-
-        let mut session_num = 1;
-        // Get the latest cached session
-        for entry in entries {
-            let entry = entry?;
-            if entry.metadata()?.modified()? >= latest.metadata()?.modified()? {
-                latest = entry;
-            }
-
-            // Increase session_num counter rather than cloning the iterator and using `.count`
-            session_num += 1;
-        }
+        let entries = std::fs::read_dir(&cache_dir)?;
+        let session_num = entries.filter(Result::is_ok).count();
 
         Ok((format!("{session_num}"), format!("{cache_dir}chisel-{session_num}.json")))
     }

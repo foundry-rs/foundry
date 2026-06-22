@@ -41,14 +41,16 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, I256};
+use alloy_primitives::{Address, Bytes, I256, U256};
 use eyre::{Result, eyre};
-use foundry_common::{ContractsByAddress, ContractsByArtifact, sh_warn};
+use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
-use foundry_evm_core::{evm::FoundryEvmNetwork, utils::StateChangeset};
+use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork, utils::StateChangeset};
 use foundry_evm_fuzz::{
-    BasicTxDetails,
-    invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
+    BasicTxDetails, CallDetails, ObservedCall,
+    invariant::{
+        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, TargetedContracts,
+    },
     strategies::{
         EvmFuzzState, FuzzStateReader, InvariantFuzzState, generate_msg_value, mutate_param_value,
     },
@@ -191,6 +193,13 @@ pub(crate) struct CampaignCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CorpusInsertionMode {
+    Live,
+    Deferred,
+    MemoryOnly,
+}
+
 struct ReplayOutcome {
     keep_entry: bool,
     new_coverage: bool,
@@ -251,13 +260,24 @@ impl WorkerCorpusSeed {
         self
     }
 
-    pub(crate) fn clone_for_worker(&self, worker_id: usize, worker_count: usize) -> Self {
+    pub(crate) fn clone_for_worker(
+        &self,
+        worker_id: usize,
+        worker_count: usize,
+        include_cmp_seq: bool,
+    ) -> Self {
         let in_memory_corpus = self
             .in_memory_corpus
             .iter()
             .enumerate()
             .filter(|(idx, _)| idx % worker_count == worker_id)
-            .map(|(_, entry)| entry.clone())
+            .map(|(_, entry)| {
+                let mut entry = entry.clone();
+                if !include_cmp_seq {
+                    entry.cmp_seq.clear();
+                }
+                entry
+            })
             .collect::<Vec<_>>();
 
         let mut metrics = self.metrics.clone();
@@ -480,7 +500,7 @@ pub struct WorkerCorpus {
     /// Call sequence mutation strategy type generator used by stateful fuzzing.
     mutation_generator: BoxedStrategy<MutationType>,
     /// Identifier of current mutated entry for this worker.
-    current_mutated: Option<Uuid>,
+    current_mutated_index: Option<usize>,
     /// Config
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
@@ -716,7 +736,7 @@ impl WorkerCorpus {
             metrics: seed.metrics,
             tx_generator,
             mutation_generator,
-            current_mutated: None,
+            current_mutated_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -768,11 +788,9 @@ impl WorkerCorpus {
         });
 
         // Update stats of current mutated primary corpus.
-        if let Some(uuid) = &self.current_mutated {
+        if let Some(index) = self.current_mutated_index.take() {
             let should_credit = new_coverage || improved_optimization;
-            if let Some(corpus) =
-                self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid == *uuid)
-            {
+            if let Some(corpus) = self.in_memory_corpus.get_mut(index) {
                 corpus.total_mutations += 1;
                 if should_credit {
                     corpus.new_finds_produced += 1
@@ -788,8 +806,6 @@ impl WorkerCorpus {
                     corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
                 );
             }
-
-            self.current_mutated = None;
         }
 
         if let Some((value, best_seq)) = optimization
@@ -822,14 +838,28 @@ impl WorkerCorpus {
         };
         let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
-        let campaign_entry = (!persist_now).then(|| CampaignCorpusEntry {
-            tx_seq: corpus_inputs.clone(),
-            dedupe_by_coverage: new_coverage,
-        });
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
-        if persist_now && let Some(worker_corpus) = &self.worker_dir {
-            let worker_corpus = worker_corpus.join(CORPUS_DIR);
+        self.insert_corpus_entry(
+            corpus,
+            if persist_now { CorpusInsertionMode::Live } else { CorpusInsertionMode::Deferred },
+            new_coverage,
+        )
+    }
+
+    fn insert_corpus_entry(
+        &mut self,
+        corpus: CorpusEntry,
+        insertion_mode: CorpusInsertionMode,
+        dedupe_by_coverage: bool,
+    ) -> Option<CampaignCorpusEntry> {
+        let campaign_entry = matches!(insertion_mode, CorpusInsertionMode::Deferred)
+            .then(|| CampaignCorpusEntry { tx_seq: corpus.tx_seq.clone(), dedupe_by_coverage });
+
+        if matches!(insertion_mode, CorpusInsertionMode::Live)
+            && let Some(worker_dir) = &self.worker_dir
+        {
+            let worker_corpus = worker_dir.join(CORPUS_DIR);
             let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
             if let Err(err) = write_result {
                 debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
@@ -843,16 +873,15 @@ impl WorkerCorpus {
             }
         }
 
-        // Track in-memory corpus changes to update MasterWorker on sync.
+        self.push_corpus_entry(corpus);
+        campaign_entry
+    }
+
+    fn push_corpus_entry(&mut self, corpus: CorpusEntry) {
         let new_index = self.in_memory_corpus.len();
         self.new_entry_indices.push(new_index);
-
-        // This includes reverting txs in the corpus and `can_continue` removes
-        // them. We want this as it is new coverage and may help reach the other branch.
         self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
-
-        campaign_entry
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -935,14 +964,16 @@ impl WorkerCorpus {
 
             let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
-            let primary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
-            let secondary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
+            let primary_index = rng.random_range(0..corpus_len);
+            let secondary_index = rng.random_range(0..corpus_len);
+            let primary = &self.in_memory_corpus[primary_index];
+            let secondary = &self.in_memory_corpus[secondary_index];
 
             match mutation_type {
                 MutationType::Splice => {
                     trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
 
-                    self.current_mutated = Some(primary.uuid);
+                    self.current_mutated_index = Some(primary_index);
 
                     let start1 = rng.random_range(0..primary.tx_seq.len());
                     let end1 = rng.random_range(start1..primary.tx_seq.len());
@@ -950,31 +981,35 @@ impl WorkerCorpus {
                     let start2 = rng.random_range(0..secondary.tx_seq.len());
                     let end2 = rng.random_range(start2..secondary.tx_seq.len());
 
-                    for tx in primary.tx_seq.iter().take(end1).skip(start1) {
-                        new_seq.push(tx.clone());
-                    }
-                    for tx in secondary.tx_seq.iter().take(end2).skip(start2) {
-                        new_seq.push(tx.clone());
-                    }
+                    new_seq.reserve((end1 - start1) + (end2 - start2));
+                    new_seq.extend_from_slice(&primary.tx_seq[start1..end1]);
+                    new_seq.extend_from_slice(&secondary.tx_seq[start2..end2]);
                 }
                 MutationType::Repeat => {
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     let start = rng.random_range(0..corpus.tx_seq.len());
                     let end = rng.random_range(start..corpus.tx_seq.len());
                     let item_idx = rng.random_range(0..corpus.tx_seq.len());
-                    let repeated = vec![new_seq[item_idx].clone(); end - start];
-                    new_seq.splice(start..end, repeated);
+                    let repeated = new_seq[item_idx].clone();
+                    for tx in &mut new_seq[start..end] {
+                        *tx = repeated.clone();
+                    }
                 }
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
 
-                    self.current_mutated = Some(primary.uuid);
+                    self.current_mutated_index = Some(primary_index);
 
+                    new_seq.reserve(primary.tx_seq.len().min(secondary.tx_seq.len()));
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
                         // TODO: chunks?
                         let tx = if rng.random::<bool>() { tx1.clone() } else { tx2.clone() };
@@ -982,10 +1017,14 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Prefix => {
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     for i in 0..rng.random_range(0..=new_seq.len()) {
@@ -993,10 +1032,14 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Suffix => {
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
                     for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
@@ -1006,10 +1049,14 @@ impl WorkerCorpus {
                 }
                 MutationType::Abi => {
                     let targets = targeted_contracts.targets();
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
 
@@ -1025,31 +1072,37 @@ impl WorkerCorpus {
                 }
                 MutationType::Cmp => {
                     let targets = targeted_contracts.targets();
-                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    let (corpus_index, corpus) = if rng.random::<bool>() {
+                        (primary_index, primary)
+                    } else {
+                        (secondary_index, secondary)
+                    };
                     trace!(target: "corpus", "cmp mutate args of {}", corpus.uuid);
 
-                    self.current_mutated = Some(corpus.uuid);
+                    self.current_mutated_index = Some(corpus_index);
 
                     new_seq = corpus.tx_seq.clone();
-                    let candidates = corpus
-                        .cmp_seq
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
-                        .collect::<Vec<_>>();
-
                     let mut mutated = false;
                     let fallback_idx = rng.random_range(0..new_seq.len());
-                    if !candidates.is_empty() {
-                        let start = rng.random_range(0..candidates.len());
-                        for offset in 0..candidates.len() {
-                            let idx = candidates[(start + offset) % candidates.len()];
+                    let candidates = || {
+                        corpus
+                            .cmp_seq
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, cmp_values)| !cmp_values.is_empty())
+                    };
+                    let candidate_count = candidates().count();
+                    if candidate_count != 0 {
+                        let start = rng.random_range(0..candidate_count);
+                        for (idx, cmp_values) in
+                            candidates().cycle().skip(start).take(candidate_count)
+                        {
                             let tx = new_seq.get_mut(idx).unwrap();
                             if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
                                 mutated = Self::cmp_mutate(
                                     tx,
                                     function,
-                                    corpus.cmp_seq[idx].as_slice(),
+                                    cmp_values.as_slice(),
                                     test_runner,
                                 )?;
                                 if mutated {
@@ -1099,9 +1152,9 @@ impl WorkerCorpus {
         let tx = if self.in_memory_corpus.is_empty() {
             self.new_tx(test_runner)?
         } else {
-            let corpus = &self.in_memory_corpus
-                [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
-            self.current_mutated = Some(corpus.uuid);
+            let corpus_index = test_runner.rng().random_range(0..self.in_memory_corpus.len());
+            let corpus = &self.in_memory_corpus[corpus_index];
+            self.current_mutated_index = Some(corpus_index);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
@@ -1122,6 +1175,118 @@ impl WorkerCorpus {
             .new_tree(test_runner)
             .map_err(|_| eyre!("Could not generate case"))?
             .current())
+    }
+
+    /// Converts replayable observed sub-calls into one normal multi-transaction corpus entry.
+    ///
+    /// This captures calls shaped by a handler or another target call and lets the existing corpus
+    /// machinery mutate, evict, sync, and persist them like any other interesting sequence.
+    pub fn hoist_observed_calls(
+        &mut self,
+        observed: &[ObservedCall],
+        parent_tx: &BasicTxDetails,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        insertion_mode: CorpusInsertionMode,
+    ) -> Option<CampaignCorpusEntry> {
+        if !self.config.is_coverage_guided() || observed.is_empty() {
+            return None;
+        }
+
+        let tx_seq = {
+            let targets = targeted_contracts.targets();
+            sequence_from_observed(
+                observed,
+                &targets,
+                ObservedCallDepth::All,
+                Some((parent_tx.warp, parent_tx.roll)),
+            )
+        };
+
+        self.push_observed_sequence(tx_seq, insertion_mode)
+    }
+
+    /// Seeds the corpus from sibling zero-input unit tests by replaying them on a clone of the
+    /// post-setUp executor and keeping the direct replayable calls made by each test.
+    ///
+    /// Returns the number of test-derived corpus entries added.
+    pub fn seed_from_test_traces<FEN: FoundryEvmNetwork>(
+        &mut self,
+        invariant_contract: &InvariantContract<'_>,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        executor: &Executor<FEN>,
+    ) -> Result<usize> {
+        if !self.config.is_coverage_guided() {
+            return Ok(0);
+        }
+
+        let mut added = 0;
+
+        for func in invariant_contract.abi.functions() {
+            if !func.is_unit_test() {
+                continue;
+            }
+            if invariant_contract
+                .invariant_fns
+                .iter()
+                .any(|(invariant_fn, _)| func.selector() == invariant_fn.selector())
+            {
+                continue;
+            }
+
+            let calldata = match func.abi_encode_input(&[]) {
+                Ok(calldata) => Bytes::from(calldata),
+                Err(_) => continue,
+            };
+
+            let exec = executor.clone();
+
+            let raw = match exec.call_raw(CALLER, invariant_contract.address, calldata, U256::ZERO)
+            {
+                Ok(raw) => raw,
+                Err(_) => continue,
+            };
+            if raw.reverted {
+                continue;
+            }
+
+            let observed = raw.observed_calls;
+            if observed.is_empty() {
+                continue;
+            }
+
+            let seq = {
+                let targets = targeted_contracts.targets();
+                sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None)
+            };
+
+            let insertion_mode = if self.id == 0 {
+                CorpusInsertionMode::Live
+            } else {
+                CorpusInsertionMode::MemoryOnly
+            };
+            let len_before = self.in_memory_corpus.len();
+            let _ = self.push_observed_sequence(seq, insertion_mode);
+            if self.in_memory_corpus.len() > len_before {
+                debug!(target: "corpus", test = %func.name, "seeded corpus sequence from test trace");
+                added += 1;
+            }
+        }
+
+        Ok(added)
+    }
+
+    fn push_observed_sequence(
+        &mut self,
+        tx_seq: Vec<BasicTxDetails>,
+        insertion_mode: CorpusInsertionMode,
+    ) -> Option<CampaignCorpusEntry> {
+        if !self.config.is_coverage_guided() || tx_seq.is_empty() {
+            return None;
+        }
+
+        let corpus = CorpusEntry::new(tx_seq);
+
+        self.insert_corpus_entry(corpus, insertion_mode, false)
     }
 
     /// Returns the next call to be used in call sequence.
@@ -1607,6 +1772,43 @@ impl WorkerCorpus {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ObservedCallDepth {
+    DirectOnly,
+    All,
+}
+
+fn sequence_from_observed(
+    observed: &[ObservedCall],
+    targets: &TargetedContracts,
+    depth: ObservedCallDepth,
+    first_delay: Option<(Option<U256>, Option<U256>)>,
+) -> Vec<BasicTxDetails> {
+    let mut first_delay = first_delay;
+    observed
+        .iter()
+        .filter(|call| matches!(depth, ObservedCallDepth::All) || call.depth == 1)
+        .filter_map(|call| {
+            let mut tx = BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender: call.caller,
+                call_details: CallDetails {
+                    target: call.target,
+                    calldata: call.calldata.clone(),
+                    value: call.value,
+                },
+            };
+            targets.can_replay(&tx).then(|| {
+                let (warp, roll) = first_delay.take().unwrap_or((None, None));
+                tx.warp = warp;
+                tx.roll = roll;
+                tx
+            })
+        })
+        .collect()
+}
+
 fn prepare_campaign_output_dir(config: &FuzzCorpusConfig) {
     let Some(root) = &config.corpus_dir else {
         return;
@@ -1688,7 +1890,6 @@ fn unique_corpus_entries<'a>(
 mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolValue;
-    use alloy_primitives::U256;
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1779,9 +1980,30 @@ mod tests {
         let corpus = CorpusEntry::new(vec![basic_tx()]);
         let seed_uuid = corpus.uuid;
         let mut manager = seeded_worker_corpus(0, temp_corpus_dir(), vec![corpus]);
-        manager.current_mutated = Some(seed_uuid);
+        manager.current_mutated_index = Some(0);
 
         (manager, seed_uuid)
+    }
+
+    fn targeted_contracts_with_selective_functions(
+        target: Address,
+        functions: Vec<Function>,
+        targeted_selectors: impl IntoIterator<Item = alloy_primitives::Selector>,
+    ) -> FuzzRunIdentifiedContracts {
+        use alloy_json_abi::JsonAbi;
+        use foundry_evm_fuzz::invariant::TargetedContract;
+
+        let mut abi = JsonAbi::new();
+        for function in functions {
+            abi.functions.entry(function.name.clone()).or_default().push(function);
+        }
+
+        let mut contract = TargetedContract::new("Target".to_string(), abi);
+        contract.add_selectors(targeted_selectors, false).unwrap();
+
+        let mut targets = TargetedContracts::new();
+        targets.inner.insert(target, contract);
+        FuzzRunIdentifiedContracts::new(targets, false)
     }
 
     #[test]
@@ -1964,7 +2186,7 @@ mod tests {
 
         let worker_count = 3;
         let shards = (0..worker_count)
-            .map(|worker_id| seed.clone_for_worker(worker_id, worker_count))
+            .map(|worker_id| seed.clone_for_worker(worker_id, worker_count, true))
             .collect::<Vec<_>>();
         let mut sharded_ids = shards
             .iter()
@@ -2006,6 +2228,287 @@ mod tests {
     }
 
     #[test]
+    fn clone_for_worker_can_strip_cmp_sequences() {
+        let cmp = CmpOperands {
+            op1: U256::from(1),
+            op2: U256::from(2),
+            pc: 3,
+            address: Address::ZERO,
+            opcode: 0,
+        };
+        let entries = (0..2)
+            .map(|_| CorpusEntry::new_with_cmp(vec![basic_tx()], vec![vec![cmp]], Uuid::new_v4()))
+            .collect::<Vec<_>>();
+        let seed = WorkerCorpusSeed { in_memory_corpus: entries, ..Default::default() };
+
+        let with_cmp = seed.clone_for_worker(0, 1, true);
+        let without_cmp = seed.clone_for_worker(0, 1, false);
+
+        assert!(with_cmp.in_memory_corpus.iter().all(|entry| !entry.cmp_seq[0].is_empty()));
+        assert!(without_cmp.in_memory_corpus.iter().all(|entry| entry.cmp_seq.is_empty()));
+    }
+
+    #[test]
+    fn hoist_observed_calls_bundles_replayable_subcalls_into_one_corpus_entry() {
+        let target = Address::from([0x42; 20]);
+        let other = Address::from([0x43; 20]);
+        let sender = Address::from([0xaa; 20]);
+        let observed_caller = Address::from([0xbb; 20]);
+        let foo = Function::parse("foo(uint256)").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+        let foo_selector = foo.selector();
+        let bar_selector = bar.selector();
+        let targeted_contracts = targeted_contracts_with_selective_functions(
+            target,
+            vec![foo, bar],
+            [foo_selector, bar_selector],
+        );
+
+        let mut foo_calldata = vec![0u8; 36];
+        foo_calldata[..4].copy_from_slice(&foo_selector[..]);
+        let bar_calldata = bar_selector.to_vec();
+        let mut unknown_selector = vec![0u8; 36];
+        unknown_selector[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        let value = U256::from(1);
+
+        let observed = vec![
+            ObservedCall {
+                depth: 1,
+                caller: observed_caller,
+                target: other,
+                calldata: Bytes::from(foo_calldata.clone()),
+                value: Some(value),
+            },
+            ObservedCall {
+                depth: 1,
+                caller: observed_caller,
+                target,
+                calldata: Bytes::from(foo_calldata),
+                value: None,
+            },
+            ObservedCall {
+                depth: 2,
+                caller: observed_caller,
+                target,
+                calldata: Bytes::from(bar_calldata),
+                value: None,
+            },
+            ObservedCall {
+                depth: 1,
+                caller: observed_caller,
+                target,
+                calldata: Bytes::from(unknown_selector),
+                value: None,
+            },
+            ObservedCall {
+                depth: 1,
+                caller: observed_caller,
+                target,
+                calldata: Bytes::from(vec![0u8; 3]),
+                value: None,
+            },
+        ];
+        let parent_tx = BasicTxDetails {
+            warp: Some(U256::from(123)),
+            roll: Some(U256::from(456)),
+            sender,
+            call_details: CallDetails {
+                target: Address::from([0x99; 20]),
+                calldata: Bytes::new(),
+                value: None,
+            },
+        };
+        let mut manager = empty_worker_corpus(0, temp_corpus_dir());
+
+        let campaign_entry = manager.hoist_observed_calls(
+            &observed,
+            &parent_tx,
+            &targeted_contracts,
+            CorpusInsertionMode::Live,
+        );
+
+        assert!(campaign_entry.is_none());
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(manager.metrics.corpus_count, 1);
+
+        let entry = manager.in_memory_corpus.last().unwrap();
+        assert_eq!(entry.tx_seq.len(), 2);
+        let tx = &entry.tx_seq[0];
+        assert_eq!(tx.warp, parent_tx.warp);
+        assert_eq!(tx.roll, parent_tx.roll);
+        assert_eq!(tx.sender, observed_caller);
+        assert_eq!(tx.call_details.target, target);
+        assert_eq!(&tx.call_details.calldata[..4], &foo_selector[..]);
+        assert_eq!(tx.call_details.value, None);
+
+        let tx = &entry.tx_seq[1];
+        assert_eq!(tx.warp, None);
+        assert_eq!(tx.roll, None);
+        assert_eq!(tx.sender, observed_caller);
+        assert_eq!(tx.call_details.target, target);
+        assert_eq!(&tx.call_details.calldata[..4], &bar_selector[..]);
+        assert_eq!(tx.call_details.value, None);
+    }
+
+    #[test]
+    fn hoist_observed_calls_returns_deferred_campaign_entry_without_persisting() {
+        let target = Address::from([0x42; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let selector = foo.selector();
+        let targeted_contracts = targeted_contracts_with_selective_functions(target, vec![foo], []);
+        let observed = vec![ObservedCall {
+            depth: 1,
+            caller: Address::from([0xaa; 20]),
+            target,
+            calldata: Bytes::from(selector.to_vec()),
+            value: None,
+        }];
+        let corpus_root = temp_corpus_dir();
+        let worker_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
+        let mut manager = empty_worker_corpus(1, corpus_root);
+
+        let campaign_entry = manager.hoist_observed_calls(
+            &observed,
+            &basic_tx(),
+            &targeted_contracts,
+            CorpusInsertionMode::Deferred,
+        );
+
+        let campaign_entry = campaign_entry.expect("deferred hoist should return campaign entry");
+        assert!(!campaign_entry.dedupe_by_coverage);
+        assert_eq!(campaign_entry.tx_seq.len(), 1);
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(read_corpus_dir(&worker_corpus_dir).count(), 0);
+    }
+
+    #[test]
+    fn hoist_observed_calls_skips_empty_or_non_coverage_guided_inputs() {
+        let target = Address::from([0x42; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let selector = foo.selector();
+        let targeted_contracts = targeted_contracts_with_selective_functions(target, vec![foo], []);
+        let observed = vec![ObservedCall {
+            depth: 1,
+            caller: Address::from([0xaa; 20]),
+            target,
+            calldata: Bytes::from(selector.to_vec()),
+            value: None,
+        }];
+
+        let mut no_corpus_config = corpus_config(temp_corpus_dir());
+        no_corpus_config.corpus_dir = None;
+        let mut manager = WorkerCorpus::from_seed(
+            0,
+            no_corpus_config,
+            Just(basic_tx()).boxed(),
+            WorkerCorpusSeed::default(),
+        );
+        assert!(
+            manager
+                .hoist_observed_calls(
+                    &observed,
+                    &basic_tx(),
+                    &targeted_contracts,
+                    CorpusInsertionMode::Live
+                )
+                .is_none()
+        );
+        assert!(manager.in_memory_corpus.is_empty());
+
+        let mut manager = empty_worker_corpus(0, temp_corpus_dir());
+        assert!(
+            manager
+                .hoist_observed_calls(
+                    &[],
+                    &basic_tx(),
+                    &targeted_contracts,
+                    CorpusInsertionMode::Live
+                )
+                .is_none()
+        );
+        assert!(manager.in_memory_corpus.is_empty());
+    }
+
+    #[test]
+    fn sequence_from_observed_keeps_only_direct_replayable_calls() {
+        let target = Address::from([0x42; 20]);
+        let other = Address::from([0x43; 20]);
+        let sender = Address::from([0xaa; 20]);
+        let nested_caller = Address::from([0xbb; 20]);
+        let foo = Function::parse("foo(uint256)").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+        let foo_selector = foo.selector();
+        let bar_selector = bar.selector();
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
+        let targets = targeted_contracts.targets();
+
+        let mut foo_calldata = vec![0u8; 36];
+        foo_calldata[..4].copy_from_slice(&foo_selector[..]);
+        let bar_calldata = bar_selector.to_vec();
+        let observed = vec![
+            ObservedCall {
+                depth: 1,
+                caller: sender,
+                target,
+                calldata: Bytes::from(foo_calldata.clone()),
+                value: None,
+            },
+            ObservedCall {
+                depth: 2,
+                caller: nested_caller,
+                target,
+                calldata: Bytes::from(foo_calldata),
+                value: None,
+            },
+            ObservedCall {
+                depth: 1,
+                caller: sender,
+                target,
+                calldata: Bytes::from(bar_calldata),
+                value: None,
+            },
+            ObservedCall {
+                depth: 1,
+                caller: sender,
+                target: other,
+                calldata: Bytes::from(foo_selector.to_vec()),
+                value: None,
+            },
+        ];
+
+        let seq = sequence_from_observed(&observed, &targets, ObservedCallDepth::DirectOnly, None);
+
+        assert_eq!(seq.len(), 1);
+        assert_eq!(seq[0].sender, sender);
+        assert_eq!(seq[0].call_details.target, target);
+        assert_eq!(&seq[0].call_details.calldata[..4], &foo_selector[..]);
+    }
+
+    #[test]
+    fn push_observed_sequence_live_persists_and_memory_only_does_not() {
+        let corpus_root = temp_corpus_dir();
+        let worker0_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
+        let mut manager = empty_worker_corpus(0, corpus_root.clone());
+
+        assert!(
+            manager.push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::Live).is_none()
+        );
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(read_corpus_dir(&worker0_corpus_dir).count(), 1);
+
+        let mut manager = empty_worker_corpus(1, corpus_root.clone());
+        let worker1_corpus_dir = corpus_root.join("worker1").join(CORPUS_DIR);
+        assert!(
+            manager
+                .push_observed_sequence(vec![basic_tx()], CorpusInsertionMode::MemoryOnly)
+                .is_none()
+        );
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(read_corpus_dir(&worker1_corpus_dir).count(), 0);
+    }
+
+    #[test]
     fn detects_legacy_invariant_corpus_dirs_without_matching_worker_dirs() {
         let corpus_root = temp_corpus_dir();
         fs::create_dir_all(corpus_root.join("worker0")).unwrap();
@@ -2041,7 +2544,7 @@ mod tests {
         assert_eq!(manager.metrics.favored_items, 0);
 
         // Mark this as the currently mutated corpus and process a run with new coverage.
-        manager.current_mutated = Some(uuid);
+        manager.current_mutated_index = Some(0);
         manager.process_inputs(&[basic_tx()], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
@@ -2063,7 +2566,7 @@ mod tests {
         manager.metrics.favored_items = 1;
 
         // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
-        manager.current_mutated = Some(uuid);
+        manager.current_mutated_index = Some(0);
         manager.process_inputs(&[basic_tx()], &[], false, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
@@ -2083,7 +2586,7 @@ mod tests {
         corpus.new_finds_produced = 2;
         corpus.is_favored = false;
 
-        manager.current_mutated = Some(uuid);
+        manager.current_mutated_index = Some(0);
         manager.process_inputs(&[basic_tx()], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
