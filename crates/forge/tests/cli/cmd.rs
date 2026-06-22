@@ -4159,6 +4159,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "experimental": false,
     "libraries": {}
   }
 }
@@ -4225,9 +4226,15 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
         config.fuzz.runs = 1;
     });
 
-    cmd.args(["test", "--match-test", "test_Increment", "--gas-report"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "test",
+        "--match-test",
+        "test_Increment",
+        "--gas-report",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
 ╭----------------------------------+-----------------+-------+--------+-------+---------╮
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
@@ -4269,7 +4276,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--match-test", "test_Increment", "--gas-report", "--md"])
+        .args([
+            "test",
+            "--match-test",
+            "test_Increment",
+            "--gas-report",
+            "--md",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -4298,7 +4312,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--mt", "test_Increment", "--gas-report", "--json"])
+        .args([
+            "test",
+            "--mt",
+            "test_Increment",
+            "--gas-report",
+            "--json",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(
             str![[r#"

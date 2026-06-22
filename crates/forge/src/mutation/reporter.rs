@@ -65,17 +65,6 @@ impl MutationReporter {
             Paint::magenta("Timed out")
         );
 
-        // Mutation score with color
-        let score = summary.mutation_score();
-        let score_display = format!("{score:.1}%");
-        let score_colored = if score >= 80.0 {
-            Paint::green(&score_display).bold()
-        } else if score >= 60.0 {
-            Paint::yellow(&score_display).bold()
-        } else {
-            Paint::red(&score_display).bold()
-        };
-
         // Format duration similar to test output
         let duration_str = if duration.as_secs() >= 60 {
             format!("{}m {:.2}s", duration.as_secs() / 60, duration.as_secs_f64() % 60.0)
@@ -83,13 +72,41 @@ impl MutationReporter {
             format!("{:.2}s", duration.as_secs_f64())
         };
 
-        let _ = sh_println!(
-            "Mutation Score: {} ({}/{} mutants killed); finished in {}",
-            score_colored,
-            summary.total_dead(),
-            summary.total_dead() + summary.total_survived(),
-            duration_str
-        );
+        if summary.has_reliable_score() {
+            // Mutation score with color
+            let score = summary.mutation_score();
+            let score_display = format!("{score:.1}%");
+            let score_colored = if score >= 80.0 {
+                Paint::green(&score_display).bold()
+            } else if score >= 60.0 {
+                Paint::yellow(&score_display).bold()
+            } else {
+                Paint::red(&score_display).bold()
+            };
+
+            let _ = sh_println!(
+                "Mutation Score: {} ({}/{} mutants killed); finished in {}",
+                score_colored,
+                summary.total_dead(),
+                summary.total_evaluated(),
+                duration_str
+            );
+        } else {
+            let _ = sh_println!(
+                "Mutation Score: unavailable ({} timed out, {} evaluated); finished in {}",
+                summary.total_timed_out(),
+                summary.total_evaluated(),
+                duration_str
+            );
+            let _ = sh_println!(
+                "{}",
+                Paint::yellow(
+                    "Timed-out mutants dominate this run. Increase --mutation-timeout or use a \
+                     faster mutation profile, for example lower optimizer_runs or disable via_ir."
+                )
+                .bold()
+            );
+        }
 
         // Survived mutants section - the most important for developers.
         if !summary.get_survived().is_empty() {

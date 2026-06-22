@@ -6,7 +6,7 @@ use alloy_signer::Signer;
 use eyre::ensure;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroU64, path::PathBuf};
+use std::{fmt, num::NonZeroU64, path::PathBuf};
 use tempo_primitives::transaction::{
     CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
 };
@@ -24,6 +24,8 @@ pub enum SessionStatus {
     #[default]
     Pending,
     Active,
+    /// Local use has stopped and key material has been erased, but on-chain revoke is still
+    /// pending or retryable.
     Revoking,
     Revoked,
     Expired,
@@ -38,10 +40,11 @@ impl SessionStatus {
 
     /// Returns `true` if entering this status must erase local key material.
     const fn clears_key_material(self) -> bool {
-        matches!(self, Self::Revoking | Self::Revoked | Self::Expired | Self::Failed)
+        matches!(self, Self::Revoking) || self.is_terminal()
     }
 
-    /// Returns `true` if the session is still in-flight or usable.
+    /// Returns `true` if the session is not terminal. This does not imply usable key material:
+    /// [`Self::Revoking`] is in-flight cleanup state and has no local signing key.
     pub const fn is_live(self) -> bool {
         !self.is_terminal()
     }
@@ -59,7 +62,7 @@ pub struct SessionTokenLimit {
 /// Session keys live with their lifecycle record in `wallet/sessions.toml`.
 /// Persistent Tempo wallet login keys remain in `wallet/keys.toml`, so creating
 /// or cleaning up a session cannot replace a user's long-lived access key.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SessionKeyMaterial {
     #[serde(default)]
     pub key_type: KeyType,
@@ -69,6 +72,20 @@ pub struct SessionKeyMaterial {
     /// provisioning on first use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_authorization: Option<String>,
+}
+
+// Manual `Debug` redacts the secret key material; propagates to containers.
+impl fmt::Debug for SessionKeyMaterial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionKeyMaterial")
+            .field("key_type", &self.key_type)
+            .field("key", &super::redacted_debug(&self.key))
+            .field(
+                "key_authorization",
+                &self.key_authorization.as_deref().map(super::redacted_debug),
+            )
+            .finish()
+    }
 }
 
 impl SessionKeyMaterial {
@@ -176,7 +193,7 @@ impl SessionRecord {
         self.get(session_id).filter(|session| session.has_live_key_at(now))
     }
 
-    /// Update a session status by id. Revoking and terminal statuses clear local key material.
+    /// Update a session status by id. Cleanup and terminal statuses clear local key material.
     ///
     /// Returns `true` when the record changed. Missing sessions and idempotent
     /// updates return `false`.
@@ -347,6 +364,23 @@ pub(crate) fn validate_signed_session_authorization(
         auth.key_type,
         expected_key_type
     );
+    // A session uses a limited access key; T6 admin keys must never be used as a session key.
+    ensure!(
+        !auth.is_admin(),
+        "session {} key_authorization is an admin key, expected a limited access key",
+        session.session_id
+    );
+    // A T6 account-bound authorization must target this session's root account (no cross-account
+    // replay).
+    if let Some(account) = auth.account {
+        ensure!(
+            account == session.root_account,
+            "session {} key_authorization is bound to account {}, expected {}",
+            session.session_id,
+            account,
+            session.root_account
+        );
+    }
     // `session_id` is local metadata; the signed binding lives in the authorization witness.
     ensure!(
         auth.witness == Some(session.session_id),
@@ -554,9 +588,8 @@ pub fn upsert_session_entry(entry: SessionEntry) -> eyre::Result<()> {
 
 /// Atomically update a session status in the registry.
 ///
-/// Terminal statuses (`revoked`, `expired`, `failed`) also clear the
-/// session-scoped private key material. Returns `true` when an entry was found
-/// and changed.
+/// Cleanup and terminal statuses (`revoking`, `revoked`, `expired`, `failed`) also clear the
+/// session-scoped private key material. Returns `true` when an entry was found and changed.
 pub fn update_session_status(session_id: B256, status: SessionStatus) -> eyre::Result<bool> {
     mutate_session_record(|record| {
         let changed = record.set_status(session_id, status);
@@ -619,6 +652,27 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const SESSION_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[test]
+    fn debug_redacts_session_key_material() {
+        // Distinctive sentinels so a leak can't accidentally pass.
+        let mut entry = sample_entry_with_key(B256::from([0x77; 32]), 200, SessionStatus::Active);
+        let key = entry.key.as_mut().unwrap();
+        key.key = "0xPRIVATE_KEY_MUST_NOT_LEAK".to_string();
+        key.key_authorization = Some("0xKEY_AUTH_MUST_NOT_LEAK".to_string());
+
+        let entry_dbg = format!("{entry:?}");
+        let record_dbg = format!("{:?}", SessionRecord { sessions: vec![entry] });
+
+        for rendered in [&entry_dbg, &record_dbg] {
+            assert!(!rendered.contains("PRIVATE_KEY_MUST_NOT_LEAK"), "key leaked in: {rendered}");
+            assert!(!rendered.contains("KEY_AUTH_MUST_NOT_LEAK"), "auth leaked in: {rendered}");
+        }
+        assert!(entry_dbg.contains("key: \"<redacted>\""), "got: {entry_dbg}");
+        assert!(entry_dbg.contains("key_authorization: Some(\"<redacted>\")"), "got: {entry_dbg}");
+        // Non-secret metadata is still visible for diagnostics.
+        assert!(entry_dbg.contains("key_type"));
+    }
 
     fn sample_entry(session_id: B256, expiry: u64, status: SessionStatus) -> SessionEntry {
         SessionEntry {
@@ -793,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn session_record_status_updates_preserve_live_keys_and_clear_terminal_keys() {
+    fn session_record_status_updates_clear_cleanup_and_terminal_keys() {
         let active_id = B256::from([0x67; 32]);
         let revoking_id = B256::from([0x68; 32]);
         let revoked_id = B256::from([0x69; 32]);
@@ -827,7 +881,7 @@ mod tests {
 
     #[test]
     fn session_entry_roundtrips_scope_limits_and_status() {
-        let entry = sample_entry_with_key(B256::from([0x66; 32]), 1234, SessionStatus::Revoking);
+        let entry = sample_entry(B256::from([0x66; 32]), 1234, SessionStatus::Revoking);
         let toml = toml::to_string(&entry).unwrap();
         let decoded: SessionEntry = toml::from_str(&toml).unwrap();
 
@@ -835,8 +889,8 @@ mod tests {
         assert_eq!(decoded.scope.as_ref().unwrap().len(), 1);
         assert_eq!(decoded.limits.as_ref().unwrap().len(), 1);
         assert_eq!(decoded.status, SessionStatus::Revoking);
-        assert_eq!(decoded.key.as_ref().unwrap().key, "0xdeadbeef");
-        assert!(decoded.has_inline_key());
+        assert!(decoded.key.is_none());
+        assert!(!decoded.has_inline_key());
         assert!(decoded.is_expired_at(1234));
     }
 
@@ -847,6 +901,7 @@ mod tests {
         let revoked_id = B256::from([0x03; 32]);
         let no_key_id = B256::from([0x04; 32]);
         let pending_id = B256::from([0x05; 32]);
+        let revoking_id = B256::from([0x06; 32]);
 
         let record = SessionRecord {
             sessions: vec![
@@ -855,6 +910,7 @@ mod tests {
                 sample_entry_with_key(revoked_id, 200, SessionStatus::Revoked),
                 sample_entry(no_key_id, 200, SessionStatus::Active),
                 sample_entry_with_key(pending_id, 200, SessionStatus::Pending),
+                sample_entry_with_key(revoking_id, 200, SessionStatus::Revoking),
             ],
         };
 
@@ -863,6 +919,7 @@ mod tests {
         assert!(record.live_key(revoked_id, 100).is_none());
         assert!(record.live_key(no_key_id, 100).is_none());
         assert!(record.live_key(pending_id, 100).is_none());
+        assert!(record.live_key(revoking_id, 100).is_none());
     }
 
     #[test]
@@ -1081,6 +1138,62 @@ mod tests {
     }
 
     #[test]
+    fn resolve_rejects_admin_key_authorization() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x17; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            // A session must use a limited access key, never a T6 admin key.
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |mut auth| {
+                    auth.is_admin = true;
+                    auth
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("admin key"), "got: {error}");
+        });
+    }
+
+    #[test]
+    fn resolve_rejects_account_bound_to_other_account() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x18; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            // An account-bound authorization minted for another account must not be replayable.
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |auth| {
+                    auth.with_account(
+                        Address::from_str("0x000000000000000000000000000000000000dead").unwrap(),
+                    )
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("bound to account"), "got: {error}");
+        });
+    }
+
+    #[test]
+    fn resolve_accepts_account_bound_to_root() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x19; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            let root_account = entry.root_account;
+            // An account binding that targets the session root is valid (backward compatible).
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |auth| {
+                    auth.with_account(root_account)
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            assert!(resolve_live_session_signer(session_id, 100).is_ok());
+        });
+    }
+
+    #[test]
     fn resolve_live_session_signer_rejects_authorization_with_wider_session_limit() {
         with_tempo_home(|| {
             let session_id = B256::from([0x10; 32]);
@@ -1203,11 +1316,12 @@ key = "0x1111"
     }
 
     #[test]
-    fn mark_expired_session_entries_clears_terminal_session_keys() {
+    fn mark_expired_session_entries_clears_unusable_session_keys() {
         with_tempo_home(|| {
             let expired_id = B256::from([0xbc; 32]);
             let revoked_id = B256::from([0xbd; 32]);
             let failed_id = B256::from([0xbe; 32]);
+            let revoking_id = B256::from([0xbf; 32]);
 
             upsert_session_entry(sample_entry_with_key(expired_id, 100, SessionStatus::Expired))
                 .unwrap();
@@ -1215,15 +1329,18 @@ key = "0x1111"
                 .unwrap();
             upsert_session_entry(sample_entry_with_key(failed_id, 200, SessionStatus::Failed))
                 .unwrap();
+            upsert_session_entry(sample_entry_with_key(revoking_id, 200, SessionStatus::Revoking))
+                .unwrap();
 
-            assert_eq!(mark_expired_session_entries(100).unwrap(), 3);
+            assert_eq!(mark_expired_session_entries(100).unwrap(), 4);
             let record = read_session_record().unwrap();
-            for session_id in [expired_id, revoked_id, failed_id] {
+            for session_id in [expired_id, revoked_id, failed_id, revoking_id] {
                 assert!(record.get(session_id).unwrap().key.is_none());
             }
             assert_eq!(record.get(expired_id).unwrap().status, SessionStatus::Expired);
             assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
             assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
+            assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
         });
     }
 

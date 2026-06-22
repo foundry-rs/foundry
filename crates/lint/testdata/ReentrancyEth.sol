@@ -60,6 +60,21 @@ contract ReentrancyEth {
         balances[receiver] = 0;
     }
 
+    function helperHeavyCallThenWrite(address payable receiver) external {
+        uint256 amount = balances[receiver];
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        sendValueHeavy(receiver, amount);
+        balances[receiver] = 0;
+    }
+
     function gasleftIsNotACap(address payable receiver) external {
         uint256 amount = balances[receiver];
         (bool ok,) = receiver.call{value: amount, gas: gasleft()}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
@@ -199,6 +214,11 @@ contract ReentrancyEth {
         require(ok, "transfer failed");
     }
 
+    function sendValueHeavy(address payable receiver, uint256 amount) internal {
+        (bool ok,) = receiver.call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+    }
+
     function recordPayment(address receiver) internal {
         totalPaid[receiver] += 1 ether;
     }
@@ -216,5 +236,35 @@ contract ReentrancyEthNameOnlyGuard {
 
     modifier nonReentrant() {
         _;
+    }
+}
+
+contract ReentrancyEthRecursiveStackRepro {
+    uint256 x;
+
+    function entry(bool flag) public {
+        if (flag) {
+            a(1);
+            return;
+        }
+        c(1);
+        x = 1;
+    }
+
+    function a(uint256 depth) internal {
+        if (depth > 0) {
+            c(depth - 1);
+        }
+        uint256 y = x;
+        (bool ok,) = msg.sender.call{value: y}(""); //~WARN: uncapped ETH transfer can be reentered before `x` is updated
+        require(ok);
+    }
+
+    function c(uint256 depth) internal {
+        h(depth);
+    }
+
+    function h(uint256 depth) internal {
+        a(depth);
     }
 }

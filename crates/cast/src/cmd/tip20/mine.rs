@@ -81,7 +81,14 @@ pub(super) async fn register(
     send_tx: SendTxOpts,
     mut tx_opts: TxParams,
 ) -> Result<()> {
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    let config = send_tx.eth.load_config()?;
+    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let chain = get_chain(config.chain, &provider).await?;
+    tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;
+    let (signer, tempo_access_key) =
+        tempo::resolve_session_or_wallet_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id())
+            .await?;
     let signer = signer.ok_or_else(|| {
         eyre::eyre!(
             "--register requires a signer or Tempo keychain identity (for example --private-key or --from)"
@@ -97,34 +104,44 @@ pub(super) async fn register(
         );
     }
 
-    let config = send_tx.eth.load_config()?;
-    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
     let mut tx = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
         .registerVirtualMaster(salt)
         .into_transaction_request();
     let expires_at = tx_opts.tempo.resolve_expires();
     tempo::print_expires(expires_at)?;
-    tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+    tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
 
     sh_status!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
 
     if let Some(ref access_key) = tempo_access_key {
+        tempo::fill_access_key_transaction(&provider, &mut tx, access_key, chain).await?;
         cast_send_with_access_key(
             &provider,
             tx,
             &signer,
             access_key,
+            Some(chain),
+            None,
             send_tx.cast_async,
             send_tx.confirmations,
             timeout,
+            !config.eth_rpc_curl,
         )
         .await?;
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
-        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
-            .await?;
+        cast_send(
+            provider,
+            tx,
+            Some(chain),
+            None,
+            send_tx.cast_async,
+            send_tx.sync,
+            send_tx.confirmations,
+            timeout,
+            !config.eth_rpc_curl,
+        )
+        .await?;
     }
 
     Ok(())

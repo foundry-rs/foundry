@@ -8,7 +8,10 @@
 //! uses the shared initialization logic from `foundry-evm-core`.
 
 use alloy_primitives::{Address, U256, address};
-use foundry_evm::core::tempo::{PATH_USD_ADDRESS, initialize_tempo_genesis_at_hardfork};
+use foundry_evm::core::tempo::{
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+    initialize_tempo_genesis_at_hardfork,
+};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     state::{AccountInfo, Bytecode},
@@ -34,11 +37,6 @@ const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 /// Admin address used for genesis initialization.
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 
-const PATH_USD: Address = PATH_USD_ADDRESS;
-const ALPHA_USD: Address = address!("0x20C0000000000000000000000000000000000001");
-const BETA_USD: Address = address!("0x20C0000000000000000000000000000000000002");
-const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003");
-
 /// Storage provider adapter for Anvil's Db to work with Tempo precompiles.
 pub struct AnvilStorageProvider<'a> {
     db: &'a mut dyn Db,
@@ -48,6 +46,7 @@ pub struct AnvilStorageProvider<'a> {
     gas_used: u64,
     gas_refunded: i64,
     reservoir: u64,
+    tip1060_storage_credits_enabled: bool,
     transient: HashMap<(Address, U256), U256>,
     hardfork: TempoHardfork,
 }
@@ -68,6 +67,7 @@ impl<'a> AnvilStorageProvider<'a> {
             gas_used: 0,
             gas_refunded: 0,
             reservoir: 0,
+            tip1060_storage_credits_enabled: hardfork.is_t7(),
             transient: HashMap::new(),
             hardfork,
         }
@@ -207,6 +207,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     fn amsterdam_eip8037_enabled(&self) -> bool {
         false
     }
+
+    fn set_tip1060_storage_credits(&mut self, enabled: bool) {
+        self.tip1060_storage_credits_enabled = enabled && self.hardfork.is_t7();
+    }
 }
 
 /// Initialize Tempo precompiles and fee tokens for Anvil.
@@ -233,7 +237,7 @@ pub fn initialize_tempo_precompiles(
     // Mint fee tokens to test accounts
     // u64::MAX per account - safe since u128::MAX can hold ~18 quintillion u64::MAX values
     let mint_amount = U256::from(u64::MAX);
-    let tokens = [PATH_USD, ALPHA_USD, BETA_USD, THETA_USD];
+    let tokens = [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
 
     StorageCtx::enter(&mut storage, || -> Result<(), TempoPrecompileError> {
         // Mint fee tokens to test accounts
@@ -274,10 +278,10 @@ pub fn initialize_tempo_precompiles(
 
         for (i, &account) in test_accounts.iter().enumerate() {
             let fee_token = match i {
-                0 => ALPHA_USD, // Alice
-                1 => BETA_USD,  // Bob
-                2 => THETA_USD, // Charlie
-                _ => PATH_USD,  // Everyone else
+                0 => ALPHA_USD_ADDRESS, // Alice
+                1 => BETA_USD_ADDRESS,  // Bob
+                2 => THETA_USD_ADDRESS, // Charlie
+                _ => PATH_USD_ADDRESS,  // Everyone else
             };
             fee_manager
                 .set_user_token(account, IFeeManager::setUserTokenCall { token: fee_token })?;

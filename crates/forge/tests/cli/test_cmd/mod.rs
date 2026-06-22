@@ -1,5 +1,6 @@
 //! Contains various tests for `forge test`.
 
+use crate::utils::assert_debug_dump_identifies_contract;
 use alloy_primitives::{Address, U256};
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
@@ -9,11 +10,7 @@ use foundry_test_utils::{
     util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
-use std::{
-    io::Write,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod core;
 mod fuzz;
@@ -23,6 +20,21 @@ mod mutation;
 mod repros;
 mod showmap;
 mod spec;
+mod symbolic;
+mod symbolic_calls;
+mod symbolic_cheatcodes;
+mod symbolic_conformance;
+mod symbolic_creates;
+mod symbolic_engine_capabilities;
+mod symbolic_false_pass_prevention;
+mod symbolic_helpers;
+mod symbolic_invariant;
+mod symbolic_limits;
+mod symbolic_memory;
+mod symbolic_opcodes;
+mod symbolic_parity;
+mod symbolic_precompiles;
+mod symbolic_storage;
 mod table;
 mod trace;
 
@@ -41,6 +53,56 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
         }
     }
     drop(dotenv);
+}
+
+fn collect_debug_dump_internal_calls<'a>(
+    value: &'a serde_json::Value,
+    calls: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_debug_dump_internal_calls(value, calls);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if let Some(call) = map
+                .get("InternalCall")
+                .and_then(|value| value.as_array())
+                .and_then(|values| values.first())
+            {
+                calls.push(call);
+            }
+            for value in map.values() {
+                collect_debug_dump_internal_calls(value, calls);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_debug_dump_storage_changes<'a>(
+    value: &'a serde_json::Value,
+    changes: &mut Vec<&'a serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_debug_dump_storage_changes(value, changes);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if let Some(change) = map.get("storage_change")
+                && !change.is_null()
+            {
+                changes.push(change);
+            }
+            for value in map.values() {
+                collect_debug_dump_storage_changes(value, changes);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
@@ -1482,13 +1544,13 @@ Traces:
     ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
     ├─ [22630] SimpleContract::increment()
-    │   ├─ [20147] SimpleContract::_setNum(1)
+    │   ├─ [20147] SimpleContract::_setNum(uint256)(1)
     │   │   └─ ← 0
     │   └─ ← [Stop]
     ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
-    │   ├─ [247] SimpleContract::_setNum(100)
+    │   ├─ [247] SimpleContract::_setNum(uint256)(100)
     │   │   └─ ← 1
-    │   ├─ [22336] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
+    │   ├─ [22336] SimpleContract::_setAddr(address)(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
     │   └─ ← [Stop]
     └─ ← [Stop]
@@ -1538,12 +1600,67 @@ Traces:
     ├─ [..] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] [..] bytes of code
     ├─ [..] SimpleContract::setStr("new value")
-    │   ├─ [..] SimpleContract::_setStr("new value")
+    │   ├─ [..] SimpleContract::_setStr(string)("new value")
     │   │   └─ ← "initial value"
     │   └─ ← [Stop]
     └─ ← [Stop]
 ...
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/15224>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(internal_functions_trace_calldata_bytes, |prj, cmd| {
+    prj.clear();
+
+    prj.add_test(
+        "DecodeInternalCalldata",
+        r#"
+contract DecodeInternalCalldataTraceTest {
+    function test_decodeInternalCalldataBytes() public {
+        DecodeInternalTarget target = new DecodeInternalTarget();
+
+        bytes[] memory wrappedSignatures = new bytes[](1);
+        wrappedSignatures[0] = hex"11223344556677889900";
+
+        bytes32 expectedDigest = keccak256("digest that should appear in the internal trace");
+
+        bool ok = target.outer(wrappedSignatures, expectedDigest);
+        require(ok, "target returned false");
+    }
+}
+
+contract DecodeInternalTarget {
+    function outer(bytes[] calldata signatures, bytes32 digest) external pure returns (bool) {
+        bytes calldata signature = signatures[0];
+        return _internalValidate(digest, signature);
+    }
+
+    function _internalValidate(bytes32 digest, bytes calldata signature)
+        internal
+        pure
+        returns (bool)
+    {
+        return digest == keccak256("digest that should appear in the internal trace")
+            && signature.length == 10;
+    }
+}
+     "#,
+    );
+
+    let stdout = cmd
+        .args(["test", "-vvvv", "--decode-internal"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        stdout.contains(
+            "DecodeInternalTarget::_internalValidate(bytes32,bytes)(\
+             0x9a707a44f6e6038d2b03f3947e82f6403612c5d5b923868f6a759e9c38e16a28, \
+             0x11223344556677889900)"
+        ),
+        "{stdout}"
+    );
 });
 
 // tests that `forge test` with a seed produces deterministic random values for uint and addresses.
@@ -2580,7 +2697,9 @@ contract MetadataTraceTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-dynamic-test-linking"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -2603,7 +2722,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
     // Check consistent traces for running with no metadata.
     cmd.forge_fuse()
-        .args(["test", "--mt", "test_proxy_trace", "-vvvv", "--no-metadata"])
+        .args([
+            "test",
+            "--mt",
+            "test_proxy_trace",
+            "-vvvv",
+            "--no-metadata",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -2644,6 +2770,109 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
+});
+
+forgetest!(debug_dump_disambiguates_overloaded_internal_functions, |prj, cmd| {
+    prj.add_source(
+        "DebugVars",
+        r"
+contract DebugVarsTest {
+    function testOverloadedInternalDebugVars() public {
+        uint256 amount = foo(uint256(42));
+        address who = foo(address(0x000000000000000000000000000000000000bEEF));
+
+        require(amount == 43, 'bad amount');
+        require(who == address(0x000000000000000000000000000000000000bEEF), 'bad address');
+    }
+
+    function foo(uint256 amount) internal pure returns (uint256 out) {
+        uint256 next = amount + 1;
+        return next;
+    }
+
+    function foo(address who) internal pure returns (address out) {
+        address seen = who;
+        return seen;
+    }
+}
+",
+    );
+
+    let dump_path = prj.root().join("overloads_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testOverloadedInternalDebugVars",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut calls = Vec::new();
+    collect_debug_dump_internal_calls(&dump, &mut calls);
+
+    let uint_call = calls
+        .iter()
+        .find(|call| call["func_name"] == "DebugVarsTest::foo(uint256)")
+        .expect("missing uint256 overload in debugger dump");
+    assert_eq!(uint_call["args"], serde_json::json!(["42"]));
+    assert_eq!(uint_call["return_data"], serde_json::json!(["43"]));
+
+    let address_call = calls
+        .iter()
+        .find(|call| call["func_name"] == "DebugVarsTest::foo(address)")
+        .expect("missing address overload in debugger dump");
+    assert_eq!(
+        address_call["args"],
+        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
+    assert_eq!(
+        address_call["return_data"],
+        serde_json::json!(["0x000000000000000000000000000000000000bEEF"])
+    );
+});
+
+// Progresses <https://github.com/foundry-rs/foundry/issues/927>: debugger storage view.
+forgetest!(debug_dump_includes_storage_changes, |prj, cmd| {
+    prj.add_source(
+        "DebugStorage",
+        r"
+contract DebugStorageTest {
+    uint256 value;
+    uint256 untouched;
+
+    function testStorage() public {
+        value = 42;
+        uint256 loaded = value;
+        uint256 coldLoaded = untouched;
+        require(loaded == 42 && coldLoaded == 0);
+    }
+}
+",
+    );
+
+    let dump_path = prj.root().join("storage_dump.json");
+
+    cmd.args(["test", "--mt", "testStorage", "--debug", "--dump", dump_path.to_str().unwrap()]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut storage_changes = Vec::new();
+    collect_debug_dump_storage_changes(&dump, &mut storage_changes);
+
+    assert!(
+        storage_changes.iter().any(|change| change["reason"] == "SSTORE"),
+        "debugger dump should include an SSTORE storage change: {storage_changes:#?}"
+    );
+    assert!(
+        storage_changes.iter().any(|change| change["reason"] == "SLOAD"),
+        "debugger dump should include an SLOAD storage access: {storage_changes:#?}"
+    );
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10322>
@@ -2828,17 +3057,6 @@ contract ForkDebugTest {{
     cmd.assert_success();
     assert_debug_dump_identifies_contract(&table_dump_path, &deployed, "ForkDebugTarget");
 });
-
-fn assert_debug_dump_identifies_contract(dump_path: &Path, address: &str, contract_name: &str) {
-    let dump: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
-    let identified = dump["contracts"]["identified_contracts"].as_object().unwrap();
-    let target_identified = identified.iter().any(|(identified_address, name)| {
-        identified_address.eq_ignore_ascii_case(address)
-            && name.as_str().is_some_and(|name| name == contract_name)
-    });
-    assert!(target_identified, "forked target was not identified in debugger dump: {identified:?}");
-}
 
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
@@ -3273,7 +3491,7 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; HTTP error 401 with body: Must be authenticated!
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; HTTP error 401 with body: [..]
 
 ...
 
@@ -3284,7 +3502,9 @@ Ran 1 test for test/ForkTest.t.sol:ForkTest
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--no-dynamic-test-linking"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
@@ -3382,9 +3602,17 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
-        .assert_success()
-        .stdout_eq(file!["../../fixtures/colored_traces.svg": TermSvg]);
+    cmd.args([
+        "test",
+        "--mt",
+        "test_Increment",
+        "--color",
+        "always",
+        "-vvvvv",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../../fixtures/colored_traces.svg": TermSvg]);
 });
 
 // Tests that traces for successful tests can be suppressed by using `-s` flag.
@@ -3422,8 +3650,9 @@ contract SuppressTracesTest is Test {
     );
 
     // Show traces and logs for failed test only.
-    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvvv", "-s"]).assert_failure().stdout_eq(
-        str![[r#"
+    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvvv", "-s", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -3471,12 +3700,11 @@ Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
-"#]],
-    );
+"#]]);
 
     // Show traces and logs for all tests.
     cmd.forge_fuse()
-        .args(["test", "--mc", "SuppressTracesTest", "-vvvv"])
+        .args(["test", "--mc", "SuppressTracesTest", "-vvvv", "--no-dynamic-test-linking"])
         .assert_failure()
         .stdout_eq(str![[r#"
 No files changed, compilation skipped
@@ -4289,7 +4517,7 @@ contract NonContractCallRevertTest is Test {
      "#,
     );
 
-    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvvvv"])
+    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvvvv", "--no-dynamic-test-linking"])
         .assert_failure()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -4533,7 +4761,9 @@ contract PrankTest is Test {
 "#,
     );
 
-    cmd.args(["test", "--mc", "PrankTest", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "PrankTest", "-vvvvv", "--no-dynamic-test-linking"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!

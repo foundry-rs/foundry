@@ -12,14 +12,15 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::TEMPO_BROWSER_GAS_BUFFER,
+    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
 };
+use foundry_config::Chain;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::{
     TempoNetwork,
@@ -103,6 +104,10 @@ pub enum SendTxSubcommands {
 
 impl SendTxArgs {
     pub async fn run(self) -> Result<()> {
+        if self.tx.tempo.session_id()?.is_some() {
+            return self.run_generic::<TempoNetwork>(None, None).await;
+        }
+
         // Resolve the signer early so we know if it's a Tempo access key.
         let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
 
@@ -115,8 +120,8 @@ impl SendTxArgs {
 
     pub async fn run_generic<N: Network>(
         self,
-        pre_resolved_signer: Option<WalletSigner>,
-        access_key: Option<TempoAccessKeyConfig>,
+        mut pre_resolved_signer: Option<WalletSigner>,
+        mut access_key: Option<TempoAccessKeyConfig>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -127,8 +132,17 @@ impl SendTxArgs {
         let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
             self;
 
+        let has_session = tx.tempo.session_id()?.is_some();
+        if has_session && unlocked {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
+        }
+        if has_session && send_tx.browser.browser {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --browser");
+        }
+
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_url = tx.tempo.sponsor_url.clone();
+        let sponsor_fee_payer = tx.tempo.sponsor;
         let expires_at = tx.tempo.resolve_expires();
         let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
             None
@@ -204,6 +218,16 @@ impl SendTxArgs {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
+        if has_session
+            && let Some(session) = tx.tempo.session_signer_for_wallet(
+                &send_tx.eth.wallet,
+                get_chain(config.chain, &provider).await?.id(),
+            )?
+        {
+            pre_resolved_signer = Some(session.signer);
+            access_key = Some(session.access_key);
+        }
+
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
             tx.tempo.key_id = Some(ak.key_address);
@@ -219,7 +243,8 @@ impl SendTxArgs {
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
-            let (tx, from) = if let Some(ref ak) = access_key {
+            let chain = builder.chain();
+            let (mut tx, from) = if let Some(ref ak) = access_key {
                 let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
                 (tx, ak.wallet_address)
             } else {
@@ -232,6 +257,15 @@ impl SendTxArgs {
                 let (tx, _) = builder.build(from).await?;
                 (tx, from)
             };
+            if let Some(fee_payer) = sponsor_fee_payer {
+                resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx,
+                    Some(fee_payer),
+                )
+                .await?;
+            }
             let hash = tx
                 .compute_sponsor_hash(from)
                 .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
@@ -287,29 +321,41 @@ impl SendTxArgs {
                 }
             }
 
+            let chain = builder.chain();
             let (mut tx_request, _) = builder.build(config.sender).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, config.sender).await?;
             }
 
             cast_send(
                 provider,
                 tx_request,
+                tempo_sponsor.is_none().then_some(chain),
+                None,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
+                tempo_sponsor.is_none() && !config.eth_rpc_curl,
             )
             .await?;
         // Case 2:
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
             let chain = builder.chain();
-            let (mut tx_request, _) = builder.build(browser.address()).await?;
+            let (mut tx_request, _) =
+                builder.with_browser_wallet().build(browser.address()).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
                 tx_request.nonce().unwrap_or_default(),
@@ -324,7 +370,24 @@ impl SendTxArgs {
                 tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
+            } else {
+                let fee_token = resolve_and_set_fee_token(
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx_request,
+                    Some(browser.address()),
+                )
+                .await?;
+                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
+                    .await?;
             }
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
@@ -340,12 +403,20 @@ impl SendTxArgs {
                 Some(s) => s,
                 None => send_tx.eth.wallet.signer().await?,
             };
+            let chain = builder.chain();
             let (mut tx_request, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
             }
             cast_send_with_access_key(
@@ -353,9 +424,12 @@ impl SendTxArgs {
                 tx_request,
                 &signer,
                 &ak,
+                tempo_sponsor.is_none().then_some(chain),
+                None,
                 send_tx.cast_async,
                 send_tx.confirmations,
                 timeout,
+                tempo_sponsor.is_none() && !config.eth_rpc_curl,
             )
             .await?;
         // Case 4:
@@ -392,10 +466,13 @@ impl SendTxArgs {
             cast_send(
                 provider,
                 tx_request,
+                None,
+                None,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
+                false,
             )
             .await?;
         // Case 5:
@@ -411,6 +488,7 @@ impl SendTxArgs {
 
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
+            let chain = builder.chain();
             let (mut tx_request, _) = builder.build(&signer).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
@@ -418,6 +496,13 @@ impl SendTxArgs {
             )?;
 
             if let Some(sponsor) = &tempo_sponsor {
+                sponsor
+                    .resolve_and_set_fee_token(
+                        (!config.eth_rpc_curl).then_some(&provider),
+                        Some(chain),
+                        &mut tx_request,
+                    )
+                    .await?;
                 sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
             }
 
@@ -429,10 +514,13 @@ impl SendTxArgs {
             cast_send(
                 provider,
                 tx_request,
+                tempo_sponsor.is_none().then_some(chain),
+                None,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
                 timeout,
+                tempo_sponsor.is_none() && !config.eth_rpc_curl,
             )
             .await?;
         }
@@ -441,18 +529,30 @@ impl SendTxArgs {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     provider: P,
-    tx: N::TransactionRequest,
+    mut tx: N::TransactionRequest,
+    chain: Option<Chain>,
+    fee_payer: Option<Address>,
     cast_async: bool,
     sync: bool,
     confs: u64,
     timeout: u64,
+    resolve_unknown_fee_token_symbol: bool,
 ) -> Result<B256>
 where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
+    let fee_token = resolve_and_set_fee_token(
+        resolve_unknown_fee_token_symbol.then_some(&provider),
+        chain,
+        &mut tx,
+        fee_payer,
+    )
+    .await?;
+    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token).await?;
     let cast = CastTxSender::new(provider);
 
     if sync {
@@ -475,21 +575,33 @@ where
 /// with [`CastTxBuilder`] (fields already set) and also with sol!-bindings (fields not yet set).
 ///
 /// NOTE: The default implementation returns an error. Only `TempoNetwork` supports this.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
     provider: &P,
     mut tx: N::TransactionRequest,
     signer: &WalletSigner,
     access_key: &TempoAccessKeyConfig,
+    chain: Option<Chain>,
+    fee_payer: Option<Address>,
     cast_async: bool,
     confirmations: u64,
     timeout: u64,
+    resolve_unknown_fee_token_symbol: bool,
 ) -> Result<B256>
 where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     tx.set_from(access_key.wallet_address);
     tx.set_key_id(access_key.key_address);
+    let fee_token = resolve_and_set_fee_token(
+        resolve_unknown_fee_token_symbol.then_some(provider),
+        chain,
+        &mut tx,
+        fee_payer,
+    )
+    .await?;
+    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(provider), fee_token).await?;
     let raw_tx = tx
         .sign_with_access_key(
             provider,

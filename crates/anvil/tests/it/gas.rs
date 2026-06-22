@@ -259,3 +259,58 @@ async fn test_estimate_gas_empty_data() {
     assert!(gas_with_data > U256::from(GAS_TRANSFER));
     assert_eq!(gas_without_data, gas_with_empty_data);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_simple_transfer_checks_funds() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+    let from = Address::random();
+
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    let err =
+        api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
+
+    assert!(err.to_string().contains("Insufficient funds for gas * price + value"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_simple_transfer_without_from_uses_transfer_fast_path() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+
+    let tx = TransactionRequest::default().with_to(to).with_value(U256::from(1));
+    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
+
+    assert_eq!(gas, U256::from(GAS_TRANSFER));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_without_from_with_gas_price_uses_transfer_fast_path() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+
+    let tx = TransactionRequest::default().with_to(to).with_gas_price(INITIAL_BASE_FEE as u128);
+    let gas = api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap();
+
+    assert_eq!(gas, U256::from(GAS_TRANSFER));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_fee_token_does_not_skip_funds_check_outside_tempo() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+    let from = Address::random();
+
+    let tx: WithOtherFields<TransactionRequest> = WithOtherFields {
+        inner: TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1)),
+        other: [(
+            "feeToken".to_string(),
+            serde_json::json!("0x20c0000000000000000000000000000000000001"),
+        )]
+        .into_iter()
+        .collect(),
+    };
+    let err = api.estimate_gas(tx, None, Default::default()).await.unwrap_err();
+
+    assert!(err.to_string().contains("Insufficient funds for gas * price + value"));
+}

@@ -1,7 +1,10 @@
 use super::ReentrancyEth;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{
+        Severity, SolLint,
+        analysis::helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
+    },
 };
 use solar::{
     ast::{
@@ -17,7 +20,7 @@ use solar::{
         ty::{TyFnKind, TyKind},
     },
 };
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 declare_forge_lint!(
     REENTRANCY_ETH,
@@ -69,20 +72,20 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
     func.kind.is_function() && matches!(func.visibility, Visibility::Public | Visibility::External)
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 struct FlowState {
     state_reads: BTreeSet<VariableId>,
     pending_calls: Vec<PendingCall>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct PendingCall {
     span: Span,
     kind: ReentrantCallKind,
     state_reads: BTreeSet<VariableId>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ReentrantCallKind {
     Eth,
     NoEth,
@@ -118,8 +121,25 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     emitted: HashSet<Span>,
     call_stack: Vec<FunctionId>,
+    inline_cache: HelperAnalysisCache<InlineCallKey, FlowState>,
+    recursive_cut_frontiers: HashMap<RecursiveFrontierKey, Vec<FunctionId>>,
+    direct_internal_calls: HashMap<FunctionId, Vec<FunctionId>>,
     reentrancy_eth_enabled: bool,
     reentrancy_no_eth_enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct InlineCallKey {
+    func_id: FunctionId,
+    /// First active function that can cut recursion from this callee.
+    recursive_cut: Option<FunctionId>,
+    state: FlowState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RecursiveFrontierKey {
+    func_id: FunctionId,
+    active_call_stack: Vec<FunctionId>,
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
@@ -130,6 +150,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             hir,
             emitted: HashSet::new(),
             call_stack: Vec::new(),
+            inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
+            recursive_cut_frontiers: HashMap::new(),
+            direct_internal_calls: HashMap::new(),
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
         }
@@ -415,9 +438,219 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
+        let key = InlineCallKey {
+            func_id,
+            recursive_cut: self.first_recursive_cut(func_id),
+            state: state.clone(),
+        };
+        if self.inline_cache.is_in_progress(&key) {
+            return;
+        }
+        if let Some(cached) = self.inline_cache.get(&key) {
+            *state = cached.clone();
+            return;
+        }
+
+        let mut after = state.clone();
+        self.inline_cache.start(key.clone());
         self.call_stack.push(func_id);
-        self.analyze_callable(func, body, state);
+        self.analyze_callable(func, body, &mut after);
         self.call_stack.pop();
+
+        self.inline_cache.finish(key, after.clone());
+        *state = after;
+    }
+
+    fn first_recursive_cut(&mut self, func_id: FunctionId) -> Option<FunctionId> {
+        let active_call_stack = self.call_stack.iter().copied().collect::<BTreeSet<_>>();
+        if active_call_stack.is_empty() {
+            return None;
+        }
+
+        let active_call_stack = active_call_stack.into_iter().collect::<Vec<_>>();
+        let key = RecursiveFrontierKey { func_id, active_call_stack };
+        if let Some(frontier) = self.recursive_cut_frontiers.get(&key) {
+            return frontier.first().copied();
+        }
+
+        let active_call_stack = key.active_call_stack.iter().copied().collect::<BTreeSet<_>>();
+        let mut seen = HashSet::new();
+        let cut = self.first_recursive_cut_function(func_id, &active_call_stack, &mut seen);
+        self.recursive_cut_frontiers.insert(key, cut.into_iter().collect::<Vec<_>>());
+        cut
+    }
+
+    fn first_recursive_cut_function(
+        &mut self,
+        func_id: FunctionId,
+        active_call_stack: &BTreeSet<FunctionId>,
+        seen: &mut HashSet<FunctionId>,
+    ) -> Option<FunctionId> {
+        if !seen.insert(func_id) {
+            return None;
+        }
+
+        for callee_id in self.direct_internal_calls(func_id) {
+            if active_call_stack.contains(&callee_id) {
+                return Some(callee_id);
+            }
+            if let Some(cut) = self.first_recursive_cut_function(callee_id, active_call_stack, seen)
+            {
+                return Some(cut);
+            }
+        }
+        None
+    }
+
+    fn direct_internal_calls(&mut self, func_id: FunctionId) -> Vec<FunctionId> {
+        if let Some(calls) = self.direct_internal_calls.get(&func_id) {
+            return calls.clone();
+        }
+
+        let mut calls = BTreeSet::new();
+        let func = self.hir.function(func_id);
+        for modifier in func.modifiers {
+            for arg in modifier.args.exprs() {
+                self.collect_direct_internal_calls_expr(arg, &mut calls);
+            }
+            if let Some(modifier_id) = modifier.id.as_function() {
+                calls.insert(modifier_id);
+            }
+        }
+        if let Some(body) = func.body {
+            self.collect_direct_internal_calls_block(body, &mut calls);
+        }
+
+        let calls = calls.into_iter().collect::<Vec<_>>();
+        self.direct_internal_calls.insert(func_id, calls.clone());
+        calls
+    }
+
+    fn collect_direct_internal_calls_block(
+        &mut self,
+        block: hir::Block<'hir>,
+        calls: &mut BTreeSet<FunctionId>,
+    ) {
+        for stmt in block.stmts {
+            self.collect_direct_internal_calls_stmt(stmt, calls);
+        }
+    }
+
+    fn collect_direct_internal_calls_stmt(
+        &mut self,
+        stmt: &'hir hir::Stmt<'hir>,
+        calls: &mut BTreeSet<FunctionId>,
+    ) {
+        match stmt.kind {
+            StmtKind::DeclSingle(var_id) => {
+                if let Some(init) = self.hir.variable(var_id).initializer {
+                    self.collect_direct_internal_calls_expr(init, calls);
+                }
+            }
+            StmtKind::DeclMulti(_, expr)
+            | StmtKind::Expr(expr)
+            | StmtKind::Emit(expr)
+            | StmtKind::Revert(expr) => {
+                self.collect_direct_internal_calls_expr(expr, calls);
+            }
+            StmtKind::Return(expr) => {
+                if let Some(expr) = expr {
+                    self.collect_direct_internal_calls_expr(expr, calls);
+                }
+            }
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+                self.collect_direct_internal_calls_block(block, calls);
+            }
+            StmtKind::If(cond, then_stmt, else_stmt) => {
+                self.collect_direct_internal_calls_expr(cond, calls);
+                self.collect_direct_internal_calls_stmt(then_stmt, calls);
+                if let Some(else_stmt) = else_stmt {
+                    self.collect_direct_internal_calls_stmt(else_stmt, calls);
+                }
+            }
+            StmtKind::Try(try_stmt) => {
+                self.collect_direct_internal_calls_expr(&try_stmt.expr, calls);
+                for clause in try_stmt.clauses {
+                    self.collect_direct_internal_calls_block(clause.block, calls);
+                }
+            }
+            StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => {}
+        }
+    }
+
+    fn collect_direct_internal_calls_expr(
+        &mut self,
+        expr: &'hir hir::Expr<'hir>,
+        calls: &mut BTreeSet<FunctionId>,
+    ) {
+        match &expr.kind {
+            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+                self.collect_direct_internal_calls_expr(lhs, calls);
+                self.collect_direct_internal_calls_expr(rhs, calls);
+            }
+            ExprKind::Unary(_, inner)
+            | ExprKind::Delete(inner)
+            | ExprKind::Member(inner, _)
+            | ExprKind::Payable(inner) => {
+                self.collect_direct_internal_calls_expr(inner, calls);
+            }
+            ExprKind::Call(callee, args, opts) => {
+                self.collect_direct_internal_calls_expr(callee, calls);
+                if let Some(opts) = opts {
+                    for opt in opts.args {
+                        self.collect_direct_internal_calls_expr(&opt.value, calls);
+                    }
+                }
+                for arg in args.exprs() {
+                    self.collect_direct_internal_calls_expr(arg, calls);
+                }
+                for func_id in resolved_function_ids(callee) {
+                    calls.insert(func_id);
+                }
+            }
+            ExprKind::Index(base, index) => {
+                self.collect_direct_internal_calls_expr(base, calls);
+                if let Some(index) = index {
+                    self.collect_direct_internal_calls_expr(index, calls);
+                }
+            }
+            ExprKind::Slice(base, start, end) => {
+                self.collect_direct_internal_calls_expr(base, calls);
+                if let Some(start) = start {
+                    self.collect_direct_internal_calls_expr(start, calls);
+                }
+                if let Some(end) = end {
+                    self.collect_direct_internal_calls_expr(end, calls);
+                }
+            }
+            ExprKind::Ternary(cond, true_expr, false_expr) => {
+                self.collect_direct_internal_calls_expr(cond, calls);
+                self.collect_direct_internal_calls_expr(true_expr, calls);
+                self.collect_direct_internal_calls_expr(false_expr, calls);
+            }
+            ExprKind::Array(exprs) => {
+                for expr in *exprs {
+                    self.collect_direct_internal_calls_expr(expr, calls);
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                for expr in exprs.iter().copied().flatten() {
+                    self.collect_direct_internal_calls_expr(expr, calls);
+                }
+            }
+            ExprKind::Ident(_)
+            | ExprKind::Lit(_)
+            | ExprKind::New(_)
+            | ExprKind::TypeCall(_)
+            | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
+            | ExprKind::Err(_) => {}
+        }
     }
 
     fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) {

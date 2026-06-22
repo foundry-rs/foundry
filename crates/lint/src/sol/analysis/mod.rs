@@ -7,5 +7,6 @@
 //!
 //! All helpers borrow HIR and never mutate it.
 
+pub mod helper_cache;
 pub mod interface;
 pub mod primitives;

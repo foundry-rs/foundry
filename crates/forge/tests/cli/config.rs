@@ -7,8 +7,9 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
-    SettingsOverrides, SolcReq,
+    CompilationRestrictions, Config, Eip1559FeeEstimatePreset, FsPermissions, FuzzConfig,
+    FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq, SymbolicConfig,
+    SymbolicExplorationOrder, SymbolicStorageLayout,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -40,7 +41,7 @@ auto_detect_remappings = true
 libraries = []
 cache = true
 cache_path = "cache"
-dynamic_test_linking = false
+dynamic_test_linking = true
 snapshots = "snapshots"
 gas_snapshot_check = false
 gas_snapshot_emit = true
@@ -79,6 +80,7 @@ ffi = false
 live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
+eip1559_fee_estimate = "market"
 prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
@@ -96,6 +98,7 @@ extra_output_files = []
 names = false
 sizes = false
 via_ir = false
+experimental = false
 ast = false
 no_storage_caching = false
 no_rpc_rate_limit = false
@@ -118,6 +121,23 @@ transaction_timeout = 120
 additional_compiler_profiles = []
 compilation_restrictions = []
 script_execution_protection = true
+
+[profile.default.symbolic]
+enabled = false
+solver = "z3"
+timeout = 30
+max_depth = 10000
+max_paths = 1024
+invariant_depth = 10
+exploration_order = "bfs"
+max_solver_queries = 10000
+default_dynamic_length = 2
+max_dynamic_length = 256
+array_lengths = []
+max_calldata_bytes = 4096
+symbolic_call_targets = false
+dump_smt = false
+storage_layout = "solidity"
 
 [profile.default.rpc_storage_caching]
 chains = "all"
@@ -269,7 +289,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
-        dynamic_test_linking: false,
+        dynamic_test_linking: true,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -325,12 +345,38 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             },
             ..Default::default()
         },
+        symbolic: SymbolicConfig {
+            enabled: true,
+            solver: "custom-z3".to_string(),
+            solver_command: None,
+            solver_portfolio: Vec::new(),
+            timeout: Some(7),
+            loop_bound: Some(64),
+            depth: Some(222),
+            width: Some(33),
+            max_depth: 123,
+            max_paths: 456,
+            invariant_depth: 5,
+            exploration_order: SymbolicExplorationOrder::Dfs,
+            max_solver_queries: 789,
+            default_dynamic_length: 3,
+            max_dynamic_length: 99,
+            array_lengths: vec![1, 2, 3],
+            dynamic_lengths: std::collections::BTreeMap::from([("data".to_string(), vec![4, 5])]),
+            default_array_lengths: vec![6, 7],
+            default_bytes_lengths: vec![8, 9],
+            max_calldata_bytes: 2048,
+            symbolic_call_targets: true,
+            dump_smt: true,
+            storage_layout: SymbolicStorageLayout::Generic,
+        },
         coverage: Default::default(),
         mutation: Default::default(),
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -405,6 +451,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
+        experimental: false,
         networks: Default::default(),
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
@@ -630,8 +677,9 @@ forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
     prj.initialize_default_contracts();
-    let config = prj.config_from_output(["--via-ir", "--no-metadata"]);
+    let config = prj.config_from_output(["--via-ir", "--experimental", "--no-metadata"]);
     assert!(config.via_ir);
+    assert!(config.experimental);
     assert_eq!(config.cbor_metadata, false);
     assert_eq!(config.bytecode_hash, BytecodeHash::None);
 });
@@ -1320,7 +1368,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "libraries": [],
   "cache": true,
   "cache_path": "cache",
-  "dynamic_test_linking": false,
+  "dynamic_test_linking": true,
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
   "gas_snapshot_emit": true,
@@ -1433,6 +1481,23 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_block_delay": null,
     "check_interval": 1
   },
+  "symbolic": {
+    "enabled": false,
+    "solver": "z3",
+    "timeout": 30,
+    "max_depth": 10000,
+    "max_paths": 1024,
+    "invariant_depth": 10,
+    "exploration_order": "bfs",
+    "max_solver_queries": 10000,
+    "default_dynamic_length": 2,
+    "max_dynamic_length": 256,
+    "array_lengths": [],
+    "max_calldata_bytes": 4096,
+    "symbolic_call_targets": false,
+    "dump_smt": false,
+    "storage_layout": "solidity"
+  },
   "coverage": {
     "report": [
       "summary"
@@ -1453,6 +1518,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
+  "eip1559_fee_estimate": "market",
   "prompt_timeout": 120,
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
@@ -1475,6 +1541,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "names": false,
   "sizes": false,
   "via_ir": false,
+  "experimental": false,
   "ast": false,
   "rpc_storage_caching": {
     "chains": "all",

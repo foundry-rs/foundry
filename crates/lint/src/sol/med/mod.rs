@@ -41,7 +41,7 @@ use weak_prng::WEAK_PRNG;
 
 register_lints!(
     (AssertStateChange, late, (ASSERT_STATE_CHANGE)),
-    (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
+    (DivideBeforeMultiply, late, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (IncorrectStrictEquality, late, (INCORRECT_STRICT_EQUALITY)),

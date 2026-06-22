@@ -9,7 +9,7 @@ declare_forge_lint!(
     EVENT_FIELDS,
     Severity::Info,
     "event-fields",
-    "address and id event parameters should be indexed for efficient log filtering"
+    "address event parameters should be indexed for efficient log filtering"
 );
 
 /// Maximum number of indexed parameters allowed by the EVM in a non-anonymous event.
@@ -51,36 +51,9 @@ fn check_event<'ast>(ctx: &LintContext, event: &'ast ItemEvent<'ast>) {
     ctx.emit_with_msg(&EVENT_FIELDS, event.name.span, msg);
 }
 
-/// Returns true when the parameter is an `address`, an `address payable`, or a uint256/bytes32
-/// whose name looks like an identifier (id-like).
-fn is_filterable_field(param: &VariableDefinition<'_>) -> bool {
-    let TypeKind::Elementary(elem) = &param.ty.kind else { return false };
-    match elem {
-        ElementaryType::Address(_) => true,
-        ElementaryType::UInt(size) if size.bits() == 256 => has_id_like_name(param),
-        ElementaryType::FixedBytes(size) if size.bytes() == 32 => has_id_like_name(param),
-        _ => false,
-    }
-}
-
-/// Returns true when the parameter name matches `id`/`ID`, ends with `Id`, `_id`, `_ID`, or ends
-/// with `ID` preceded by a lowercase ASCII letter.
-fn has_id_like_name(param: &VariableDefinition<'_>) -> bool {
-    let Some(ident) = &param.name else { return false };
-    let name = ident.as_str();
-
-    if name == "id" || name == "ID" {
-        return true;
-    }
-    if name.ends_with("_id") || name.ends_with("_ID") || name.ends_with("Id") {
-        return true;
-    }
-    if let Some(prefix) = name.strip_suffix("ID")
-        && let Some(last) = prefix.chars().last()
-    {
-        return last.is_ascii_lowercase();
-    }
-    false
+/// Returns true when the parameter is an `address`.
+const fn is_filterable_field(param: &VariableDefinition<'_>) -> bool {
+    matches!(&param.ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
 
 /// Render a parameter as `name (type)` (or `parameter #N (type)` if unnamed) for the diagnostic.

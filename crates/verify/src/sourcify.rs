@@ -34,7 +34,11 @@ impl VerificationProvider for SourcifyVerificationProvider {
         Ok(())
     }
 
-    async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
+    async fn submit(
+        &mut self,
+        args: VerifyArgs,
+        context: VerificationContext,
+    ) -> Result<Option<VerifyCheckArgs>> {
         let body = self.prepare_verify_request(&args, &context).await?;
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
 
@@ -45,7 +49,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 args.address.to_string()
             )?;
 
-            return Ok(());
+            return Ok(None);
         }
 
         trace!("submitting verification request {:?}", body);
@@ -60,7 +64,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
             .run_async(|| {
                 async {
                     sh_status!(
-                        "Submitting verification for [{}] {:?}.",
+                        "Submitting verification for [{}] {}.",
                         context.target_name,
                         args.address.to_string()
                     )?;
@@ -100,7 +104,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            let job_url = Self::get_job_status_url(
+            let job_url = Self::get_job_ui_url(
                 args.verifier.verifier_url.as_deref(),
                 resp.verification_id.clone(),
             );
@@ -110,19 +114,15 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 job_url
             )?;
             sh_println!("{}\t{}", resp.verification_id, job_url)?;
-
-            if args.watch {
-                let check_args = VerifyCheckArgs {
-                    id: resp.verification_id,
-                    etherscan: args.etherscan,
-                    retry: args.retry,
-                    verifier: args.verifier,
-                };
-                return self.check(check_args).await;
-            }
+            Ok(Some(VerifyCheckArgs {
+                id: resp.verification_id,
+                etherscan: args.etherscan,
+                retry: args.retry,
+                verifier: args.verifier,
+            }))
+        } else {
+            Ok(None)
         }
-
-        Ok(())
     }
 
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
@@ -206,6 +206,11 @@ impl SourcifyVerificationProvider {
     fn get_job_status_url(verifier_url: Option<&str>, job_id: String) -> String {
         let base_url = Self::get_base_url(verifier_url);
         format!("{base_url}v2/verify/{job_id}")
+    }
+
+    fn get_job_ui_url(verifier_url: Option<&str>, job_id: String) -> String {
+        let base_url = Self::get_base_url(verifier_url);
+        format!("{base_url}verify-ui/jobs/{job_id}")
     }
 
     fn get_lookup_url(

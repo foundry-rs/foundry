@@ -49,6 +49,14 @@ LL │         hook.notify(amount);
 warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
    ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
    │
+LL │         hook.notify(amount);
+   │         ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
 LL │         hook.overloaded(amount);
    │         ━━━━━━━━━━━━━━━━━━━━━━━
    │

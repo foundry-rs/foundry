@@ -855,7 +855,7 @@ mod tests {
             any::<u32>().prop_map(|v| DynSolValue::Uint(U256::from(v), 256)),
             any::<[u8; 20]>().prop_map(Address::from).prop_map(DynSolValue::Address),
             any::<[u8; 32]>().prop_map(B256::from).prop_map(|b| DynSolValue::FixedBytes(b, 32)),
-            ".*".prop_map(DynSolValue::String),
+            ".*".prop_filter("invalid string value", |s| s != "{}").prop_map(DynSolValue::String),
         ];
 
         // Combine them to create a list of unique fields that preserve the random order.

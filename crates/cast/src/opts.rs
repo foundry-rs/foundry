@@ -15,15 +15,17 @@ use crate::cmd::{
     estimate::EstimateArgs,
     find_block::FindBlockArgs,
     interface::InterfaceArgs,
-    keychain::{KeyAuthSubcommand, KeychainSubcommand},
+    keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
     logs::LogsArgs,
     mktx::MakeTxArgs,
+    receive_policy::ReceivePolicySubcommand,
     rpc::RpcArgs,
     run::RunArgs,
     send::SendTxArgs,
     storage::StorageArgs,
     tempo::TempoSubcommand,
     tip20::Tip20Subcommand,
+    tip403::Tip403Subcommand,
     trace::TraceArgs,
     txpool::TxPoolSubcommands,
     vaddr::VaddrSubcommand,
@@ -1257,6 +1259,20 @@ pub enum CastSubcommand {
         command: Tip20Subcommand,
     },
 
+    /// Account-level receive policy operations (Tempo).
+    #[command(name = "receive-policy")]
+    ReceivePolicy {
+        #[command(subcommand)]
+        command: ReceivePolicySubcommand,
+    },
+
+    /// TIP-403 policy registry operations (Tempo).
+    #[command(name = "tip403")]
+    Tip403 {
+        #[command(subcommand)]
+        command: Tip403Subcommand,
+    },
+
     /// Tempo keychain (access key) management.
     #[command(visible_alias = "kc")]
     Keychain {
@@ -1265,10 +1281,10 @@ pub enum CastSubcommand {
     },
 
     /// Tempo key authorization RLP helpers.
-    #[command(name = "key-auth")]
-    KeyAuth {
+    #[command(name = "key-authorization", visible_alias = "key-auth")]
+    KeyAuthorization {
         #[command(subcommand)]
-        command: KeyAuthSubcommand,
+        command: KeyAuthorizationSubcommand,
     },
 
     /// Tempo wallet integration (login, etc.).

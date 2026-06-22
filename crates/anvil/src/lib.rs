@@ -323,9 +323,9 @@ impl NodeHandle {
         self.config.print(fork)?;
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                sh_eprintln!("IPC path: {ipc_path}")?;
+                sh_println!("IPC path: {ipc_path}")?;
             }
-            sh_eprintln!(
+            sh_println!(
                 "Listening on {}",
                 self.addresses
                     .iter()
@@ -484,7 +484,7 @@ pub fn init_tracing() -> LoggingManager {
             rust_log_val.parse().expect("failed to parse modified RUST_LOG");
         tracing_subscriber::registry()
             .with(env_filter)
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(tracing_subscriber::fmt::layer())
             .try_init()
     } else {
         tracing_subscriber::Registry::default()
@@ -493,8 +493,7 @@ pub fn init_tracing() -> LoggingManager {
                 tracing_subscriber::fmt::layer()
                     .without_time()
                     .with_target(false)
-                    .with_level(false)
-                    .with_writer(std::io::stderr),
+                    .with_level(false),
             )
             .try_init()
     };

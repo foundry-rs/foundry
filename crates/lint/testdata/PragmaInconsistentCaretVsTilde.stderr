@@ -1,15 +1,7 @@
-note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: ~0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: ^0.8.20, ~0.8.20
    ╭▸ ROOT/testdata/PragmaInconsistentCaretVsTilde.sol:LL:CC
    │
 LL │ pragma solidity ^0.8.20;
-   │ ━━━━━━━━━━━━━━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity ~0.8.20;' conflicts with other version requirements in the project: ^0.8.20
-   ╭▸ ROOT/testdata/PragmaInconsistentCaretVsTilde.sol:LL:CC
-   │
-LL │ pragma solidity ~0.8.20;
    │ ━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent

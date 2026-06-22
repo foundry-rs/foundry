@@ -44,7 +44,7 @@ use foundry_config::{
     },
     filter::GlobMatcher,
 };
-use foundry_debugger::Debugger;
+use foundry_debugger::{Debugger, DebuggerLayout};
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -120,6 +120,10 @@ pub struct TestArgs {
     /// case. If the fuzz test does not fail, it will open the debugger on the last fuzz case.
     #[arg(long, conflicts_with_all = ["flamegraph", "flamechart", "decode_internal", "rerun"])]
     debug: bool,
+
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    debug_layout: Option<DebuggerLayout>,
 
     /// Generate a flamegraph for a single test. Implies `--decode-internal`.
     ///
@@ -219,6 +223,97 @@ pub struct TestArgs {
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
+
+    /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC")]
+    pub symbolic: bool,
+
+    /// Solver executable used for symbolic tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
+    pub symbolic_solver: Option<String>,
+
+    /// Exact solver command used for symbolic tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER_COMMAND", value_name = "COMMAND")]
+    pub symbolic_solver_command: Option<String>,
+
+    /// Comma-separated SMT solver names or commands to race in parallel for symbolic tests.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_SOLVER_PORTFOLIO",
+        value_delimiter = ',',
+        value_name = "SOLVER_OR_COMMAND,..."
+    )]
+    pub symbolic_solver_portfolio: Option<Vec<String>>,
+
+    /// Timeout for symbolic execution in seconds.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_TIMEOUT", value_name = "SECONDS")]
+    pub symbolic_timeout: Option<u32>,
+
+    /// Halmos-compatible symbolic loop bound.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_LOOP", value_name = "N")]
+    pub symbolic_loop: Option<u32>,
+
+    /// Halmos-compatible symbolic execution depth alias.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_DEPTH", value_name = "N")]
+    pub symbolic_depth: Option<u32>,
+
+    /// Halmos-compatible symbolic path width alias.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_WIDTH", value_name = "N")]
+    pub symbolic_width: Option<u32>,
+
+    /// Maximum number of opcodes executed along a symbolic path.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_DEPTH", value_name = "N")]
+    pub symbolic_max_depth: Option<u32>,
+
+    /// Maximum number of symbolic paths to explore per test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_PATHS", value_name = "N")]
+    pub symbolic_max_paths: Option<u32>,
+
+    /// Maximum number of calls in a bounded symbolic invariant sequence.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_INVARIANT_DEPTH", value_name = "N")]
+    pub symbolic_invariant_depth: Option<u32>,
+
+    /// Maximum number of solver queries per symbolic test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_SOLVER_QUERIES", value_name = "N")]
+    pub symbolic_max_solver_queries: Option<u32>,
+
+    /// Default bounded length for symbolic dynamic ABI inputs.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_DEFAULT_DYNAMIC_LENGTH", value_name = "N")]
+    pub symbolic_default_dynamic_length: Option<u32>,
+
+    /// Maximum permitted bounded length for symbolic dynamic ABI inputs.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_DYNAMIC_LENGTH", value_name = "N")]
+    pub symbolic_max_dynamic_length: Option<u32>,
+
+    /// Per-dynamic-input symbolic lengths, applied in ABI traversal order.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_ARRAY_LENGTHS",
+        value_delimiter = ',',
+        value_name = "N,..."
+    )]
+    pub symbolic_array_lengths: Option<Vec<u32>>,
+
+    /// Maximum symbolic calldata size in bytes.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_CALLDATA_BYTES", value_name = "N")]
+    pub symbolic_max_calldata_bytes: Option<u32>,
+
+    /// Expand symbolic external call targets over known deployed contracts.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_CALL_TARGETS")]
+    pub symbolic_call_targets: bool,
+
+    /// Dump SMT-LIB queries issued by symbolic tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_DUMP_SMT")]
+    pub symbolic_dump_smt: bool,
+
+    /// Symbolic storage modelling mode.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_STORAGE_LAYOUT",
+        value_name = "solidity|generic",
+        value_parser = ["solidity", "generic"]
+    )]
+    pub symbolic_storage_layout: Option<String>,
 
     /// Show test execution progress.
     #[arg(long, conflicts_with_all = ["quiet", "json"], help_heading = "Display options")]
@@ -468,7 +563,7 @@ impl TestArgs {
                     return true;
                 }
                 let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-                matches_artifact(test_filter, &stripped, abi)
+                matches_artifact(test_filter, &stripped, abi, config.symbolic.enabled)
             })
             .map(|(id, _)| id.source)
             .collect())
@@ -795,7 +890,8 @@ impl TestArgs {
             let mut builder = Debugger::builder()
                 .traces(traces)
                 .sources(sources)
-                .breakpoints(test_result.breakpoints);
+                .breakpoints(test_result.breakpoints)
+                .layout(self.debug_layout.unwrap_or_default());
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
@@ -1830,6 +1926,67 @@ impl Provider for TestArgs {
                 Dict::from([("workers".to_string(), Value::serialize(invariant_workers)?)]).into(),
             );
         }
+
+        let mut symbolic_dict = Dict::default();
+        if self.symbolic {
+            symbolic_dict.insert("enabled".to_string(), true.into());
+        }
+        if let Some(solver) = self.symbolic_solver.clone() {
+            symbolic_dict.insert("solver".to_string(), solver.into());
+        }
+        if let Some(solver_command) = self.symbolic_solver_command.clone() {
+            symbolic_dict.insert("solver_command".to_string(), solver_command.into());
+        }
+        if let Some(solver_portfolio) = self.symbolic_solver_portfolio.clone() {
+            symbolic_dict.insert("solver_portfolio".to_string(), solver_portfolio.into());
+        }
+        if let Some(timeout) = self.symbolic_timeout {
+            symbolic_dict.insert("timeout".to_string(), timeout.into());
+        }
+        if let Some(loop_bound) = self.symbolic_loop {
+            symbolic_dict.insert("loop".to_string(), loop_bound.into());
+        }
+        if let Some(depth) = self.symbolic_depth {
+            symbolic_dict.insert("depth".to_string(), depth.into());
+        }
+        if let Some(width) = self.symbolic_width {
+            symbolic_dict.insert("width".to_string(), width.into());
+        }
+        if let Some(max_depth) = self.symbolic_max_depth {
+            symbolic_dict.insert("max_depth".to_string(), max_depth.into());
+        }
+        if let Some(max_paths) = self.symbolic_max_paths {
+            symbolic_dict.insert("max_paths".to_string(), max_paths.into());
+        }
+        if let Some(invariant_depth) = self.symbolic_invariant_depth {
+            symbolic_dict.insert("invariant_depth".to_string(), invariant_depth.into());
+        }
+        if let Some(max_solver_queries) = self.symbolic_max_solver_queries {
+            symbolic_dict.insert("max_solver_queries".to_string(), max_solver_queries.into());
+        }
+        if let Some(default_dynamic_length) = self.symbolic_default_dynamic_length {
+            symbolic_dict
+                .insert("default_dynamic_length".to_string(), default_dynamic_length.into());
+        }
+        if let Some(max_dynamic_length) = self.symbolic_max_dynamic_length {
+            symbolic_dict.insert("max_dynamic_length".to_string(), max_dynamic_length.into());
+        }
+        if let Some(array_lengths) = self.symbolic_array_lengths.clone() {
+            symbolic_dict.insert("array_lengths".to_string(), array_lengths.into());
+        }
+        if let Some(max_calldata_bytes) = self.symbolic_max_calldata_bytes {
+            symbolic_dict.insert("max_calldata_bytes".to_string(), max_calldata_bytes.into());
+        }
+        if self.symbolic_call_targets {
+            symbolic_dict.insert("symbolic_call_targets".to_string(), true.into());
+        }
+        if self.symbolic_dump_smt {
+            symbolic_dict.insert("dump_smt".to_string(), true.into());
+        }
+        if let Some(storage_layout) = self.symbolic_storage_layout.clone() {
+            symbolic_dict.insert("storage_layout".to_string(), storage_layout.into());
+        }
+        dict.insert("symbolic".to_string(), symbolic_dict.into());
 
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())

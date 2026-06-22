@@ -38,3 +38,11 @@ LL │         revert();
    │
    ╰ help: https://getfoundry.sh/forge/linting/custom-errors
 
+note[custom-errors]: prefer using custom errors on revert and require calls
+   ╭▸ ROOT/testdata/CustomErrors.sol:LL:CC
+   │
+LL │         require(value > 0);
+   │         ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/custom-errors
+

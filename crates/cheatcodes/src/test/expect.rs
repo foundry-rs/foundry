@@ -10,7 +10,7 @@ use alloy_primitives::{
     Address, Bytes, LogData as RawLog, U256, hex, keccak256,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use foundry_common::{abi::get_indexed_event, fmt::format_token};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_traces::DecodedCallLog;
@@ -20,6 +20,8 @@ use revm::{
         InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
     },
 };
+use tempo_contracts::precompiles::ISignatureVerifier;
+use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
@@ -412,11 +414,50 @@ impl Cheatcode for expectTip20LogoURIUpdatedCall {
     }
 }
 
+impl Cheatcode for expectKeychainVerifiedCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { account, digest, signature } = self;
+        expect_keychain_verified(state, *account, *digest, signature.clone(), false)
+    }
+}
+
+impl Cheatcode for expectKeychainAdminVerifiedCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { account, digest, signature } = self;
+        expect_keychain_verified(state, *account, *digest, signature.clone(), true)
+    }
+}
+
 impl Cheatcode for expectLogoURIUpdatedCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { token, updater, newLogoURI } = self;
         expect_logo_uri_updated(ccx, token, updater, newLogoURI)
     }
+}
+
+fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    account: Address,
+    digest: alloy_primitives::B256,
+    signature: Bytes,
+    admin: bool,
+) -> Result {
+    let calldata = if admin {
+        ISignatureVerifier::verifyKeychainAdminCall { account, hash: digest, signature }
+            .abi_encode()
+    } else {
+        ISignatureVerifier::verifyKeychainCall { account, hash: digest, signature }.abi_encode()
+    };
+    expect_call(
+        state,
+        &SIGNATURE_VERIFIER_ADDRESS,
+        &Bytes::from(calldata),
+        None,
+        None,
+        None,
+        1,
+        ExpectedCallType::NonCount,
+    )
 }
 
 fn expect_logo_uri_updated<FEN: FoundryEvmNetwork>(
@@ -1114,7 +1155,9 @@ fn decode_event(
     }
     let t0 = topics[0]; // event sig
     // Try to identify the event
-    let event = foundry_common::block_on(identifier.identify_event(t0))?;
+    let event = foundry_common::block_on(
+        identifier.identify_event_with_indexed_count(t0, topics.len().saturating_sub(1)),
+    )?;
 
     // Check if event already has indexed information from signatures
     let has_indexed_info = event.inputs.iter().any(|p| p.indexed);
@@ -1170,6 +1213,17 @@ pub(crate) fn get_emit_mismatch_message(
 
     // 1. Different number of topics
     if actual.topics().len() != expected.topics().len() {
+        let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
+        let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
+        let expected_topics = checked_topic_count(expected, is_anonymous);
+        let actual_topics = checked_topic_count(actual, is_anonymous);
+
+        if expected_name == actual_name {
+            return format!(
+                "{actual_name} indexed topic count mismatch: expected {expected_topics}, got {actual_topics}"
+            );
+        }
+
         return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
@@ -1310,6 +1364,10 @@ fn name_mismatched_logs(
     let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
     let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
     format!("{actual_name} != expected {expected_name}")
+}
+
+fn checked_topic_count(log: &RawLog, is_anonymous: bool) -> usize {
+    if is_anonymous { log.topics().len() } else { log.topics().len().saturating_sub(1) }
 }
 
 fn expect_safe_memory<FEN: FoundryEvmNetwork>(

@@ -274,6 +274,8 @@ interface Vm {
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter, uint64 count) external;
     function expectEmit(uint64 count) external;
     function expectEmit(address emitter, uint64 count) external;
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
     function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function expectPartialRevert(bytes4 revertData) external;
     function expectPartialRevert(bytes4 revertData, address reverter) external;
@@ -465,6 +467,8 @@ interface Vm {
     function rollFork(bytes32 txHash) external;
     function rollFork(uint256 forkId, uint256 blockNumber) external;
     function rollFork(uint256 forkId, bytes32 txHash) external;
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
     function rpcUrlStructs() external view returns (Rpc[] memory urls);
     function rpcUrls() external view returns (string[2][] memory urls);
@@ -511,6 +515,8 @@ interface Vm {
     function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
     function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
     function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey) external pure returns (bytes memory signature);
+    function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(Wallet calldata wallet, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);

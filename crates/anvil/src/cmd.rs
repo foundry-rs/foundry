@@ -105,6 +105,8 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
+    /// Enable mixed mining mode. Blocks are mined on a timer (set by `--block-time`),
+    /// but also whenever a transaction is submitted. Requires `--block-time` to be set.
     #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
 
@@ -663,11 +665,11 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
-    /// Disable printing of `console.log` invocations to stderr.
+    /// Disable printing of `console.log` invocations to stdout.
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
-    /// Enable printing of traces for executed transactions and `eth_call` to stderr.
+    /// Enable printing of traces for executed transactions and `eth_call` to stdout.
     #[arg(long, visible_alias = "enable-trace-printing")]
     pub print_traces: bool,
 

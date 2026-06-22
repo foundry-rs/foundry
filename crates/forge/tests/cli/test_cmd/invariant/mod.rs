@@ -394,7 +394,9 @@ contract InvariantSequenceLenTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 ...
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 1)
@@ -406,8 +408,10 @@ contract InvariantSequenceLenTest is Test {
     prj.update_config(|config| {
         config.invariant.shrink_run_limit = 0;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
@@ -432,8 +436,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
     prj.update_config(|config| {
         config.invariant.show_solidity = true;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
@@ -460,8 +466,10 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
     prj.update_config(|config| {
         config.invariant.show_solidity = false;
     });
-    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_increment", "--no-dynamic-test-linking"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest

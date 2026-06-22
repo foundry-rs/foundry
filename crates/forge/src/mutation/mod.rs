@@ -181,6 +181,16 @@ impl MutationsSummary {
         if valid_mutants == 0 { 0.0 } else { self.dead.len() as f64 / valid_mutants as f64 * 100.0 }
     }
 
+    /// Mutants that reached a test verdict and can contribute to the score.
+    pub const fn total_evaluated(&self) -> usize {
+        self.dead.len() + self.survived.len()
+    }
+
+    /// Whether the score is useful enough to present as a coverage signal.
+    pub const fn has_reliable_score(&self) -> bool {
+        self.total_evaluated() > 0 && self.timed_out.len() < self.total_evaluated()
+    }
+
     /// Convert to JSON output format.
     ///
     /// Output is sorted deterministically: files in lexicographic order
@@ -663,5 +673,36 @@ mod tests {
         assert!(
             handler.retrieve_cached_mutant_results("build", "exec", &changed_mutants).is_none()
         );
+    }
+
+    #[test]
+    fn mutation_score_is_unreliable_when_evaluated_mutants_equal_timeouts() {
+        let mut summary = MutationsSummary::new();
+        summary.add_dead_mutant(mutant(10, 20, "number++"));
+        summary.add_timed_out_mutant(mutant(30, 40, "number--"));
+
+        assert_eq!(summary.total_evaluated(), 1);
+        assert!(!summary.has_reliable_score());
+    }
+
+    #[test]
+    fn mutation_score_is_unreliable_when_timeouts_dominate() {
+        let mut summary = MutationsSummary::new();
+        summary.add_dead_mutant(mutant(10, 20, "number++"));
+        summary.add_timed_out_mutant(mutant(30, 40, "number--"));
+        summary.add_timed_out_mutant(mutant(50, 60, "number += 1"));
+
+        assert_eq!(summary.total_evaluated(), 1);
+        assert!(!summary.has_reliable_score());
+    }
+
+    #[test]
+    fn mutation_score_is_unreliable_with_no_evaluated_mutants() {
+        let mut summary = MutationsSummary::new();
+        summary.add_timed_out_mutant(mutant(10, 20, "number++"));
+
+        assert_eq!(summary.total_evaluated(), 0);
+        assert!(!summary.has_reliable_score());
+        assert_eq!(summary.mutation_score(), 0.0);
     }
 }

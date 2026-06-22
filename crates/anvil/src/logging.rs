@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::{Metadata, subscriber::Interest};
 use tracing_subscriber::{Layer, layer::Context};
 
-/// The target that identifies the events intended to be logged to stderr
+/// The target that identifies the events intended to be logged to stdout
 pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";
 
 /// The target that identifies the events coming from the `console.log` invocations.
@@ -14,7 +14,7 @@ pub(crate) const EVM_CONSOLE_LOG_TARGET: &str = "node::console";
 /// A logger that listens for node related events and displays them.
 ///
 /// This layer is intended to be used as filter for `NODE_USER_LOG_TARGET` events that will
-/// eventually be logged to stderr
+/// eventually be logged to stdout
 #[derive(Clone, Debug, Default)]
 pub struct NodeLogLayer {
     state: LoggingManager,

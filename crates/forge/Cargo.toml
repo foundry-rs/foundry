@@ -30,6 +30,7 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
+foundry-evm-symbolic.workspace = true
 foundry-linking.workspace = true
 
 comfy-table.workspace = true
@@ -77,7 +78,7 @@ regex = { workspace = true, default-features = false }
 revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
-similar = { version = "2", features = ["inline"] }
+similar = { version = "3", features = ["inline"] }
 solar.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
@@ -92,20 +93,18 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
-# doc server
-axum = { workspace = true, features = ["ws"] }
-tower-http = { workspace = true, features = ["fs"] }
 opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
 soldeer-core.workspace = true
-quick-junit = "0.5.2"
+quick-junit = "0.6.0"
 tempfile.workspace = true
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
+axum.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 

@@ -19,6 +19,7 @@ members = [
     "crates/evm/evm/",
     "crates/evm/fuzz/",
     "crates/evm/sancov/",
+    "crates/evm/symbolic/",
     "crates/evm/hardforks/",
     "crates/evm/traces/",
     "crates/fmt/",
@@ -58,7 +59,6 @@ equatable_if_let = "warn"
 explicit_into_iter_loop = "warn"
 explicit_iter_loop = "warn"
 flat_map_option = "warn"
-from_iter_instead_of_collect = "warn"
 if_then_some_else_none = "warn"
 implicit_clone = "warn"
 if_not_else = "warn"
@@ -251,11 +251,8 @@ alloy-sol-macro-expander.opt-level = "s"
 figment2.opt-level = "s"
 foundry-compilers-artifacts-solc.opt-level = "s"
 foundry-config.opt-level = "s"
-html5ever.opt-level = "s"
-mdbook-driver.opt-level = "s"
 prettyplease.opt-level = "s"
 protobuf.opt-level = "s"
-pulldown-cmark.opt-level = "s"
 syn-solidity.opt-level = "s"
 syn.opt-level = "s"
 trezor-client.opt-level = "s"
@@ -268,12 +265,6 @@ h2.opt-level = "s"
 rustls.opt-level = "s"
 tower.opt-level = "s"
 tower-http.opt-level = "s"
-
-# Doc generation / templating.
-mdbook-core.opt-level = "s"
-mdbook-html.opt-level = "s"
-font-awesome-as-a-crate.opt-level = "s"
-handlebars.opt-level = "s"
 
 # Watch mode.
 watchexec.opt-level = "s"
@@ -333,10 +324,11 @@ foundry-evm-hardforks = { path = "crates/evm/hardforks", default-features = fals
 foundry-evm-networks = { path = "crates/evm/networks", default-features = false }
 foundry-evm-fuzz = { path = "crates/evm/fuzz", default-features = false }
 foundry-evm-sancov = { path = "crates/evm/sancov" }
+foundry-evm-symbolic = { path = "crates/evm/symbolic", default-features = false }
 foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils", default-features = false }
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "db0373422379ab2e98a1c6ba9ed4e8b71c094340", default-features = false }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "6bea29247c2fa37344337d7434cd8aaf2f479182", default-features = false }
 foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
@@ -408,16 +400,16 @@ op-alloy-rpc-types = "0.24.0"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.36.0"
+alloy-evm = "0.37.0"
 alloy-op-evm = "0.32.0"
 
 # revm
-revm = { version = "40.0.3", default-features = false }
-revm-inspectors = { version = "0.40.0", features = ["serde"] }
+revm = { version = "41.0.0", default-features = false }
+revm-inspectors = { version = "0.41.1", features = ["serde"] }
 op-revm = { version = "20.0.0", default-features = false }
 
 ## cli
-anstream = "0.6"
+anstream = "1.0"
 anstyle = "1.0"
 dialoguer = { version = "0.12", default-features = false, features = [
     "password",
@@ -435,7 +427,7 @@ thiserror = "2"
 
 # allocators
 mimalloc = "0.1"
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 
 # misc
 auto_impl = "1"
@@ -479,15 +471,15 @@ rustls = "0.23"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
-similar-asserts = "1.7"
-soldeer-commands = "=0.10.0"
-soldeer-core = { version = "=0.10.1", features = ["serde"] }
+similar-asserts = "2.0"
+soldeer-commands = "=0.11.0"
+soldeer-core = { version = "=0.11.0", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.23"
 tokio = "1"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
-toml = "0.9"
-toml_edit = "0.24"
+toml = "1.1"
+toml_edit = "0.25"
 tower = "0.5"
 tower-http = "0.6"
 tracing = "0.1"
@@ -509,28 +501,28 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "8d008eefacacf608b6ceb70636c777672fdccd88", default-features = false, features = [
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "9de5344a961c13dd4b20186e665bdcf61ed0e2df", default-features = false, features = [
     "tempo",
     "client",
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c", default-features = false, features = [
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # testing
-snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
+snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
@@ -538,6 +530,9 @@ snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+## Temporary dependency on foundry-rs/foundry-core#94 until foundry-compilers is released.
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "39f19b016c2ba793b24255bda83bd3822c8cb525" }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
@@ -588,7 +583,7 @@ idna_adapter = "=1.1.0"
 
 ## op-revm / op-alloy / alloy-op-evm
 ## Pinned to foundry-rs forks until upstream optimism bumps to revm 40.
-op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "4201f16a746f2da2df38f1eac477500d492eaed5" }
+op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "c10fd76e66fd46cebc08ba370aa58bde72b94140" }
 alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
@@ -596,18 +591,18 @@ op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = 
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "bump-alloy-evm-0-36-tempo" }
 
 ## foundry-fork-db
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "8027e5ccdfe55e562a1111495d2c9acb6e27a930" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "ba6246789fc12cf8fe78aa74aadf31d663f08c1f" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "32bb1d454f0fb70f8085c93bc04f35ed9715dc0c" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2cf84002140367ff6de3268e5bf39972b8a0dc6c" }
 
 # solar
-solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
-solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
-solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
-solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "4393d0dbb8d37df4df5c2840350a73a189441988" }
+solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
+solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
+solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
+solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "da6b0c3a8c0edd23f8b1414c61418ba78d6c4670" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]

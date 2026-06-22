@@ -10,7 +10,7 @@ pub fn is_elementary(hir: &hir::Hir<'_>, id: VariableId, abi: &str) -> bool {
 /// Static contract type of a method-call receiver: a contract-typed variable
 /// or an `IFoo(addr)` interface wrap.
 pub fn receiver_contract_id(hir: &hir::Hir<'_>, recv: &Expr<'_>) -> Option<ContractId> {
-    match &recv.kind {
+    match &recv.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             if let TypeKind::Custom(ItemId::Contract(cid)) = hir.variable(*id).ty.kind {
                 Some(cid)
@@ -18,10 +18,14 @@ pub fn receiver_contract_id(hir: &hir::Hir<'_>, recv: &Expr<'_>) -> Option<Contr
                 None
             }
         }
-        ExprKind::Call(
-            Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
-            ..,
-        ) => Some(*cid),
+        ExprKind::Call(callee, ..) => {
+            if let ExprKind::Ident([Res::Item(ItemId::Contract(cid))]) = &callee.peel_parens().kind
+            {
+                Some(*cid)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }

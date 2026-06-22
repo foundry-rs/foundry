@@ -31,7 +31,7 @@ pub mod strategies;
 pub use strategies::LiteralMaps;
 
 mod inspector;
-pub use inspector::Fuzzer;
+pub use inspector::{Fuzzer, ObservedCall};
 
 /// Metadata needed to reproduce a fuzz run.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

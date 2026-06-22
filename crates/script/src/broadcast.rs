@@ -1,8 +1,16 @@
 use std::{cmp::Ordering, num::NonZeroU64, sync::Arc, time::Duration};
 
 use crate::{
-    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
+    ScriptArgs, ScriptConfig,
+    build::LinkedBuildData,
+    progress::ScriptProgress,
+    sequence::ScriptSequenceKind,
+    session::{
+        RemainingScriptTransaction, SignerScope,
+        insert_session_access_key_for_remaining_transactions,
+        script_session_expected_sender_if_configured,
+    },
+    verify::BroadcastedState,
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
@@ -20,16 +28,19 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer::Signature;
 use eyre::{Context, Result, bail};
 use forge_script_sequence::ScriptSequence;
-use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
-    provider::{ProviderBuilder, try_get_http_provider},
+    provider::{
+        ProviderBuilder,
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        try_get_http_provider,
+    },
     shell,
     tempo::{
-        KeyEntry, KeysFile, ResolvedSessionSigner, TempoSponsor, WALLET_KEYS_PATH,
-        decode_key_authorization, tempo_home,
+        KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
+        maybe_print_fee_token, resolve_and_set_fee_token, tempo_home,
     },
 };
 use foundry_config::Config;
@@ -100,6 +111,7 @@ where
     /// 1. Nonce synchronization: Waits for the provider's nonce to catch up to the expected
     ///    transaction nonce when doing sequential broadcast
     /// 2. Gas estimation: Re-estimates gas right before broadcasting for chains that require it
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare(
         &mut self,
         provider: &RootProvider<N>,
@@ -108,6 +120,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        chain: Option<Chain>,
     ) -> Result<()> {
         let (tx, access_key_authorization) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
@@ -166,6 +179,13 @@ where
             .await?;
         }
 
+        let fee_token = if let Some(sponsor) = tempo_sponsor {
+            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
+            None
+        } else {
+            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
+        };
+
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
@@ -175,6 +195,8 @@ where
         if let Some(sponsor) = tempo_sponsor {
             let from = tx.from().expect("no sender");
             sponsor.attach_and_print::<N>(tx, from).await?;
+        } else {
+            maybe_print_fee_token(Some(provider), fee_token).await?;
         }
 
         Ok(())
@@ -237,6 +259,7 @@ where
     ///
     /// This is a convenience method that combines [`prepare`](Self::prepare) and
     /// [`send`](Self::send) into a single call.
+    #[allow(clippy::too_many_arguments)]
     pub async fn prepare_and_send(
         mut self,
         provider: Arc<RootProvider<N>>,
@@ -245,6 +268,7 @@ where
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
+        chain: Option<Chain>,
     ) -> Result<TxHash> {
         self.prepare(
             &provider,
@@ -253,47 +277,12 @@ where
             estimate_via_rpc,
             estimate_multiplier,
             tempo_sponsor,
+            chain,
         )
         .await?;
 
         self.send(provider).await
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct SignerScope {
-    chain: u64,
-    sender: Address,
-}
-
-impl SignerScope {
-    pub(crate) const fn new(chain: u64, sender: Address) -> Self {
-        Self { chain, sender }
-    }
-}
-
-fn insert_session_access_key_for_remaining_transactions(
-    access_keys: &mut HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)>,
-    session: ResolvedSessionSigner,
-    remaining_transactions: &[RemainingScriptTransaction],
-) -> Result<()> {
-    let chain = session.session.chain_id;
-    let root = session.session.root_account;
-    if let Some(tx) = remaining_transactions.iter().find(|tx| tx.from == root && tx.chain != chain)
-    {
-        eyre::bail!(
-            "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
-            chain,
-            root,
-            tx.chain,
-        );
-    }
-
-    if remaining_transactions.iter().any(|tx| tx.from == root) {
-        access_keys.insert(SignerScope::new(chain, root), (session.signer, session.access_key));
-    }
-
-    Ok(())
 }
 
 fn build_lookup(entry: &KeyEntry) -> Result<TempoLookup> {
@@ -376,42 +365,6 @@ fn lookup_signer_in(from: Address, chain: u64, file: &KeysFile) -> Result<TempoL
         }
     }
     fallback.map(|e| build_lookup_chain0_fallback(e, chain)).unwrap_or(Ok(TempoLookup::NotFound))
-}
-
-/// Returns the single sender a Tempo session is allowed to cover.
-///
-/// Session signing is intentionally fail-closed: a single session access key represents one root
-/// account, so scripts with multiple pending senders must not silently mix the session key with
-/// other wallets.
-pub(crate) fn script_session_expected_sender(
-    required_addresses: &AddressHashSet,
-) -> Result<Option<Address>> {
-    required_addresses
-        .iter()
-        .copied()
-        .at_most_one()
-        .map_err(|_| eyre::eyre!("Tempo sessions require a single script sender"))
-}
-
-pub(crate) fn script_session_expected_sender_if_configured<FEN: FoundryEvmNetwork>(
-    script_config: &ScriptConfig<FEN>,
-    required_addresses: &AddressHashSet,
-) -> Result<Option<Address>> {
-    script_config
-        .tempo
-        .session_id()?
-        .map_or(Ok(None), |_| script_session_expected_sender(required_addresses))
-}
-
-pub(crate) struct RemainingScriptTransaction {
-    pub(crate) chain: u64,
-    pub(crate) from: Address,
-}
-
-impl RemainingScriptTransaction {
-    pub(crate) const fn scope(&self) -> SignerScope {
-        SignerScope::new(self.chain, self.from)
-    }
 }
 
 pub(crate) fn remaining_unsigned_transactions<N: Network>(
@@ -546,7 +499,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
             let expected_session_sender = script_session_expected_sender_if_configured(
-                &self.script_config,
+                &self.script_config.tempo,
                 &required_addresses,
             )?;
 
@@ -663,83 +616,81 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         )
                     }
                     (false, _, _) => {
-                        let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let fees = estimate_eip1559_fees(
+                            &provider,
+                            self.script_config.config.eip1559_fee_estimate,
+                        )
+                        .await
+                        .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
-                        // When using --browser, the browser wallet may override the
-                        // priority fee with its own estimate (from
-                        // eth_maxPriorityFeePerGas) without adjusting maxFeePerGas,
-                        // leading to maxPriorityFeePerGas > maxFeePerGas.
-                        // This is common on OP Stack chains (e.g. Base) where
-                        // eth_feeHistory returns empty reward arrays, causing the
-                        // estimator to fall back to a 1 wei priority fee.
-                        if matches!(&send_kind, SendTransactionsKind::Raw { browser: Some(_), .. })
-                            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
-                            && suggested_tip > fees.max_priority_fee_per_gas
-                        {
-                            fees.max_fee_per_gas += suggested_tip - fees.max_priority_fee_per_gas;
-                            fees.max_priority_fee_per_gas = suggested_tip;
-                        }
+                        // Browser wallets may suggest their own tip; query it best-effort.
+                        let browser_suggested_tip = if matches!(
+                            &send_kind,
+                            SendTransactionsKind::Raw { browser: Some(_), .. }
+                        ) {
+                            provider.get_max_priority_fee_per_gas().await.ok()
+                        } else {
+                            None
+                        };
 
-                        if let Some(gas_price) = self.args.with_gas_price {
-                            fees.max_fee_per_gas = gas_price.to();
-                        }
+                        let fees = resolve_broadcast_eip1559_fees(
+                            fees,
+                            self.args.with_gas_price.map(|p| p.to()),
+                            self.args.priority_gas_price.map(|p| p.to()),
+                            browser_suggested_tip,
+                        )?;
 
-                        if let Some(priority_gas_price) = self.args.priority_gas_price {
-                            fees.max_priority_fee_per_gas = priority_gas_price.to();
-                        }
-
-                        (None, Some(fees))
+                        (None, Some(fees.estimation()))
                     }
                 };
 
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
-                let transactions = sequence
-                    .transactions
-                    .iter()
-                    .skip(already_broadcasted)
-                    .map(|tx_with_metadata| {
-                        let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
+                let sequence_chain = sequence.chain;
+                let mut transactions = Vec::with_capacity(
+                    sequence.transactions.len().saturating_sub(already_broadcasted),
+                );
+                for tx_with_metadata in sequence.transactions.iter().skip(already_broadcasted) {
+                    let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
-                        let kind = match tx_with_metadata.tx().clone() {
-                            TransactionMaybeSigned::Signed { tx, .. } => {
-                                if tempo_sponsor.is_some() {
-                                    eyre::bail!(
-                                        "cannot attach Tempo sponsor signature to an already signed script transaction"
-                                    );
-                                }
-                                SendTransactionKind::Signed(tx)
+                    let kind = match tx_with_metadata.tx().clone() {
+                        TransactionMaybeSigned::Signed { tx, .. } => {
+                            if tempo_sponsor.is_some() {
+                                eyre::bail!(
+                                    "cannot attach Tempo sponsor signature to an already signed script transaction"
+                                );
                             }
-                            TransactionMaybeSigned::Unsigned(mut tx) => {
-                                let from = tx.from().expect("No sender for onchain transaction!");
+                            SendTransactionKind::Signed(tx)
+                        }
+                        TransactionMaybeSigned::Unsigned(mut tx) => {
+                            let from = tx.from().expect("No sender for onchain transaction!");
 
-                                tx.set_chain_id(sequence.chain);
+                            tx.set_chain_id(sequence_chain);
 
-                                // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
-                                // alloy
-                                if tx.kind().is_none() {
-                                    tx.set_create();
-                                }
-
-                                if let Some(gas_price) = gas_price {
-                                    tx.set_gas_price(gas_price);
-                                } else {
-                                    let eip1559_fees = eip1559_fees.expect("was set above");
-                                    tx.set_max_priority_fee_per_gas(
-                                        eip1559_fees.max_priority_fee_per_gas,
-                                    );
-                                    tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
-                                }
-
-                                self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
-
-                                send_kind.for_sender(sequence.chain, &from, tx)?
+                            // Set TxKind::Create explicitly to satisfy `check_reqd_fields` in
+                            // alloy
+                            if tx.kind().is_none() {
+                                tx.set_create();
                             }
-                        };
 
-                        Ok((kind, is_fixed_gas_limit))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                            if let Some(gas_price) = gas_price {
+                                tx.set_gas_price(gas_price);
+                            } else {
+                                let eip1559_fees = eip1559_fees.expect("was set above");
+                                tx.set_max_priority_fee_per_gas(
+                                    eip1559_fees.max_priority_fee_per_gas,
+                                );
+                                tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
+                            }
+
+                            self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
+
+                            send_kind.for_sender(sequence_chain, &from, tx)?
+                        }
+                    };
+
+                    transactions.push((kind, is_fixed_gas_limit));
+                }
 
                 let estimate_via_rpc = has_different_gas_calc(sequence.chain)
                     || self.script_config.evm_opts.networks.is_tempo()
@@ -759,6 +710,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
                 let mut index = already_broadcasted;
+                let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     seq_progress.inner.write().set_status(&format!(
@@ -782,6 +734,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
                                             tempo_sponsor.as_deref(),
+                                            Some(sequence_chain.into()),
                                         )
                                         .await;
                                     (res, kind, *is_fixed_gas_limit, 0, None)
@@ -827,6 +780,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
                                             tempo_sponsor.as_deref(),
+                                            Some(sequence_chain.into()),
                                         )
                                         .await;
                                     (
@@ -919,31 +873,36 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         })
     }
 
-    pub fn verify_preflight_check(&self) -> Result<()> {
+    pub async fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
             let chain: Chain = sequence.chain.into();
+            // Resolve the API key: CLI arg first, then per-chain config, then global fallback.
             let etherscan_key = self
                 .script_config
                 .config
                 .get_etherscan_api_key(Some(chain))
                 .or_else(|| self.script_config.config.etherscan_api_key.clone());
-            // Use the centralized resolver so the preflight reflects the provider that will
-            // actually be used at verification time (not just the explicit CLI value).
-            let resolved = self.args.verifier.resolve(etherscan_key.as_deref(), Some(chain));
-            if resolved == VerificationProviderType::Etherscan {
-                let has_etherscan_url = (chain.etherscan_urls().is_some()
-                    && !chain.is_custom_sourcify())
-                    || self.args.verifier.verifier_url.is_some();
-                if !has_etherscan_url {
-                    eyre::bail!(
-                        "Chain {} has no known Etherscan API URL; pass --verifier-url <URL>",
-                        sequence.chain
-                    );
-                }
-                if etherscan_key.is_none() {
-                    eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
-                }
-            }
+            let api_key =
+                self.args.verifier.resolve_api_key(etherscan_key.as_deref()).map(str::to_owned);
+            let has_url = self.args.verifier.verifier_url.is_some();
+            let is_explicit = self.args.verifier.is_explicitly_set();
+            // Presence check: use the fully-resolved provider type so that implicit Etherscan
+            // selection (key from env/config, no explicit --verifier flag) is validated too.
+            self.args
+                .verifier
+                .resolve(api_key.as_deref(), Some(chain))
+                .client(api_key.as_deref(), Some(chain), has_url, is_explicit)
+                .wrap_err_with(|| {
+                    format!("Verification preflight check failed for chain {}", sequence.chain)
+                })?;
+            // Connectivity check: validates credentials are actually accepted by the verifier.
+            self.args
+                .verifier
+                .check_credentials(api_key.as_deref(), chain, &self.script_config.config)
+                .await
+                .wrap_err_with(|| {
+                    format!("Verification preflight check failed for chain {}", sequence.chain)
+                })?;
         }
 
         Ok(())
@@ -1271,12 +1230,17 @@ impl BundledState<TempoEvmNetwork> {
         // Build the batch transaction request
         let nonce = provider.get_transaction_count(sender).await?;
 
-        // Get gas prices - batch transactions are Tempo-only, always use EIP-1559 style fees
-        let fees = provider.estimate_eip1559_fees().await?;
-        let max_fee_per_gas =
-            self.args.with_gas_price.map(|p| p.to()).unwrap_or(fees.max_fee_per_gas);
-        let max_priority_fee_per_gas =
-            self.args.priority_gas_price.map(|p| p.to()).unwrap_or(fees.max_priority_fee_per_gas);
+        // Batch transactions are Tempo-only and always use EIP-1559 style fees.
+        let fees = estimate_eip1559_fees(&provider, self.script_config.config.eip1559_fee_estimate)
+            .await?;
+        let fees = resolve_broadcast_eip1559_fees(
+            fees,
+            self.args.with_gas_price.map(|p| p.to()),
+            self.args.priority_gas_price.map(|p| p.to()),
+            None,
+        )?;
+        let max_fee_per_gas = fees.max_fee_per_gas;
+        let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         let mut batch_tx = TempoTransactionRequest {
             inner: TransactionRequest {
@@ -1297,6 +1261,24 @@ impl BundledState<TempoEvmNetwork> {
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
+        let fee_token = if let Some(sponsor) = &tempo_sponsor {
+            sponsor
+                .resolve_and_set_fee_token(
+                    Some(provider.as_ref()),
+                    Some(Chain::from_named(NamedChain::Tempo)),
+                    &mut batch_tx,
+                )
+                .await?;
+            None
+        } else {
+            resolve_and_set_fee_token(
+                Some(provider.as_ref()),
+                Some(Chain::from_named(NamedChain::Tempo)),
+                &mut batch_tx,
+                Some(sender),
+            )
+            .await?
+        };
 
         if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
             batch_tx.key_id = Some(ak.key_address);
@@ -1317,6 +1299,8 @@ impl BundledState<TempoEvmNetwork> {
 
         if let Some(sponsor) = &tempo_sponsor {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
+        } else {
+            maybe_print_fee_token(Some(provider.as_ref()), fee_token).await?;
         }
 
         // Sign and send.
@@ -1469,11 +1453,10 @@ mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_network::Ethereum;
-    use alloy_primitives::{B256, Bloom, address};
+    use alloy_primitives::{Bloom, address};
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
-    use foundry_common::tempo::{KeyType, SessionEntry, SessionKeyMaterial, SessionStatus};
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -1518,17 +1501,6 @@ mod tests {
     }
 
     #[test]
-    fn session_sender_requires_single_root_account() {
-        let one = address!("0x1111111111111111111111111111111111111111");
-        let two = address!("0x2222222222222222222222222222222222222222");
-        let single_sender = [one].into_iter().collect();
-        let multiple_senders = [one, two].into_iter().collect();
-
-        assert_eq!(script_session_expected_sender(&single_sender).unwrap(), Some(one));
-        assert!(script_session_expected_sender(&multiple_senders).is_err());
-    }
-
-    #[test]
     fn access_key_signer_is_scoped_to_chain() {
         let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
         let root_address = root.address();
@@ -1561,42 +1533,6 @@ mod tests {
             }
             _ => panic!("expected root wallet signer for non-session chain"),
         }
-    }
-
-    #[test]
-    fn session_access_key_rejects_session_root_on_wrong_chain() {
-        let (session, root_address, _) = session_signer(4217);
-        let remaining = [RemainingScriptTransaction { chain: 1, from: root_address }];
-        let mut access_keys = HashMap::default();
-
-        let err = insert_session_access_key_for_remaining_transactions(
-            &mut access_keys,
-            session,
-            &remaining,
-        )
-        .unwrap_err();
-
-        assert!(access_keys.is_empty());
-        let message = err.to_string();
-        assert!(message.contains("Tempo session is for chain 4217"), "{message}");
-        assert!(message.contains("transaction from session root"), "{message}");
-        assert!(message.contains("chain 1"), "{message}");
-    }
-
-    #[test]
-    fn session_access_key_is_inserted_for_session_chain() {
-        let (session, root_address, access_key_address) = session_signer(4217);
-        let remaining = [RemainingScriptTransaction { chain: 4217, from: root_address }];
-        let mut access_keys = HashMap::default();
-
-        insert_session_access_key_for_remaining_transactions(&mut access_keys, session, &remaining)
-            .unwrap();
-
-        let (signer, config) =
-            access_keys.get(&SignerScope::new(4217, root_address)).expect("session access key");
-        assert_eq!(signer.address(), access_key_address);
-        assert_eq!(config.wallet_address, root_address);
-        assert_eq!(config.key_address, access_key_address);
     }
 
     #[test]
@@ -1682,7 +1618,18 @@ mod tests {
         let provider =
             RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
+        sender
+            .prepare(
+                &provider,
+                false,
+                true,
+                false,
+                100,
+                None,
+                Some(Chain::from_named(NamedChain::Mainnet)),
+            )
+            .await
+            .unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _, _) => {
@@ -1697,36 +1644,6 @@ mod tests {
             from: Some(from),
             ..Default::default()
         }))
-    }
-
-    fn session_signer(chain_id: u64) -> (ResolvedSessionSigner, Address, Address) {
-        let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
-        let root_address = root.address();
-        let signer =
-            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
-        let key_address = signer.address();
-        let access_key = TempoAccessKeyConfig {
-            wallet_address: root_address,
-            key_address,
-            key_authorization: None,
-        };
-        let session = SessionEntry {
-            session_id: B256::ZERO,
-            root_account: root_address,
-            chain_id,
-            key_address,
-            expiry: u64::MAX,
-            scope: None,
-            limits: None,
-            status: SessionStatus::Active,
-            key: Some(SessionKeyMaterial {
-                key_type: KeyType::Secp256k1,
-                key: ACCESS_KEY_PRIVATE_KEY.to_string(),
-                key_authorization: None,
-            }),
-        };
-
-        (ResolvedSessionSigner { session, signer, access_key }, root_address, key_address)
     }
 
     fn receipt() -> TransactionReceipt {

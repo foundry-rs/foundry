@@ -21,7 +21,7 @@ pub(super) async fn set(
 ) -> eyre::Result<()> {
     validate_logo_uri(&logo_uri)?;
 
-    let (signer, tempo_access_key) = super::resolve_tip20_signer(&send_tx).await?;
+    let (signer, tempo_access_key) = super::resolve_tip20_signer(&send_tx, &tx_opts).await?;
 
     let config = send_tx.eth.rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;

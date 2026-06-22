@@ -4127,7 +4127,7 @@
     {
       "func": {
         "id": "deployCode_0",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4147,7 +4147,7 @@
     {
       "func": {
         "id": "deployCode_1",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4167,7 +4167,7 @@
     {
       "func": {
         "id": "deployCode_2",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4187,7 +4187,7 @@
     {
       "func": {
         "id": "deployCode_3",
-        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4207,7 +4207,7 @@
     {
       "func": {
         "id": "deployCode_4",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.",
         "declaration": "function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4227,7 +4227,7 @@
     {
       "func": {
         "id": "deployCode_5",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4247,7 +4247,7 @@
     {
       "func": {
         "id": "deployCode_6",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4267,7 +4267,7 @@
     {
       "func": {
         "id": "deployCode_7",
-        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.\nReverts if the target artifact contains unlinked library placeholders.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
         "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);",
         "visibility": "external",
         "mutability": "",
@@ -4407,7 +4407,7 @@
     {
       "func": {
         "id": "eip712HashStruct_0",
-        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
@@ -4447,7 +4447,7 @@
     {
       "func": {
         "id": "eip712HashType_0",
-        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
@@ -5626,6 +5626,46 @@
     },
     {
       "func": {
+        "id": "expectKeychainAdminVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainAdminVerified(address,bytes32,bytes)",
+        "selector": "0xcbe45e4f",
+        "selectorBytes": [
+          203,
+          228,
+          94,
+          79
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectKeychainVerified",
+        "description": "Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.",
+        "declaration": "function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectKeychainVerified(address,bytes32,bytes)",
+        "selector": "0x3040e515",
+        "selectorBytes": [
+          48,
+          64,
+          229,
+          21
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectLogoURIUpdated",
         "description": "Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.",
         "declaration": "function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;",
@@ -6347,7 +6387,7 @@
     {
       "func": {
         "id": "getCode",
-        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional. Use <profile> to select artifacts compiled with a specific profile\nfrom foundry.toml.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -6367,7 +6407,7 @@
     {
       "func": {
         "id": "getDeployedCode",
-        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "description": "Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and\n<version>/<profile> parts are optional.",
         "declaration": "function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);",
         "visibility": "external",
         "mutability": "view",
@@ -9452,6 +9492,46 @@
     },
     {
       "func": {
+        "id": "rpcJson_0",
+        "description": "Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string)",
+        "selector": "0x9519f228",
+        "selectorBytes": [
+          149,
+          25,
+          242,
+          40
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "rpcJson_1",
+        "description": "Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.",
+        "declaration": "function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "rpcJson(string,string,string)",
+        "selector": "0x273b74f8",
+        "selectorBytes": [
+          39,
+          59,
+          116,
+          248
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "rpcUrl",
         "description": "Returns the RPC url for the given alias.",
         "declaration": "function rpcUrl(string calldata rpcAlias) external view returns (string memory json);",
@@ -10364,6 +10444,46 @@
           96,
           156,
           101
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychain",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.",
+        "declaration": "function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychain(uint256,address,bytes32)",
+        "selector": "0x5804c690",
+        "selectorBytes": [
+          88,
+          4,
+          198,
+          144
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signKeychainAdmin",
+        "description": "Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.\nReturns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.\nThe supplied `digest` should already be domain-separated with chain ID, contract address,\nand account address.",
+        "declaration": "function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signKeychainAdmin(uint256,address,bytes32)",
+        "selector": "0xbc5fb2f7",
+        "selectorBytes": [
+          188,
+          95,
+          178,
+          247
         ]
       },
       "group": "crypto",
