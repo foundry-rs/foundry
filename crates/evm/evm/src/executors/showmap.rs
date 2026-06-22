@@ -96,11 +96,22 @@ pub struct ShowmapStats {
     /// Number of corpus entries skipped because they couldn't be replayed
     /// against the current target (e.g. selector mismatch).
     pub skipped_entries: usize,
+    /// Number of corpus entries skipped because they could not be read.
+    pub unreadable_entries: usize,
     /// True if sancov coverage was requested. Lets the caller distinguish
     /// "sancov not asked for" from "sancov asked for but produced nothing".
     pub sancov_requested: bool,
     /// True if any non-zero sancov hits were observed across the replay.
     pub sancov_observed: bool,
+}
+
+/// Test target metadata needed to replay corpus entries.
+pub struct ShowmapReplayTarget<'a> {
+    pub fuzzed_function: Option<&'a Function>,
+    pub fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
+    pub invariant_address: Option<Address>,
+    pub invariant_fns: &'a [&'a Function],
+    pub dynamic: Option<&'a DynamicTargetCtx<'a>>,
 }
 
 /// Facts observed while replaying one candidate for minimization.
@@ -148,9 +159,7 @@ fn merge_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
 pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     corpus_dir: &Path,
-    fuzzed_function: Option<&Function>,
-    fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-    dynamic: Option<&DynamicTargetCtx<'_>>,
+    target: ShowmapReplayTarget<'_>,
     opts: &ShowmapOpts,
 ) -> Result<ShowmapStats> {
     let entries = read_corpus_tree(corpus_dir)?;
@@ -173,6 +182,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             Ok(_) => continue,
             Err(err) => {
                 debug!(target: "showmap", %err, ?entry.path, "failed to read corpus entry");
+                stats.unreadable_entries += 1;
+                stats.skipped_entries += 1;
                 continue;
             }
         };
@@ -182,7 +193,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         // Targets deployed during this entry, cleared after the entry.
         let mut created: Vec<Address> = Vec::new();
         for tx in &tx_seq {
-            if !WorkerCorpus::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
+            if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
                 continue;
             }
             had_replayable = true;
@@ -206,17 +217,65 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
 
             register_replay_created(
                 &call_result.state_changeset,
-                dynamic,
-                fuzzed_contracts,
+                target.dynamic,
+                target.fuzzed_contracts,
                 &mut created,
             );
 
             // Stateful tests need the tx committed so subsequent calls see its effects.
-            if fuzzed_contracts.is_some() {
+            if target.fuzzed_contracts.is_some() {
+                if !opts.emit_files
+                    && let Some(failure) = invariant_handler_failure(
+                        tx.call_details.target,
+                        tx.call_details
+                            .calldata
+                            .get(..4)
+                            .map(Selector::from_slice)
+                            .unwrap_or_default(),
+                        call_result.reverter,
+                        did_fail_on_assert(&call_result, &call_result.state_changeset),
+                        &call_result,
+                    )
+                {
+                    rollback_replay_created(target.fuzzed_contracts, created);
+                    return Err(eyre::eyre!(
+                        "corpus entry {} failed during replay: {failure}",
+                        entry.path.display()
+                    ));
+                }
                 executor.commit(&mut call_result);
+                if !opts.emit_files
+                    && let Some(address) = target.invariant_address
+                    && let Some(failure) =
+                        broken_invariant(&executor, address, target.invariant_fns)?
+                {
+                    rollback_replay_created(target.fuzzed_contracts, created);
+                    return Err(eyre::eyre!(
+                        "corpus entry {} broke invariant during replay: {failure}",
+                        entry.path.display()
+                    ));
+                }
+            } else if !opts.emit_files {
+                let target_addr = tx.call_details.target;
+                let success = if call_result.reverter.is_some_and(|reverter| {
+                    reverter != target_addr && reverter != CHEATCODE_ADDRESS
+                }) {
+                    true
+                } else {
+                    executor.is_raw_call_mut_success(target_addr, &mut call_result, false)
+                };
+                if !success {
+                    rollback_replay_created(target.fuzzed_contracts, created);
+                    return Err(eyre::eyre!(
+                        "corpus entry {} failed during replay: {:?}:0x{}",
+                        entry.path.display(),
+                        call_result.exit_reason,
+                        hex::encode(&call_result.result)
+                    ));
+                }
             }
         }
-        rollback_replay_created(fuzzed_contracts, created);
+        rollback_replay_created(target.fuzzed_contracts, created);
 
         if !had_replayable {
             stats.skipped_entries += 1;

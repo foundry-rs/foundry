@@ -45,7 +45,12 @@ impl CorpusDirEntry {
     }
 
     pub fn read_tx_seq(&self) -> foundry_common::fs::Result<Vec<BasicTxDetails>> {
-        if self.path.extension() == Some("gz".as_ref()) {
+        if self
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"))
+        {
             foundry_common::fs::read_json_gzip_file(&self.path)
         } else {
             foundry_common::fs::read_json_file(&self.path)

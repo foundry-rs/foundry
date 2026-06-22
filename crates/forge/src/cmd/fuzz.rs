@@ -223,18 +223,20 @@ impl FuzzCminArgs {
         let mut test = minimizer_test_args(self.filter.clone());
         test.enable_fuzz_only();
         let session = prepare_minimize_session(&mut test).await?;
-        let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let mut kept = 0usize;
         let mut total = 0usize;
         let mut skipped = 0usize;
+        let mut unreadable = 0usize;
         let mut replayed = 0usize;
         let mut cumulative = ReplayObservation::default();
+        let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         for entry in read_corpus_entries(&self.corpus_dir)? {
             total += 1;
             let sequence = read_sequence(&entry.path)
                 .with_context(|| format!("failed to read corpus entry {}", entry.path.display()));
             let Ok(sequence) = sequence else {
                 skipped += 1;
+                unreadable += 1;
                 continue;
             };
             let observation = replay_candidate(&session, evm_edge_indices.clone(), sequence)?;
@@ -259,6 +261,12 @@ impl FuzzCminArgs {
         }
 
         if total > 0 && replayed == 0 {
+            if unreadable > 0 {
+                bail!(
+                    "replayed 0 transactions from {}; {unreadable} corpus entries could not be read",
+                    self.corpus_dir.display()
+                );
+            }
             bail!(
                 "replayed 0 transactions from {}; check that --mc/--mt match the corpus entries",
                 self.corpus_dir.display()
@@ -331,7 +339,7 @@ impl FuzzTminArgs {
             &mut attempts,
         )?;
 
-        if self.out.extension() == Some("gz".as_ref()) {
+        if is_gzip_path(&self.out) {
             fs::write_json_gzip_file(&self.out, &sequence)?;
         } else {
             fs::write_json_file(&self.out, &sequence)?;
@@ -423,21 +431,25 @@ impl CorpusDecoder {
 
         let selector = Selector::from_slice(&calldata[..4]);
         self.functions.get(&selector).and_then(|functions| {
-            functions.iter().find_map(|indexed| {
+            let mut matches = functions.iter().filter_map(|indexed| {
                 let decoded_args = indexed.function.abi_decode_input(&calldata[4..]).ok()?;
-                let args = format_tokens_raw(&decoded_args).collect::<Vec<_>>();
-                let signature = indexed.function.signature();
-                Some(DecodedCall {
-                    call: format!(
-                        "{}.{}({})",
-                        indexed.contract,
-                        indexed.function.name,
-                        args.join(", ")
-                    ),
-                    contract: indexed.contract.clone(),
-                    signature,
-                    args,
-                })
+                Some((indexed, format_tokens_raw(&decoded_args).collect::<Vec<_>>()))
+            });
+            let (indexed, args) = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            let signature = indexed.function.signature();
+            Some(DecodedCall {
+                call: format!(
+                    "{}.{}({})",
+                    indexed.contract,
+                    indexed.function.name,
+                    args.join(", ")
+                ),
+                contract: indexed.contract.clone(),
+                signature,
+                args,
             })
         })
     }
@@ -473,11 +485,17 @@ fn read_corpus_entries(path: &Path) -> Result<Vec<CorpusDirEntry>> {
 }
 
 fn read_sequence(path: &Path) -> Result<Vec<BasicTxDetails>> {
-    if path.extension() == Some("gz".as_ref()) {
+    if is_gzip_path(path) {
         Ok(fs::read_json_gzip_file(path)?)
     } else {
         Ok(fs::read_json_file(path)?)
     }
+}
+
+fn is_gzip_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
 }
 
 fn minimizer_test_args(filter: FilterArgs) -> TestArgs {
@@ -520,14 +538,22 @@ fn replay_candidate(
 }
 
 fn merge_new_edges(cumulative: &mut ReplayObservation, observation: &ReplayObservation) -> bool {
-    let before = count_edges(cumulative);
-    cumulative.merge_edge_coverage(observation);
-    count_edges(cumulative) > before
+    merge_new_edge_vec(&mut cumulative.evm_edges, &observation.evm_edges)
+        | merge_new_edge_vec(&mut cumulative.sancov_edges, &observation.sancov_edges)
 }
 
-fn count_edges(observation: &ReplayObservation) -> usize {
-    observation.evm_edges.iter().filter(|&&edge| edge != 0).count()
-        + observation.sancov_edges.iter().filter(|&&edge| edge != 0).count()
+fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
+    if cumulative.len() < candidate.len() {
+        cumulative.resize(candidate.len(), 0);
+    }
+    let mut improved = false;
+    for (cumulative, &candidate) in cumulative.iter_mut().zip(candidate) {
+        if candidate > *cumulative {
+            *cumulative = candidate;
+            improved = true;
+        }
+    }
+    improved
 }
 
 fn minimize_sequence(
@@ -626,7 +652,7 @@ fn covers_edge_vec(candidate: &[u8], original: &[u8]) -> bool {
     original
         .iter()
         .enumerate()
-        .all(|(idx, &edge)| edge == 0 || candidate.get(idx).copied().unwrap_or_default() != 0)
+        .all(|(idx, &edge)| candidate.get(idx).copied().unwrap_or_default() >= edge)
 }
 
 fn cleanup_metadata(tx: &mut BasicTxDetails) {

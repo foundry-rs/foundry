@@ -28,6 +28,7 @@ use foundry_evm::{
     decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, MinimizationReplayInput, RawCallResult, ShowmapOpts,
+        ShowmapReplayTarget,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
@@ -139,7 +140,7 @@ pub(crate) fn count_runnable_invariant_campaign_anchors(
     .anchor_count()
 }
 
-fn function_matches_network_pass(
+pub(crate) fn function_matches_network_pass(
     all_override_networks: &[NetworkVariant],
     pass_network: Option<&NetworkVariant>,
     func_network: Option<NetworkVariant>,
@@ -1836,13 +1837,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             };
             let dynamic = evm.dynamic_target_ctx();
+            let invariant_fns =
+                live_invariants.iter().map(|(invariant, _)| *invariant).collect::<Vec<_>>();
+            let invariant_address = self.address;
             return self.run_showmap(
                 func,
                 corpus_dir,
                 &showmap,
-                None,
-                Some(&targeted),
-                Some(&dynamic),
+                ShowmapReplayTarget {
+                    fuzzed_function: None,
+                    fuzzed_contracts: Some(&targeted),
+                    invariant_address: Some(invariant_address),
+                    invariant_fns: &invariant_fns,
+                    dynamic: Some(&dynamic),
+                },
             );
         }
 
@@ -1946,8 +1954,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .iter()
                 .map(|(invariant, _)| *invariant)
                 .collect::<Vec<_>>();
-            let mut evm_edge_indices =
-                minimize.evm_edge_indices.lock().expect("minimize edge index lock");
+            let mut evm_edge_indices = match minimize.evm_edge_indices.lock() {
+                Ok(indices) => indices,
+                Err(_) => {
+                    self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
+                    return self.result;
+                }
+            };
             match replay_sequence_for_minimization(
                 &evm.executor,
                 MinimizationReplayInput {
@@ -1963,11 +1976,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 Ok(observation) => {
                     let replayed = observation.replayed;
                     let skipped = observation.skipped;
-                    minimize
-                        .observations
-                        .lock()
-                        .expect("minimize observations lock")
-                        .push(observation);
+                    match minimize.observations.lock() {
+                        Ok(mut observations) => observations.push(observation),
+                        Err(_) => {
+                            self.result.single_fail(Some(
+                                "minimize observations lock poisoned".to_string(),
+                            ));
+                            return self.result;
+                        }
+                    }
                     self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
                 }
                 Err(e) => self.result.single_fail(Some(e.to_string())),
@@ -2565,15 +2582,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
             let corpus_dir =
                 showmap.corpus_dir.clone().or_else(|| fuzz_config.corpus.corpus_dir.clone());
-            return self.run_showmap(func, corpus_dir, &showmap, Some(func), None, None);
+            return self.run_showmap(
+                func,
+                corpus_dir,
+                &showmap,
+                ShowmapReplayTarget {
+                    fuzzed_function: Some(func),
+                    fuzzed_contracts: None,
+                    invariant_address: None,
+                    invariant_fns: &[],
+                    dynamic: None,
+                },
+            );
         }
 
         if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.clone() {
             let mut executor = self.executor.clone().into_owned();
             executor.inspector_mut().collect_edge_coverage(true);
             executor.inspector_mut().collect_sancov_edges(true);
-            let mut evm_edge_indices =
-                minimize.evm_edge_indices.lock().expect("minimize edge index lock");
+            let mut evm_edge_indices = match minimize.evm_edge_indices.lock() {
+                Ok(indices) => indices,
+                Err(_) => {
+                    self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
+                    return self.result;
+                }
+            };
             match replay_sequence_for_minimization(
                 &executor,
                 MinimizationReplayInput {
@@ -2589,11 +2622,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 Ok(observation) => {
                     let replayed = observation.replayed;
                     let skipped = observation.skipped;
-                    minimize
-                        .observations
-                        .lock()
-                        .expect("minimize observations lock")
-                        .push(observation);
+                    match minimize.observations.lock() {
+                        Ok(mut observations) => observations.push(observation),
+                        Err(_) => {
+                            self.result.single_fail(Some(
+                                "minimize observations lock poisoned".to_string(),
+                            ));
+                            return self.result;
+                        }
+                    }
                     self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
                 }
                 Err(e) => self.result.single_fail(Some(e.to_string())),
@@ -2748,9 +2785,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         func: &Function,
         corpus_dir: Option<PathBuf>,
         showmap: &crate::multi_runner::ShowmapConfig,
-        fuzzed_function: Option<&Function>,
-        fuzzed_contracts: Option<&foundry_evm::fuzz::invariant::FuzzRunIdentifiedContracts>,
-        dynamic: Option<&foundry_evm::executors::DynamicTargetCtx<'_>>,
+        target: ShowmapReplayTarget<'_>,
     ) -> TestResult {
         let Some(corpus_dir) = corpus_dir else {
             self.result.replay_skip("no corpus_dir configured for this test");
@@ -2773,7 +2808,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // tests share one corpus per contract, so omit the function name for them
         // to avoid emitting duplicate approach dirs that replay the same corpus.
         let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
-        let approach = if fuzzed_contracts.is_some() {
+        let approach = if target.fuzzed_contracts.is_some() {
             format!("{}__{safe_id}", showmap.approach)
         } else {
             let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
@@ -2789,14 +2824,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
 
         let start = std::time::Instant::now();
-        let result = replay_corpus_to_showmap(
-            &executor,
-            &corpus_dir,
-            fuzzed_function,
-            fuzzed_contracts,
-            dynamic,
-            &opts,
-        );
+        let result = replay_corpus_to_showmap(&executor, &corpus_dir, target, &opts);
         let duration = start.elapsed();
         match result {
             Ok(stats) => {

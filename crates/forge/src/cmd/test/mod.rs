@@ -13,6 +13,10 @@ use crate::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
         SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
     },
+    runner::{
+        InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
+        function_matches_network_pass,
+    },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -104,10 +108,15 @@ fn validate_showmap_name(kind: &str, name: &str) -> Result<()> {
 
 pub(crate) struct FuzzMinimizeReplaySession {
     filter: ProjectPathsAwareFilter,
-    passes: Vec<FuzzMinimizeReplay>,
+    passes: Vec<FuzzMinimizeReplayPass>,
 }
 
 type FuzzMinimizeReplay = Box<dyn Fn(&ProjectPathsAwareFilter, FuzzMinimizeConfig) -> Result<()>>;
+
+struct FuzzMinimizeReplayPass {
+    target_count: usize,
+    replay: FuzzMinimizeReplay,
+}
 
 impl FuzzMinimizeReplaySession {
     pub(crate) fn replay(
@@ -122,11 +131,17 @@ impl FuzzMinimizeReplaySession {
             observations: observations.clone(),
         };
 
-        for replay in &self.passes {
-            replay(&self.filter, fuzz_minimize.clone())?;
+        for pass in &self.passes {
+            if pass.target_count == 0 {
+                continue;
+            }
+            (pass.replay)(&self.filter, fuzz_minimize.clone())?;
         }
 
-        let observations = observations.lock().expect("minimize observations lock").clone();
+        let observations = observations
+            .lock()
+            .map_err(|_| eyre::eyre!("minimize observations lock poisoned"))?
+            .clone();
         Ok(merge_replay_observations(observations))
     }
 }
@@ -144,8 +159,56 @@ fn replay_with_runner<FEN: FoundryEvmNetwork>(
 
 fn fuzz_minimize_replay<FEN: FoundryEvmNetwork>(
     runner: MultiContractRunner<FEN>,
-) -> FuzzMinimizeReplay {
-    Box::new(move |filter, fuzz_minimize| replay_with_runner(&runner, filter, fuzz_minimize))
+    filter: &ProjectPathsAwareFilter,
+) -> FuzzMinimizeReplayPass {
+    let target_count = count_fuzz_minimize_targets(&runner, filter);
+    FuzzMinimizeReplayPass {
+        target_count,
+        replay: Box::new(move |filter, fuzz_minimize| {
+            replay_with_runner(&runner, filter, fuzz_minimize)
+        }),
+    }
+}
+
+fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
+    runner: &MultiContractRunner<FEN>,
+    filter: &dyn TestFilter,
+) -> usize {
+    runner
+        .matching_contracts(filter)
+        .map(|(id, contract)| {
+            let contract_name = id.identifier();
+            let fuzz_targets = contract
+                .abi
+                .functions()
+                .filter(|func| func.is_fuzz_test())
+                .filter(|func| filter.matches_test_function_in_contract(&contract_name, func))
+                .filter(|func| {
+                    function_matches_network_pass(
+                        &runner.tcfg.multi_network.all_override_networks,
+                        runner.tcfg.multi_network.pass_network.as_ref(),
+                        runner.tcfg.inline_config.network_for(
+                            &runner.tcfg.config.profile,
+                            &contract_name,
+                            &func.name,
+                        ),
+                    )
+                })
+                .count();
+            let invariant_targets = count_runnable_invariant_campaign_anchors(
+                &contract.abi,
+                filter,
+                InvariantCampaignScope {
+                    config: &runner.tcfg.config,
+                    inline_config: &runner.tcfg.inline_config,
+                    contract_name: &contract_name,
+                    all_override_networks: &runner.tcfg.multi_network.all_override_networks,
+                    pass_network: runner.tcfg.multi_network.pass_network.as_ref(),
+                },
+            );
+            fuzz_targets + invariant_targets
+        })
+        .sum()
 }
 
 fn merge_replay_observations(observations: Vec<ReplayObservation>) -> ReplayObservation {
@@ -941,6 +1004,7 @@ impl TestArgs {
                     evm_opts.clone(),
                     &output,
                     MultiNetworkConfig::default(),
+                    &filter,
                 )
                 .await?,
             );
@@ -956,6 +1020,7 @@ impl TestArgs {
                         all_override_networks: all_override_networks.clone(),
                         pass_network: None,
                     },
+                    &filter,
                 )
                 .await?,
             );
@@ -973,10 +1038,18 @@ impl TestArgs {
                             all_override_networks: all_override_networks.clone(),
                             pass_network: Some(network),
                         },
+                        &filter,
                     )
                     .await?,
                 );
             }
+        }
+
+        let target_count = passes.iter().map(|pass| pass.target_count).sum::<usize>();
+        if target_count != 1 {
+            bail!(
+                "fuzz minimization requires exactly one matched fuzz or invariant test; matched {target_count}"
+            );
         }
 
         Ok(FuzzMinimizeReplaySession { filter, passes })
@@ -1645,7 +1718,8 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         multi_network: MultiNetworkConfig,
-    ) -> eyre::Result<FuzzMinimizeReplay> {
+        filter: &ProjectPathsAwareFilter,
+    ) -> eyre::Result<FuzzMinimizeReplayPass> {
         if dispatch_opts.networks.is_tempo() {
             return self
                 .build_fuzz_minimize_runner::<TempoEvmNetwork>(
@@ -1655,7 +1729,7 @@ impl TestArgs {
                     multi_network,
                 )
                 .await
-                .map(fuzz_minimize_replay);
+                .map(|runner| fuzz_minimize_replay(runner, filter));
         }
 
         #[cfg(feature = "optimism")]
@@ -1663,12 +1737,12 @@ impl TestArgs {
             return self
                 .build_fuzz_minimize_runner::<OpEvmNetwork>(config, evm_opts, output, multi_network)
                 .await
-                .map(fuzz_minimize_replay);
+                .map(|runner| fuzz_minimize_replay(runner, filter));
         }
 
         self.build_fuzz_minimize_runner::<EthEvmNetwork>(config, evm_opts, output, multi_network)
             .await
-            .map(fuzz_minimize_replay)
+            .map(|runner| fuzz_minimize_replay(runner, filter))
     }
 
     /// Run all tests that matches the filter predicate from a test runner
