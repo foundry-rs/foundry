@@ -197,9 +197,12 @@ impl TUIContext<'_> {
 
     fn footer_height(&self) -> u16 {
         let status_or_input = u16::from(
-            self.pc_input.is_some() || self.opcode_search_input.is_some() || self.status.is_some(),
+            self.pc_input.is_some()
+                || self.buffer_offset_input.is_some()
+                || self.opcode_search_input.is_some()
+                || self.status.is_some(),
         );
-        let shortcuts = if self.show_shortcuts { 2 } else { 0 };
+        let shortcuts = if self.show_shortcuts { 3 } else { 0 };
         status_or_input + shortcuts
     }
 
@@ -216,6 +219,19 @@ impl TUIContext<'_> {
                 Span::styled("█", Style::new().fg(Color::Cyan)),
                 Span::styled(
                     "  Enter: jump | Esc: cancel | hex: 0x2a/2a | decimal: d:42",
+                    Style::new().add_modifier(Modifier::DIM),
+                ),
+            ]));
+        } else if let Some(input) = &self.buffer_offset_input {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("Goto {} offset: ", self.active_buffer_name()),
+                    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(input.as_str()),
+                Span::styled("█", Style::new().fg(Color::Cyan)),
+                Span::styled(
+                    "  Enter: jump | Esc: cancel | hex: 0x20/20 | decimal: d:32",
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
@@ -240,12 +256,15 @@ impl TUIContext<'_> {
             lines.push(Line::from(Span::styled(status.text.as_str(), style)));
         }
 
-        let l1 = "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [p]: goto PC | [/]: search opcodes | [n/N]: next/prev search";
-        let l2 = "[l]: layout | [b]: cycle buffer | [t]: stack labels | [m]: buffer decoding | [shift + j/k]: scroll stack | [ctrl + j/k]: scroll buffer | ['<char>]: goto breakpoint | [h] toggle help";
+        let l1 =
+            "[q] quit | [j/k] op | [a/s] jump | [c/C] call | [g/G] start/end | [p] PC | [o] offset";
+        let l2 = "[/] search | [n/N] repeat | [l] layout | [b] buffer | [t] labels | [m] decode | [h] help";
+        let l3 = "[J/K] stack scroll | [ctrl+j/k] buffer scroll | ['<char>] breakpoint";
         let dimmed = Style::new().add_modifier(Modifier::DIM);
         if self.show_shortcuts {
             lines.push(Line::from(Span::styled(l1, dimmed)));
             lines.push(Line::from(Span::styled(l2, dimmed)));
+            lines.push(Line::from(Span::styled(l3, dimmed)));
         }
 
         let paragraph =
@@ -543,8 +562,8 @@ impl TUIContext<'_> {
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
         let call = self.debug_call();
         let step = self.current_step();
-        let buf = match self.active_buffer {
-            BufferKind::Memory => step.memory.as_ref().unwrap().as_ref(),
+        let buf: &[u8] = match self.active_buffer {
+            BufferKind::Memory => step.memory.as_ref().map_or(&[], |memory| memory.as_ref()),
             BufferKind::Calldata => call.calldata.as_ref(),
             BufferKind::Returndata => step.returndata.as_ref(),
         };
@@ -1135,6 +1154,9 @@ mod tests {
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
     use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        layout::Rect,
         style::{Color, Style},
         text::Line,
     };
@@ -1236,6 +1258,25 @@ mod tests {
 
     fn abi_word(value: U256) -> [u8; 32] {
         value.to_be_bytes::<32>()
+    }
+
+    #[test]
+    fn draw_buffer_handles_missing_memory_snapshot() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        let tui = TUIContext::new(&mut context);
+        let backend = TestBackend::new(80, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_buffer(f, Rect::new(0, 0, 80, 4))).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
     }
 
     #[test]
