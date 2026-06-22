@@ -90,6 +90,7 @@ impl FuzzRunIdentifiedContracts {
             created_contracts.push(*address);
             let contract = TargetedContract {
                 identifier: artifact.name.clone(),
+                function_by_selector: build_function_index(&contract.abi),
                 abi: contract.abi.clone(),
                 targeted_functions: functions,
                 excluded_functions: Vec::new(),
@@ -134,7 +135,7 @@ impl TargetedContracts {
                 tx.call_details
                     .calldata
                     .get(..4)
-                    .and_then(|selector| c.abi.functions().find(|f| f.selector() == selector)),
+                    .and_then(|selector| c.function_for_selector(selector)),
             ),
             None => (None, None),
         }
@@ -167,9 +168,7 @@ impl TargetedContracts {
         self.inner.get(&tx.call_details.target).and_then(|contract| {
             tx.call_details.calldata.get(..4).and_then(|selector| {
                 contract
-                    .abi
-                    .functions()
-                    .find(|f| f.selector() == selector)
+                    .function_for_selector(selector)
                     .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
             })
         })
@@ -213,17 +212,27 @@ pub struct TargetedContract {
     pub excluded_functions: Vec<Function>,
     /// The contract's storage layout, if available.
     pub storage_layout: Option<Arc<StorageLayout>>,
+    /// Selector -> ABI function map, precomputed from `abi` for O(1) lookup instead of scanning
+    /// `abi.functions()` on every call. Built once at construction; `abi` never changes after.
+    function_by_selector: HashMap<Selector, Function>,
+}
+
+/// Builds the selector -> function map used for O(1) function lookup by selector.
+fn build_function_index(abi: &JsonAbi) -> HashMap<Selector, Function> {
+    abi.functions().map(|func| (func.selector(), func.clone())).collect()
 }
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
-    pub const fn new(identifier: String, abi: JsonAbi) -> Self {
+    pub fn new(identifier: String, abi: JsonAbi) -> Self {
+        let function_by_selector = build_function_index(&abi);
         Self {
             identifier,
             abi,
             targeted_functions: Vec::new(),
             excluded_functions: Vec::new(),
             storage_layout: None,
+            function_by_selector,
         }
     }
 
@@ -259,6 +268,13 @@ impl TargetedContract {
     /// Returns the function for the given selector.
     pub fn get_function(&self, selector: Selector) -> eyre::Result<&Function> {
         get_function(&self.identifier, selector, &self.abi)
+    }
+
+    /// O(1) lookup of the ABI function matching the given 4-byte selector prefix, or `None` if
+    /// the slice is not a known selector. Replaces a linear scan of `abi.functions()`.
+    fn function_for_selector(&self, selector: &[u8]) -> Option<&Function> {
+        let selector = Selector::try_from(selector).ok()?;
+        self.function_by_selector.get(&selector)
     }
 
     /// Adds the specified selectors to the targeted functions.
