@@ -39,6 +39,9 @@ use locked_ether::LOCKED_ETHER;
 mod mapping_deletion;
 use mapping_deletion::MAPPING_DELETION;
 
+mod tautological_compare;
+use tautological_compare::TAUTOLOGICAL_COMPARE;
+
 mod weak_prng;
 use weak_prng::WEAK_PRNG;
 
@@ -55,6 +58,7 @@ register_lints!(
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
     (LockedEther, late, (LOCKED_ETHER)),
-    (WeakPrng, early, (WEAK_PRNG)),
-    (MappingDeletion, late, (MAPPING_DELETION))
+    (MappingDeletion, late, (MAPPING_DELETION)),
+    (TautologicalCompare, late, (TAUTOLOGICAL_COMPARE)),
+    (WeakPrng, early, (WEAK_PRNG))
 );

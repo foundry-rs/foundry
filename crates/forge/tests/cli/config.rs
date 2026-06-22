@@ -107,7 +107,7 @@ bytecode_hash = "ipfs"
 cbor_metadata = true
 sparse_mode = false
 build_info = false
-isolate = false
+isolate = true
 disable_block_gas_limit = false
 enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
@@ -1347,7 +1347,6 @@ contract CounterTest {
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
     prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
@@ -1621,7 +1620,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
       "path": "out"
     }
   ],
-  "isolate": false,
+  "isolate": true,
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
   "labels": {},

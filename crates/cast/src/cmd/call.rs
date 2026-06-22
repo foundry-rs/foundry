@@ -588,7 +588,7 @@ impl CallArgs {
             params,
             config.eth_rpc_headers.as_deref(),
             jwt.as_deref(),
-        );
+        )?;
 
         sh_println!("{}", curl_cmd)?;
         Ok(())

@@ -1,7 +1,7 @@
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use serde_json::Value;
-use std::process::Command;
+use std::{path::PathBuf, process::Command};
 
 use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
 
@@ -18,6 +18,18 @@ fn json_test_result(stdout: &[u8], signature: &str) -> Value {
         }
     }
     panic!("missing JSON test result for {signature}: {json}");
+}
+
+fn read_artifact_ref(artifact_ref: &Value) -> Value {
+    let artifact_path = artifact_ref["path"].as_str().expect("symbolic artifact path");
+    let artifact_path = PathBuf::from(artifact_path);
+    let artifact = std::fs::read_to_string(&artifact_path)
+        .unwrap_or_else(|err| panic!("failed to read artifact {}: {err}", artifact_path.display()));
+    serde_json::from_str(&artifact).expect("symbolic counterexample artifact")
+}
+
+fn read_artifact(symbolic: &Value) -> Value {
+    read_artifact_ref(&symbolic["artifact"])
 }
 
 forgetest_init!(symbolic_tests_are_ignored_without_flag, |prj, cmd| {
@@ -176,11 +188,13 @@ contract SymbolicAssert {
 "#,
     );
 
-    let stdout = cmd
+    let output = cmd
         .args(["test", "--symbolic", "--match-test", "checkRejectsFortyTwo"])
         .assert_failure()
         .get_output()
-        .stdout_lossy();
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
 
     assert_relevant_lines(
         &stdout,
@@ -206,6 +220,8 @@ checkRejectsFortyTwo(uint256)
 args=[42]
 "#]],
     );
+    assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
+    assert!(stderr.contains("cache/symbolic/"), "{stderr}");
 });
 
 forgetest_init!(symbolic_json_schema_reports_replayed_counterexample, |prj, cmd| {
@@ -226,9 +242,25 @@ contract SymbolicJsonCounterexample {
 }
 "#,
     );
+    prj.add_test(
+        "SymbolicJsonCounterexampleDuplicate.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256) public pure {}
+}
+"#,
+    );
 
     let output = cmd
-        .args(["test", "--symbolic", "--json", "--match-test", "checkRejectsFortyTwo"])
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "checkRejectsFortyTwo",
+            "--match-path",
+            "test/SymbolicJsonCounterexample.t.sol",
+        ])
         .assert_failure()
         .get_output()
         .stdout
@@ -243,7 +275,103 @@ contract SymbolicJsonCounterexample {
     assert!(symbolic["counterexample"]["calldata"].as_str().unwrap().starts_with("0x"));
     assert_eq!(symbolic["counterexample"]["args"], "42");
     assert_eq!(symbolic["counterexample"]["raw_args"], "42");
+    assert_eq!(symbolic["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
+    assert_eq!(result["counterexample_artifacts"][0], symbolic["artifact"]);
+    let artifact_path = symbolic["artifact"]["path"].as_str().unwrap().to_string();
+    let artifact = read_artifact(symbolic);
+    assert_eq!(artifact["schema_version"], 1);
+    assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(artifact["kind"], "single_call");
+    assert_eq!(artifact["test"]["test"], "checkRejectsFortyTwo(uint256)");
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+    assert!(artifact["calls"][0]["calldata"].as_str().unwrap().starts_with("0x"));
+    assert_eq!(artifact["calls"][0]["args"], "42");
+    assert_eq!(artifact["calls"][0]["raw_args"], "42");
     assert!(symbolic["solver"]["stats"]["model_queries"].as_u64().unwrap() >= 1);
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+[FAIL;
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[42]
+"#]],
+    );
+    assert!(
+        !replay_stdout.contains("SymbolicJsonCounterexampleDuplicate.t.sol"),
+        "{replay_stdout}"
+    );
+
+    let mut invalid_artifact = artifact.clone();
+    invalid_artifact["calls"][0]["value"] = serde_json::json!("0x1");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&invalid_artifact).unwrap()).unwrap();
+    let invalid_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        invalid_stdout
+            .contains("single-call symbolic artifact replay does not support non-zero value"),
+        "{invalid_stdout}"
+    );
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let mut invalid_artifact = artifact.clone();
+    invalid_artifact["calls"][0]["sender"] =
+        serde_json::json!("0x0000000000000000000000000000000000000001");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&invalid_artifact).unwrap()).unwrap();
+    let invalid_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(invalid_stdout.contains("single-call symbolic artifact sender"), "{invalid_stdout}");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRejectsFortyTwo(uint256) public pure {}
+}
+"#,
+    );
+    cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]).assert_success();
+
+    prj.add_test(
+        "SymbolicJsonCounterexample.t.sol",
+        r#"
+contract SymbolicJsonCounterexample {
+    function checkRenamed(uint256) public pure {}
+}
+"#,
+    );
+    let stale_stderr = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stale_stderr.contains("symbolic artifact target"), "{stale_stderr}");
+    assert!(
+        stale_stderr.contains("checkRejectsFortyTwo(uint256)` was not found"),
+        "{stale_stderr}"
+    );
 });
 
 forgetest_init!(symbolic_json_schema_reports_replay_skip, |prj, cmd| {
@@ -291,6 +419,7 @@ contract SymbolicJsonReplaySkip is Test {
         symbolic["replay"]["reason"].as_str().unwrap().contains("vm.skip during concrete replay")
     );
     assert_eq!(symbolic["counterexample"]["args"], "42");
+    assert!(symbolic["artifact"].is_null());
 });
 
 forgetest_init!(symbolic_json_schema_reports_incomplete, |prj, cmd| {
@@ -846,11 +975,13 @@ contract SymbolicInvariantSingle is Test {
 "#,
     );
 
-    let stdout = cmd
+    let output = cmd
         .args(["test", "--symbolic", "--match-test", "invariant_counterNeverEleven"])
         .assert_failure()
         .get_output()
-        .stdout_lossy();
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
 
     assert_relevant_lines(
         &stdout,
@@ -876,7 +1007,874 @@ set(uint256)
 args=[7]
 "#]],
     );
+    assert!(stderr.contains("Counterexample artifact:"), "{stderr}");
+    assert!(stderr.contains("cache/symbolic/"), "{stderr}");
     assert!(!stdout.contains("No contracts to fuzz"), "{stdout}");
+});
+
+forgetest_init!(symbolic_json_reports_sequence_counterexample_artifact, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_sequence_counterexample_artifact because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantSequenceArtifact.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactTarget {
+    uint256 public value;
+
+    function set(uint256 x) external {
+        if (x == 7) {
+            value = 11;
+        }
+    }
+}
+
+contract SymbolicInvariantSequenceArtifact is Test {
+    SymbolicArtifactTarget target;
+
+    function setUp() public {
+        target = new SymbolicArtifactTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_counterNeverEleven() public view {
+        assert(target.value() != 11);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "invariant_counterNeverEleven"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "invariant_counterNeverEleven()");
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let failure = failures.first().expect("invariant failure");
+    assert_eq!(failure["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
+    assert_eq!(result["counterexample_artifacts"][0], failure["artifact"]);
+    let artifact_path = failure["artifact"]["path"].as_str().unwrap().to_string();
+
+    let artifact = read_artifact_ref(&failure["artifact"]);
+    assert_eq!(artifact["schema_version"], 1);
+    assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
+    assert_eq!(artifact["kind"], "sequence");
+    assert_eq!(artifact["test"]["test"], "invariant_counterNeverEleven()");
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"].as_array().unwrap().len(), 1);
+    assert_eq!(artifact["calls"][0]["function_name"], "set");
+    assert_eq!(artifact["calls"][0]["args"], "7");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+invariant_counterNeverEleven()
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[7]
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_artifact_replay_uses_stored_fail_on_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_test(
+        "SymbolicArtifactFailOnRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactFailOnRevert is Test {
+    uint256 ignored;
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {
+        ignored = 1;
+        revert("boom");
+    }
+
+    function skip() external {
+        vm.assume(false);
+    }
+
+    function invariant_noop() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("fail-on-revert-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactFailOnRevert.t.sol:SymbolicArtifactFailOnRevert",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": "boom"
+        },
+        "replay_semantics": {
+            "fail_on_revert": true
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": "0x1d2aa5b3",
+                "value": null,
+                "contract_name": "SymbolicArtifactFailOnRevert",
+                "function_name": "skip",
+                "signature": "skip()",
+                "args": "",
+                "raw_args": ""
+            },
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "SymbolicArtifactFailOnRevert",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            }
+        ]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let mut bare_contract_artifact = artifact.clone();
+    bare_contract_artifact["test"]["contract"] = serde_json::json!("SymbolicArtifactFailOnRevert");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&bare_contract_artifact).unwrap())
+        .unwrap();
+    let stderr = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(stderr.contains("test.contract must be `path:Contract`"), "{stderr}");
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noop()");
+    assert_eq!(result["status"], "Failure");
+    assert!(result["kind"].get("Invariant").is_some(), "{result}");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 2);
+    assert_eq!(result["kind"]["Invariant"]["reverts"], 1);
+    assert!(result["kind"].get("Unit").is_none(), "{result}");
+
+    let fixed_artifact_path = prj.root().join("fixed-artifact.json");
+    let mut fixed_artifact = artifact;
+    fixed_artifact["replay_semantics"]["fail_on_revert"] = serde_json::json!(false);
+    std::fs::write(&fixed_artifact_path, serde_json::to_vec_pretty(&fixed_artifact).unwrap())
+        .unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--json",
+            "--replay-symbolic-artifact",
+            fixed_artifact_path.to_str().unwrap(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_noop()");
+    assert_eq!(result["status"], "Success");
+    assert!(result["kind"].get("Invariant").is_some(), "{result}");
+    assert_eq!(result["kind"]["Invariant"]["runs"], 1);
+    assert_eq!(result["kind"]["Invariant"]["calls"], 2);
+    assert_eq!(result["kind"]["Invariant"]["reverts"], 1);
+    assert!(result["kind"].get("Unit").is_none(), "{result}");
+});
+
+forgetest_init!(symbolic_artifact_replay_matches_bracketed_path, |prj, cmd| {
+    prj.add_test(
+        "SymbolicArtifact[Replay].t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactBracketPath is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {
+        revert("boom");
+    }
+
+    function invariant_noop() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("bracketed-path-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifact[Replay].t.sol:SymbolicArtifactBracketPath",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": "boom"
+        },
+        "replay_semantics": {
+            "fail_on_revert": true
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+                "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "SymbolicArtifactBracketPath",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            }
+        ]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("invariant_noop()"), "{stdout}");
+    assert!(stdout.contains("boom"), "{stdout}");
+});
+
+forgetest_init!(symbolic_artifact_replay_rejects_stale_sequence_target, |prj, cmd| {
+    prj.add_test(
+        "SymbolicArtifactStaleTarget.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactStaleTarget is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {}
+
+    function invariant_noop() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("stale-sequence-selector-artifact.json");
+    let mut artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactStaleTarget.t.sol:SymbolicArtifactStaleTarget",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": null,
+            "roll": null,
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": "0xffffffff",
+            "value": null,
+            "contract_name": "SymbolicArtifactStaleTarget",
+            "function_name": "step",
+            "signature": "step()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("targets unknown function"), "{stdout}");
+
+    let stale_target_artifact_path = prj.root().join("stale-sequence-target-artifact.json");
+    artifact["calls"][0]["target"] =
+        serde_json::json!("0x0000000000000000000000000000000000000000");
+    artifact["calls"][0]["calldata"] = serde_json::json!("0xe25fe175");
+    std::fs::write(&stale_target_artifact_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", stale_target_artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("targets unknown function"), "{stdout}");
+});
+
+forgetest_init!(symbolic_artifact_replay_rejects_forbidden_sequence_sender, |prj, cmd| {
+    prj.add_test(
+        "SymbolicArtifactForbiddenSender.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactForbiddenSender is Test {
+    bool drained;
+    address constant BOB = address(0xB0B);
+
+    function setUp() public {
+        targetContract(address(this));
+        excludeSender(BOB);
+    }
+
+    function step() external {
+        if (msg.sender == BOB) {
+            drained = true;
+        }
+    }
+
+    function invariant_notDrained() public view {
+        assert(!drained);
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("forbidden-sequence-sender-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactForbiddenSender.t.sol:SymbolicArtifactForbiddenSender",
+            "test": "invariant_notDrained()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": null,
+            "roll": null,
+            "sender": "0x0000000000000000000000000000000000000b0b",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": "0xe25fe175",
+            "value": null,
+            "contract_name": "SymbolicArtifactForbiddenSender",
+            "function_name": "step",
+            "signature": "step()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("uses forbidden sender"), "{stdout}");
+
+    let zero_sender_artifact_path = prj.root().join("zero-sequence-sender-artifact.json");
+    let mut zero_sender_artifact = artifact;
+    zero_sender_artifact["calls"][0]["sender"] =
+        serde_json::json!("0x0000000000000000000000000000000000000000");
+    std::fs::write(
+        &zero_sender_artifact_path,
+        serde_json::to_vec_pretty(&zero_sender_artifact).unwrap(),
+    )
+    .unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", zero_sender_artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("uses forbidden sender"), "{stdout}");
+});
+
+forgetest_init!(symbolic_artifact_replay_accepts_created_sequence_target, |prj, cmd| {
+    prj.add_test(
+        "SymbolicArtifactCreatedTarget.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract CreatedTarget {
+    SymbolicArtifactCreatedTarget invariantTest;
+
+    constructor(SymbolicArtifactCreatedTarget _invariantTest) {
+        invariantTest = _invariantTest;
+    }
+
+    function step() external {
+        invariantTest.trip();
+    }
+}
+
+contract Spawner {
+    SymbolicArtifactCreatedTarget invariantTest;
+
+    constructor(SymbolicArtifactCreatedTarget _invariantTest) {
+        invariantTest = _invariantTest;
+    }
+
+    function step() external {
+        new CreatedTarget(invariantTest);
+    }
+}
+
+contract SymbolicArtifactCreatedTarget is Test {
+    bool tripped;
+
+    function setUp() public {
+        new Spawner(this);
+    }
+
+    function trip() external {
+        tripped = true;
+    }
+
+    function invariant_notTripped() public view {
+        assert(!tripped);
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("created-sequence-target-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactCreatedTarget.t.sol:SymbolicArtifactCreatedTarget",
+            "test": "invariant_notTripped()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 2,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x0000000000000000000000000000000000000b0b",
+                "target": "0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "Spawner",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            },
+            {
+                "warp": null,
+                "roll": null,
+                "sender": "0x0000000000000000000000000000000000000b0b",
+                "target": "0x104fBc016F4bb334D775a19E8A6510109AC63E00",
+                "calldata": "0xe25fe175",
+                "value": null,
+                "contract_name": "CreatedTarget",
+                "function_name": "step",
+                "signature": "step()",
+                "args": "",
+                "raw_args": ""
+            }
+        ]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("panic: assertion failed"), "{stdout}");
+    assert!(!stdout.contains("targets unknown function"), "{stdout}");
+});
+
+forgetest_init!(symbolic_artifact_replay_ignores_non_target_network_passes, |prj, cmd| {
+    prj.add_test(
+        "SymbolicArtifactNetworkReplay.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicArtifactNetworkReplay is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function step() external {}
+
+    function invariant_noop() public pure {}
+
+    /// forge-config: default.networks.network = "tempo"
+    function test_tempo_marker() public pure {}
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("network-replay-artifact.json");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "sequence",
+        "test": {
+            "contract": "test/SymbolicArtifactNetworkReplay.t.sol:SymbolicArtifactNetworkReplay",
+            "test": "invariant_noop()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 1,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": null,
+            "roll": null,
+            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": "0xe25fe175",
+            "value": null,
+            "contract_name": "SymbolicArtifactNetworkReplay",
+            "function_name": "step",
+            "signature": "step()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(stdout.contains("[PASS] invariant_noop()"), "{stdout}");
+    assert!(!stdout.contains("was not found"), "{stdout}");
 });
 
 forgetest_init!(symbolic_invariant_respects_sequence_depth, |prj, cmd| {
