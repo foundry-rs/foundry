@@ -62,13 +62,15 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         }
 
         self.call_depth = self.call_depth.saturating_add(1);
-        self.record_observed_call(
-            inputs.caller,
-            inputs.target_address,
-            inputs.input.bytes(ecx),
-            inputs.transfer_value().filter(|value| !value.is_zero()),
-            inputs.scheme,
-        );
+        if self.should_record_observed_call(inputs.scheme) {
+            self.observed_calls.push(ObservedCall {
+                depth: self.call_depth - 1,
+                caller: inputs.caller,
+                target: inputs.target_address,
+                calldata: inputs.input.bytes(ecx),
+                value: inputs.transfer_value().filter(|value| !value.is_zero()),
+            });
+        }
 
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
@@ -127,6 +129,7 @@ impl Fuzzer {
         std::mem::take(&mut self.observed_calls)
     }
 
+    #[cfg(test)]
     fn record_observed_call(
         &mut self,
         caller: Address,
@@ -135,7 +138,7 @@ impl Fuzzer {
         value: Option<U256>,
         scheme: CallScheme,
     ) {
-        if self.record_calls && self.call_depth > 1 && matches!(scheme, CallScheme::Call) {
+        if self.should_record_observed_call(scheme) {
             self.observed_calls.push(ObservedCall {
                 depth: self.call_depth - 1,
                 caller,
@@ -144,6 +147,11 @@ impl Fuzzer {
                 value,
             });
         }
+    }
+
+    #[inline]
+    const fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
+        self.record_calls && self.call_depth > 1 && matches!(scheme, CallScheme::Call)
     }
 
     /// Collects `stack` and `memory` values into the fuzz dictionary.
@@ -162,11 +170,6 @@ impl Fuzzer {
         // }
 
         self.collect = false;
-    }
-
-    /// Drains values observed by the inspector since the last call.
-    pub fn drain_collected_values(&mut self) -> Vec<B256> {
-        std::mem::take(&mut self.collected_values)
     }
 
     /// Overrides an external call to simulate reentrancy attacks.
