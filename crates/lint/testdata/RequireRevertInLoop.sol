@@ -5,7 +5,15 @@ pragma solidity ^0.8.18;
 
 error BadItem(uint256 index);
 
+library RequireRevertInLoopLib {
+    function validateExtension(uint256 value) internal pure {
+        require(value != 0, "zero"); //~WARN: `require` or `revert` inside a loop
+    }
+}
+
 contract RequireRevertInLoop {
+    using RequireRevertInLoopLib for uint256;
+
     function requireInsideLoop(uint256[] calldata values) external pure {
         for (uint256 i; i < values.length; ++i) {
             require(values[i] != 0, "zero"); //~WARN: `require` or `revert` inside a loop
@@ -66,6 +74,74 @@ contract RequireRevertInLoop {
         for (uint256 i; i < values.length; ++i) {
             require(values[i] != 0, "zero"); //~WARN: `require` or `revert` inside a loop
         }
+    }
+
+    function sharedHelperRequireInsideFirstLoop(uint256[] calldata values) external pure {
+        for (uint256 i; i < values.length; ++i) {
+            sharedValidate(values[i]);
+        }
+    }
+
+    function sharedHelperRequireInsideSecondLoop(uint256[] calldata values) external pure {
+        for (uint256 i; i < values.length; ++i) {
+            sharedValidate(values[i]);
+        }
+    }
+
+    function sharedValidate(uint256 value) internal pure {
+        require(value != 0, "zero");
+        //~^WARN: `require` or `revert` inside a loop
+    }
+
+    function requireInLoopCondition(uint256 iterations) external pure {
+        uint256 i;
+        while (conditionWithRequire(i, iterations)) {
+            ++i;
+        }
+    }
+
+    function conditionWithRequire(uint256 i, uint256 iterations) internal pure returns (bool) {
+        require(iterations < 100, "too many"); //~WARN: `require` or `revert` inside a loop
+        return i < iterations;
+    }
+
+    function requireInForLoopUpdate(uint256 iterations) external pure {
+        for (uint256 i; i < iterations; i = incrementWithRequire(i)) {}
+    }
+
+    function incrementWithRequire(uint256 i) internal pure returns (uint256) {
+        require(i < 100, "too many"); //~WARN: `require` or `revert` inside a loop
+        return i + 1;
+    }
+
+    function extensionRequireInsideLoop(uint256[] calldata values) external pure {
+        for (uint256 i; i < values.length; ++i) {
+            values[i].validateExtension();
+        }
+    }
+
+    function externalSelfCallInsideLoop(uint256[] calldata values) external view {
+        for (uint256 i; i < values.length; ++i) {
+            this.externalValidate(values[i]);
+        }
+    }
+
+    function externalValidate(uint256 value) external pure {
+        require(value != 0, "zero");
+    }
+
+    function overloadedHelperInsideLoop(uint256[] calldata values) external pure {
+        for (uint256 i; i < values.length; ++i) {
+            overloadedValidate(values[i]);
+        }
+    }
+
+    function overloadedValidate(uint256 value) internal pure {
+        require(value != 0, "zero"); //~WARN: `require` or `revert` inside a loop
+    }
+
+    function overloadedValidate(address value) internal pure {
+        require(value != address(0), "zero");
     }
 
     modifier repeated(uint256 iterations) {

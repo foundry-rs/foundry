@@ -49,6 +49,46 @@ LL │             require(values[i] != 0, "zero");
 warning[require-revert-in-loop]: `require` or `revert` inside a loop
    ╭▸ ROOT/testdata/RequireRevertInLoop.sol:LL:CC
    │
+LL │         require(value != 0, "zero");
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+   ╭▸ ROOT/testdata/RequireRevertInLoop.sol:LL:CC
+   │
+LL │         require(iterations < 100, "too many");
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+   ╭▸ ROOT/testdata/RequireRevertInLoop.sol:LL:CC
+   │
+LL │         require(i < 100, "too many");
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+   ╭▸ ROOT/testdata/RequireRevertInLoop.sol:LL:CC
+   │
+LL │         require(value != 0, "zero");
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+   ╭▸ ROOT/testdata/RequireRevertInLoop.sol:LL:CC
+   │
+LL │         require(value != 0, "zero");
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+   ╭▸ ROOT/testdata/RequireRevertInLoop.sol:LL:CC
+   │
 LL │         require(ok, "not ok");
    │         ━━━━━━━━━━━━━━━━━━━━━
    │
