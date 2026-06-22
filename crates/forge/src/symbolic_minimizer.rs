@@ -1176,6 +1176,10 @@ mod tests {
         function.abi_decode_input(&call.calldata[4..]).unwrap()
     }
 
+    fn address(value: u64) -> Address {
+        Address::from_word(B256::from(U256::from(value)))
+    }
+
     #[test]
     fn minimizes_common_abi_values_with_replay_predicate() {
         let abi =
@@ -1345,7 +1349,7 @@ mod tests {
 
     #[test]
     fn matches_echidna_address_deadbeef_and_bool_examples() {
-        let deadbeef = Address::from_word(B256::from(U256::from(0xdeadbeefu64)));
+        let deadbeef = address(0xdeadbeef);
 
         let address_abi = JsonAbi::parse(["function check(address) external"]).unwrap();
         let address_function = address_abi.functions().next().unwrap();
@@ -1405,6 +1409,142 @@ mod tests {
             decoded(function, &minimized.minimized_call),
             vec![DynSolValue::Bytes(vec![0x41, 0x42]), DynSolValue::String("OK".to_string()),]
         );
+        assert!(minimized.changed());
+    }
+
+    #[test]
+    fn adapts_echidna_values_darray_fixture() {
+        let abi = JsonAbi::parse(["function add_darray(address[]) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let target = address(0x123456);
+        let start = call(
+            function,
+            vec![DynSolValue::Array(vec![
+                DynSolValue::Address(address(0xaaaa)),
+                DynSolValue::Address(target),
+                DynSolValue::Address(address(0xbbbb)),
+            ])],
+        );
+
+        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            let args = decoded(function, candidate);
+            matches!(&args[0], DynSolValue::Array(values) if values.iter().any(|value| {
+                matches!(value, DynSolValue::Address(candidate) if *candidate == target)
+            }))
+        })
+        .unwrap();
+
+        assert_eq!(
+            decoded(function, &minimized.minimized_call),
+            vec![DynSolValue::Array(vec![DynSolValue::Address(target)])]
+        );
+        assert!(minimized.changed());
+    }
+
+    #[test]
+    fn adapts_echidna_abiv2_dynamic_struct_fixture() {
+        let abi = JsonAbi::parse(["function yolo((uint256,string,address)) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let start = call(
+            function,
+            vec![DynSolValue::Tuple(vec![
+                DynSolValue::Uint(U256::from(137), 256),
+                DynSolValue::String("xyoloy".to_string()),
+                DynSolValue::Address(Address::from([0xaa; 20])),
+            ])],
+        );
+
+        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            let args = decoded(function, candidate);
+            matches!(&args[0], DynSolValue::Tuple(values)
+                if matches!(&values[..], [
+                    DynSolValue::Uint(_, _),
+                    DynSolValue::String(value),
+                    DynSolValue::Address(_),
+                ] if value.contains("yolo")))
+        })
+        .unwrap();
+
+        assert_eq!(
+            decoded(function, &minimized.minimized_call),
+            vec![DynSolValue::Tuple(vec![
+                DynSolValue::Uint(U256::ZERO, 256),
+                DynSolValue::String("yolo".to_string()),
+                DynSolValue::Address(Address::ZERO),
+            ])]
+        );
+        assert!(minimized.changed());
+    }
+
+    #[test]
+    fn adapts_echidna_abiv2_multituple_fixture() {
+        let abi = JsonAbi::parse(["function f(((bytes)),((bytes))) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let start = call(
+            function,
+            vec![
+                DynSolValue::Tuple(vec![DynSolValue::Tuple(vec![DynSolValue::Bytes(vec![
+                    0x99, 0x42, 0x88,
+                ])])]),
+                DynSolValue::Tuple(vec![DynSolValue::Tuple(vec![DynSolValue::Bytes(vec![
+                    0xaa, 0xbb,
+                ])])]),
+            ],
+        );
+
+        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            let args = decoded(function, candidate);
+            matches!(&args[0], DynSolValue::Tuple(outer)
+                if matches!(&outer[0], DynSolValue::Tuple(inner)
+                    if matches!(&inner[0], DynSolValue::Bytes(bytes) if bytes.contains(&0x42))))
+        })
+        .unwrap();
+
+        assert_eq!(
+            decoded(function, &minimized.minimized_call),
+            vec![
+                DynSolValue::Tuple(vec![DynSolValue::Tuple(vec![DynSolValue::Bytes(vec![0x42])])]),
+                DynSolValue::Tuple(vec![DynSolValue::Tuple(vec![DynSolValue::Bytes(Vec::new())])]),
+            ]
+        );
+        assert!(minimized.changed());
+    }
+
+    #[test]
+    fn adapts_echidna_basic_multisender_fixture() {
+        let abi = JsonAbi::parse(["function s3() external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let mut start = call(function, Vec::new());
+        let configured_senders = [address(0x1), address(0x2), address(0x3)];
+        start.sender = configured_senders[2];
+
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &configured_senders,
+            |candidate| configured_senders.contains(&candidate.sender),
+        )
+        .unwrap();
+
+        assert_eq!(minimized.minimized_call.sender, configured_senders[0]);
+        assert!(minimized.changed());
+    }
+
+    #[test]
+    fn adapts_echidna_basic_delay_fixture() {
+        let abi = JsonAbi::parse(["function g() external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let mut start = call(function, Vec::new());
+        start.warp = Some(U256::from(43));
+        start.roll = Some(U256::from(42));
+
+        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            candidate.warp == Some(U256::ZERO) && candidate.roll == Some(U256::ZERO)
+        })
+        .unwrap();
+
+        assert_eq!(minimized.minimized_call.warp, Some(U256::ZERO));
+        assert_eq!(minimized.minimized_call.roll, Some(U256::ZERO));
         assert!(minimized.changed());
     }
 
