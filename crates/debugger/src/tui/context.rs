@@ -68,6 +68,8 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) key_buffer: String,
     /// Current goto program counter prompt contents, if the prompt is active.
     pub(crate) pc_input: Option<String>,
+    /// Current active-buffer byte offset prompt contents, if the prompt is active.
+    pub(crate) buffer_offset_input: Option<String>,
     /// Current opcode search prompt contents, if the prompt is active.
     pub(crate) opcode_search_input: Option<String>,
     /// Last opcode search term, used by repeat-search shortcuts.
@@ -95,6 +97,7 @@ impl<'a> TUIContext<'a> {
 
             key_buffer: String::with_capacity(64),
             pc_input: None,
+            buffer_offset_input: None,
             opcode_search_input: None,
             last_opcode_search: None,
             status: None,
@@ -164,9 +167,17 @@ impl<'a> TUIContext<'a> {
 
     fn active_buffer(&self) -> &[u8] {
         match self.active_buffer {
-            BufferKind::Memory => self.current_step().memory.as_ref().unwrap().as_bytes(),
+            BufferKind::Memory => self.current_step().memory.as_ref().map_or(&[], |m| m.as_bytes()),
             BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
+        }
+    }
+
+    pub(crate) const fn active_buffer_name(&self) -> &'static str {
+        match self.active_buffer {
+            BufferKind::Memory => "memory",
+            BufferKind::Calldata => "calldata",
+            BufferKind::Returndata => "returndata",
         }
     }
 }
@@ -191,6 +202,11 @@ impl TUIContext<'_> {
 
         if self.pc_input.is_some() {
             self.handle_pc_input_key_event(event);
+            return ControlFlow::Continue(());
+        }
+
+        if self.buffer_offset_input.is_some() {
+            self.handle_buffer_offset_input_key_event(event);
             return ControlFlow::Continue(());
         }
 
@@ -325,6 +341,13 @@ impl TUIContext<'_> {
                 self.pc_input = Some(String::new());
             }
 
+            // Go to byte offset in the active buffer
+            KeyCode::Char('o') => {
+                self.key_buffer.clear();
+                self.status = None;
+                self.buffer_offset_input = Some(String::new());
+            }
+
             // Search opcodes in the current call
             KeyCode::Char('/') => {
                 self.key_buffer.clear();
@@ -377,9 +400,34 @@ impl TUIContext<'_> {
                 }
             }
             KeyCode::Char(c)
-                if !event.modifiers.contains(KeyModifiers::CONTROL) && is_pc_input_char(c) =>
+                if !event.modifiers.contains(KeyModifiers::CONTROL) && is_numeric_input_char(c) =>
             {
                 if let Some(input) = &mut self.pc_input {
+                    input.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_buffer_offset_input_key_event(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Esc => {
+                self.buffer_offset_input = None;
+            }
+            KeyCode::Enter => {
+                let input = self.buffer_offset_input.take().unwrap_or_default();
+                self.goto_buffer_offset_from_input(&input);
+            }
+            KeyCode::Backspace => {
+                if let Some(input) = &mut self.buffer_offset_input {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(c)
+                if !event.modifiers.contains(KeyModifiers::CONTROL) && is_numeric_input_char(c) =>
+            {
+                if let Some(input) = &mut self.buffer_offset_input {
                     input.push(c);
                 }
             }
@@ -461,7 +509,7 @@ impl TUIContext<'_> {
                 self.debug_arena(),
                 self.draw_memory.inner_call_index,
                 self.current_step,
-                candidate.pc,
+                candidate.value,
             ) {
                 found.push((candidate, target));
             }
@@ -471,10 +519,10 @@ impl TUIContext<'_> {
             [] => {
                 let current = self.debug_call();
                 let outside = candidates.iter().any(|candidate| {
-                    pc_exists_outside_code_context(self.debug_arena(), current, candidate.pc)
+                    pc_exists_outside_code_context(self.debug_arena(), current, candidate.value)
                 });
                 let pc = if let [candidate] = candidates.as_slice() {
-                    let pc = candidate.pc;
+                    let pc = candidate.value;
                     format!("PC 0x{pc:x} ({pc})")
                 } else {
                     format!("PC `{}`", input.trim())
@@ -511,13 +559,70 @@ impl TUIContext<'_> {
         self.scroll_memory_to_current_write();
         self.key_buffer.clear();
 
-        let pc = candidate.pc;
+        let pc = candidate.value;
         let scope = match target.scope {
             PcTargetScope::CurrentNode => "current trace",
             PcTargetScope::SameCodeContext => "same contract",
         };
         let action = if already_at_target { "Already at" } else { "Jumped to" };
         self.set_info(format!("{action} PC 0x{pc:x} ({pc}) in {scope}"));
+    }
+
+    fn goto_buffer_offset_from_input(&mut self, input: &str) {
+        let candidates = match parse_buffer_offset_candidates(input) {
+            Ok(candidates) => candidates,
+            Err(err) => {
+                self.set_error(err);
+                return;
+            }
+        };
+
+        let buffer_name = self.active_buffer_name();
+        let buffer_len = self.active_buffer().len();
+        if buffer_len == 0 {
+            self.set_error(format!("Current {buffer_name} buffer is empty"));
+            return;
+        }
+
+        let mut found = Vec::new();
+        for &candidate in &candidates {
+            if candidate.value < buffer_len {
+                found.push(candidate);
+            }
+        }
+
+        match found.as_slice() {
+            [] => {
+                let offset = if let [candidate] = candidates.as_slice() {
+                    format!("0x{:x} ({})", candidate.value, candidate.value)
+                } else {
+                    format!("`{}`", input.trim())
+                };
+                self.set_error(format!(
+                    "{buffer_name} offset {offset} is outside the {buffer_len}-byte buffer"
+                ));
+            }
+            [candidate] => self.apply_buffer_offset(*candidate),
+            _ => {
+                let input = input.trim();
+                let options = found
+                    .iter()
+                    .map(|candidate| candidate.describe())
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                self.set_error(format!(
+                    "Ambiguous buffer offset `{input}`: {options} both exist; use d:<offset> or 0x<offset>"
+                ));
+            }
+        }
+    }
+
+    fn apply_buffer_offset(&mut self, candidate: NumericCandidate) {
+        let offset = candidate.value;
+        self.draw_memory.current_buf_startline = offset / 32;
+        self.key_buffer.clear();
+        let buffer_name = self.active_buffer_name();
+        self.set_info(format!("Jumped to {buffer_name} offset 0x{offset:x} ({offset})"));
     }
 
     fn set_info(&mut self, text: String) {
@@ -547,7 +652,10 @@ impl TUIContext<'_> {
     }
 
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
-        if self.pc_input.is_some() || self.opcode_search_input.is_some() {
+        if self.pc_input.is_some()
+            || self.buffer_offset_input.is_some()
+            || self.opcode_search_input.is_some()
+        {
             return ControlFlow::Continue(());
         }
 
@@ -643,7 +751,7 @@ fn buffer_as_number(s: &str) -> usize {
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
 }
 
-const fn is_pc_input_char(c: char) -> bool {
+const fn is_numeric_input_char(c: char) -> bool {
     c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
 }
 
@@ -660,19 +768,21 @@ enum PcBase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PcCandidate {
-    pc: usize,
+struct NumericCandidate {
+    value: usize,
     base: PcBase,
 }
 
-impl PcCandidate {
+impl NumericCandidate {
     fn describe(self) -> String {
         match self.base {
-            PcBase::Hex => format!("hex 0x{:x}", self.pc),
-            PcBase::Decimal => format!("decimal {}", self.pc),
+            PcBase::Hex => format!("hex 0x{:x}", self.value),
+            PcBase::Decimal => format!("decimal {}", self.value),
         }
     }
 }
+
+type PcCandidate = NumericCandidate;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PcTargetScope {
@@ -688,53 +798,93 @@ struct PcTarget {
 }
 
 fn parse_pc_candidates(input: &str) -> Result<Vec<PcCandidate>, String> {
+    parse_numeric_candidates(input, NumericInputKind::ProgramCounter)
+}
+
+fn parse_buffer_offset_candidates(input: &str) -> Result<Vec<NumericCandidate>, String> {
+    parse_numeric_candidates(input, NumericInputKind::BufferOffset)
+}
+
+#[derive(Clone, Copy)]
+enum NumericInputKind {
+    ProgramCounter,
+    BufferOffset,
+}
+
+impl NumericInputKind {
+    const fn empty_message(self) -> &'static str {
+        match self {
+            Self::ProgramCounter => "Enter a program counter",
+            Self::BufferOffset => "Enter a buffer offset",
+        }
+    }
+
+    fn invalid_message(self, input: &str) -> String {
+        match self {
+            Self::ProgramCounter => format!("Invalid PC `{input}`; use 0x2a, 2a, or d:42"),
+            Self::BufferOffset => {
+                format!("Invalid buffer offset `{input}`; use 0x20 or d:32")
+            }
+        }
+    }
+}
+
+fn parse_numeric_candidates(
+    input: &str,
+    kind: NumericInputKind,
+) -> Result<Vec<NumericCandidate>, String> {
     let input = input.trim();
     if input.is_empty() {
-        return Err("Enter a program counter".to_string());
+        return Err(kind.empty_message().to_string());
     }
 
     if let Some(rest) = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")) {
-        return parse_pc_candidate(rest, 16, PcBase::Hex, input);
+        return parse_numeric_candidate(rest, 16, PcBase::Hex, input, kind);
     }
 
     if let Some(rest) = input.strip_prefix("d:").or_else(|| input.strip_prefix("dec:")) {
-        return parse_pc_candidate(rest, 10, PcBase::Decimal, input);
+        return parse_numeric_candidate(rest, 10, PcBase::Decimal, input, kind);
     }
 
     if input.chars().any(|c| c.is_ascii_hexdigit() && c.is_ascii_alphabetic()) {
-        return parse_pc_candidate(input, 16, PcBase::Hex, input);
+        return parse_numeric_candidate(input, 16, PcBase::Hex, input, kind);
     }
 
     if input.chars().all(|c| c.is_ascii_digit()) {
-        let decimal = parse_pc(input, 10, input)?;
-        let hex = parse_pc(input, 16, input)?;
+        let decimal = parse_number(input, 10, input, kind)?;
+        let hex = parse_number(input, 16, input, kind)?;
         if decimal == hex {
-            return Ok(vec![PcCandidate { pc: decimal, base: PcBase::Decimal }]);
+            return Ok(vec![NumericCandidate { value: decimal, base: PcBase::Decimal }]);
         }
         return Ok(vec![
-            PcCandidate { pc: decimal, base: PcBase::Decimal },
-            PcCandidate { pc: hex, base: PcBase::Hex },
+            NumericCandidate { value: decimal, base: PcBase::Decimal },
+            NumericCandidate { value: hex, base: PcBase::Hex },
         ]);
     }
 
-    Err(format!("Invalid PC `{input}`; use 0x2a, 2a, or d:42"))
+    Err(kind.invalid_message(input))
 }
 
-fn parse_pc_candidate(
+fn parse_numeric_candidate(
     input: &str,
     radix: u32,
     base: PcBase,
     original: &str,
-) -> Result<Vec<PcCandidate>, String> {
-    Ok(vec![PcCandidate { pc: parse_pc(input, radix, original)?, base }])
+    kind: NumericInputKind,
+) -> Result<Vec<NumericCandidate>, String> {
+    Ok(vec![NumericCandidate { value: parse_number(input, radix, original, kind)?, base }])
 }
 
-fn parse_pc(input: &str, radix: u32, original: &str) -> Result<usize, String> {
+fn parse_number(
+    input: &str,
+    radix: u32,
+    original: &str,
+    kind: NumericInputKind,
+) -> Result<usize, String> {
     if input.is_empty() {
-        return Err(format!("Invalid PC `{original}`; use 0x2a, 2a, or d:42"));
+        return Err(kind.invalid_message(original));
     }
-    usize::from_str_radix(input, radix)
-        .map_err(|_| format!("Invalid PC `{original}`; use 0x2a, 2a, or d:42"))
+    usize::from_str_radix(input, radix).map_err(|_| kind.invalid_message(original))
 }
 
 fn find_pc_target(
@@ -965,11 +1115,11 @@ mod tests {
     fn parses_prefixed_hex_pc() {
         assert_eq!(
             parse_pc_candidates("0x2a").unwrap(),
-            vec![PcCandidate { pc: 42, base: PcBase::Hex }]
+            vec![PcCandidate { value: 42, base: PcBase::Hex }]
         );
         assert_eq!(
             parse_pc_candidates("0X2A").unwrap(),
-            vec![PcCandidate { pc: 42, base: PcBase::Hex }]
+            vec![PcCandidate { value: 42, base: PcBase::Hex }]
         );
     }
 
@@ -977,7 +1127,7 @@ mod tests {
     fn parses_bare_hex_pc_with_letters() {
         assert_eq!(
             parse_pc_candidates("2a").unwrap(),
-            vec![PcCandidate { pc: 42, base: PcBase::Hex }]
+            vec![PcCandidate { value: 42, base: PcBase::Hex }]
         );
     }
 
@@ -985,11 +1135,11 @@ mod tests {
     fn parses_explicit_decimal_pc() {
         assert_eq!(
             parse_pc_candidates("d:42").unwrap(),
-            vec![PcCandidate { pc: 42, base: PcBase::Decimal }]
+            vec![PcCandidate { value: 42, base: PcBase::Decimal }]
         );
         assert_eq!(
             parse_pc_candidates("dec:42").unwrap(),
-            vec![PcCandidate { pc: 42, base: PcBase::Decimal }]
+            vec![PcCandidate { value: 42, base: PcBase::Decimal }]
         );
     }
 
@@ -998,13 +1148,13 @@ mod tests {
         assert_eq!(
             parse_pc_candidates("10").unwrap(),
             vec![
-                PcCandidate { pc: 10, base: PcBase::Decimal },
-                PcCandidate { pc: 16, base: PcBase::Hex },
+                PcCandidate { value: 10, base: PcBase::Decimal },
+                PcCandidate { value: 16, base: PcBase::Hex },
             ]
         );
         assert_eq!(
             parse_pc_candidates("9").unwrap(),
-            vec![PcCandidate { pc: 9, base: PcBase::Decimal }]
+            vec![PcCandidate { value: 9, base: PcBase::Decimal }]
         );
     }
 
@@ -1014,6 +1164,31 @@ mod tests {
         assert!(parse_pc_candidates("0x").is_err());
         assert!(parse_pc_candidates("xyz").is_err());
         assert!(parse_pc_candidates("184467440737095516160").is_err());
+    }
+
+    #[test]
+    fn parses_buffer_offsets_like_program_counters_with_offset_errors() {
+        assert_eq!(
+            parse_buffer_offset_candidates("0x20").unwrap(),
+            vec![NumericCandidate { value: 32, base: PcBase::Hex }]
+        );
+        assert_eq!(
+            parse_buffer_offset_candidates("d:32").unwrap(),
+            vec![NumericCandidate { value: 32, base: PcBase::Decimal }]
+        );
+        assert_eq!(
+            parse_buffer_offset_candidates("20").unwrap(),
+            vec![
+                NumericCandidate { value: 20, base: PcBase::Decimal },
+                NumericCandidate { value: 32, base: PcBase::Hex },
+            ]
+        );
+
+        assert_eq!(parse_buffer_offset_candidates("").unwrap_err(), "Enter a buffer offset");
+        assert_eq!(
+            parse_buffer_offset_candidates("0x").unwrap_err(),
+            "Invalid buffer offset `0x`; use 0x20 or d:32"
+        );
     }
 
     #[test]
@@ -1167,6 +1342,111 @@ mod tests {
         assert_eq!(tui.pc_input, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn buffer_offset_input_mode_handles_calldata_offsets_and_blocks_normal_commands() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 96]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+
+        assert!(matches!(tui.handle_key_event(key(KeyCode::Char('o'))), ControlFlow::Continue(())));
+        assert_eq!(tui.buffer_offset_input.as_deref(), Some(""));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('q')));
+        assert_eq!(tui.buffer_offset_input.as_deref(), Some(""));
+        assert_eq!(tui.draw_memory.current_buf_startline, 0);
+
+        for c in "0x40".chars() {
+            let _ = tui.handle_key_event(key(KeyCode::Char(c)));
+        }
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.buffer_offset_input, None);
+        assert_eq!(tui.draw_memory.current_buf_startline, 2);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Jumped to calldata offset 0x40 (64)");
+    }
+
+    #[test]
+    fn buffer_offset_jumps_in_active_calldata_buffer() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 96]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+
+        tui.goto_buffer_offset_from_input("0x20");
+
+        assert_eq!(tui.draw_memory.current_buf_startline, 1);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x20 (32)");
+    }
+
+    #[test]
+    fn buffer_offset_reports_ambiguous_and_out_of_range_offsets_without_moving() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 64]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+        tui.draw_memory.current_buf_startline = 1;
+
+        tui.goto_buffer_offset_from_input("20");
+        assert_eq!(tui.draw_memory.current_buf_startline, 1);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert!(status.text.contains("Ambiguous buffer offset `20`"));
+
+        tui.goto_buffer_offset_from_input("0x80");
+        assert_eq!(tui.draw_memory.current_buf_startline, 1);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "calldata offset 0x80 (128) is outside the 64-byte buffer");
+    }
+
+    #[test]
+    fn buffer_offset_escape_cancels_and_empty_buffer_reports_error() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('o')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('2')));
+        let _ = tui.handle_key_event(key(KeyCode::Esc));
+
+        assert_eq!(tui.buffer_offset_input, None);
+        assert_eq!(tui.draw_memory.current_buf_startline, 0);
+        assert_eq!(tui.status, None);
+
+        tui.goto_buffer_offset_from_input("0");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Current memory buffer is empty");
     }
 
     #[test]
