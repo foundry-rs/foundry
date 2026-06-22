@@ -478,7 +478,7 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 1, calls: 1, reverts: 1)
+ invariant_increment() (runs: 1, calls: 3, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -1712,7 +1712,7 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 3 met]
 	[Sequence] (original: 5, shrunk: 5)
 ...
- invariant_cond3() (runs: 1, calls: 1, reverts: [..])
+ invariant_cond3() (runs: 1, calls: 5, reverts: 0)
 ...
 "#
     ]]);

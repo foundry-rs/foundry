@@ -86,6 +86,13 @@ reason kind, effective bounds, solver identity and counters, explicit
 assumptions, call-trace location metadata, replay status, and counterexample
 payload when one exists.
 
+When Forge materializes a replay candidate, `symbolic.artifact` points to a
+durable replay artifact written under the configured cache path. The artifact
+schema lives at
+`crates/evm/symbolic/assets/symbolic-counterexample.schema.json` and records
+the replay status, bounds, assumptions, solver metadata, optional trace
+reference, and concrete call data needed by downstream minimizers and exporters.
+
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
 > equal symbolic hashes to infer equal symbolic preimages or lengths in modeled
