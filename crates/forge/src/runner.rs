@@ -239,6 +239,34 @@ mod tests {
 
     const CONTRACT_NAME: &str = "src/Test.t.sol:InvariantTest";
 
+    #[test]
+    fn symbolic_artifact_file_name_hashes_full_identity() {
+        let single = symbolic_artifact_file_name(
+            "src/A.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::SingleCall,
+        );
+        let same_file_component_different_contract = symbolic_artifact_file_name(
+            "src/B.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::SingleCall,
+        );
+        let same_contract_different_kind = symbolic_artifact_file_name(
+            "src/A.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::Sequence,
+        );
+
+        assert_ne!(single, same_file_component_different_contract);
+        assert_ne!(single, same_contract_different_kind);
+
+        let hash = single
+            .strip_prefix("test_collision__-")
+            .and_then(|value| value.strip_suffix(".json"))
+            .expect("file name should include sanitized value prefix and json suffix");
+        assert_eq!(hash.len(), 32);
+    }
+
     fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
         let config = Config::default();
         count_runnable_invariant_campaign_anchors(
@@ -992,7 +1020,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .join("symbolic")
             .join(sanitize_symbolic_artifact_component(self.cr.name));
         // Use a stable per-test artifact path so the latest counterexample replaces older ones.
-        let path = dir.join(symbolic_artifact_file_name(artifact_file_name));
+        let path = dir.join(symbolic_artifact_file_name(self.cr.name, artifact_file_name, kind));
         let artifact = SymbolicCounterexampleArtifact::new(
             kind,
             SymbolicCounterexampleTestIdentity {
@@ -2898,9 +2926,14 @@ fn sanitize_symbolic_artifact_component(value: &str) -> String {
     if sanitized.is_empty() { "_".to_string() } else { sanitized }
 }
 
-fn symbolic_artifact_file_name(value: &str) -> String {
-    let hash = keccak256(value.as_bytes());
-    let hash = hex::encode(&hash[..4]);
+fn symbolic_artifact_file_name(
+    contract_id: &str,
+    value: &str,
+    kind: SymbolicCounterexampleArtifactKind,
+) -> String {
+    let identity = format!("{contract_id}\0{value}\0{kind:?}");
+    let hash = keccak256(identity.as_bytes());
+    let hash = hex::encode(&hash[..16]);
     format!("{}-{hash}.json", sanitize_symbolic_artifact_component(value))
 }
 
