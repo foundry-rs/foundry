@@ -105,6 +105,15 @@ fn weighted_mutation_type(rng: &mut impl Rng, distribution: &WeightedIndex<u32>)
     }
 }
 
+fn assert_supported_mutation_weight_total(mutation_weights: FuzzCorpusMutationWeights) {
+    let total = mutation_weights.total();
+    assert!(
+        total <= u64::from(u32::MAX),
+        "effective mutation weights sum to {total}, which exceeds the maximum supported total {}",
+        u32::MAX
+    );
+}
+
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
 enum MutationType {
@@ -728,6 +737,7 @@ impl WorkerCorpus {
         seed: WorkerCorpusSeed,
     ) -> Self {
         let mutation_weights = config.mutation_weights.effective();
+        assert_supported_mutation_weight_total(mutation_weights);
         let mutation_distribution = WeightedIndex::new([
             mutation_weights.mutation_weight_splice,
             mutation_weights.mutation_weight_repeat,
@@ -738,11 +748,19 @@ impl WorkerCorpus {
             mutation_weights.mutation_weight_cmp,
         ])
         .expect("effective mutation weights contain at least one non-zero entry");
-        let arg_mutation_distribution = WeightedIndex::new([
-            mutation_weights.mutation_weight_abi,
-            mutation_weights.mutation_weight_cmp,
-        ])
-        .ok();
+        let arg_mutation_distribution = if mutation_weights.mutation_weight_abi == 0
+            && mutation_weights.mutation_weight_cmp == 0
+        {
+            None
+        } else {
+            Some(
+                WeightedIndex::new([
+                    mutation_weights.mutation_weight_abi,
+                    mutation_weights.mutation_weight_cmp,
+                ])
+                .expect("non-zero argument mutation weights fit in supported mutation total"),
+            )
+        };
 
         let worker_dir = config.corpus_dir.as_ref().map(|corpus_dir| {
             let worker_dir = corpus_dir.join(format!("{WORKER}{id}"));
@@ -2122,6 +2140,24 @@ mod tests {
 
         assert_eq!(input, Bytes::from(vec![0x44]));
         assert!(manager.current_mutated_index.is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "effective mutation weights sum")]
+    fn mutation_weights_reject_overflowing_total() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.mutation_weights = FuzzCorpusMutationWeights {
+            mutation_weight_splice: u32::MAX,
+            mutation_weight_repeat: 1,
+            mutation_weight_interleave: 0,
+            mutation_weight_prefix: 0,
+            mutation_weight_suffix: 0,
+            mutation_weight_abi: 0,
+            mutation_weight_cmp: 0,
+        };
+
+        let _manager =
+            worker_corpus_with_config(0, config, basic_tx(), WorkerCorpusSeed::default());
     }
 
     #[test]
