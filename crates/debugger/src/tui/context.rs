@@ -232,7 +232,7 @@ impl TUIContext<'_> {
             }),
             // Scroll down the memory buffer
             KeyCode::Char('j') | KeyCode::Down if control => self.repeat(|this| {
-                let max_buf = (this.active_buffer().len() / 32).saturating_sub(1);
+                let max_buf = this.active_buffer().len().div_ceil(32).saturating_sub(1);
                 if this.draw_memory.current_buf_startline < max_buf {
                     this.draw_memory.current_buf_startline += 1;
                 }
@@ -386,53 +386,20 @@ impl TUIContext<'_> {
     }
 
     fn handle_pc_input_key_event(&mut self, event: KeyEvent) {
-        match event.code {
-            KeyCode::Esc => {
-                self.pc_input = None;
-            }
-            KeyCode::Enter => {
-                let input = self.pc_input.take().unwrap_or_default();
-                self.goto_pc_from_input(&input);
-            }
-            KeyCode::Backspace => {
-                if let Some(input) = &mut self.pc_input {
-                    input.pop();
-                }
-            }
-            KeyCode::Char(c)
-                if !event.modifiers.contains(KeyModifiers::CONTROL) && is_pc_input_char(c) =>
-            {
-                if let Some(input) = &mut self.pc_input {
-                    input.push(c);
-                }
-            }
-            _ => {}
+        if let Some(input) =
+            handle_prompt_input_key_event(&mut self.pc_input, event, |_, c| is_pc_input_char(c))
+        {
+            self.goto_pc_from_input(&input);
         }
     }
 
     fn handle_buffer_offset_input_key_event(&mut self, event: KeyEvent) {
-        match event.code {
-            KeyCode::Esc => {
-                self.buffer_offset_input = None;
-            }
-            KeyCode::Enter => {
-                let input = self.buffer_offset_input.take().unwrap_or_default();
-                self.goto_buffer_offset_from_input(&input);
-            }
-            KeyCode::Backspace => {
-                if let Some(input) = &mut self.buffer_offset_input {
-                    input.pop();
-                }
-            }
-            KeyCode::Char(c)
-                if !event.modifiers.contains(KeyModifiers::CONTROL)
-                    && (c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')) =>
-            {
-                if let Some(input) = &mut self.buffer_offset_input {
-                    input.push(c);
-                }
-            }
-            _ => {}
+        if let Some(input) = handle_prompt_input_key_event(
+            &mut self.buffer_offset_input,
+            event,
+            is_buffer_offset_input_char,
+        ) {
+            self.goto_buffer_offset_from_input(&input);
         }
     }
 
@@ -728,8 +695,63 @@ fn buffer_as_number(s: &str) -> usize {
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
 }
 
+fn handle_prompt_input_key_event(
+    input: &mut Option<String>,
+    event: KeyEvent,
+    is_input_char: impl Fn(&str, char) -> bool,
+) -> Option<String> {
+    match event.code {
+        KeyCode::Esc => {
+            *input = None;
+        }
+        KeyCode::Enter => {
+            return Some(input.take().unwrap_or_default());
+        }
+        KeyCode::Backspace => {
+            if let Some(input) = input {
+                input.pop();
+            }
+        }
+        KeyCode::Char(c) if !event.modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(input) = input
+                && is_input_char(input, c)
+            {
+                input.push(c);
+            }
+        }
+        _ => {}
+    }
+
+    None
+}
+
 const fn is_pc_input_char(c: char) -> bool {
     c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
+}
+
+fn is_buffer_offset_input_char(input: &str, c: char) -> bool {
+    if !(c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')) {
+        return false;
+    }
+
+    let mut next = String::with_capacity(input.len() + c.len_utf8());
+    next.push_str(input);
+    next.push(c);
+    is_buffer_offset_input_prefix(&next)
+}
+
+fn is_buffer_offset_input_prefix(input: &str) -> bool {
+    if let Some(rest) = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")) {
+        return rest.chars().all(|c| c.is_ascii_hexdigit());
+    }
+
+    if let Some(rest) = input.strip_prefix("d:").or_else(|| input.strip_prefix("dec:")) {
+        return rest.chars().all(|c| c.is_ascii_digit());
+    }
+
+    input.chars().all(|c| c.is_ascii_hexdigit())
+        || "d:".starts_with(input)
+        || "dec:".starts_with(input)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -834,7 +856,7 @@ fn parse_buffer_offset(input: &str) -> Result<usize, String> {
         } else if let Some(rest) = input.strip_prefix("d:").or_else(|| input.strip_prefix("dec:")) {
             (rest, 10)
         } else {
-            (input, 10)
+            (input, 16)
         };
 
     if digits.is_empty() {
@@ -845,7 +867,7 @@ fn parse_buffer_offset(input: &str) -> Result<usize, String> {
 }
 
 fn invalid_buffer_offset(input: &str) -> String {
-    format!("Invalid buffer offset `{input}`; use 0x20 or d:32")
+    format!("Invalid buffer offset `{input}`; use hex 0x20/20 or decimal d:32")
 }
 
 fn find_pc_target(
@@ -1050,6 +1072,10 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::empty())
     }
 
+    fn ctrl_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
     #[test]
     fn layout_shortcut_cycles_only_concrete_layouts() {
         let address = Address::repeat_byte(1);
@@ -1128,21 +1154,40 @@ mod tests {
     }
 
     #[test]
-    fn parses_buffer_offsets_without_changing_pc_candidate_shape() {
+    fn parses_buffer_offsets_as_visible_hex_labels() {
         assert_eq!(parse_buffer_offset("0x20").unwrap(), 32);
         assert_eq!(parse_buffer_offset("d:32").unwrap(), 32);
         assert_eq!(parse_buffer_offset("dec:32").unwrap(), 32);
-        assert_eq!(parse_buffer_offset("20").unwrap(), 20);
+        assert_eq!(parse_buffer_offset("20").unwrap(), 32);
+        assert_eq!(parse_buffer_offset("2a").unwrap(), 42);
+        assert_eq!(parse_buffer_offset("a").unwrap(), 10);
 
         assert_eq!(parse_buffer_offset("").unwrap_err(), "Enter a buffer offset");
         assert_eq!(
             parse_buffer_offset("0x").unwrap_err(),
-            "Invalid buffer offset `0x`; use 0x20 or d:32"
+            "Invalid buffer offset `0x`; use hex 0x20/20 or decimal d:32"
         );
         assert_eq!(
-            parse_buffer_offset("2a").unwrap_err(),
-            "Invalid buffer offset `2a`; use 0x20 or d:32"
+            parse_buffer_offset("2x3").unwrap_err(),
+            "Invalid buffer offset `2x3`; use hex 0x20/20 or decimal d:32"
         );
+    }
+
+    #[test]
+    fn filters_buffer_offset_input_to_parser_prefixes() {
+        assert!(is_buffer_offset_input_char("", '0'));
+        assert!(is_buffer_offset_input_char("0", 'x'));
+        assert!(is_buffer_offset_input_char("0x", '2'));
+        assert!(is_buffer_offset_input_char("2", 'a'));
+        assert!(is_buffer_offset_input_char("d", ':'));
+        assert!(is_buffer_offset_input_char("dec", ':'));
+        assert!(is_buffer_offset_input_char("dec:", '3'));
+
+        assert!(!is_buffer_offset_input_char("", 'x'));
+        assert!(!is_buffer_offset_input_char("2", 'x'));
+        assert!(!is_buffer_offset_input_char("1", ':'));
+        assert!(!is_buffer_offset_input_char("DEC", ':'));
+        assert!(!is_buffer_offset_input_char("d:", 'a'));
     }
 
     #[test]
@@ -1320,7 +1365,7 @@ mod tests {
         assert_eq!(tui.buffer_offset_input.as_deref(), Some(""));
         assert_eq!(tui.draw_memory.current_buf_startline, 0);
 
-        for c in "0x40".chars() {
+        for c in "40".chars() {
             let _ = tui.handle_key_event(key(KeyCode::Char(c)));
         }
         let _ = tui.handle_key_event(key(KeyCode::Enter));
@@ -1347,10 +1392,31 @@ mod tests {
         tui.init();
         tui.active_buffer = BufferKind::Calldata;
 
-        tui.goto_buffer_offset_from_input("0x20");
+        tui.goto_buffer_offset_from_input("20");
 
         assert_eq!(tui.draw_memory.current_buf_startline, 1);
         assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x20 (32)");
+    }
+
+    #[test]
+    fn buffer_offset_jumps_to_visible_hex_label_on_partial_last_line() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 65]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+
+        tui.goto_buffer_offset_from_input("40");
+
+        assert_eq!(tui.draw_memory.current_buf_startline, 2);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x40 (64)");
     }
 
     #[test]
@@ -1370,14 +1436,14 @@ mod tests {
         tui.draw_memory.current_buf_startline = 1;
 
         tui.goto_buffer_offset_from_input("20");
-        assert_eq!(tui.draw_memory.current_buf_startline, 0);
+        assert_eq!(tui.draw_memory.current_buf_startline, 1);
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Info);
-        assert_eq!(status.text, "Jumped to calldata offset 0x14 (20)");
+        assert_eq!(status.text, "Jumped to calldata offset 0x20 (32)");
 
-        tui.draw_memory.current_buf_startline = 1;
+        tui.draw_memory.current_buf_startline = 0;
         tui.goto_buffer_offset_from_input("0x80");
-        assert_eq!(tui.draw_memory.current_buf_startline, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 0);
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Error);
         assert_eq!(status.text, "calldata offset 0x80 (128) is outside the 64-byte buffer");
@@ -1402,6 +1468,29 @@ mod tests {
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Error);
         assert_eq!(status.text, "Current memory buffer is empty");
+    }
+
+    #[test]
+    fn buffer_scroll_reaches_partial_last_line() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 65]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+
+        let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
+        assert_eq!(tui.draw_memory.current_buf_startline, 1);
+        let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
+        assert_eq!(tui.draw_memory.current_buf_startline, 2);
+        let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
+        assert_eq!(tui.draw_memory.current_buf_startline, 2);
     }
 
     #[test]

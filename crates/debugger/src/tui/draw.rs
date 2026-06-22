@@ -231,7 +231,7 @@ impl TUIContext<'_> {
                 Span::raw(input.as_str()),
                 Span::styled("█", Style::new().fg(Color::Cyan)),
                 Span::styled(
-                    "  Enter: jump | Esc: cancel | hex: 0x20 | decimal: d:32",
+                    "  Enter: jump | Esc: cancel | hex: 0x20/20 | decimal: d:32",
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
@@ -562,8 +562,8 @@ impl TUIContext<'_> {
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
         let call = self.debug_call();
         let step = self.current_step();
-        let buf = match self.active_buffer {
-            BufferKind::Memory => step.memory.as_ref().unwrap().as_ref(),
+        let buf: &[u8] = match self.active_buffer {
+            BufferKind::Memory => step.memory.as_ref().map_or(&[], |memory| memory.as_ref()),
             BufferKind::Calldata => call.calldata.as_ref(),
             BufferKind::Returndata => step.returndata.as_ref(),
         };
@@ -1154,6 +1154,9 @@ mod tests {
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
     use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        layout::Rect,
         style::{Color, Style},
         text::Line,
     };
@@ -1255,6 +1258,25 @@ mod tests {
 
     fn abi_word(value: U256) -> [u8; 32] {
         value.to_be_bytes::<32>()
+    }
+
+    #[test]
+    fn draw_buffer_handles_missing_memory_snapshot() {
+        let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
+        let tui = TUIContext::new(&mut context);
+        let backend = TestBackend::new(80, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_buffer(f, Rect::new(0, 0, 80, 4))).unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Memory (max expansion: 0 bytes)"));
     }
 
     #[test]
