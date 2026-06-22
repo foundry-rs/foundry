@@ -188,7 +188,7 @@ impl Cheatcode for serializeBool_0Call {
 impl Cheatcode for serializeUint_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { objectKey, valueKey, value } = self;
-        serialize_json(state, objectKey, valueKey, (*value).into())
+        serialize_json_value(state, objectKey, valueKey, uint_json_value(*value))
     }
 }
 
@@ -242,11 +242,11 @@ impl Cheatcode for serializeBool_1Call {
 impl Cheatcode for serializeUint_1Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { objectKey, valueKey, values } = self;
-        serialize_json(
+        serialize_json_value(
             state,
             objectKey,
             valueKey,
-            DynSolValue::Array(values.iter().map(|v| DynSolValue::Uint(*v, 256)).collect()),
+            Value::Array(values.iter().copied().map(uint_json_value).collect()),
         )
     }
 }
@@ -336,7 +336,7 @@ impl Cheatcode for serializeUintToHexCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { objectKey, valueKey, value } = self;
         let hex = format!("0x{value:x}");
-        serialize_json(state, objectKey, valueKey, hex.into())
+        serialize_json_value(state, objectKey, valueKey, Value::String(hex))
     }
 }
 
@@ -660,10 +660,27 @@ fn serialize_json<FEN: FoundryEvmNetwork>(
     value: DynSolValue,
 ) -> Result {
     let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs())?;
+    serialize_json_value(state, object_key, value_key, value)
+}
+
+fn serialize_json_value<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    object_key: &str,
+    value_key: &str,
+    value: Value,
+) -> Result {
     let map = state.serialized_jsons.entry(object_key.into()).or_default();
     map.insert(value_key.into(), value);
     let stringified = serde_json::to_string(map).unwrap();
     Ok(stringified.abi_encode())
+}
+
+fn uint_json_value(value: U256) -> Value {
+    if let Ok(n) = u64::try_from(value) {
+        Value::Number(n.into())
+    } else {
+        Value::String(value.to_string())
+    }
 }
 
 /// Resolves a [DynSolType] from user input.
