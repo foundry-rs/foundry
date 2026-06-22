@@ -421,6 +421,80 @@ args=[42, 0x0042]
     );
 });
 
+forgetest_init!(symbolic_minimizes_echidna_address_array_duplicate_fixture, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizes_echidna_address_array_duplicate_fixture because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeAddressArrayDuplicate.t.sol",
+        r#"
+library AddressArrayUtilsBug {
+    function hasDuplicate(address[] memory xs) internal pure returns (bool) {
+        for (uint256 i = 0; i < xs.length; i++) {
+            for (uint256 j = i + 1; j < xs.length; j++) {
+                if (xs[i] == xs[j]) return true;
+            }
+        }
+        return false;
+    }
+}
+
+contract SymbolicMinimizeAddressArrayDuplicate {
+    /// forge-config: default.symbolic.array_lengths = [6]
+    function checkNoDuplicate(address[] memory xs) public pure {
+        assert(!AddressArrayUtilsBug.hasDuplicate(xs));
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkNoDuplicate"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkNoDuplicate(address[])");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 2);
+    assert!(symbolic["minimization"]["accepted"].as_u64().unwrap() > 0);
+    assert_eq!(symbolic["minimization"]["original_calldata_bytes"], 260);
+    assert_eq!(symbolic["minimization"]["minimized_calldata_bytes"], 132);
+
+    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
+    let minimized = read_artifact(symbolic);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_ne!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
+    assert_eq!(
+        minimized["calls"][0]["args"],
+        "[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]"
+    );
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            symbolic["artifact"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[[0x0000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000]]
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_json_schema_reports_replay_skip, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

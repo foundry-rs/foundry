@@ -69,6 +69,7 @@ pub(crate) fn minimize_single_call_counterexample(
     };
     minimize_values_batch(&mut current_args, &mut try_args);
     minimize_value_subsets(&mut current_args, &mut try_args);
+    minimize_value_pairs(&mut current_args, &mut try_args);
     minimize_values(&mut current_args, &mut try_args);
     minimize_call_fields(
         &mut current_call,
@@ -467,6 +468,44 @@ fn minimize_values(values: &mut [DynSolValue], try_values: &mut dyn FnMut(&[DynS
     }
 }
 
+fn minimize_value_pairs(
+    values: &mut Vec<DynSolValue>,
+    try_values: &mut dyn FnMut(&[DynSolValue]) -> bool,
+) -> bool {
+    let mut changed = false;
+    loop {
+        let mut pass_changed = false;
+        for left_idx in 0..values.len() {
+            for right_idx in left_idx + 1..values.len() {
+                let left = values[left_idx].clone();
+                let right = values[right_idx].clone();
+                if minimize_numeric_value_pair(&left, &right, |left, right| {
+                    let mut candidate_values = values.clone();
+                    candidate_values[left_idx] = left;
+                    candidate_values[right_idx] = right;
+                    if try_values(&candidate_values) {
+                        *values = candidate_values;
+                        true
+                    } else {
+                        false
+                    }
+                }) {
+                    pass_changed = true;
+                    break;
+                }
+            }
+            if pass_changed {
+                break;
+            }
+        }
+        if !pass_changed {
+            break;
+        }
+        changed = true;
+    }
+    changed
+}
+
 fn minimize_value(
     value: &mut DynSolValue,
     try_value: &mut dyn FnMut(&DynSolValue) -> bool,
@@ -537,6 +576,14 @@ fn minimize_compound_value(
                 *value = candidate;
                 return true;
             }
+            if let Some(candidate) = minimize_element_pairs(
+                &mut elements,
+                |items| DynSolValue::Array(items.to_vec()),
+                try_value,
+            ) {
+                *value = candidate;
+                return true;
+            }
             minimize_elements(&mut elements, |items| DynSolValue::Array(items.to_vec()), try_value)
                 .map(|candidate| {
                     *value = candidate;
@@ -554,6 +601,14 @@ fn minimize_compound_value(
                 return true;
             }
             if let Some(candidate) = minimize_element_subsets(
+                &mut elements,
+                |items| DynSolValue::FixedArray(items.to_vec()),
+                try_value,
+            ) {
+                *value = candidate;
+                return true;
+            }
+            if let Some(candidate) = minimize_element_pairs(
                 &mut elements,
                 |items| DynSolValue::FixedArray(items.to_vec()),
                 try_value,
@@ -589,6 +644,14 @@ fn minimize_compound_value(
                 *value = candidate;
                 return true;
             }
+            if let Some(candidate) = minimize_element_pairs(
+                &mut elements,
+                |items| DynSolValue::Tuple(items.to_vec()),
+                try_value,
+            ) {
+                *value = candidate;
+                return true;
+            }
             minimize_elements(&mut elements, |items| DynSolValue::Tuple(items.to_vec()), try_value)
                 .map(|candidate| {
                     *value = candidate;
@@ -610,6 +673,18 @@ fn minimize_compound_value(
                 return true;
             }
             if let Some(candidate) = minimize_element_subsets(
+                &mut tuple,
+                |items| DynSolValue::CustomStruct {
+                    name: name.clone(),
+                    prop_names: prop_names.clone(),
+                    tuple: items.to_vec(),
+                },
+                try_value,
+            ) {
+                *value = candidate;
+                return true;
+            }
+            if let Some(candidate) = minimize_element_pairs(
                 &mut tuple,
                 |items| DynSolValue::CustomStruct {
                     name: name.clone(),
@@ -1030,6 +1105,33 @@ fn minimize_elements_batch(
     })
 }
 
+fn minimize_element_pairs(
+    elements: &mut Vec<DynSolValue>,
+    rebuild: impl Fn(&[DynSolValue]) -> DynSolValue,
+    try_value: &mut dyn FnMut(&DynSolValue) -> bool,
+) -> Option<DynSolValue> {
+    for left_idx in 0..elements.len() {
+        for right_idx in left_idx + 1..elements.len() {
+            let left = elements[left_idx].clone();
+            let right = elements[right_idx].clone();
+            if minimize_numeric_value_pair(&left, &right, |left, right| {
+                let mut candidate_elements = elements.clone();
+                candidate_elements[left_idx] = left;
+                candidate_elements[right_idx] = right;
+                if try_value(&rebuild(&candidate_elements)) {
+                    *elements = candidate_elements;
+                    true
+                } else {
+                    false
+                }
+            }) {
+                return Some(rebuild(elements));
+            }
+        }
+    }
+    None
+}
+
 fn minimize_element_subsets(
     elements: &mut Vec<DynSolValue>,
     rebuild: impl Fn(&[DynSolValue]) -> DynSolValue,
@@ -1063,6 +1165,74 @@ fn minimize_element_subsets(
         }
     }
     None
+}
+
+fn minimize_numeric_value_pair(
+    left: &DynSolValue,
+    right: &DynSolValue,
+    mut try_pair: impl FnMut(DynSolValue, DynSolValue) -> bool,
+) -> bool {
+    match (left, right) {
+        (DynSolValue::Uint(left, left_bits), DynSolValue::Uint(right, right_bits)) => {
+            let mut try_uint_pair = |left, right| {
+                try_pair(DynSolValue::Uint(left, *left_bits), DynSolValue::Uint(right, *right_bits))
+            };
+            minimize_u256_pair_delta_candidates(*left, *right, &mut try_uint_pair)
+        }
+        (DynSolValue::Int(left, left_bits), DynSolValue::Int(right, right_bits)) => {
+            minimize_i256_pair_candidates(*left, *right, |left, right| {
+                try_pair(DynSolValue::Int(left, *left_bits), DynSolValue::Int(right, *right_bits))
+            })
+        }
+        _ => false,
+    }
+}
+
+fn minimize_u256_pair_delta_candidates(
+    current_left: U256,
+    current_right: U256,
+    try_candidate: &mut impl FnMut(U256, U256) -> bool,
+) -> bool {
+    match current_left.cmp(&current_right) {
+        std::cmp::Ordering::Equal => {
+            !current_left.is_zero() && try_candidate(U256::ZERO, U256::ZERO)
+        }
+        std::cmp::Ordering::Greater => {
+            let delta = current_left - current_right;
+            !current_right.is_zero() && try_candidate(delta, U256::ZERO)
+        }
+        std::cmp::Ordering::Less => {
+            let delta = current_right - current_left;
+            !current_left.is_zero() && try_candidate(U256::ZERO, delta)
+        }
+    }
+}
+
+fn minimize_i256_pair_candidates(
+    current_left: I256,
+    current_right: I256,
+    mut try_candidate: impl FnMut(I256, I256) -> bool,
+) -> bool {
+    if current_left == I256::ZERO || current_right == I256::ZERO {
+        return false;
+    }
+    if current_left.is_negative() != current_right.is_negative() {
+        return false;
+    }
+
+    minimize_u256_pair_candidates(
+        current_left.unsigned_abs(),
+        current_right.unsigned_abs(),
+        |left_abs, right_abs| {
+            let left = signed_candidate_with_abs(current_left, left_abs);
+            let right = signed_candidate_with_abs(current_right, right_abs);
+            try_candidate(left, right)
+        },
+    )
+}
+
+fn signed_candidate_with_abs(current: I256, abs: U256) -> I256 {
+    if current.is_negative() { I256::from_raw(abs.wrapping_neg()) } else { I256::from_raw(abs) }
 }
 
 fn subset_sizes(shrinkable_len: usize) -> Vec<usize> {
@@ -1614,6 +1784,75 @@ mod tests {
                 DynSolValue::Bytes(vec![0x42]),
             ]),]
         );
+        assert!(minimized.accepted > 0);
+    }
+
+    #[test]
+    fn adapts_echidna_symbolic_fixed_array_relation_fixture() {
+        let abi = JsonAbi::parse(["function array(uint256[3]) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let start = call(
+            function,
+            vec![DynSolValue::FixedArray(vec![
+                DynSolValue::Uint(U256::from(4_370_001), 256),
+                DynSolValue::Uint(U256::from(1_524_785_991), 256),
+                DynSolValue::Uint(U256::from(4_370_000), 256),
+            ])],
+        );
+
+        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            let args = decoded(function, candidate);
+            matches!(&args[0], DynSolValue::FixedArray(values)
+                if matches!(&values[..], [
+                    DynSolValue::Uint(left, _),
+                    DynSolValue::Uint(_, _),
+                    DynSolValue::Uint(right, _),
+                ] if *left == *right + U256::from(1)))
+        })
+        .unwrap();
+
+        assert_eq!(
+            decoded(function, &minimized.minimized_call),
+            vec![DynSolValue::FixedArray(vec![
+                DynSolValue::Uint(U256::from(1), 256),
+                DynSolValue::Uint(U256::ZERO, 256),
+                DynSolValue::Uint(U256::ZERO, 256),
+            ])]
+        );
+        assert!(minimized.changed());
+        assert!(minimized.accepted > 0);
+    }
+
+    #[test]
+    fn adapts_echidna_addressarrayutils_duplicate_fixture() {
+        let abi = JsonAbi::parse(["function checkNoDuplicate(address[]) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let start = call(
+            function,
+            vec![DynSolValue::Array(vec![
+                DynSolValue::Address(address(0x20000)),
+                DynSolValue::Address(address(0xffff_ffff)),
+                DynSolValue::Address(Address::ZERO),
+                DynSolValue::Address(address(0x20000)),
+                DynSolValue::Address(address(0x1ffff_fffe)),
+                DynSolValue::Address(address(0x30000)),
+            ])],
+        );
+
+        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            let args = decoded(function, candidate);
+            matches!(&args[0], DynSolValue::Array(values) if values.iter().tuple_combinations().any(|(left, right)| left == right))
+        })
+        .unwrap();
+
+        assert_eq!(
+            decoded(function, &minimized.minimized_call),
+            vec![DynSolValue::Array(vec![
+                DynSolValue::Address(Address::ZERO),
+                DynSolValue::Address(Address::ZERO),
+            ])]
+        );
+        assert!(minimized.changed());
         assert!(minimized.accepted > 0);
     }
 
