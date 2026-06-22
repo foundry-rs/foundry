@@ -37,7 +37,7 @@ pub(crate) fn minimize_single_call_counterexample(
     configured_senders: &[Address],
     mut still_fails: impl FnMut(&SymbolicCounterexampleCall) -> bool,
 ) -> Option<MinimizedSingleCall> {
-    if !call.calldata.get(..4).is_some_and(|selector| selector == function.selector()) {
+    if call.calldata.get(..4).is_none_or(|selector| selector != function.selector()) {
         return None;
     }
 
@@ -446,16 +446,13 @@ fn same_call(left: &SymbolicCounterexampleCall, right: &SymbolicCounterexampleCa
         && left.value == right.value
 }
 
-fn minimize_values(
-    values: &mut Vec<DynSolValue>,
-    try_values: &mut dyn FnMut(&[DynSolValue]) -> bool,
-) {
+fn minimize_values(values: &mut [DynSolValue], try_values: &mut dyn FnMut(&[DynSolValue]) -> bool) {
     loop {
         let mut changed = false;
         for idx in 0..values.len() {
             let mut value = values[idx].clone();
             let value_changed = minimize_value(&mut value, &mut |candidate| {
-                let mut candidate_values = values.clone();
+                let mut candidate_values = values.to_vec();
                 candidate_values[idx] = candidate.clone();
                 try_values(&candidate_values)
             });
@@ -998,14 +995,14 @@ fn deletion_lengths(len: usize) -> Vec<usize> {
 }
 
 fn minimize_elements(
-    elements: &mut Vec<DynSolValue>,
+    elements: &mut [DynSolValue],
     rebuild: impl Fn(&[DynSolValue]) -> DynSolValue,
     try_value: &mut dyn FnMut(&DynSolValue) -> bool,
 ) -> Option<DynSolValue> {
     for idx in 0..elements.len() {
         let mut element = elements[idx].clone();
         let changed = minimize_value(&mut element, &mut |candidate| {
-            let mut candidate_elements = elements.clone();
+            let mut candidate_elements = elements.to_vec();
             candidate_elements[idx] = candidate.clone();
             try_value(&rebuild(&candidate_elements))
         });
@@ -1027,12 +1024,10 @@ fn minimize_elements_batch(
         return None;
     }
     let candidate = rebuild(&simple_elements);
-    if try_value(&candidate) {
+    try_value(&candidate).then(|| {
         *elements = simple_elements;
-        Some(candidate)
-    } else {
-        None
-    }
+        candidate
+    })
 }
 
 fn minimize_element_subsets(
@@ -1052,17 +1047,17 @@ fn minimize_element_subsets(
     }
 
     for subset_size in subset_sizes(shrinkable_idxs.len()) {
-        let mut subset = Vec::with_capacity(subset_size);
-        if let Some(candidate_elements) = try_element_subset(
+        let mut search = ElementSubsetSearch {
             elements,
-            &simple_elements,
-            &shrinkable_idxs,
-            subset_size,
-            0,
-            &mut subset,
-            &rebuild,
+            simple_elements: &simple_elements,
+            shrinkable_idxs: &shrinkable_idxs,
+            rebuild: &rebuild,
             try_value,
-        ) {
+        };
+        let mut subset = Vec::with_capacity(subset_size);
+        if let Some(candidate_elements) =
+            try_element_subset(&mut search, subset_size, 0, &mut subset)
+        {
             *elements = candidate_elements.clone();
             return Some(rebuild(&candidate_elements));
         }
@@ -1098,40 +1093,41 @@ fn bounded_combination_count(n: usize, k: usize, max: usize) -> Option<usize> {
     Some(count)
 }
 
-fn try_element_subset(
-    elements: &[DynSolValue],
-    simple_elements: &[DynSolValue],
-    shrinkable_idxs: &[usize],
+struct ElementSubsetSearch<'a, R>
+where
+    R: Fn(&[DynSolValue]) -> DynSolValue,
+{
+    elements: &'a [DynSolValue],
+    simple_elements: &'a [DynSolValue],
+    shrinkable_idxs: &'a [usize],
+    rebuild: &'a R,
+    try_value: &'a mut dyn FnMut(&DynSolValue) -> bool,
+}
+
+fn try_element_subset<R>(
+    search: &mut ElementSubsetSearch<'_, R>,
     subset_size: usize,
     start: usize,
     subset: &mut Vec<usize>,
-    rebuild: &impl Fn(&[DynSolValue]) -> DynSolValue,
-    try_value: &mut dyn FnMut(&DynSolValue) -> bool,
-) -> Option<Vec<DynSolValue>> {
+) -> Option<Vec<DynSolValue>>
+where
+    R: Fn(&[DynSolValue]) -> DynSolValue,
+{
     if subset.len() == subset_size {
-        let mut candidate_elements = elements.to_vec();
+        let mut candidate_elements = search.elements.to_vec();
         for idx in subset.iter().copied() {
-            candidate_elements[idx] = simple_elements[idx].clone();
+            candidate_elements[idx] = search.simple_elements[idx].clone();
         }
-        if try_value(&rebuild(&candidate_elements)) {
+        if (search.try_value)(&(search.rebuild)(&candidate_elements)) {
             return Some(candidate_elements);
         }
         return None;
     }
 
     let remaining = subset_size - subset.len();
-    for choice_idx in start..=shrinkable_idxs.len() - remaining {
-        subset.push(shrinkable_idxs[choice_idx]);
-        if let Some(candidate) = try_element_subset(
-            elements,
-            simple_elements,
-            shrinkable_idxs,
-            subset_size,
-            choice_idx + 1,
-            subset,
-            rebuild,
-            try_value,
-        ) {
+    for choice_idx in start..=search.shrinkable_idxs.len() - remaining {
+        subset.push(search.shrinkable_idxs[choice_idx]);
+        if let Some(candidate) = try_element_subset(search, subset_size, choice_idx + 1, subset) {
             return Some(candidate);
         }
         subset.pop();
@@ -1287,6 +1283,129 @@ mod tests {
             vec![DynSolValue::Uint(U256::from(43), 8)]
         );
         assert!(minimized.attempts < MAX_MINIMIZATION_ATTEMPTS);
+    }
+
+    #[test]
+    fn matches_echidna_contiguous_slice_examples() {
+        let bytes_abi = JsonAbi::parse(["function check(bytes) external"]).unwrap();
+        let bytes_function = bytes_abi.functions().next().unwrap();
+        let bytes_start =
+            call(bytes_function, vec![DynSolValue::Bytes(vec![0x99, 0x41, 0x42, 0x88])]);
+        let bytes_minimized =
+            minimize_single_call_counterexample(bytes_function, &bytes_start, &[], |candidate| {
+                decoded(bytes_function, candidate) == vec![DynSolValue::Bytes(vec![0x41, 0x42])]
+            })
+            .unwrap();
+        assert_eq!(
+            decoded(bytes_function, &bytes_minimized.minimized_call),
+            vec![DynSolValue::Bytes(vec![0x41, 0x42])]
+        );
+
+        let string_abi = JsonAbi::parse(["function check(string) external"]).unwrap();
+        let string_function = string_abi.functions().next().unwrap();
+        let string_start = call(string_function, vec![DynSolValue::String("xOKy".to_string())]);
+        let string_minimized =
+            minimize_single_call_counterexample(string_function, &string_start, &[], |candidate| {
+                decoded(string_function, candidate) == vec![DynSolValue::String("OK".to_string())]
+            })
+            .unwrap();
+        assert_eq!(
+            decoded(string_function, &string_minimized.minimized_call),
+            vec![DynSolValue::String("OK".to_string())]
+        );
+
+        let array_abi = JsonAbi::parse(["function check(uint256[]) external"]).unwrap();
+        let array_function = array_abi.functions().next().unwrap();
+        let array_start = call(
+            array_function,
+            vec![DynSolValue::Array(vec![
+                DynSolValue::Uint(U256::from(9), 256),
+                DynSolValue::Uint(U256::from(4), 256),
+                DynSolValue::Uint(U256::from(2), 256),
+                DynSolValue::Uint(U256::from(8), 256),
+            ])],
+        );
+        let array_minimized =
+            minimize_single_call_counterexample(array_function, &array_start, &[], |candidate| {
+                let args = decoded(array_function, candidate);
+                matches!(&args[0], DynSolValue::Array(values) if values == &[
+                    DynSolValue::Uint(U256::from(4), 256),
+                    DynSolValue::Uint(U256::from(2), 256),
+                ])
+            })
+            .unwrap();
+        assert_eq!(
+            decoded(array_function, &array_minimized.minimized_call),
+            vec![DynSolValue::Array(vec![
+                DynSolValue::Uint(U256::from(4), 256),
+                DynSolValue::Uint(U256::from(2), 256),
+            ])]
+        );
+    }
+
+    #[test]
+    fn matches_echidna_address_deadbeef_and_bool_examples() {
+        let deadbeef = Address::from_word(B256::from(U256::from(0xdeadbeefu64)));
+
+        let address_abi = JsonAbi::parse(["function check(address) external"]).unwrap();
+        let address_function = address_abi.functions().next().unwrap();
+        let address_start =
+            call(address_function, vec![DynSolValue::Address(Address::from([0xaa; 20]))]);
+        let address_minimized = minimize_single_call_counterexample(
+            address_function,
+            &address_start,
+            &[],
+            |candidate| {
+                let args = decoded(address_function, candidate);
+                matches!(&args[..], [DynSolValue::Address(address)] if *address == deadbeef)
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            decoded(address_function, &address_minimized.minimized_call),
+            vec![DynSolValue::Address(deadbeef)]
+        );
+
+        let bool_abi = JsonAbi::parse(["function check(bool) external"]).unwrap();
+        let bool_function = bool_abi.functions().next().unwrap();
+        let bool_start = call(bool_function, vec![DynSolValue::Bool(true)]);
+        let bool_minimized =
+            minimize_single_call_counterexample(bool_function, &bool_start, &[], |candidate| {
+                decoded(bool_function, candidate) == vec![DynSolValue::Bool(false)]
+            })
+            .unwrap();
+        assert_eq!(
+            decoded(bool_function, &bool_minimized.minimized_call),
+            vec![DynSolValue::Bool(false)]
+        );
+    }
+
+    #[test]
+    fn minimizes_correlated_multi_arg_slice_examples() {
+        let abi = JsonAbi::parse(["function check(bytes,string) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let start = call(
+            function,
+            vec![
+                DynSolValue::Bytes(vec![0x99, 0x41, 0x42, 0x88]),
+                DynSolValue::String("xOKy".to_string()),
+            ],
+        );
+
+        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            let args = decoded(function, candidate);
+            matches!(&args[..], [
+                DynSolValue::Bytes(bytes),
+                DynSolValue::String(string),
+            ] if bytes == &[0x41, 0x42] && string.contains("OK"))
+        })
+        .unwrap();
+
+        assert_eq!(
+            decoded(function, &minimized.minimized_call),
+            vec![DynSolValue::Bytes(vec![0x41, 0x42]), DynSolValue::String("OK".to_string()),]
+        );
+        assert!(minimized.changed());
     }
 
     #[test]

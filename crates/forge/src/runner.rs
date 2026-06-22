@@ -1454,7 +1454,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &signature,
                         &symbolic_result,
                         SymbolicCounterexampleArtifactKind::SingleCall,
-                        vec![final_call.clone()],
+                        vec![final_call],
                     );
                     if let Some(artifact) = minimized_artifact.clone() {
                         symbolic_result = symbolic_result.with_artifact(artifact);
@@ -3079,7 +3079,7 @@ fn validate_single_call_symbolic_replay(
             call.target, test_address
         ));
     }
-    if !call.calldata.get(..4).is_some_and(|selector| func.selector() == selector) {
+    if call.calldata.get(..4).is_none_or(|selector| func.selector() != selector) {
         return Err(format!(
             "single-call symbolic artifact calldata does not match `{}` selector",
             func.signature()
