@@ -424,8 +424,8 @@ impl FuzzDictionary {
     /// If values are newly collected then they are removed at the end of current run.
     fn insert_push_bytes_values(&mut self, address: &Address, account_info: &AccountInfo) {
         if self.config.include_push_bytes
-            && !self.addresses.contains(address)
             && let Some(code) = &account_info.code
+            && !self.addresses.contains(address)
         {
             self.insert_address(*address);
             if !self.values_full() {
@@ -548,10 +548,9 @@ impl FuzzDictionary {
 
     fn insert_value_u256(&mut self, value: U256) -> bool {
         // Also add the value below and above the push value to the dictionary.
-        let one = U256::from(1);
         self.insert_value(value.into())
-            | self.insert_value((value.wrapping_sub(one)).into())
-            | self.insert_value((value.wrapping_add(one)).into())
+            | self.insert_value((value.wrapping_sub(U256::ONE)).into())
+            | self.insert_value((value.wrapping_add(U256::ONE)).into())
     }
 
     fn values_full(&self) -> bool {
