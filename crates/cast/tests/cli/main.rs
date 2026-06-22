@@ -4347,6 +4347,53 @@ Traces:
 "#]]);
 });
 
+// --debug-trace-call with --with-local-artifacts labels the called contract by its local
+// artifact name (Counter::) instead of the raw address. Without the RPC bytecode-map fetch the
+// trace falls back to the bare address, so this test can fail.
+forgetest_async!(cast_call_debug_trace_call_with_local_artifacts, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "call",
+        "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "number()(uint256)",
+        "--debug-trace-call",
+        "--with-local-artifacts",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Compiling project to generate artifacts
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [23488] Counter::number()
+    └─ ← [Return] 0
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 

@@ -5,14 +5,14 @@ use crate::{
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_network::{BlockResponse, TransactionResponse};
+use alloy_network::{BlockResponse, Network, TransactionResponse};
 use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressHashMap, AddressSet},
 };
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockTransactions,
+    BlockId, BlockTransactions,
     trace::geth::{GethDebugTracingOptions, PreStateConfig},
 };
 use clap::Parser;
@@ -445,6 +445,33 @@ pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
             }
             Some((addr, code))
         }));
+    }
+    Ok(contracts_bytecode)
+}
+
+/// Fetches the runtime bytecode of the addresses seen in `result` over RPC.
+///
+/// The RPC trace path (`cast call --debug-trace-call`) has no local executor to read code
+/// from, so the bytecode needed to match local artifacts is fetched from the node with
+/// `eth_getCode`. Addresses whose code cannot be fetched are skipped with a warning.
+pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
+    provider: &P,
+    result: &TraceResult,
+    block: BlockId,
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
+    if let Some(ref traces) = result.traces {
+        for addr in gather_trace_addresses(traces) {
+            match provider.get_code_at(addr).block_id(block).await {
+                Ok(code) if !code.is_empty() => {
+                    contracts_bytecode.insert(addr, code);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    let _ = sh_warn!("Failed to fetch code for {addr}: {err}");
+                }
+            }
+        }
     }
     Ok(contracts_bytecode)
 }

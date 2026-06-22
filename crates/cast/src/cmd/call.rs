@@ -1,4 +1,4 @@
-use super::run::fetch_contracts_bytecode_from_trace;
+use super::run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc};
 use crate::{
     Cast,
     debug::handle_traces,
@@ -343,7 +343,21 @@ impl CallArgs {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
 
-            let geth_trace = provider.debug_trace_call(tx, block, call_options).await?;
+            let geth_trace = provider
+                .debug_trace_call(tx, block, call_options)
+                .await
+                .map_err(|err| -> eyre::Report {
+                    // The `debug` namespace is often disabled on public RPCs, which reject the
+                    // call with JSON-RPC error -32601 (method not found). Surface an
+                    // actionable hint instead of the raw transport error.
+                    if err.as_error_resp().is_some_and(|resp| resp.code == -32601) {
+                        eyre::eyre!(
+                            "the RPC endpoint does not support `debug_traceCall` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or drop `--debug-trace-call` to run the call locally with `--trace`"
+                        )
+                    } else {
+                        err.into()
+                    }
+                })?;
             let GethTrace::CallTracer(frame) = geth_trace else {
                 eyre::bail!(
                     "`debug_traceCall` did not return a callTracer frame; the RPC endpoint may not \
@@ -363,12 +377,22 @@ impl CallArgs {
                 gas_used,
             };
 
+            // Local-artifact labeling matches deployed runtime bytecode against the
+            // project artifacts. There is no local executor on this path, so fetch the code
+            // over RPC for the addresses in the trace. Skip the extra round-trips unless
+            // local artifacts were requested.
+            let contracts_bytecode = if with_local_artifacts {
+                fetch_contracts_bytecode_via_rpc(&provider, &result, block).await?
+            } else {
+                Default::default()
+            };
+
             let chain = alloy_chains::Chain::from_id(provider.get_chain_id().await?);
             handle_traces(
                 result,
                 &config,
                 chain,
-                &Default::default(),
+                &contracts_bytecode,
                 labels,
                 with_local_artifacts,
                 false,
