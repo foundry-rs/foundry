@@ -4,9 +4,15 @@ use crate::{
     decode::decode_console_logs,
     diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
-    multi_runner::{FuzzMinimizeConfig, MultiNetworkConfig, ShowmapConfig, matches_artifact},
+    multi_runner::{
+        FuzzMinimizeConfig, MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig,
+        matches_artifact,
+    },
     mutation::{MutationRunConfig, run_mutation_testing},
-    result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
+    result::{
+        SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
+        SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
+    },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -319,6 +325,29 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC")]
     pub symbolic: bool,
 
+    /// Replay a durable symbolic counterexample artifact emitted by `forge test --symbolic`.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with_all = [
+            "debug",
+            "flamegraph",
+            "flamechart",
+            "rerun",
+            "fuzz_input_file",
+            "showmap_out",
+            "path",
+            "test_pattern",
+            "test_pattern_inverse",
+            "contract_pattern",
+            "contract_pattern_inverse",
+            "path_pattern",
+            "no-match-path",
+        ],
+    )]
+    pub replay_symbolic_artifact: Option<PathBuf>,
+
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
     pub symbolic_solver: Option<String>,
@@ -578,6 +607,79 @@ impl TestArgs {
         self.fuzz_failure_replay = true;
     }
 
+    fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
+        let Some(path) = &self.replay_symbolic_artifact else {
+            return Ok(None);
+        };
+
+        if !self.filter.is_empty() || self.path.is_some() {
+            bail!(
+                "`--replay-symbolic-artifact` cannot be combined with test selection filters; \
+                 the artifact selects its original target"
+            );
+        }
+
+        let value = foundry_common::fs::read_json_file::<serde_json::Value>(path).wrap_err(
+            format!("failed to read symbolic counterexample artifact {}", path.display()),
+        )?;
+        let schema_version =
+            value.get("schema_version").and_then(serde_json::Value::as_u64).ok_or_else(|| {
+                eyre::eyre!(
+                    "symbolic counterexample artifact {} is missing numeric schema_version",
+                    path.display()
+                )
+            })?;
+        if schema_version != 1 {
+            bail!(
+                "unsupported symbolic counterexample artifact schema version {} in {}",
+                schema_version,
+                path.display()
+            );
+        }
+        let schema = value.get("schema").and_then(serde_json::Value::as_str).ok_or_else(|| {
+            eyre::eyre!(
+                "symbolic counterexample artifact {} is missing string schema",
+                path.display()
+            )
+        })?;
+        if schema != SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA {
+            bail!(
+                "unsupported symbolic counterexample artifact schema `{}` in {}",
+                schema,
+                path.display()
+            );
+        }
+        let artifact = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).wrap_err(
+            format!("failed to parse symbolic counterexample artifact {}", path.display()),
+        )?;
+        if artifact.calls.is_empty() {
+            bail!("symbolic counterexample artifact {} has no calls", path.display());
+        }
+        if artifact.replay.status != SymbolicReplayStatus::Confirmed {
+            bail!(
+                "symbolic counterexample artifact {} replay status must be confirmed, got {:?}",
+                path.display(),
+                artifact.replay.status,
+            );
+        }
+        let Some((artifact_path, contract_name)) = artifact.test.contract.rsplit_once(':') else {
+            bail!(
+                "symbolic counterexample artifact {} test.contract must be `path:Contract`, got `{}`",
+                path.display(),
+                artifact.test.contract,
+            );
+        };
+        if artifact_path.is_empty() || contract_name.is_empty() {
+            bail!(
+                "symbolic counterexample artifact {} test.contract must be `path:Contract`, got `{}`",
+                path.display(),
+                artifact.test.contract,
+            );
+        }
+
+        Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
+    }
+
     /// Reject flags whose stdout shape conflicts with the NDJSON stream
     /// contract under `--machine`. Called from the binary entry point so
     /// `--watch` is also rejected.
@@ -696,13 +798,30 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
-        let (project_root, config, evm_opts, output, filter) = self.compile_project().await?;
-        self.run_tests(&project_root, config, evm_opts, &output, &filter, false).await
+        let (project_root, config, evm_opts, output, filter, replay_symbolic_artifact) =
+            self.compile_project().await?;
+        self.run_tests(
+            &project_root,
+            config,
+            evm_opts,
+            &output,
+            &filter,
+            false,
+            replay_symbolic_artifact,
+        )
+        .await
     }
 
     async fn compile_project(
         &mut self,
-    ) -> Result<(PathBuf, Config, EvmOpts, ProjectCompileOutput, ProjectPathsAwareFilter)> {
+    ) -> Result<(
+        PathBuf,
+        Config,
+        EvmOpts,
+        ProjectCompileOutput,
+        ProjectPathsAwareFilter,
+        Option<SymbolicArtifactReplayConfig>,
+    )> {
         let machine_mode = foundry_cli::is_machine();
 
         // Merge all configs.
@@ -740,7 +859,33 @@ impl TestArgs {
         let project = config.project()?;
         let project_root = project.paths.root.clone();
 
-        let filter = self.filter(&config)?;
+        let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
+        if replay_symbolic_artifact.is_some() {
+            config.symbolic.enabled = true;
+        }
+
+        let mut filter = self.filter(&config)?;
+        if let Some(replay) = &replay_symbolic_artifact {
+            let filter_args = filter.args_mut();
+            filter_args.test_pattern_inverse = None;
+            filter_args.contract_pattern_inverse = None;
+            filter_args.path_pattern_inverse = None;
+            let (path, contract) = replay
+                .artifact
+                .test
+                .contract
+                .rsplit_once(':')
+                .map_or(("", replay.artifact.test.contract.as_str()), |(path, contract)| {
+                    (path, contract)
+                });
+            filter_args.test_pattern =
+                Some(Regex::new(&format!("^{}$", regex::escape(&replay.artifact.test.test)))?);
+            filter_args.contract_pattern =
+                Some(Regex::new(&format!("^{}$", regex::escape(contract)))?);
+            if !path.is_empty() {
+                filter_args.path_pattern = Some(globset::escape(path).parse::<GlobMatcher>()?);
+            }
+        }
         trace!(target: "forge::test", ?filter, "using filter");
 
         let mut compiler = ProjectCompiler::new()
@@ -758,13 +903,13 @@ impl TestArgs {
             emit_machine_compile_error(&output);
         }
 
-        Ok((project_root, config, evm_opts, output, filter))
+        Ok((project_root, config, evm_opts, output, filter, replay_symbolic_artifact))
     }
 
     pub(crate) async fn prepare_fuzz_minimize_replay(
         &mut self,
     ) -> Result<FuzzMinimizeReplaySession> {
-        let (_, mut config, mut evm_opts, output, filter) = self.compile_project().await?;
+        let (_, mut config, mut evm_opts, output, filter, _) = self.compile_project().await?;
 
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -840,6 +985,7 @@ impl TestArgs {
     /// Executes all the tests in the project.
     ///
     /// See [`Self::compile_and_run`] for more details.
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_tests(
         &mut self,
         project_root: &Path,
@@ -848,6 +994,7 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
         coverage: bool,
+        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     ) -> Result<TestOutcome> {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -882,6 +1029,9 @@ impl TestArgs {
             }
             if self.showmap_out.is_some() {
                 conflicts.push("--showmap-out");
+            }
+            if self.replay_symbolic_artifact.is_some() {
+                conflicts.push("--replay-symbolic-artifact");
             }
             if !conflicts.is_empty() {
                 bail!(
@@ -968,6 +1118,7 @@ impl TestArgs {
                 should_debug,
                 decode_internal,
                 MultiNetworkConfig::default(),
+                replay_symbolic_artifact.clone(),
             )
             .await?
         } else {
@@ -990,6 +1141,7 @@ impl TestArgs {
                         all_override_networks: all_override_networks.clone(),
                         pass_network: None,
                     },
+                    replay_symbolic_artifact.clone(),
                 )
                 .await?;
 
@@ -1011,6 +1163,7 @@ impl TestArgs {
                             all_override_networks: all_override_networks.clone(),
                             pass_network: Some(network),
                         },
+                        replay_symbolic_artifact.clone(),
                     )
                     .await?;
                 merge_outcomes(&mut outcome, pass_outcome);
@@ -1028,6 +1181,25 @@ impl TestArgs {
 
             (libraries, outcome)
         };
+
+        if let Some(replay) = &replay_symbolic_artifact {
+            let replayed = outcome.tests().count();
+            if replayed == 0 {
+                bail!(
+                    "symbolic artifact target `{}::{}` was not found",
+                    replay.artifact.test.contract,
+                    replay.artifact.test.test
+                );
+            }
+            if replayed > 1 {
+                bail!(
+                    "symbolic artifact target `{}::{}` matched {} tests; replay requires exactly one target",
+                    replay.artifact.test.contract,
+                    replay.artifact.test.test,
+                    replayed
+                );
+            }
+        }
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -1352,6 +1524,7 @@ impl TestArgs {
         should_debug: bool,
         decode_internal: InternalTraceMode,
         multi_network: MultiNetworkConfig,
+        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork_block) =
@@ -1374,6 +1547,7 @@ impl TestArgs {
             .with_fuzz_minimize(fuzz_minimize)
             .with_fuzz_only(self.fuzz_only)
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
+            .with_symbolic_artifact_replay(replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
@@ -1417,6 +1591,7 @@ impl TestArgs {
         should_debug: bool,
         decode_internal: InternalTraceMode,
         multi_network: MultiNetworkConfig,
+        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         if dispatch_opts.networks.is_tempo() {
             self.build_and_run_tests::<TempoEvmNetwork>(
@@ -1428,6 +1603,7 @@ impl TestArgs {
                 should_debug,
                 decode_internal,
                 multi_network,
+                replay_symbolic_artifact,
             )
             .await
         } else {
@@ -1443,6 +1619,7 @@ impl TestArgs {
                         should_debug,
                         decode_internal,
                         multi_network,
+                        replay_symbolic_artifact,
                     )
                     .await;
             }
@@ -1455,6 +1632,7 @@ impl TestArgs {
                 should_debug,
                 decode_internal,
                 multi_network,
+                replay_symbolic_artifact,
             )
             .await
         }
@@ -1713,6 +1891,9 @@ impl TestArgs {
                     !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
                     sh_println!("{}", result.short_result_with_suite(name, &contract_name))?;
+                    for artifact in &result.counterexample_artifacts {
+                        sh_warn!("Counterexample artifact: {}", artifact.path.display())?;
+                    }
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind

@@ -3,7 +3,7 @@
 use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
-    result::SuiteResult,
+    result::{SuiteResult, SymbolicCounterexampleArtifact},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
         count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
@@ -377,6 +377,15 @@ pub struct FuzzMinimizeConfig {
     pub observations: Arc<Mutex<Vec<foundry_evm::executors::ReplayObservation>>>,
 }
 
+/// CLI-only options for replaying a durable symbolic counterexample artifact.
+#[derive(Clone, Debug)]
+pub struct SymbolicArtifactReplayConfig {
+    /// Artifact payload to replay.
+    pub artifact: SymbolicCounterexampleArtifact,
+    /// Path the artifact was loaded from, used in diagnostics.
+    pub path: PathBuf,
+}
+
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
@@ -421,6 +430,9 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
+
+    /// When set, run only the matching test and replay this artifact's concrete payload.
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -544,6 +556,8 @@ pub struct MultiContractRunnerBuilder {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
+    /// Symbolic artifact replay mode (CLI-only, off by default).
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -563,6 +577,7 @@ impl MultiContractRunnerBuilder {
             fuzz_minimize: None,
             fuzz_only: false,
             fuzz_failure_replay: false,
+            symbolic_artifact_replay: None,
         }
     }
 
@@ -583,6 +598,14 @@ impl MultiContractRunnerBuilder {
 
     pub const fn with_fuzz_failure_replay(mut self, fuzz_failure_replay: bool) -> Self {
         self.fuzz_failure_replay = fuzz_failure_replay;
+        self
+    }
+
+    pub fn with_symbolic_artifact_replay(
+        mut self,
+        replay: Option<SymbolicArtifactReplayConfig>,
+    ) -> Self {
+        self.symbolic_artifact_replay = replay;
         self
     }
 
@@ -753,6 +776,7 @@ impl MultiContractRunnerBuilder {
                 fuzz_minimize: self.fuzz_minimize,
                 fuzz_only: self.fuzz_only,
                 fuzz_failure_replay: self.fuzz_failure_replay,
+                symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },
 
