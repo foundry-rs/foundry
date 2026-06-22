@@ -11,8 +11,8 @@ use crate::{
         SymbolicCallTrace, SymbolicCounterexample, SymbolicCounterexampleArtifact,
         SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
         SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
-        SymbolicReplayMetadata, SymbolicResult, TestResult, TestSetup, TestStatus,
-        invariant_campaign_display_name,
+        SymbolicReplayMetadata, SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup,
+        TestStatus, invariant_campaign_display_name,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -31,7 +31,7 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
-            check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
+            check_sequence, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
         replay_corpus_to_showmap,
@@ -1351,6 +1351,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         match artifact.kind {
             SymbolicCounterexampleArtifactKind::SingleCall => {
+                if artifact.replay.status != SymbolicReplayStatus::Confirmed {
+                    self.result.single_fail(Some(format!(
+                        "single-call symbolic artifact replay status must be confirmed, got {:?}",
+                        artifact.replay.status
+                    )));
+                    return self.result;
+                }
                 let Some(call) = artifact.calls.first() else {
                     self.result.single_fail(Some("symbolic artifact has no calls".to_string()));
                     return self.result;
@@ -1367,27 +1374,53 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.result.single_fail(Some(err));
                     return self.result;
                 }
+                if call.warp.is_some() || call.roll.is_some() {
+                    self.result.single_fail(Some(
+                        "single-call symbolic artifact replay does not support warp or roll"
+                            .to_string(),
+                    ));
+                    return self.result;
+                }
 
                 if self.prepare_test(func).is_err() {
                     return self.result;
                 }
 
-                let mut executor = self.clone_executor();
-                match execute_tx(&mut executor, &call.to_basic_tx_details()) {
-                    Ok(mut raw_call_result) => {
-                        let replay_still_fails = !executor.is_raw_call_mut_success(
+                let executor = self.clone_executor();
+                match executor.call_raw(
+                    call.sender,
+                    call.target,
+                    call.calldata.clone(),
+                    call.value.unwrap_or(U256::ZERO),
+                ) {
+                    Ok(raw_call_result) => {
+                        let replay_success = executor.is_raw_call_success(
                             self.address,
-                            &mut raw_call_result,
+                            Cow::Borrowed(&raw_call_result.state_changeset),
+                            &raw_call_result,
                             false,
                         );
-                        self.result.single_result(
-                            !replay_still_fails,
-                            if replay_still_fails { artifact.replay.reason.clone() } else { None },
-                            raw_call_result,
-                        );
-                        if replay_still_fails {
-                            self.result.counterexample =
-                                Some(CounterExample::Single(call.to_base_counterexample()));
+                        if replay_success {
+                            self.result.single_result(true, None, raw_call_result);
+                        } else {
+                            match raw_call_result.into_evm_error(Some(self.revert_decoder())) {
+                                EvmError::Execution(err) => {
+                                    let reason = if err.reason.is_empty() {
+                                        artifact.replay.reason.clone()
+                                    } else {
+                                        Some(err.reason.clone())
+                                    };
+                                    self.result.single_result(false, reason, err.raw);
+                                    self.result.counterexample =
+                                        Some(CounterExample::Single(call.to_base_counterexample()));
+                                }
+                                EvmError::Skip(reason) => self.result.single_skip(reason),
+                                err => {
+                                    self.result.counterexample =
+                                        Some(CounterExample::Single(call.to_base_counterexample()));
+                                    self.result.single_fail(Some(err.to_string()));
+                                }
+                            }
                         }
                     }
                     Err(err) => {
