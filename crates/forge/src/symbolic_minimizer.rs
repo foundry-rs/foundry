@@ -1231,7 +1231,7 @@ fn minimize_i256_pair_candidates(
     )
 }
 
-fn signed_candidate_with_abs(current: I256, abs: U256) -> I256 {
+const fn signed_candidate_with_abs(current: I256, abs: U256) -> I256 {
     if current.is_negative() { I256::from_raw(abs.wrapping_neg()) } else { I256::from_raw(abs) }
 }
 
@@ -1834,7 +1834,7 @@ mod tests {
                 DynSolValue::Address(address(0xffff_ffff)),
                 DynSolValue::Address(Address::ZERO),
                 DynSolValue::Address(address(0x20000)),
-                DynSolValue::Address(address(0x1ffff_fffe)),
+                DynSolValue::Address(address(0x0001_ffff_fffe)),
                 DynSolValue::Address(address(0x30000)),
             ])],
         );
