@@ -88,8 +88,7 @@ pub fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
 pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
     if path.is_file() {
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
-        let (uuid, timestamp) = parse_corpus_filename(name)
-            .map_err(|err| eyre!("failed to parse corpus filename {}: {err}", path.display()))?;
+        let (uuid, timestamp) = parse_corpus_filename(name).unwrap_or((Uuid::nil(), 0));
         return Ok(vec![CorpusDirEntry { path: path.to_path_buf(), uuid, timestamp }]);
     }
 
@@ -173,5 +172,18 @@ mod tests {
 
         let entries = read_corpus_tree(&dir).unwrap();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn read_corpus_tree_accepts_explicit_single_file_with_arbitrary_name() {
+        let dir = temp_dir();
+        let entry = dir.join("min.json");
+        std::fs::write(&entry, "[]").unwrap();
+
+        let entries = read_corpus_tree(&entry).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, entry);
+        assert_eq!(entries[0].uuid, Uuid::nil());
+        assert_eq!(entries[0].timestamp, 0);
     }
 }

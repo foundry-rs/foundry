@@ -283,14 +283,14 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         if fuzzed_contracts.is_some() {
             if observation.failure.is_none() {
                 observation.failure =
-                    invariant_handler_failure(target, selector, reverter, reverted);
+                    invariant_handler_failure(target, selector, reverter, reverted, &call_result);
             }
             executor.commit(&mut call_result);
             if observation.failure.is_none()
                 && let Some(address) = invariant_address
-                && let Some(name) = broken_invariant(&executor, address, invariant_fns)?
+                && let Some(failure) = broken_invariant(&executor, address, invariant_fns)?
             {
-                observation.failure = Some(format!("invariant:{name}"));
+                observation.failure = Some(failure);
             }
         } else {
             let success = if call_result
@@ -303,8 +303,9 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             };
             if !success && observation.failure.is_none() {
                 observation.failure = Some(format!(
-                    "fuzz:{target:?}:{selector:?}:{reverter:?}:{:?}",
-                    call_result.exit_reason
+                    "fuzz:{target:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
+                    call_result.exit_reason,
+                    hex::encode(&call_result.result)
                 ));
             }
         }
@@ -313,13 +314,20 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     Ok(observation)
 }
 
-fn invariant_handler_failure(
+fn invariant_handler_failure<FEN: FoundryEvmNetwork>(
     target: Address,
     selector: Selector,
     reverter: Option<Address>,
     reverted: bool,
+    call_result: &crate::executors::RawCallResult<FEN>,
 ) -> Option<String> {
-    reverted.then(|| format!("handler:{target:?}:{selector:?}:{reverter:?}"))
+    reverted.then(|| {
+        format!(
+            "handler:{target:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
+            call_result.exit_reason,
+            hex::encode(&call_result.result)
+        )
+    })
 }
 
 fn broken_invariant<FEN: FoundryEvmNetwork>(
@@ -328,13 +336,18 @@ fn broken_invariant<FEN: FoundryEvmNetwork>(
     invariant_fns: &[&Function],
 ) -> Result<Option<String>> {
     for invariant in invariant_fns {
-        let (_, success) = call_invariant_function(
+        let (call_result, success) = call_invariant_function(
             executor,
             invariant_address,
             (*invariant).abi_encode_input(&[])?.into(),
         )?;
         if !success {
-            return Ok(Some(invariant.name.clone()));
+            return Ok(Some(format!(
+                "invariant:{}:{:?}:0x{}",
+                invariant.name,
+                call_result.exit_reason,
+                hex::encode(&call_result.result)
+            )));
         }
     }
     Ok(None)

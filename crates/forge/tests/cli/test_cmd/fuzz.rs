@@ -1,4 +1,5 @@
-use alloy_primitives::U256;
+use alloy_json_abi::JsonAbi;
+use alloy_primitives::{U256, hex};
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
@@ -284,6 +285,18 @@ minimized corpus: kept 1/1 entries in cmin-file
     let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("minimized entry: 1 txs -> min.json"), "{stdout}");
     assert!(prj.root().join("min.json").is_file());
+
+    let show_min = cmd.forge_fuse().args(["fuzz", "show", "min.json"]).assert_success();
+    let stdout = String::from_utf8(show_min.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("min.json (1 txs)"), "{stdout}");
+    assert!(stdout.contains("ForgeFuzzShowTargetTest.testFuzz_setNumber("), "{stdout}");
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzShowTargetTest", "--corpus-dir", "min.json"])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] testFuzz_setNumber(uint256) (replay: 1 entries"), "{stdout}");
 });
 
 forgetest_init!(forge_fuzz_cmin_keeps_coverage_divergent_entries, |prj, cmd| {
@@ -395,6 +408,59 @@ contract ForgeFuzzTminSessionTest is Test {
     let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("after 4 candidate replays"), "{stdout}");
     assert!(prj.root().join("min-session.json").is_file());
+});
+
+forgetest_init!(forge_fuzz_tmin_preserves_revert_data, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzTminReason.t.sol",
+        r#"
+contract ForgeFuzzTminReasonTest {
+    function testFuzz_reason(uint256 value) public pure {
+        if (value == 0) revert("zero");
+        if (value == 2) revert("two");
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let artifact = std::fs::read_to_string(
+        prj.root().join("out/ForgeFuzzTminReason.t.sol/ForgeFuzzTminReasonTest.json"),
+    )
+    .unwrap();
+    let artifact: Value = serde_json::from_str(&artifact).unwrap();
+    let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone()).unwrap();
+    let function = abi.functions().find(|function| function.name == "testFuzz_reason").unwrap();
+    let calldata_two = format!("0x{}{:064x}", hex::encode(function.selector()), 2);
+    let entry = format!(
+        r#"[{{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"{calldata_two}",
+  "value":"0x0"
+}}]"#
+    );
+    std::fs::write(corpus.join("reason.json"), entry).unwrap();
+
+    let tmin = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminReasonTest",
+            "corpus/reason.json",
+            "--out",
+            "min-reason.json",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("preserved original failure"), "{stdout}");
+
+    let min = std::fs::read_to_string(prj.root().join("min-reason.json")).unwrap();
+    assert!(min.contains(&calldata_two), "{min}");
 });
 
 forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
