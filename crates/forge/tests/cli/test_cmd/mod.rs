@@ -122,12 +122,7 @@ forgetest!(testdata, |_prj, cmd| {
     let nmc_isolate = format!(
         "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount|{FLAKY_TESTDATA_CONTRACTS})",
     );
-    let nmc_default = format!("--nmc=({FLAKY_TESTDATA_CONTRACTS})");
-    if cfg!(feature = "isolate-by-default") {
-        args.push(&nmc_isolate);
-    } else {
-        args.push(&nmc_default);
-    }
+    args.push(&nmc_isolate);
 
     let orig_assert = cmd.args(args).assert();
     if orig_assert.get_output().status.success() {
@@ -414,7 +409,6 @@ contract SimpleContractTest is DSTest {
 }
    "#;
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
@@ -476,7 +470,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // checks that forge test repeatedly produces the same output
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_test_repeatedly, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
@@ -569,7 +562,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests that libraries are handled correctly in multiforking mode
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(
         "Contract.sol",
@@ -1490,7 +1482,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests internal functions trace
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace, |prj, cmd| {
     prj.clear();
 
@@ -1541,14 +1532,14 @@ Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [231452] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
-    ├─ [22630] SimpleContract::increment()
+    ├─ [43694] SimpleContract::increment()
     │   ├─ [20147] SimpleContract::_setNum(uint256)(1)
     │   │   └─ ← 0
     │   └─ ← [Stop]
-    ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
-    │   ├─ [247] SimpleContract::_setNum(uint256)(100)
+    ├─ [49360] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
+    │   ├─ [5047] SimpleContract::_setNum(uint256)(100)
     │   │   └─ ← 1
     │   ├─ [22336] SimpleContract::_setAddr(address)(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
@@ -1563,7 +1554,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests internal functions trace with memory decoding
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
     prj.clear();
 
@@ -1609,7 +1599,6 @@ Traces:
 });
 
 // <https://github.com/foundry-rs/foundry/issues/15224>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_calldata_bytes, |prj, cmd| {
     prj.clear();
 
@@ -1907,7 +1896,6 @@ contract ATest is Test {
 });
 
 // tests `pauseTracing` and `resumeTracing` functions
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -1962,10 +1950,10 @@ Traces:
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [449649] PauseTracingTest::test()
+  [558945] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
-    ├─ [22896] TraceGenerator::generate()
+    ├─ [48460] TraceGenerator::generate()
     │   ├─ [1589] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
     │   │   └─ ← [Stop]
@@ -3499,7 +3487,6 @@ Ran 1 test for test/ForkTest.t.sol:ForkTest
 });
 
 // Tests that test traces display state changes when running with verbosity.
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--no-dynamic-test-linking"])
@@ -3509,19 +3496,19 @@ forgetest_init!(should_show_state_changes, |prj, cmd| {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [137242] CounterTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218890] CounterTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [28783] CounterTest::test_Increment()
-    ├─ [22418] Counter::increment()
+  [51847] CounterTest::test_Increment()
+    ├─ [43482] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
@@ -3599,7 +3586,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args([
@@ -3617,7 +3603,6 @@ forgetest_init!(colored_traces, |prj, cmd| {
 
 // Tests that traces for successful tests can be suppressed by using `-s` flag.
 // <https://github.com/foundry-rs/foundry/issues/9864>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
@@ -3663,21 +3648,21 @@ Logs:
   test increment failure
 
 Traces:
-  [137242] SuppressTracesTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218890] SuppressTracesTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35200] SuppressTracesTest::test_increment_failure()
+  [58264] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [22418] Counter::increment()
+    ├─ [43482] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
@@ -3715,19 +3700,19 @@ Logs:
   test increment failure
 
 Traces:
-  [137242] SuppressTracesTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218890] SuppressTracesTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35200] SuppressTracesTest::test_increment_failure()
+  [58264] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [22418] Counter::increment()
+    ├─ [43482] Counter::increment()
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
@@ -3742,12 +3727,12 @@ Logs:
   test increment success
 
 Traces:
-  [32164] SuppressTracesTest::test_increment_success()
+  [55228] SuppressTracesTest::test_increment_success()
     ├─ [0] console::log("test increment success") [staticcall]
     │   └─ ← [Stop]
-    ├─ [22418] Counter::increment()
+    ├─ [43482] Counter::increment()
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
@@ -4475,7 +4460,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(detailed_revert_when_calling_non_contract_address, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
@@ -4530,17 +4514,17 @@ Logs:
   test non contract call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238803] NonContractCallRevertTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
+    ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [6350] NonContractCallRevertTest::test_non_contract_call_failure()
+  [27510] NonContractCallRevertTest::test_non_contract_call_failure()
     ├─ [0] console::log("test non contract call failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
+    ├─ [21160] 0xdEADBEeF00000000000000000000000000000000::number()
     │   └─ ← [Stop]
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
 
@@ -4552,10 +4536,10 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238803] NonContractCallRevertTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
+    ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -4572,17 +4556,17 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238803] NonContractCallRevertTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
+    ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [8620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
+  [29684] NonContractCallRevertTest::test_non_supported_selector_call_failure()
     ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [145] Counter::random()
+    ├─ [21209] Counter::random()
     │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
     └─ ← [Revert] EvmError: Revert
 
@@ -4607,7 +4591,6 @@ Tip: Run `forge test --rerun` to retry only the 3 failed tests
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(detailed_revert_when_delegatecalling_unlinked_library, |prj, cmd| {
     prj.add_test(
         "NonContractDelegateCallRevertTest.t.sol",
@@ -4661,14 +4644,14 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [255303] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350691] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [214746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
-    ├─ [3896] LibraryCaller::foobar(10)
+    ├─ [27100] LibraryCaller::foobar(10)
     │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
     │   │   └─ ← [Stop]
     │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
@@ -4806,7 +4789,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // tests proper reverts in fork mode for contracts with non-existent linked libraries.
 // <https://github.com/foundry-rs/foundry/issues/11185>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_fork_test_with_non_existent_linked_library, |prj, cmd| {
     prj.update_config(|config| {
         config.libraries =
@@ -4891,7 +4873,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11632>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(invariant_consistent_output, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));

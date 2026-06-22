@@ -7,7 +7,7 @@ permissions: {}
 
 on:
   schedule:
-    - cron: "0 2 * * *" # Run daily at 2 AM UTC (offset from test-flaky and test-isolate)
+    - cron: "0 2 * * *" # Run daily at 2 AM UTC (offset from test-flaky)
   workflow_dispatch: # Needed so we can run it manually
 
 env:
