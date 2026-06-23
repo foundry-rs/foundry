@@ -1777,10 +1777,18 @@ impl SymbolicExecutor {
         if selector == selector!("lastCallGas()") {
             return Err(SymbolicError::Unsupported("symbolic vm.lastCallGas not modeled"));
         }
+        if selector == selector!("lastFrameGas()") {
+            return Err(SymbolicError::Unsupported("symbolic vm.lastFrameGas not modeled"));
+        }
         if selector == selector!("snapshotGasLastCall(string)")
             || selector == selector!("snapshotGasLastCall(string,string)")
         {
             return Err(SymbolicError::Unsupported("symbolic vm.snapshotGasLastCall not modeled"));
+        }
+        if selector == selector!("snapshotGasLastFrame(string)")
+            || selector == selector!("snapshotGasLastFrame(string,string)")
+        {
+            return Err(SymbolicError::Unsupported("symbolic vm.snapshotGasLastFrame not modeled"));
         }
         if selector == selector!("stopSnapshotGas()")
             || selector == selector!("stopSnapshotGas(string)")
