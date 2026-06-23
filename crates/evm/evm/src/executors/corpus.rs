@@ -879,12 +879,17 @@ impl WorkerCorpus {
         // When the run is interesting only because of optimization (no new coverage),
         // add the best prefix to the corpus instead of the full run — the prefix is
         // the sequence that actually achieved the best value.
-        assert!(!inputs.is_empty());
-        let corpus_inputs = if improved_optimization && !new_coverage {
+        //
+        // `inputs` can be empty when every call was discarded/popped but new coverage was
+        // still recorded; there's nothing to persist, so skip without inserting an entry.
+        let corpus_inputs = if improved_optimization && (!new_coverage || inputs.is_empty()) {
             self.optimization_best_sequence.clone()
         } else {
             inputs.to_vec()
         };
+        if corpus_inputs.is_empty() {
+            return None;
+        }
         let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
             cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
@@ -2379,6 +2384,29 @@ mod tests {
         assert_eq!(senders.len(), 2);
         assert!(senders.contains(&Address::repeat_byte(1)));
         assert!(senders.contains(&Address::repeat_byte(2)));
+    }
+
+    #[test]
+    fn empty_input_sequence_with_new_coverage_does_not_panic_or_insert() {
+        // A run where every executed call was discarded (magic assume) or popped (reverts
+        // without `fail_on_revert`, handler assertions) leaves no surviving inputs, yet
+        // `new_coverage` can still be true because edge coverage is collected before the
+        // input is popped. Processing must not panic and must not persist an entry.
+        let corpus_root = temp_corpus_dir();
+        let worker_subdir = corpus_root.join("worker1");
+        let mut manager = empty_worker_corpus(1, corpus_root);
+
+        let record = manager.process_inputs_for_campaign(&[], &[], true, None);
+
+        assert!(record.is_none());
+        assert_eq!(manager.in_memory_corpus.len(), 0);
+        assert_eq!(manager.metrics.corpus_count, 0);
+        assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+
+        // Live processing path must also tolerate the empty sequence.
+        manager.process_inputs(&[], &[], true, None);
+        assert_eq!(manager.in_memory_corpus.len(), 0);
+        assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
     }
 
     #[test]

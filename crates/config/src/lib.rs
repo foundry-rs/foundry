@@ -2679,7 +2679,7 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             profiles: vec![Self::DEFAULT_PROFILE],
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
-            isolate: cfg!(feature = "isolate-by-default"),
+            isolate: true,
             root: root_default(),
             extends: None,
             src: "src".into(),
