@@ -22,15 +22,20 @@ use foundry_compilers::{
 use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
-use solar::{
-    sema::{
-        Gcx,
-        eval::ConstantEvaluator,
-        hir::{ElementaryType, ItemId, NatSpecKind, TypeKind, VariableId},
-        interface::source_map::FileName,
-    },
+use solar::sema::{
+    Gcx,
+    eval::ConstantEvaluator,
+    hir::{ElementaryType, ItemId, NatSpecKind, TypeKind, VariableId},
+    interface::source_map::FileName,
 };
-use std::{collections::BTreeMap, fmt, ops::ControlFlow, path::Path, str::FromStr, sync::LazyLock};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt,
+    ops::ControlFlow,
+    path::Path,
+    str::FromStr,
+    sync::LazyLock,
+};
 
 /// CLI arguments for `forge inspect`.
 #[derive(Clone, Debug, Parser)]
@@ -520,8 +525,7 @@ fn hir_type_storage_info<'hir>(
             } else {
                 format!("struct {}", s.name.as_str())
             };
-            // Recursively compute the struct's slot count via the same packing rules.
-            let slot_count = struct_slot_count(gcx, s.fields);
+            let slot_count = pack_fields(gcx, s.fields, |_, _, _, _| {});
             (label, slot_count * 32, slot_count, "inplace")
         }
         TypeKind::Custom(ItemId::Enum(id)) => {
@@ -548,29 +552,40 @@ fn hir_type_storage_info<'hir>(
     }
 }
 
-/// Computes the number of 32-byte slots consumed by a sequence of struct fields.
-fn struct_slot_count<'hir>(gcx: Gcx<'hir>, fields: &'hir [VariableId]) -> u64 {
+/// Runs Solidity's storage packing algorithm over `fields`, invoking
+/// `on_field(var_id, type_label, slot, byte_offset)` for each field.
+/// Returns the total number of 32-byte slots consumed.
+fn pack_fields<'hir>(
+    gcx: Gcx<'hir>,
+    fields: &'hir [VariableId],
+    mut on_field: impl FnMut(VariableId, &str, u64, u64),
+) -> u64 {
     let hir = &gcx.hir;
     let mut current_slot: u64 = 0;
     let mut current_offset: u64 = 0;
     for &var_id in fields {
         let var = hir.variable(var_id);
-        let (_, byte_size, slot_count, _) = hir_type_storage_info(gcx, &var.ty.kind);
-        if slot_count > 0 {
+        let (type_label, byte_size, slot_count, _) = hir_type_storage_info(gcx, &var.ty.kind);
+        let (field_slot, field_offset) = if slot_count > 0 {
             if current_offset > 0 {
                 current_slot += 1;
                 current_offset = 0;
             }
+            let s = current_slot;
             current_slot += slot_count;
+            (s, 0u64)
         } else {
             if current_offset + byte_size > 32 {
                 current_slot += 1;
                 current_offset = 0;
             }
+            let s = current_slot;
+            let o = current_offset;
             current_offset += byte_size;
-        }
+            (s, o)
+        };
+        on_field(var_id, &type_label, field_slot, field_offset);
     }
-    // Any partially-filled final slot counts as a full slot.
     if current_offset > 0 { current_slot + 1 } else { current_slot }
 }
 
@@ -618,33 +633,10 @@ fn register_type_recursive<'hir>(
         TypeKind::Custom(ItemId::Struct(id)) => {
             let hir = &gcx.hir;
             let s = hir.strukt(*id);
-            let mut cur_slot: u64 = 0;
-            let mut cur_offset: u64 = 0;
             let mut members: Vec<Value> = Vec::new();
-            for &var_id in s.fields {
+            pack_fields(gcx, s.fields, |var_id, field_type, fs, fo| {
                 let var = hir.variable(var_id);
-                let field_name =
-                    var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
-                let (field_type, field_bytes, field_slots, _) =
-                    hir_type_storage_info(gcx, &var.ty.kind);
-                let (fs, fo) = if field_slots > 0 {
-                    if cur_offset > 0 {
-                        cur_slot += 1;
-                        cur_offset = 0;
-                    }
-                    let s = cur_slot;
-                    cur_slot += field_slots;
-                    (s, 0u64)
-                } else {
-                    if cur_offset + field_bytes > 32 {
-                        cur_slot += 1;
-                        cur_offset = 0;
-                    }
-                    let s = cur_slot;
-                    let o = cur_offset;
-                    cur_offset += field_bytes;
-                    (s, o)
-                };
+                let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
                 register_type_recursive(gcx, &var.ty.kind, types);
                 members.push(serde_json::json!({
                     "astId": 0,
@@ -654,7 +646,7 @@ fn register_type_recursive<'hir>(
                     "slot": fs.to_string(),
                     "type": field_type,
                 }));
-            }
+            });
             let mut other = BTreeMap::new();
             other.insert("members".to_string(), Value::Array(members));
             StorageType {
@@ -693,35 +685,30 @@ fn collect_erc7201_entries(
     let mut entries: Vec<Storage> = Vec::new();
     let mut types: BTreeMap<String, StorageType> = BTreeMap::new();
 
-    let mut lowered = false;
     let compiler = output.parser_mut().solc_mut().compiler_mut();
     compiler.enter_mut(|compiler| -> Result<()> {
         let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else { return Ok(()) };
-        lowered = true;
 
         let gcx = compiler.gcx();
         let hir = &gcx.hir;
 
-        // Locate the target contract.
-        let matching: Vec<_> = hir
-            .contract_ids()
-            .filter(|id| {
-                let c = hir.contract(*id);
-                if let Some(name) = target_name
-                    && c.name.as_str() != name
-                {
-                    return false;
-                }
-                matches!(&hir.source(c.source).file.name, FileName::Real(p) if p == target_path)
-            })
-            .collect();
-
-        let target_id = match matching.as_slice() {
-            [id] => *id,
+        // Locate the target contract: require exactly one match.
+        let mut it = hir.contract_ids().filter(|id| {
+            let c = hir.contract(*id);
+            if let Some(name) = target_name
+                && c.name.as_str() != name
+            {
+                return false;
+            }
+            matches!(&hir.source(c.source).file.name, FileName::Real(p) if p == target_path)
+        });
+        let target_id = match (it.next(), it.next()) {
+            (Some(id), None) => id,
             _ => return Ok(()),
         };
 
-        let linearized_bases: Vec<_> = hir.contract(target_id).linearized_bases.to_vec();
+        let linearized_bases: HashSet<_> =
+            hir.contract(target_id).linearized_bases.iter().copied().collect();
         let target_contract_name = hir.contract(target_id).name.as_str().to_string();
 
         // Walk every struct in the HIR; keep those that belong to a contract in the
@@ -753,57 +740,25 @@ fn collect_erc7201_entries(
             let base_slot = U256::from_be_bytes(erc7201(namespace).0);
             let contract_label = format!("{target_contract_name} [erc7201:{namespace}]");
 
-            // Assign slots using Solidity's packing rules.
-            let mut current_slot: u64 = 0;
-            let mut current_offset: u64 = 0; // bytes used in current slot (low-order)
-
-            for &var_id in strukt.fields {
+            pack_fields(gcx, strukt.fields, |var_id, type_label, field_slot, field_offset| {
                 let var = hir.variable(var_id);
                 let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
-                let (type_label, byte_size, slot_count, _encoding) =
-                    hir_type_storage_info(gcx, &var.ty.kind);
-
-                let (field_slot, field_offset) = if slot_count > 0 {
-                    // Slot-boundary type: align to a fresh slot, then consume slot_count slots.
-                    if current_offset > 0 {
-                        current_slot += 1;
-                        current_offset = 0;
-                    }
-                    let s = current_slot;
-                    current_slot += slot_count;
-                    (s, 0u64)
-                } else {
-                    // Packable value type: fit into current slot or advance.
-                    if current_offset + byte_size > 32 {
-                        current_slot += 1;
-                        current_offset = 0;
-                    }
-                    let s = current_slot;
-                    let o = current_offset;
-                    current_offset += byte_size;
-                    (s, o)
-                };
-
                 let slot_value = base_slot + U256::from(field_slot);
-                let slot_str = format!("{slot_value:#066x}");
-
                 entries.push(Storage {
                     ast_id: 0,
                     contract: contract_label.clone(),
                     label: field_name,
                     offset: field_offset as i64,
-                    slot: slot_str,
-                    storage_type: type_label.clone(),
+                    slot: format!("{slot_value:#066x}"),
+                    storage_type: type_label.to_string(),
                 });
-
                 register_type_recursive(gcx, &var.ty.kind, &mut types);
-            }
+            });
         }
 
         Ok(())
     })?;
 
-    let _ = lowered;
     Ok((entries, types))
 }
 
