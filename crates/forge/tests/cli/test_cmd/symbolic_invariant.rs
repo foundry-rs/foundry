@@ -114,13 +114,15 @@ contract SymbolicRevertBranchInvariant is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/SymbolicRevertBranchInvariant.t.sol:SymbolicRevertBranchInvariant
-[FAIL: symbolic invariant counterexample]
+[FAIL: assertion failed: 1 != 0]
 ...
  invariant_counterStaysZero() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -200,13 +202,15 @@ contract SymbolicOverlayCodeInvariant is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/SymbolicOverlayCodeInvariant.t.sol:SymbolicOverlayCodeInvariant
-[FAIL: symbolic invariant counterexample]
+[FAIL: assertion failed: 42 != 0]
 ...
  invariant_counterAlwaysReturnsZero() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });

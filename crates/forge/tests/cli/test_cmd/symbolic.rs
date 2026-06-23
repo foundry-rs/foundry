@@ -1241,10 +1241,25 @@ contract SymbolicInvariantSequenceArtifact is Test {
     let failures = result["invariant_failures"].as_array().expect("invariant failures");
     let failure = failures.first().expect("invariant failure");
     assert_eq!(failure["artifact"]["schema"], "foundry:symbolic.counterexample@v1");
-    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
-    assert_eq!(result["counterexample_artifacts"][0], failure["artifact"]);
+    let minimization = &failure["minimization"];
+    assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["minimized_sequence_len"], 1);
+    assert!(
+        minimization["original_sequence_len"].as_u64().unwrap()
+            > minimization["minimized_sequence_len"].as_u64().unwrap()
+    );
+    let artifacts = result["counterexample_artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0], failure["artifact"]);
+    assert_eq!(artifacts[1], minimization["original"]);
     let artifact_path = failure["artifact"]["path"].as_str().unwrap().to_string();
 
+    let original = read_artifact_ref(&minimization["original"]);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert!(
+        original["calls"].as_array().unwrap().len()
+            > minimization["minimized_sequence_len"].as_u64().unwrap() as usize
+    );
     let artifact = read_artifact_ref(&failure["artifact"]);
     assert_eq!(artifact["schema_version"], 1);
     assert_eq!(artifact["schema"], "foundry:symbolic.counterexample@v1");
@@ -1277,6 +1292,133 @@ invariant_counterNeverEleven()
         &replay_stdout,
         foundry_test_utils::str![[r#"
 args=[7]
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_json_reports_minimized_sequence_counterexample, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_json_reports_minimized_sequence_counterexample because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantSequenceMinimize.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSequenceMinTarget {
+    bool primed;
+    bool fired;
+
+    function prime(uint256 x) external {
+        if (x > 40) {
+            primed = true;
+        }
+    }
+
+    function fire(uint256 y) external {
+        if (y > 100) {
+            fired = true;
+        }
+    }
+
+    function broken() external view returns (bool) {
+        return primed && fired;
+    }
+}
+
+contract SymbolicInvariantSequenceMinimize is Test {
+    SymbolicSequenceMinTarget target;
+    uint256[] public fixture_x = [1000];
+    uint256[] public fixture_y = [5000];
+
+    function setUp() public {
+        target = new SymbolicSequenceMinTarget();
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = SymbolicSequenceMinTarget.prime.selector;
+        selectors[1] = SymbolicSequenceMinTarget.fire.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 20
+    /// forge-config: default.invariant.check_interval = 0
+    /// forge-config: default.invariant.shrink_run_limit = 5000
+    function invariant_targetNeverBroken() public view {
+        assertEq(target.broken(), false);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "invariant_targetNeverBroken",
+            "--fuzz-seed",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "invariant_targetNeverBroken()");
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let failure = failures.first().expect("invariant failure");
+    let minimization = &failure["minimization"];
+    assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["original_sequence_len"], 20);
+    assert_eq!(minimization["minimized_sequence_len"], 2);
+    assert!(minimization["accepted"].as_u64().unwrap() > 0);
+    assert!(
+        minimization["minimized_calldata_bytes"].as_u64().unwrap()
+            < minimization["original_calldata_bytes"].as_u64().unwrap()
+    );
+    let artifacts = result["counterexample_artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert!(artifacts.contains(&failure["artifact"]));
+    assert!(artifacts.contains(&minimization["original"]));
+
+    let original = read_artifact_ref(&minimization["original"]);
+    let minimized = read_artifact_ref(&minimization["minimized"]);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_eq!(original["calls"].as_array().unwrap().len(), 20);
+    assert_eq!(minimized["calls"].as_array().unwrap().len(), 2);
+
+    let calls = minimized["calls"].as_array().unwrap();
+    let prime = calls.iter().find(|call| call["function_name"] == "prime").unwrap();
+    let fire = calls.iter().find(|call| call["function_name"] == "fire").unwrap();
+    assert_eq!(prime["args"], "41");
+    assert_eq!(fire["args"], "101");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            minimization["minimized"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+invariant_targetNeverBroken()
 "#]],
     );
 });

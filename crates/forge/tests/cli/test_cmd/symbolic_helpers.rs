@@ -27,7 +27,7 @@ macro_rules! skip_unless_z3 {
 ///   unconstrained address pool.
 pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", r"paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?"),
+        ("[METRICS]", r"(?:paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?|runs: \d+, calls: \d+, reverts: \d+)"),
         ("[SENDER]", r"sender=0x[0-9a-fA-F]{40}"),
     ])
 }
@@ -38,7 +38,7 @@ pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
 /// *some* counterexample exists, not what it is.
 pub fn assert_symbolic_witness(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", r"paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?"),
+        ("[METRICS]", r"(?:paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?|runs: \d+, calls: \d+, reverts: \d+)"),
         ("[SENDER]", r"sender=0x[0-9a-fA-F]{40}"),
         ("[CALLDATA]", r"calldata=0x[0-9a-fA-F]+"),
         // `args=[...]` may contain nested scientific-notation brackets like
