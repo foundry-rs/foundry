@@ -1398,18 +1398,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     let mut final_reason = reason;
                     let mut minimization = None;
 
-                    if let Some(candidate) = minimize_single_call_counterexample(
-                        func,
-                        &original_call,
-                        std::slice::from_ref(&self.sender),
-                        self.tcfg.config.invariant.shrink_run_limit as usize,
-                        |candidate| {
-                            self.symbolic_single_call_preserves_failure(
-                                candidate,
-                                final_reason.as_deref(),
-                            )
-                        },
-                    ) {
+                    if final_reason.is_some()
+                        && let Some(candidate) = minimize_single_call_counterexample(
+                            func,
+                            &original_call,
+                            self.tcfg.config.invariant.shrink_run_limit as usize,
+                            |candidate| {
+                                self.symbolic_single_call_preserves_failure(
+                                    candidate,
+                                    final_reason.as_deref(),
+                                )
+                            },
+                        )
+                    {
                         if candidate.changed() {
                             match self.replay_confirmed_symbolic_single_call(
                                 &candidate.minimized_call,

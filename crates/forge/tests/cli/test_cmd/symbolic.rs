@@ -421,10 +421,10 @@ args=[42, 0x0042]
     );
 });
 
-forgetest_init!(symbolic_minimizer_preserves_failure_flag_reason, |prj, cmd| {
+forgetest_init!(symbolic_minimizer_skips_reasonless_failure_flag, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
-            "skipping symbolic_minimizer_preserves_failure_flag_reason because z3 is not available"
+            "skipping symbolic_minimizer_skips_reasonless_failure_flag because z3 is not available"
         );
         return;
     }
@@ -455,18 +455,12 @@ contract SymbolicMinimizeFailureFlag is Test {
     assert_eq!(symbolic["status"], "fail_counterexample");
     assert_eq!(symbolic["replay"]["status"], "confirmed");
     assert_eq!(symbolic["counterexample"]["raw_args"], "42");
-    assert_eq!(symbolic["minimization"]["accepted"], 0);
-    assert_eq!(
-        symbolic["minimization"]["original_calldata_bytes"],
-        symbolic["minimization"]["minimized_calldata_bytes"]
-    );
+    assert!(symbolic["minimization"].is_null());
+    assert_eq!(result["counterexample_artifacts"].as_array().unwrap().len(), 1);
 
-    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
-    let minimized = read_artifact(symbolic);
-    assert_eq!(original["replay"]["status"], "confirmed");
-    assert_eq!(minimized["replay"]["status"], "confirmed");
-    assert_eq!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
-    assert_eq!(minimized["calls"][0]["raw_args"], "42");
+    let artifact = read_artifact(symbolic);
+    assert_eq!(artifact["replay"]["status"], "confirmed");
+    assert_eq!(artifact["calls"][0]["raw_args"], "42");
 
     let replay_stdout = cmd
         .forge_fuse()

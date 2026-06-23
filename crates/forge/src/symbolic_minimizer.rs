@@ -18,11 +18,6 @@ pub(crate) struct MinimizedSingleCall {
 impl MinimizedSingleCall {
     pub(crate) fn changed(&self) -> bool {
         self.original_call.calldata != self.minimized_call.calldata
-            || self.original_call.sender != self.minimized_call.sender
-            || self.original_call.target != self.minimized_call.target
-            || self.original_call.value != self.minimized_call.value
-            || self.original_call.warp != self.minimized_call.warp
-            || self.original_call.roll != self.minimized_call.roll
     }
 }
 
@@ -33,7 +28,6 @@ impl MinimizedSingleCall {
 pub(crate) fn minimize_single_call_counterexample(
     function: &Function,
     call: &SymbolicCounterexampleCall,
-    configured_senders: &[Address],
     max_attempts: usize,
     mut still_fails: impl FnMut(&SymbolicCounterexampleCall) -> bool,
 ) -> Option<MinimizedSingleCall> {
@@ -71,14 +65,6 @@ pub(crate) fn minimize_single_call_counterexample(
     minimize_value_subsets(&mut current_args, &mut try_args);
     minimize_value_pairs(&mut current_args, &mut try_args);
     minimize_values(&mut current_args, &mut try_args);
-    minimize_call_fields(
-        &mut current_call,
-        configured_senders,
-        max_attempts,
-        &mut attempts,
-        &mut accepted,
-        &mut still_fails,
-    );
 
     current_call = with_formatted_args(current_call, &current_args);
 
@@ -211,198 +197,6 @@ fn minimally_simple_value(mut value: DynSolValue) -> DynSolValue {
     value
 }
 
-fn minimize_call_fields(
-    call: &mut SymbolicCounterexampleCall,
-    configured_senders: &[Address],
-    max_attempts: usize,
-    attempts: &mut usize,
-    accepted: &mut usize,
-    still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
-) {
-    loop {
-        let changed = minimize_call_sender(
-            call,
-            configured_senders,
-            max_attempts,
-            attempts,
-            accepted,
-            still_fails,
-        ) || minimize_call_u256_field(
-            call,
-            max_attempts,
-            attempts,
-            accepted,
-            still_fails,
-            |call| call.value,
-            |call, value| call.value = value,
-        ) || minimize_call_delay(call, max_attempts, attempts, accepted, still_fails);
-        if !changed {
-            break;
-        }
-    }
-}
-
-fn minimize_call_sender(
-    call: &mut SymbolicCounterexampleCall,
-    configured_senders: &[Address],
-    max_attempts: usize,
-    attempts: &mut usize,
-    accepted: &mut usize,
-    still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
-) -> bool {
-    let mut ordered_senders = configured_senders.to_vec();
-    ordered_senders.sort_unstable();
-    ordered_senders.dedup();
-    let Some(current_idx) = ordered_senders.iter().position(|sender| *sender == call.sender) else {
-        return false;
-    };
-
-    for candidate in ordered_senders.into_iter().take(current_idx) {
-        let mut candidate_call = call.clone();
-        candidate_call.sender = candidate;
-        if accept_call_candidate(
-            call,
-            candidate_call,
-            max_attempts,
-            attempts,
-            accepted,
-            still_fails,
-        ) {
-            return true;
-        }
-    }
-    false
-}
-
-fn minimize_call_delay(
-    call: &mut SymbolicCounterexampleCall,
-    max_attempts: usize,
-    attempts: &mut usize,
-    accepted: &mut usize,
-    still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
-) -> bool {
-    match (call.warp, call.roll) {
-        (Some(warp), Some(roll)) => minimize_call_delay_pair(
-            call,
-            warp,
-            roll,
-            max_attempts,
-            attempts,
-            accepted,
-            still_fails,
-        ),
-        _ => {
-            minimize_call_u256_field(
-                call,
-                max_attempts,
-                attempts,
-                accepted,
-                still_fails,
-                |call| call.warp,
-                |call, value| call.warp = value,
-            ) || minimize_call_u256_field(
-                call,
-                max_attempts,
-                attempts,
-                accepted,
-                still_fails,
-                |call| call.roll,
-                |call, value| call.roll = value,
-            )
-        }
-    }
-}
-
-fn minimize_call_delay_pair(
-    call: &mut SymbolicCounterexampleCall,
-    current_warp: U256,
-    current_roll: U256,
-    max_attempts: usize,
-    attempts: &mut usize,
-    accepted: &mut usize,
-    still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
-) -> bool {
-    if current_warp.is_zero() && current_roll.is_zero() {
-        return false;
-    }
-
-    let mut try_delay = |call: &mut SymbolicCounterexampleCall, warp: U256, roll: U256| {
-        let (warp, roll) = level_delay(warp, roll);
-        let mut candidate_call = call.clone();
-        candidate_call.warp = Some(warp);
-        candidate_call.roll = Some(roll);
-        accept_call_candidate(call, candidate_call, max_attempts, attempts, accepted, still_fails)
-    };
-
-    (!current_roll.is_zero()
-        && minimize_u256_candidates(current_roll, |candidate| {
-            try_delay(call, current_warp, candidate)
-        }))
-        || (!current_warp.is_zero()
-            && minimize_u256_candidates(current_warp, |candidate| {
-                try_delay(call, candidate, current_roll)
-            }))
-        || minimize_u256_pair_candidates(current_warp, current_roll, |warp, roll| {
-            try_delay(call, warp, roll)
-        })
-}
-
-fn level_delay(warp: U256, roll: U256) -> (U256, U256) {
-    if warp.is_zero() || roll.is_zero() { (U256::ZERO, U256::ZERO) } else { (warp, roll) }
-}
-
-fn minimize_call_u256_field(
-    call: &mut SymbolicCounterexampleCall,
-    max_attempts: usize,
-    attempts: &mut usize,
-    accepted: &mut usize,
-    still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
-    get: impl Fn(&SymbolicCounterexampleCall) -> Option<U256>,
-    set: impl Fn(&mut SymbolicCounterexampleCall, Option<U256>),
-) -> bool {
-    let Some(current) = get(call) else {
-        return false;
-    };
-    if current.is_zero() {
-        return false;
-    }
-
-    minimize_u256_candidates(current, |candidate| {
-        let mut candidate_call = call.clone();
-        set(&mut candidate_call, Some(candidate));
-        accept_call_candidate(call, candidate_call, max_attempts, attempts, accepted, still_fails)
-    })
-}
-
-fn minimize_u256_candidates(current: U256, mut try_candidate: impl FnMut(U256) -> bool) -> bool {
-    if !current.is_zero() && try_candidate(U256::ZERO) {
-        return true;
-    }
-    for bit in (0..256).rev() {
-        let mask: U256 = U256::from(1) << bit;
-        if current & mask == U256::ZERO {
-            continue;
-        }
-        if try_candidate(current & !mask) {
-            return true;
-        }
-    }
-
-    let mut accepted_value = current;
-    let mut rejected_value = U256::ZERO;
-    let mut changed = false;
-    while accepted_value > rejected_value + U256::from(1) {
-        let candidate = rejected_value + ((accepted_value - rejected_value) >> 1usize);
-        if try_candidate(candidate) {
-            accepted_value = candidate;
-            changed = true;
-        } else {
-            rejected_value = candidate;
-        }
-    }
-    changed
-}
-
 fn minimize_u256_pair_candidates(
     current_left: U256,
     current_right: U256,
@@ -441,37 +235,6 @@ fn minimize_u256_pair_candidates(
         }
     }
     changed
-}
-
-fn accept_call_candidate(
-    call: &mut SymbolicCounterexampleCall,
-    candidate: SymbolicCounterexampleCall,
-    max_attempts: usize,
-    attempts: &mut usize,
-    accepted: &mut usize,
-    still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
-) -> bool {
-    if same_call(call, &candidate) || *attempts >= max_attempts {
-        return false;
-    }
-
-    *attempts += 1;
-    if still_fails(&candidate) {
-        *call = candidate;
-        *accepted += 1;
-        true
-    } else {
-        false
-    }
-}
-
-fn same_call(left: &SymbolicCounterexampleCall, right: &SymbolicCounterexampleCall) -> bool {
-    left.warp == right.warp
-        && left.roll == right.roll
-        && left.sender == right.sender
-        && left.target == right.target
-        && left.calldata == right.calldata
-        && left.value == right.value
 }
 
 fn minimize_values(values: &mut [DynSolValue], try_values: &mut dyn FnMut(&[DynSolValue]) -> bool) {
@@ -1401,7 +1164,7 @@ mod tests {
         );
 
         let minimized =
-            minimize_single_call_counterexample(function, &start, &[], TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
+            minimize_single_call_counterexample(function, &start, TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
                 let args = decoded(function, candidate);
                 matches!(&args[0], DynSolValue::Uint(value, _) if *value & U256::from(0x2a) == U256::from(0x2a))
                     && matches!(&args[1], DynSolValue::Address(address) if address.as_slice()[19] == 0xaa)
@@ -1449,7 +1212,7 @@ mod tests {
             ],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
+        let minimized = minimize_single_call_counterexample(function, &start, TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
             let args = decoded(function, candidate);
             matches!(&args[0], DynSolValue::Uint(value, _) if *value > U256::from(42))
                 && matches!(&args[1], DynSolValue::Int(value, _) if *value < I256::try_from(-42).unwrap())
@@ -1478,7 +1241,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1503,7 +1265,6 @@ mod tests {
         let bytes_minimized = minimize_single_call_counterexample(
             bytes_function,
             &bytes_start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 decoded(bytes_function, candidate) == vec![DynSolValue::Bytes(vec![0x41, 0x42])]
@@ -1521,7 +1282,6 @@ mod tests {
         let string_minimized = minimize_single_call_counterexample(
             string_function,
             &string_start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 decoded(string_function, candidate) == vec![DynSolValue::String("OK".to_string())]
@@ -1547,7 +1307,6 @@ mod tests {
         let array_minimized = minimize_single_call_counterexample(
             array_function,
             &array_start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(array_function, candidate);
@@ -1578,7 +1337,6 @@ mod tests {
         let address_minimized = minimize_single_call_counterexample(
             address_function,
             &address_start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(address_function, candidate);
@@ -1597,7 +1355,6 @@ mod tests {
         let bool_minimized = minimize_single_call_counterexample(
             bool_function,
             &bool_start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| decoded(bool_function, candidate) == vec![DynSolValue::Bool(false)],
         )
@@ -1623,7 +1380,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1659,7 +1415,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1693,7 +1448,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1737,7 +1491,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1759,49 +1512,6 @@ mod tests {
     }
 
     #[test]
-    fn adapts_echidna_basic_multisender_fixture() {
-        let abi = JsonAbi::parse(["function s3() external"]).unwrap();
-        let function = abi.functions().next().unwrap();
-        let mut start = call(function, Vec::new());
-        let configured_senders = [address(0x1), address(0x2), address(0x3)];
-        start.sender = configured_senders[2];
-
-        let minimized = minimize_single_call_counterexample(
-            function,
-            &start,
-            &configured_senders,
-            TEST_MAX_MINIMIZATION_ATTEMPTS,
-            |candidate| configured_senders.contains(&candidate.sender),
-        )
-        .unwrap();
-
-        assert_eq!(minimized.minimized_call.sender, configured_senders[0]);
-        assert!(minimized.changed());
-    }
-
-    #[test]
-    fn adapts_echidna_basic_delay_fixture() {
-        let abi = JsonAbi::parse(["function g() external"]).unwrap();
-        let function = abi.functions().next().unwrap();
-        let mut start = call(function, Vec::new());
-        start.warp = Some(U256::from(43));
-        start.roll = Some(U256::from(42));
-
-        let minimized = minimize_single_call_counterexample(
-            function,
-            &start,
-            &[],
-            TEST_MAX_MINIMIZATION_ATTEMPTS,
-            |candidate| candidate.warp == Some(U256::ZERO) && candidate.roll == Some(U256::ZERO),
-        )
-        .unwrap();
-
-        assert_eq!(minimized.minimized_call.warp, Some(U256::ZERO));
-        assert_eq!(minimized.minimized_call.roll, Some(U256::ZERO));
-        assert!(minimized.changed());
-    }
-
-    #[test]
     fn minimizes_correlated_top_level_abi_value_subsets() {
         let abi = JsonAbi::parse(["function check(uint256,uint256,bytes) external"]).unwrap();
         let function = abi.functions().next().unwrap();
@@ -1817,7 +1527,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1857,7 +1566,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1898,7 +1606,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
@@ -1940,7 +1647,7 @@ mod tests {
             ])],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
+        let minimized = minimize_single_call_counterexample(function, &start, TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
             let args = decoded(function, candidate);
             matches!(&args[0], DynSolValue::Array(values) if values.iter().tuple_combinations().any(|(left, right)| left == right))
         })
@@ -1953,44 +1660,6 @@ mod tests {
                 DynSolValue::Address(Address::ZERO),
             ])]
         );
-        assert!(minimized.changed());
-        assert!(minimized.accepted > 0);
-    }
-
-    #[test]
-    fn minimizes_correlated_args_and_call_env() {
-        let abi = JsonAbi::parse(["function check(uint256,uint256) external"]).unwrap();
-        let function = abi.functions().next().unwrap();
-        let mut start = call(
-            function,
-            vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Uint(U256::from(1), 256)],
-        );
-        start.sender = Address::from([0xaa; 20]);
-        start.value = Some(U256::from(100));
-        start.warp = Some(U256::from(50));
-        start.roll = Some(U256::from(10));
-
-        let configured_senders = [Address::ZERO, start.sender];
-        let minimized =
-            minimize_single_call_counterexample(function, &start, &configured_senders, TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
-                let args = decoded(function, candidate);
-                matches!(&args[..], [DynSolValue::Uint(left, _), DynSolValue::Uint(right, _)] if left.is_zero() && right.is_zero())
-                    && candidate.value.is_some_and(|value| value > U256::from(42))
-                    && candidate.warp.is_some_and(|warp| warp > U256::from(4))
-                    && candidate.roll.is_some_and(|roll| roll > U256::from(2))
-                    && (candidate.sender == Address::ZERO || candidate.sender.as_slice()[19] == 0xaa)
-            })
-            .unwrap();
-
-        let args = decoded(function, &minimized.minimized_call);
-        assert_eq!(
-            args,
-            vec![DynSolValue::Uint(U256::ZERO, 256), DynSolValue::Uint(U256::ZERO, 256)]
-        );
-        assert_eq!(minimized.minimized_call.sender, Address::ZERO);
-        assert_eq!(minimized.minimized_call.value, Some(U256::from(43)));
-        assert_eq!(minimized.minimized_call.warp, Some(U256::from(5)));
-        assert_eq!(minimized.minimized_call.roll, Some(U256::from(3)));
         assert!(minimized.changed());
         assert!(minimized.accepted > 0);
     }
@@ -2013,7 +1682,6 @@ mod tests {
         let minimized = minimize_single_call_counterexample(
             function,
             &start,
-            &[],
             TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(function, candidate);
