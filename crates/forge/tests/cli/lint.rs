@@ -276,14 +276,25 @@ forgetest!(default_lint_severity_includes_info, |prj, cmd| {
     prj.add_source("DefaultInfoLintsImport", DEFAULT_INFO_LINTS_IMPORT);
     prj.add_source("DefaultInfoLints", DEFAULT_INFO_LINTS);
 
-    let output = cmd.arg("lint").assert_success();
-    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+note[mixed-case-function]: function names should use mixedCase
+  [FILE]:8:14
+  │
+8 │     function BAD_CASE() public {}
+  │              ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
-    assert_eq!(stderr.matches("note[").count(), 2);
-    assert!(stderr.contains("note[unused-import]: unused imports should be removed"));
-    assert!(stderr.contains("import { UnusedSymbol } from \"./DefaultInfoLintsImport.sol\";"));
-    assert!(stderr.contains("note[mixed-case-function]: function names should use mixedCase"));
-    assert!(stderr.contains("function BAD_CASE() public {}"));
+note[unused-import]: unused imports should be removed
+  [FILE]:5:10
+  │
+5 │ import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+  │          ━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/unused-import
+
+
+"#]]);
 });
 
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
