@@ -275,7 +275,9 @@ impl FuzzCminArgs {
             // existed but did not target the matched test (filter mismatch / `vm.assume`).
             let mismatched = skipped.saturating_sub(unreadable);
             if unreadable == total {
-                bail!("replayed 0 transactions from {corpus}; all {unreadable} corpus entries could not be read");
+                bail!(
+                    "replayed 0 transactions from {corpus}; all {unreadable} corpus entries could not be read"
+                );
             }
             if mismatched > 0 {
                 bail!(
@@ -657,8 +659,14 @@ fn minimize_sequence(
     let mut idx = 0;
     while idx < sequence.len() && *attempts < max_attempts {
         let removed = sequence.remove(idx);
-        if accepts_candidate(session, evm_edge_indices.clone(), original, sequence, max_attempts, attempts)?
-        {
+        if accepts_candidate(
+            session,
+            evm_edge_indices.clone(),
+            original,
+            sequence,
+            max_attempts,
+            attempts,
+        )? {
             // Keep the removal; the next tx now occupies `idx`.
         } else {
             sequence.insert(idx, removed);
@@ -691,10 +699,8 @@ fn minimize_sequence(
             if *attempts >= max_attempts {
                 break;
             }
-            let restore = std::mem::replace(
-                &mut sequence[tx_idx].call_details.calldata,
-                calldata.into(),
-            );
+            let restore =
+                std::mem::replace(&mut sequence[tx_idx].call_details.calldata, calldata.into());
             if !accepts_candidate(
                 session,
                 evm_edge_indices.clone(),

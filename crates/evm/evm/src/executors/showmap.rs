@@ -134,10 +134,10 @@ pub struct InvariantReplayOptions {
 /// reproduces the *same* failure. It deliberately keys on the failure site (and,
 /// for code paths within a single function, an edge-coverage fingerprint) rather
 /// than on raw revert bytes, so that:
-/// - the same bug reached with different revert arguments is still considered the
-///   same failure (avoids false negatives), and
-/// - distinct assertion sites that produce identical revert data (e.g. two
-///   `Panic(0x01)` paths) are kept distinct (avoids false positives).
+/// - the same bug reached with different revert arguments is still considered the same failure
+///   (avoids false negatives), and
+/// - distinct assertion sites that produce identical revert data (e.g. two `Panic(0x01)` paths) are
+///   kept distinct (avoids false positives).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayFailure {
     /// A stateless fuzz test call failed. Keyed by selector and code-path fingerprint.
@@ -269,8 +269,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let mut executor = executor.clone();
         // Targets deployed during this entry, cleared after the entry.
         let mut created: Vec<Address> = Vec::new();
-        let fail_on_revert =
-            target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
+        let fail_on_revert = target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
         // Number of committed (non-`vm.assume`) calls, used to gate invariant checks.
         let mut accepted = 0usize;
         let mut entry_failure: Option<ReplayFailure> = None;
@@ -585,8 +584,7 @@ fn broken_after_invariant<FEN: FoundryEvmNetwork>(
 /// `check_interval == 1` every call is checked; otherwise every N-th call.
 fn should_check_invariant(accepted: usize, check_interval: u32) -> bool {
     debug_assert!(accepted > 0);
-    check_interval == 1
-        || (check_interval > 1 && accepted.is_multiple_of(check_interval as usize))
+    check_interval == 1 || (check_interval > 1 && accepted.is_multiple_of(check_interval as usize))
 }
 
 /// Saturating-add per-(bytecode, pc) hits from a `HitMaps` snapshot into `dst`.

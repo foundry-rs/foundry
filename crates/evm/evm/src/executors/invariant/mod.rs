@@ -55,11 +55,11 @@ use std::{
 };
 
 mod error;
+pub(crate) use error::snapshot_edge_fingerprint;
 pub use error::{
     FailureKey, HandlerAssertionFailure, InvariantFailures, InvariantFuzzError,
     handler_site_already_minimal,
 };
-pub(crate) use error::snapshot_edge_fingerprint;
 use foundry_evm_coverage::HitMaps;
 
 mod campaign;
