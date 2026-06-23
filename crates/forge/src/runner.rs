@@ -1115,11 +1115,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let reason = self.symbolic_raw_call_failure_reason(&raw_call_result)?;
-        if let Some(expected) = expected_reason
-            && reason.as_deref() != Some(expected)
-        {
+        if reason.as_deref() != expected_reason {
             return Err(format!(
-                "candidate replay failed with different reason: expected `{expected}`, got `{}`",
+                "candidate replay failed with different reason: expected `{}`, got `{}`",
+                expected_reason.unwrap_or(""),
                 reason.as_deref().unwrap_or("")
             ));
         }
@@ -1403,6 +1402,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         func,
                         &original_call,
                         std::slice::from_ref(&self.sender),
+                        self.tcfg.config.invariant.shrink_run_limit as usize,
                         |candidate| {
                             self.symbolic_single_call_preserves_failure(
                                 candidate,

@@ -4,7 +4,6 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Function as SolFunction, I256, U256};
 use itertools::Itertools;
 
-const MAX_MINIMIZATION_ATTEMPTS: usize = 5000;
 const MAX_SUBSET_CANDIDATES_PER_PASS: usize = 256;
 
 /// Result of deterministic single-call counterexample minimization.
@@ -35,6 +34,7 @@ pub(crate) fn minimize_single_call_counterexample(
     function: &Function,
     call: &SymbolicCounterexampleCall,
     configured_senders: &[Address],
+    max_attempts: usize,
     mut still_fails: impl FnMut(&SymbolicCounterexampleCall) -> bool,
 ) -> Option<MinimizedSingleCall> {
     if call.calldata.get(..4).is_none_or(|selector| selector != function.selector()) {
@@ -48,13 +48,13 @@ pub(crate) fn minimize_single_call_counterexample(
     let mut accepted = 0usize;
 
     let mut try_args = |candidate_args: &[DynSolValue]| {
+        if attempts >= max_attempts {
+            return false;
+        }
         let Some(candidate_call) = call_with_args(function, call, candidate_args) else {
             return false;
         };
         if candidate_call.calldata == current_call.calldata {
-            return false;
-        }
-        if attempts >= MAX_MINIMIZATION_ATTEMPTS {
             return false;
         }
 
@@ -74,6 +74,7 @@ pub(crate) fn minimize_single_call_counterexample(
     minimize_call_fields(
         &mut current_call,
         configured_senders,
+        max_attempts,
         &mut attempts,
         &mut accepted,
         &mut still_fails,
@@ -213,22 +214,28 @@ fn minimally_simple_value(mut value: DynSolValue) -> DynSolValue {
 fn minimize_call_fields(
     call: &mut SymbolicCounterexampleCall,
     configured_senders: &[Address],
+    max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
     still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
 ) {
     loop {
-        let changed =
-            minimize_call_sender(call, configured_senders, attempts, accepted, still_fails)
-                || minimize_call_u256_field(
-                    call,
-                    attempts,
-                    accepted,
-                    still_fails,
-                    |call| call.value,
-                    |call, value| call.value = value,
-                )
-                || minimize_call_delay(call, attempts, accepted, still_fails);
+        let changed = minimize_call_sender(
+            call,
+            configured_senders,
+            max_attempts,
+            attempts,
+            accepted,
+            still_fails,
+        ) || minimize_call_u256_field(
+            call,
+            max_attempts,
+            attempts,
+            accepted,
+            still_fails,
+            |call| call.value,
+            |call, value| call.value = value,
+        ) || minimize_call_delay(call, max_attempts, attempts, accepted, still_fails);
         if !changed {
             break;
         }
@@ -238,6 +245,7 @@ fn minimize_call_fields(
 fn minimize_call_sender(
     call: &mut SymbolicCounterexampleCall,
     configured_senders: &[Address],
+    max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
     still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
@@ -252,7 +260,14 @@ fn minimize_call_sender(
     for candidate in ordered_senders.into_iter().take(current_idx) {
         let mut candidate_call = call.clone();
         candidate_call.sender = candidate;
-        if accept_call_candidate(call, candidate_call, attempts, accepted, still_fails) {
+        if accept_call_candidate(
+            call,
+            candidate_call,
+            max_attempts,
+            attempts,
+            accepted,
+            still_fails,
+        ) {
             return true;
         }
     }
@@ -261,17 +276,25 @@ fn minimize_call_sender(
 
 fn minimize_call_delay(
     call: &mut SymbolicCounterexampleCall,
+    max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
     still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
 ) -> bool {
     match (call.warp, call.roll) {
-        (Some(warp), Some(roll)) => {
-            minimize_call_delay_pair(call, warp, roll, attempts, accepted, still_fails)
-        }
+        (Some(warp), Some(roll)) => minimize_call_delay_pair(
+            call,
+            warp,
+            roll,
+            max_attempts,
+            attempts,
+            accepted,
+            still_fails,
+        ),
         _ => {
             minimize_call_u256_field(
                 call,
+                max_attempts,
                 attempts,
                 accepted,
                 still_fails,
@@ -279,6 +302,7 @@ fn minimize_call_delay(
                 |call, value| call.warp = value,
             ) || minimize_call_u256_field(
                 call,
+                max_attempts,
                 attempts,
                 accepted,
                 still_fails,
@@ -293,6 +317,7 @@ fn minimize_call_delay_pair(
     call: &mut SymbolicCounterexampleCall,
     current_warp: U256,
     current_roll: U256,
+    max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
     still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
@@ -306,7 +331,7 @@ fn minimize_call_delay_pair(
         let mut candidate_call = call.clone();
         candidate_call.warp = Some(warp);
         candidate_call.roll = Some(roll);
-        accept_call_candidate(call, candidate_call, attempts, accepted, still_fails)
+        accept_call_candidate(call, candidate_call, max_attempts, attempts, accepted, still_fails)
     };
 
     (!current_roll.is_zero()
@@ -328,6 +353,7 @@ fn level_delay(warp: U256, roll: U256) -> (U256, U256) {
 
 fn minimize_call_u256_field(
     call: &mut SymbolicCounterexampleCall,
+    max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
     still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
@@ -344,7 +370,7 @@ fn minimize_call_u256_field(
     minimize_u256_candidates(current, |candidate| {
         let mut candidate_call = call.clone();
         set(&mut candidate_call, Some(candidate));
-        accept_call_candidate(call, candidate_call, attempts, accepted, still_fails)
+        accept_call_candidate(call, candidate_call, max_attempts, attempts, accepted, still_fails)
     })
 }
 
@@ -420,11 +446,12 @@ fn minimize_u256_pair_candidates(
 fn accept_call_candidate(
     call: &mut SymbolicCounterexampleCall,
     candidate: SymbolicCounterexampleCall,
+    max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
     still_fails: &mut impl FnMut(&SymbolicCounterexampleCall) -> bool,
 ) -> bool {
-    if same_call(call, &candidate) || *attempts >= MAX_MINIMIZATION_ATTEMPTS {
+    if same_call(call, &candidate) || *attempts >= max_attempts {
         return false;
     }
 
@@ -1326,6 +1353,8 @@ mod tests {
     use super::*;
     use alloy_json_abi::JsonAbi;
 
+    const TEST_MAX_MINIMIZATION_ATTEMPTS: usize = 5000;
+
     fn call(function: &Function, args: Vec<DynSolValue>) -> SymbolicCounterexampleCall {
         SymbolicCounterexampleCall {
             warp: None,
@@ -1372,7 +1401,7 @@ mod tests {
         );
 
         let minimized =
-            minimize_single_call_counterexample(function, &start, &[], |candidate| {
+            minimize_single_call_counterexample(function, &start, &[], TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
                 let args = decoded(function, candidate);
                 matches!(&args[0], DynSolValue::Uint(value, _) if *value & U256::from(0x2a) == U256::from(0x2a))
                     && matches!(&args[1], DynSolValue::Address(address) if address.as_slice()[19] == 0xaa)
@@ -1420,7 +1449,7 @@ mod tests {
             ],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+        let minimized = minimize_single_call_counterexample(function, &start, &[], TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
             let args = decoded(function, candidate);
             matches!(&args[0], DynSolValue::Uint(value, _) if *value > U256::from(42))
                 && matches!(&args[1], DynSolValue::Int(value, _) if *value < I256::try_from(-42).unwrap())
@@ -1446,17 +1475,23 @@ mod tests {
         let function = abi.functions().next().unwrap();
         let start = call(function, vec![DynSolValue::Uint(U256::from(246), 8)]);
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::Uint(value, 8) if *value > U256::from(42))
-        })
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[0], DynSolValue::Uint(value, 8) if *value > U256::from(42))
+            },
+        )
         .unwrap();
 
         assert_eq!(
             decoded(function, &minimized.minimized_call),
             vec![DynSolValue::Uint(U256::from(43), 8)]
         );
-        assert!(minimized.attempts < MAX_MINIMIZATION_ATTEMPTS);
+        assert!(minimized.attempts < TEST_MAX_MINIMIZATION_ATTEMPTS);
     }
 
     #[test]
@@ -1465,11 +1500,16 @@ mod tests {
         let bytes_function = bytes_abi.functions().next().unwrap();
         let bytes_start =
             call(bytes_function, vec![DynSolValue::Bytes(vec![0x99, 0x41, 0x42, 0x88])]);
-        let bytes_minimized =
-            minimize_single_call_counterexample(bytes_function, &bytes_start, &[], |candidate| {
+        let bytes_minimized = minimize_single_call_counterexample(
+            bytes_function,
+            &bytes_start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
                 decoded(bytes_function, candidate) == vec![DynSolValue::Bytes(vec![0x41, 0x42])]
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(
             decoded(bytes_function, &bytes_minimized.minimized_call),
             vec![DynSolValue::Bytes(vec![0x41, 0x42])]
@@ -1478,11 +1518,16 @@ mod tests {
         let string_abi = JsonAbi::parse(["function check(string) external"]).unwrap();
         let string_function = string_abi.functions().next().unwrap();
         let string_start = call(string_function, vec![DynSolValue::String("xOKy".to_string())]);
-        let string_minimized =
-            minimize_single_call_counterexample(string_function, &string_start, &[], |candidate| {
+        let string_minimized = minimize_single_call_counterexample(
+            string_function,
+            &string_start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
                 decoded(string_function, candidate) == vec![DynSolValue::String("OK".to_string())]
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(
             decoded(string_function, &string_minimized.minimized_call),
             vec![DynSolValue::String("OK".to_string())]
@@ -1499,15 +1544,20 @@ mod tests {
                 DynSolValue::Uint(U256::from(8), 256),
             ])],
         );
-        let array_minimized =
-            minimize_single_call_counterexample(array_function, &array_start, &[], |candidate| {
+        let array_minimized = minimize_single_call_counterexample(
+            array_function,
+            &array_start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
                 let args = decoded(array_function, candidate);
                 matches!(&args[0], DynSolValue::Array(values) if values == &[
                     DynSolValue::Uint(U256::from(4), 256),
                     DynSolValue::Uint(U256::from(2), 256),
                 ])
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(
             decoded(array_function, &array_minimized.minimized_call),
             vec![DynSolValue::Array(vec![
@@ -1529,6 +1579,7 @@ mod tests {
             address_function,
             &address_start,
             &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| {
                 let args = decoded(address_function, candidate);
                 matches!(&args[..], [DynSolValue::Address(address)] if *address == deadbeef)
@@ -1543,11 +1594,14 @@ mod tests {
         let bool_abi = JsonAbi::parse(["function check(bool) external"]).unwrap();
         let bool_function = bool_abi.functions().next().unwrap();
         let bool_start = call(bool_function, vec![DynSolValue::Bool(true)]);
-        let bool_minimized =
-            minimize_single_call_counterexample(bool_function, &bool_start, &[], |candidate| {
-                decoded(bool_function, candidate) == vec![DynSolValue::Bool(false)]
-            })
-            .unwrap();
+        let bool_minimized = minimize_single_call_counterexample(
+            bool_function,
+            &bool_start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| decoded(bool_function, candidate) == vec![DynSolValue::Bool(false)],
+        )
+        .unwrap();
         assert_eq!(
             decoded(bool_function, &bool_minimized.minimized_call),
             vec![DynSolValue::Bool(false)]
@@ -1566,13 +1620,19 @@ mod tests {
             ],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[..], [
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[..], [
                 DynSolValue::Bytes(bytes),
                 DynSolValue::String(string),
             ] if bytes == &[0x41, 0x42] && string.contains("OK"))
-        })
+            },
+        )
         .unwrap();
 
         assert_eq!(
@@ -1596,12 +1656,18 @@ mod tests {
             ])],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::Array(values) if values.iter().any(|value| {
-                matches!(value, DynSolValue::Address(candidate) if *candidate == target)
-            }))
-        })
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[0], DynSolValue::Array(values) if values.iter().any(|value| {
+                    matches!(value, DynSolValue::Address(candidate) if *candidate == target)
+                }))
+            },
+        )
         .unwrap();
 
         assert_eq!(
@@ -1624,15 +1690,21 @@ mod tests {
             ])],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::Tuple(values)
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[0], DynSolValue::Tuple(values)
                 if matches!(&values[..], [
                     DynSolValue::Uint(_, _),
                     DynSolValue::String(value),
                     DynSolValue::Address(_),
                 ] if value.contains("yolo")))
-        })
+            },
+        )
         .unwrap();
 
         assert_eq!(
@@ -1662,12 +1734,18 @@ mod tests {
             ],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::Tuple(outer)
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[0], DynSolValue::Tuple(outer)
                 if matches!(&outer[0], DynSolValue::Tuple(inner)
                     if matches!(&inner[0], DynSolValue::Bytes(bytes) if bytes.contains(&0x42))))
-        })
+            },
+        )
         .unwrap();
 
         assert_eq!(
@@ -1692,6 +1770,7 @@ mod tests {
             function,
             &start,
             &configured_senders,
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
             |candidate| configured_senders.contains(&candidate.sender),
         )
         .unwrap();
@@ -1708,9 +1787,13 @@ mod tests {
         start.warp = Some(U256::from(43));
         start.roll = Some(U256::from(42));
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            candidate.warp == Some(U256::ZERO) && candidate.roll == Some(U256::ZERO)
-        })
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| candidate.warp == Some(U256::ZERO) && candidate.roll == Some(U256::ZERO),
+        )
         .unwrap();
 
         assert_eq!(minimized.minimized_call.warp, Some(U256::ZERO));
@@ -1731,14 +1814,20 @@ mod tests {
             ],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[..], [
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[..], [
                 DynSolValue::Uint(left, _),
                 DynSolValue::Uint(right, _),
                 DynSolValue::Bytes(bytes),
             ] if left.is_zero() && right.is_zero() && bytes.contains(&0x42))
-        })
+            },
+        )
         .unwrap();
 
         assert_eq!(
@@ -1765,15 +1854,21 @@ mod tests {
             ])],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::Tuple(values)
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[0], DynSolValue::Tuple(values)
                 if matches!(&values[..], [
                     DynSolValue::Uint(left, _),
                     DynSolValue::Uint(right, _),
                     DynSolValue::Bytes(bytes),
                 ] if left.is_zero() && right.is_zero() && bytes.contains(&0x42)))
-        })
+            },
+        )
         .unwrap();
 
         assert_eq!(
@@ -1800,15 +1895,21 @@ mod tests {
             ])],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::FixedArray(values)
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[0], DynSolValue::FixedArray(values)
                 if matches!(&values[..], [
                     DynSolValue::Uint(left, _),
                     DynSolValue::Uint(_, _),
                     DynSolValue::Uint(right, _),
                 ] if *left == *right + U256::from(1)))
-        })
+            },
+        )
         .unwrap();
 
         assert_eq!(
@@ -1839,7 +1940,7 @@ mod tests {
             ])],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
+        let minimized = minimize_single_call_counterexample(function, &start, &[], TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
             let args = decoded(function, candidate);
             matches!(&args[0], DynSolValue::Array(values) if values.iter().tuple_combinations().any(|(left, right)| left == right))
         })
@@ -1871,7 +1972,7 @@ mod tests {
 
         let configured_senders = [Address::ZERO, start.sender];
         let minimized =
-            minimize_single_call_counterexample(function, &start, &configured_senders, |candidate| {
+            minimize_single_call_counterexample(function, &start, &configured_senders, TEST_MAX_MINIMIZATION_ATTEMPTS, |candidate| {
                 let args = decoded(function, candidate);
                 matches!(&args[..], [DynSolValue::Uint(left, _), DynSolValue::Uint(right, _)] if left.is_zero() && right.is_zero())
                     && candidate.value.is_some_and(|value| value > U256::from(42))
@@ -1909,12 +2010,18 @@ mod tests {
             ],
         );
 
-        let minimized = minimize_single_call_counterexample(function, &start, &[], |candidate| {
-            let args = decoded(function, candidate);
-            matches!(&args[0], DynSolValue::Int(value, _) if *value == I256::MINUS_ONE)
-                && matches!(&args[1], DynSolValue::Bool(false))
-                && matches!(&args[2], DynSolValue::FixedBytes(bytes, 3) if bytes[2] == 0x42)
-        })
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            &[],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let args = decoded(function, candidate);
+                matches!(&args[0], DynSolValue::Int(value, _) if *value == I256::MINUS_ONE)
+                    && matches!(&args[1], DynSolValue::Bool(false))
+                    && matches!(&args[2], DynSolValue::FixedBytes(bytes, 3) if bytes[2] == 0x42)
+            },
+        )
         .unwrap();
 
         assert_eq!(decoded(function, &minimized.minimized_call), decoded(function, &start));

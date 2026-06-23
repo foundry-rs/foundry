@@ -421,6 +421,71 @@ args=[42, 0x0042]
     );
 });
 
+forgetest_init!(symbolic_minimizer_preserves_failure_flag_reason, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_minimizer_preserves_failure_flag_reason because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMinimizeFailureFlag.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicMinimizeFailureFlag is Test {
+    function checkFailureFlag(uint256 x) public {
+        if (x == 0) revert("candidate-revert");
+        if (x == 42) fail();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-test", "checkFailureFlag"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkFailureFlag(uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "fail_counterexample");
+    assert_eq!(symbolic["replay"]["status"], "confirmed");
+    assert_eq!(symbolic["counterexample"]["raw_args"], "42");
+    assert_eq!(symbolic["minimization"]["accepted"], 0);
+    assert_eq!(
+        symbolic["minimization"]["original_calldata_bytes"],
+        symbolic["minimization"]["minimized_calldata_bytes"]
+    );
+
+    let original = read_artifact_ref(&symbolic["minimization"]["original"]);
+    let minimized = read_artifact(symbolic);
+    assert_eq!(original["replay"]["status"], "confirmed");
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    assert_eq!(original["calls"][0]["calldata"], minimized["calls"][0]["calldata"]);
+    assert_eq!(minimized["calls"][0]["raw_args"], "42");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            symbolic["artifact"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        foundry_test_utils::str![[r#"
+args=[42]
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_minimizes_echidna_address_array_duplicate_fixture, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
