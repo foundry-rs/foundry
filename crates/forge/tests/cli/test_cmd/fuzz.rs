@@ -5,6 +5,21 @@ use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
 use serde_json::Value;
 
+fn find_first_json(root: &std::path::Path) -> std::path::PathBuf {
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "json") {
+                return path;
+            }
+        }
+    }
+    panic!("no json corpus entry under {}", root.display());
+}
+
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
     prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
@@ -506,23 +521,7 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
     prj.update_config(|config| {
         config.invariant.fail_on_revert = true;
     });
-    let mut dirs = vec![prj.root().join("invariant_corpus")];
-    let mut corpus_entry = None;
-    while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                dirs.push(path);
-            } else if path.extension().is_some_and(|extension| extension == "json") {
-                corpus_entry = Some(path);
-                break;
-            }
-        }
-        if corpus_entry.is_some() {
-            break;
-        }
-    }
-    let corpus_entry = corpus_entry.expect("generated invariant corpus entry");
+    let corpus_entry = find_first_json(&prj.root().join("invariant_corpus"));
     let corpus_entry = corpus_entry.strip_prefix(prj.root()).unwrap().to_str().unwrap().to_string();
 
     let replay = cmd
@@ -574,6 +573,155 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
         .assert_success();
     let stdout = String::from_utf8(showmap.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[PASS] invariant_ok() (replay: 1 entries"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_invariant_sequence_checks, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.check_interval = 0;
+        config.invariant.corpus.corpus_dir = Some("seed_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "ForgeFuzzInvariantReplaySequence.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzInvariantReplaySequenceTest is Test {
+    bool checksEnabled;
+    bool ok = true;
+    bool afterFails;
+
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](3);
+        selectors[0] = this.enableChecks.selector;
+        selectors[1] = this.setOk.selector;
+        selectors[2] = this.armAfterInvariant.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function enableChecks() external {
+        checksEnabled = true;
+    }
+
+    function setOk(bool value) external {
+        ok = value;
+    }
+
+    function armAfterInvariant(uint256 value) external {
+        if (value == 0xdeadbeef) {
+            afterFails = true;
+        }
+    }
+
+    function invariant_ok() public view {
+        if (checksEnabled) {
+            assertTrue(ok);
+        }
+    }
+
+    function afterInvariant() external view {
+        if (afterFails) {
+            revert("after");
+        }
+    }
+}
+   "#,
+    );
+    cmd.args([
+        "test",
+        "--mc",
+        "ForgeFuzzInvariantReplaySequenceTest",
+        "--mt",
+        "invariant_ok",
+        "-q",
+    ])
+    .assert_success();
+
+    let seed_entry =
+        std::fs::read_to_string(find_first_json(&prj.root().join("seed_corpus"))).unwrap();
+    let seed_entry: Value = serde_json::from_str(&seed_entry).unwrap();
+    let tx = &seed_entry.as_array().unwrap()[0];
+    let sender = tx["sender"].as_str().unwrap();
+    let target = tx["target"].as_str().unwrap();
+    let artifact = std::fs::read_to_string(prj.root().join(
+        "out/ForgeFuzzInvariantReplaySequence.t.sol/ForgeFuzzInvariantReplaySequenceTest.json",
+    ))
+    .unwrap();
+    let artifact: Value = serde_json::from_str(&artifact).unwrap();
+    let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone()).unwrap();
+    let selector = |name: &str| {
+        let function = abi.functions().find(|function| function.name == name).unwrap();
+        hex::encode(function.selector())
+    };
+    let enable_checks = format!("0x{}", selector("enableChecks"));
+    let set_ok_false = format!("0x{}{:064x}", selector("setOk"), 0);
+    let set_ok_true = format!("0x{}{:064x}", selector("setOk"), 1);
+    let arm_after_invariant = format!("0x{}{:064x}", selector("armAfterInvariant"), 0xdeadbeefu64);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = format!(
+        r#"[{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{enable_checks}",
+  "value":"0x0"
+}},{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{set_ok_false}",
+  "value":"0x0"
+}},{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{set_ok_true}",
+  "value":"0x0"
+}}]"#
+    );
+    std::fs::write(corpus.join("check-interval.json"), entry).unwrap();
+    let entry = format!(
+        r#"[{{
+  "sender":"{sender}",
+  "target":"{target}",
+  "calldata":"{arm_after_invariant}",
+  "value":"0x0"
+}}]"#
+    );
+    std::fs::write(corpus.join("after-invariant.json"), entry).unwrap();
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzInvariantReplaySequenceTest",
+            "--mt",
+            "invariant_ok",
+            "--corpus-dir",
+            "corpus/check-interval.json",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] invariant_ok() (replay: 1 entries"), "{stdout}");
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzInvariantReplaySequenceTest",
+            "--mt",
+            "invariant_ok",
+            "--corpus-dir",
+            "corpus/after-invariant.json",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("broke invariant during replay: afterInvariant:"), "{stdout}");
 });
 
 forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {

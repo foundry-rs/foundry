@@ -27,8 +27,8 @@ use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
-        CallResult, EvmError, Executor, ITest, MinimizationReplayInput, RawCallResult, ShowmapOpts,
-        ShowmapReplayTarget,
+        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
+        RawCallResult, ShowmapOpts, ShowmapReplayTarget,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
@@ -1851,6 +1851,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     fuzzed_contracts: Some(&targeted),
                     invariant_address: Some(invariant_address),
                     invariant_fns: &invariant_fns,
+                    invariant_replay: InvariantReplayOptions {
+                        check_interval: invariant_config.check_interval,
+                        call_after_invariant,
+                    },
                     dynamic: Some(&dynamic),
                 },
             );
@@ -1964,11 +1968,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: &minimize.input,
                     evm_edge_indices: &mut evm_edge_indices,
                 },
-                None,
-                Some(&targeted),
-                Some(invariant_contract.address),
-                &invariant_contract.invariant_fns,
-                Some(&dynamic),
+                ShowmapReplayTarget {
+                    fuzzed_function: None,
+                    fuzzed_contracts: Some(&targeted),
+                    invariant_address: Some(invariant_contract.address),
+                    invariant_fns: &invariant_contract.invariant_fns,
+                    invariant_replay: InvariantReplayOptions {
+                        check_interval: invariant_config.check_interval,
+                        call_after_invariant,
+                    },
+                    dynamic: Some(&dynamic),
+                },
             ) {
                 Ok(observation) => {
                     let replayed = observation.replayed;
@@ -2588,6 +2598,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     fuzzed_contracts: None,
                     invariant_address: None,
                     invariant_fns: &[],
+                    invariant_replay: InvariantReplayOptions::default(),
                     dynamic: None,
                 },
             );
@@ -2610,11 +2621,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence: &minimize.input,
                     evm_edge_indices: &mut evm_edge_indices,
                 },
-                Some(func),
-                None,
-                None,
-                &[],
-                None,
+                ShowmapReplayTarget {
+                    fuzzed_function: Some(func),
+                    fuzzed_contracts: None,
+                    invariant_address: None,
+                    invariant_fns: &[],
+                    invariant_replay: InvariantReplayOptions::default(),
+                    dynamic: None,
+                },
             ) {
                 Ok(observation) => {
                     let replayed = observation.replayed;

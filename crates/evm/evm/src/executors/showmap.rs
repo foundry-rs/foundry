@@ -19,7 +19,9 @@ use crate::{
             DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created,
         },
         corpus_io::read_corpus_tree,
-        invariant::{call_invariant_function, did_fail_on_assert, execute_tx},
+        invariant::{
+            call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
+        },
     },
     inspectors::EdgeIndexMap,
 };
@@ -114,7 +116,15 @@ pub struct ShowmapReplayTarget<'a> {
     pub fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
     pub invariant_address: Option<Address>,
     pub invariant_fns: &'a [(&'a Function, bool)],
+    pub invariant_replay: InvariantReplayOptions,
     pub dynamic: Option<&'a DynamicTargetCtx<'a>>,
+}
+
+/// Invariant replay settings that affect when terminal checks run.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InvariantReplayOptions {
+    pub check_interval: u32,
+    pub call_after_invariant: bool,
 }
 
 /// Facts observed while replaying one candidate for minimization.
@@ -195,11 +205,19 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let mut executor = executor.clone();
         // Targets deployed during this entry, cleared after the entry.
         let mut created: Vec<Address> = Vec::new();
+        let total_replayable = tx_seq
+            .iter()
+            .filter(|tx| {
+                WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts)
+            })
+            .count();
+        let mut replayed = 0usize;
         for tx in &tx_seq {
             if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
                 continue;
             }
             had_replayable = true;
+            replayed += 1;
 
             let mut call_result = execute_tx(&mut executor, tx)?;
             // Coverage-collection asymmetry across calls within a stateful sequence:
@@ -251,9 +269,18 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                 }
                 executor.commit(&mut call_result);
                 if !opts.emit_files
+                    && should_check_invariant(
+                        replayed,
+                        total_replayable,
+                        target.invariant_replay.check_interval,
+                    )
                     && let Some(address) = target.invariant_address
-                    && let Some(failure) =
-                        broken_invariant(&executor, address, target.invariant_fns)?
+                    && let Some(failure) = broken_invariant(
+                        &executor,
+                        address,
+                        target.invariant_fns,
+                        target.invariant_replay.call_after_invariant,
+                    )?
                 {
                     rollback_replay_created(target.fuzzed_contracts, created);
                     return Err(eyre::eyre!(
@@ -324,11 +351,7 @@ pub struct MinimizationReplayInput<'a> {
 pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     input: MinimizationReplayInput<'_>,
-    fuzzed_function: Option<&Function>,
-    fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
-    invariant_address: Option<Address>,
-    invariant_fns: &[(&Function, bool)],
-    dynamic: Option<&DynamicTargetCtx<'_>>,
+    target: ShowmapReplayTarget<'_>,
 ) -> Result<ReplayObservation> {
     let mut observation = ReplayObservation::default();
     let mut executor = executor.clone();
@@ -336,14 +359,21 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     executor.inspector_mut().collect_sancov_edges(true);
 
     let mut created = Vec::new();
+    let total_replayable = input
+        .sequence
+        .iter()
+        .filter(|tx| {
+            WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts)
+        })
+        .count();
     for tx in input.sequence {
-        if !WorkerCorpus::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
+        if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
             observation.skipped += 1;
             continue;
         }
         observation.replayed += 1;
         let mut call_result = execute_tx(&mut executor, tx)?;
-        let target = tx.call_details.target;
+        let target_addr = tx.call_details.target;
         let selector =
             tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
         let reverter = call_result.reverter;
@@ -355,17 +385,17 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
 
         register_replay_created(
             &call_result.state_changeset,
-            dynamic,
-            fuzzed_contracts,
+            target.dynamic,
+            target.fuzzed_contracts,
             &mut created,
         );
 
-        if fuzzed_contracts.is_some() {
+        if target.fuzzed_contracts.is_some() {
             if observation.failure.is_none() {
                 let fail_on_revert =
-                    invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
+                    target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
                 observation.failure = invariant_handler_failure(
-                    target,
+                    target_addr,
                     selector,
                     reverter,
                     did_fail_on_assert(&call_result, &call_result.state_changeset),
@@ -375,30 +405,40 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             }
             executor.commit(&mut call_result);
             if observation.failure.is_none()
-                && let Some(address) = invariant_address
-                && let Some(failure) = broken_invariant(&executor, address, invariant_fns)?
+                && should_check_invariant(
+                    observation.replayed,
+                    total_replayable,
+                    target.invariant_replay.check_interval,
+                )
+                && let Some(address) = target.invariant_address
+                && let Some(failure) = broken_invariant(
+                    &executor,
+                    address,
+                    target.invariant_fns,
+                    target.invariant_replay.call_after_invariant,
+                )?
             {
                 observation.failure = Some(failure);
             }
         } else {
             let success = if call_result
                 .reverter
-                .is_some_and(|reverter| reverter != target && reverter != CHEATCODE_ADDRESS)
+                .is_some_and(|reverter| reverter != target_addr && reverter != CHEATCODE_ADDRESS)
             {
                 true
             } else {
-                executor.is_raw_call_mut_success(target, &mut call_result, false)
+                executor.is_raw_call_mut_success(target_addr, &mut call_result, false)
             };
             if !success && observation.failure.is_none() {
                 observation.failure = Some(format!(
-                    "fuzz:{target:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
+                    "fuzz:{target_addr:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
                     call_result.exit_reason,
                     hex::encode(&call_result.result)
                 ));
             }
         }
     }
-    rollback_replay_created(fuzzed_contracts, created);
+    rollback_replay_created(target.fuzzed_contracts, created);
     Ok(observation)
 }
 
@@ -425,6 +465,7 @@ fn broken_invariant<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
     invariant_fns: &[(&Function, bool)],
+    call_after_invariant: bool,
 ) -> Result<Option<String>> {
     for (invariant, _) in invariant_fns {
         let (call_result, success) = call_invariant_function(
@@ -441,7 +482,27 @@ fn broken_invariant<FEN: FoundryEvmNetwork>(
             )));
         }
     }
+    if call_after_invariant {
+        let (call_result, success) = call_after_invariant_function(executor, invariant_address)?;
+        if !success {
+            return Ok(Some(format!(
+                "afterInvariant:{:?}:0x{}",
+                call_result.exit_reason,
+                hex::encode(&call_result.result)
+            )));
+        }
+    }
     Ok(None)
+}
+
+fn should_check_invariant(replayed: usize, total_replayable: usize, check_interval: u32) -> bool {
+    debug_assert!(replayed > 0);
+    let is_last_call = replayed == total_replayable;
+    if check_interval == 0 {
+        is_last_call
+    } else {
+        check_interval == 1 || replayed.is_multiple_of(check_interval as usize) || is_last_call
+    }
 }
 
 /// Saturating-add per-(bytecode, pc) hits from a `HitMaps` snapshot into `dst`.
