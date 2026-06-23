@@ -134,6 +134,10 @@ impl InvariantFuzzState {
     }
 
     pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
+        if fuzzer.collected_values.is_empty() {
+            return;
+        }
+
         let mut dict = self.inner.borrow_mut();
         for value in fuzzer.collected_values.drain(..) {
             dict.insert_value(value);
