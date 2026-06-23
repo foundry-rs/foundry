@@ -1558,10 +1558,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                     }
                 }
+                let sequence = (0..txes.len()).collect::<Vec<_>>();
                 match check_sequence(
                     self.clone_executor(),
                     &txes,
-                    (0..txes.len()).collect(),
+                    &sequence,
                     self.setup.address,
                     invariant.selector().to_vec().into(),
                     CheckSequenceOptions {
@@ -2854,10 +2855,11 @@ fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
     expect_assertion_failure: bool,
 ) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
     let txes = base_counterexamples_to_txes(ctx, call_sequence);
+    let sequence = (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect::<Vec<_>>();
     let result = check_sequence(
         executor,
         &txes,
-        (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect(),
+        &sequence,
         ctx.invariant_contract.address,
         ctx.invariant_contract.anchor().selector().to_vec().into(),
         CheckSequenceOptions {
@@ -3069,7 +3071,7 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
         let outcome = replay_handler_failure_sequence(
             executor.clone(),
             &txes,
-            sequence,
+            &sequence,
             ctx.invariant_config.has_delay(),
             Some(ctx.revert_decoder),
         );
