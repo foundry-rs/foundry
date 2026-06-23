@@ -275,12 +275,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                         target.invariant_replay.check_interval,
                     )
                     && let Some(address) = target.invariant_address
-                    && let Some(failure) = broken_invariant(
-                        &executor,
-                        address,
-                        target.invariant_fns,
-                        target.invariant_replay.call_after_invariant,
-                    )?
+                    && let Some(failure) =
+                        broken_invariant(&executor, address, target.invariant_fns)?
                 {
                     rollback_replay_created(target.fuzzed_contracts, created);
                     return Err(eyre::eyre!(
@@ -307,6 +303,19 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                     ));
                 }
             }
+        }
+        if !opts.emit_files
+            && had_replayable
+            && target.fuzzed_contracts.is_some()
+            && target.invariant_replay.call_after_invariant
+            && let Some(address) = target.invariant_address
+            && let Some(failure) = broken_after_invariant(&executor, address)?
+        {
+            rollback_replay_created(target.fuzzed_contracts, created);
+            return Err(eyre::eyre!(
+                "corpus entry {} broke invariant during replay: {failure}",
+                entry.path.display()
+            ));
         }
         rollback_replay_created(target.fuzzed_contracts, created);
 
@@ -411,12 +420,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                     target.invariant_replay.check_interval,
                 )
                 && let Some(address) = target.invariant_address
-                && let Some(failure) = broken_invariant(
-                    &executor,
-                    address,
-                    target.invariant_fns,
-                    target.invariant_replay.call_after_invariant,
-                )?
+                && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
             {
                 observation.failure = Some(failure);
             }
@@ -437,6 +441,15 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 ));
             }
         }
+    }
+    if observation.failure.is_none()
+        && observation.replayed > 0
+        && target.fuzzed_contracts.is_some()
+        && target.invariant_replay.call_after_invariant
+        && let Some(address) = target.invariant_address
+        && let Some(failure) = broken_after_invariant(&executor, address)?
+    {
+        observation.failure = Some(failure);
     }
     rollback_replay_created(target.fuzzed_contracts, created);
     Ok(observation)
@@ -465,7 +478,6 @@ fn broken_invariant<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
     invariant_fns: &[(&Function, bool)],
-    call_after_invariant: bool,
 ) -> Result<Option<String>> {
     for (invariant, _) in invariant_fns {
         let (call_result, success) = call_invariant_function(
@@ -482,15 +494,20 @@ fn broken_invariant<FEN: FoundryEvmNetwork>(
             )));
         }
     }
-    if call_after_invariant {
-        let (call_result, success) = call_after_invariant_function(executor, invariant_address)?;
-        if !success {
-            return Ok(Some(format!(
-                "afterInvariant:{:?}:0x{}",
-                call_result.exit_reason,
-                hex::encode(&call_result.result)
-            )));
-        }
+    Ok(None)
+}
+
+fn broken_after_invariant<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    invariant_address: Address,
+) -> Result<Option<String>> {
+    let (call_result, success) = call_after_invariant_function(executor, invariant_address)?;
+    if !success {
+        return Ok(Some(format!(
+            "afterInvariant:{:?}:0x{}",
+            call_result.exit_reason,
+            hex::encode(&call_result.result)
+        )));
     }
     Ok(None)
 }

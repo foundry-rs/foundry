@@ -623,6 +623,9 @@ contract ForgeFuzzInvariantReplaySequenceTest is Test {
     }
 
     function afterInvariant() external view {
+        if (checksEnabled && !ok) {
+            revert("after");
+        }
         if (afterFails) {
             revert("after");
         }
