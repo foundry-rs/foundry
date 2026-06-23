@@ -3001,7 +3001,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         func.name,
                     );
                 }
-                if !showmap.emit_files && stats.corpus_entries == 0 {
+                if stats.corpus_entries == 0
+                    && stats.unreadable_entries > 0
+                    && stats.unreadable_entries == stats.skipped_entries
+                {
+                    self.result.single_fail(Some(format!(
+                        "failed to read {} corpus entries from {}",
+                        stats.unreadable_entries,
+                        corpus_dir.display()
+                    )));
+                } else if !showmap.emit_files && stats.corpus_entries == 0 {
                     self.result.replay_skip(format!(
                         "replayed 0 corpus entries from {}",
                         corpus_dir.display()

@@ -266,7 +266,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             }
         };
 
-        let mut had_replayable = false;
+        let mut had_accepted = false;
         let mut executor = executor.clone();
         // Targets deployed during this entry, cleared after the entry.
         let mut created: Vec<Address> = Vec::new();
@@ -278,7 +278,6 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
                 continue;
             }
-            had_replayable = true;
 
             let mut call_result = execute_tx(&mut executor, tx)?;
             // Snapshot the edge fingerprint before any coverage merge zeroes the buffer.
@@ -304,6 +303,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             if call_result.result.as_ref() == MAGIC_ASSUME {
                 continue;
             }
+            had_accepted = true;
 
             register_replay_created(
                 &call_result.state_changeset,
@@ -383,7 +383,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         }
         rollback_replay_created(target.fuzzed_contracts, created);
 
-        if !had_replayable {
+        if !had_accepted {
             stats.skipped_entries += 1;
             continue;
         }

@@ -573,6 +573,7 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
 
 forgetest_init!(forge_fuzz_replay_invariant_sequence_checks, |prj, cmd| {
     prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(1u32));
         config.invariant.runs = 1;
         config.invariant.depth = 1;
         config.invariant.check_interval = 0;
@@ -773,9 +774,16 @@ forgetest_init!(forge_fuzz_cmin_tmin_error_on_zero_replay, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzZeroReplay.t.sol",
         r#"
-contract ForgeFuzzZeroReplayTest {
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzZeroReplayTest is Test {
     function testFuzz_branch(uint256 value) public pure {
         value;
+    }
+
+    function testFuzz_assumeAlways(uint256 value) public {
+        value;
+        vm.assume(false);
     }
 }
    "#,
@@ -837,6 +845,55 @@ contract ForgeFuzzZeroReplayTest {
     let stdout = String::from_utf8(zero_replay.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("[SKIP: replayed 0 corpus entries from wrong-corpus]"), "{stdout}");
     assert!(!stdout.contains("[PASS] testFuzz_branch(uint256) (replay: 0 entries"), "{stdout}");
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzZeroReplay.t.sol/ForgeFuzzZeroReplayTest.json");
+    let assume_corpus = prj.root().join("assume-corpus");
+    std::fs::create_dir_all(&assume_corpus).unwrap();
+    write_corpus_entry(
+        &assume_corpus,
+        "00000000-0000-0000-0000-000000000003-3.json",
+        &calldata_for(&abi, "testFuzz_assumeAlways", 1),
+    );
+    let all_assume_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_assumeAlways",
+            "--corpus-dir",
+            "assume-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(all_assume_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: replayed 0 corpus entries from assume-corpus]"), "{stdout}");
+    assert!(
+        !stdout.contains("[PASS] testFuzz_assumeAlways(uint256) (replay: 1 entries"),
+        "{stdout}"
+    );
+
+    let malformed_corpus = prj.root().join("malformed-corpus");
+    std::fs::create_dir_all(&malformed_corpus).unwrap();
+    std::fs::write(malformed_corpus.join("00000000-0000-0000-0000-000000000004-4.json"), "{")
+        .unwrap();
+    let malformed_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_branch",
+            "--corpus-dir",
+            "malformed-corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(malformed_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("failed to read 1 corpus entries from malformed-corpus"), "{stdout}");
 
     let zero_replay_cmin = cmd
         .forge_fuse()
