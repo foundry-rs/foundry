@@ -460,7 +460,7 @@ impl FuzzDictionary {
         mapping_slots: Option<&MappingSlots>,
     ) {
         let slot = B256::from(*slot);
-        let value = B256::from(*value);
+        let value_word = B256::from(*value);
 
         // Always insert the slot itself
         self.insert_value(slot);
@@ -469,15 +469,18 @@ impl FuzzDictionary {
         if let Some(slot_identifier) = slot_identifier
             // Identify slot type.
             && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots)
-            && slot_info.decode(value).is_some()
+            && slot_info.decode(value_word).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
             if !self.samples_seeded {
                 self.seed_samples();
             }
-            self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
+            self.sample_values
+                .entry(slot_info.slot_type.dyn_sol_type)
+                .or_default()
+                .insert(value_word);
         } else {
-            self.insert_value_u256(value.into());
+            self.insert_value_u256(*value);
         }
     }
 
