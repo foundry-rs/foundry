@@ -274,10 +274,6 @@ pub struct TestArgs {
     #[arg(skip)]
     pub(crate) showmap_override: Option<ShowmapConfig>,
 
-    /// Internal minimization replay override used by `forge fuzz cmin/tmin`.
-    #[arg(skip)]
-    pub(crate) fuzz_minimize_override: Option<FuzzMinimizeConfig>,
-
     /// Internal mode used by `forge fuzz replay` to replay persisted fuzz failures.
     #[arg(skip)]
     pub(crate) fuzz_failure_replay: bool,
@@ -1643,7 +1639,6 @@ impl TestArgs {
 
         let config = Arc::new(config);
         let showmap = self.showmap_config()?;
-        let fuzz_minimize = self.fuzz_minimize_override.clone();
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -1655,7 +1650,6 @@ impl TestArgs {
             .set_coverage(coverage)
             .with_multi_network(multi_network)
             .with_showmap(showmap)
-            .with_fuzz_minimize(fuzz_minimize)
             .with_fuzz_only(self.fuzz_only)
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_symbolic_artifact_replay(replay_symbolic_artifact)

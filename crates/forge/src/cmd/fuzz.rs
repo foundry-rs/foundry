@@ -229,9 +229,7 @@ impl FuzzCminArgs {
     }
 
     async fn run_to(&self, out_dir: &Path) -> Result<CminSummary> {
-        let mut test = minimizer_test_args(self.test.clone());
-        test.enable_fuzz_only();
-        let session = prepare_minimize_session(&mut test).await?;
+        let session = self.test.clone().prepare_session().await?;
         let mut kept = 0usize;
         let mut total = 0usize;
         let mut skipped = 0usize;
@@ -341,9 +339,7 @@ impl FuzzTminArgs {
 
         let mut sequence = read_sequence(&self.input)?;
         let before_txs = sequence.len();
-        let mut test = minimizer_test_args(self.test);
-        test.enable_fuzz_only();
-        let session = prepare_minimize_session(&mut test).await?;
+        let session = self.test.prepare_session().await?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
         let original = replay_candidate(&session, evm_edge_indices.clone(), sequence.clone())?;
         if original.replayed == 0 && !original.has_coverage() && original.failure.is_none() {
@@ -533,6 +529,22 @@ struct FuzzMinimizeTestArgs {
     build: FuzzMinimizeBuildArgs,
 }
 
+impl FuzzMinimizeTestArgs {
+    async fn prepare_session(self) -> Result<FuzzMinimizeReplaySession> {
+        let mut test = TestArgs::parse_from(["test", "-q"]);
+        test.set_fuzz_minimize_replay_options(
+            self.global,
+            self.evm,
+            self.build.into(),
+            self.filter,
+        );
+        test.enable_fuzz_only();
+        prepare_minimize_session(&mut test).await
+    }
+}
+
+// This is intentionally narrower than `BuildOpts`: `cmin`/`tmin` reserve
+// `-o/--out` for corpus output, while full `BuildOpts` uses it for artifact output.
 #[derive(Clone, Debug, Default, Parser)]
 struct FuzzMinimizeBuildArgs {
     /// Specify the solc version, or a path to a local solc, to build with.
@@ -557,12 +569,6 @@ struct FuzzMinimizeBuildArgs {
 
     #[command(flatten)]
     project_paths: ProjectPathOpts,
-}
-
-fn minimizer_test_args(args: FuzzMinimizeTestArgs) -> TestArgs {
-    let mut test = TestArgs::parse_from(["test", "-q"]);
-    test.set_fuzz_minimize_replay_options(args.global, args.evm, args.build.into(), args.filter);
-    test
 }
 
 impl From<FuzzMinimizeBuildArgs> for BuildOpts {
