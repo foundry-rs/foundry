@@ -1,5 +1,5 @@
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Selector, map::HashMap};
+use alloy_primitives::{Address, Selector};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -188,16 +188,6 @@ impl TargetedContracts {
                 .find(|f| f.selector() == selector)
                 .map(|function| format!("{}.{}", contract.identifier.as_str(), function.name))
         })
-    }
-
-    /// Returns a map of contract addresses to their storage layouts.
-    pub fn get_storage_layouts(&self) -> HashMap<Address, Arc<StorageLayout>> {
-        self.inner
-            .iter()
-            .filter_map(|(addr, c)| {
-                c.storage_layout.as_ref().map(|layout| (*addr, Arc::clone(layout)))
-            })
-            .collect()
     }
 }
 
