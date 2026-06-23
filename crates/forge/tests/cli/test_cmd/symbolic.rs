@@ -1,31 +1,14 @@
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use serde_json::Value;
-use std::{path::PathBuf, process::Command};
+use std::process::Command;
 
-use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
+use super::symbolic_helpers::{
+    assert_relevant_lines, assert_symbolic, json_test_result, read_artifact_ref,
+};
 
 fn z3_available() -> bool {
     Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
-}
-
-fn json_test_result(stdout: &[u8], signature: &str) -> Value {
-    let json: Value = serde_json::from_slice(stdout).expect("forge test --json output");
-    let suites = json.as_object().expect("top-level suites object");
-    for suite in suites.values() {
-        if let Some(result) = suite["test_results"].get(signature) {
-            return result.clone();
-        }
-    }
-    panic!("missing JSON test result for {signature}: {json}");
-}
-
-fn read_artifact_ref(artifact_ref: &Value) -> Value {
-    let artifact_path = artifact_ref["path"].as_str().expect("symbolic artifact path");
-    let artifact_path = PathBuf::from(artifact_path);
-    let artifact = std::fs::read_to_string(&artifact_path)
-        .unwrap_or_else(|err| panic!("failed to read artifact {}: {err}", artifact_path.display()));
-    serde_json::from_str(&artifact).expect("symbolic counterexample artifact")
 }
 
 fn read_artifact(symbolic: &Value) -> Value {
