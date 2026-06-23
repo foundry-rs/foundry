@@ -8,7 +8,7 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::Selector;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use eyre::{Context, Result, bail};
-use foundry_cli::opts::{BuildOpts, CompilerOpts, EvmArgs, GlobalArgs, ProjectPathOpts};
+use foundry_cli::opts::{BuildOpts, EvmArgs, GlobalArgs};
 use foundry_common::{
     fmt::format_tokens_raw,
     fs, sh_println,
@@ -181,7 +181,7 @@ pub struct FuzzCminArgs {
     #[arg(value_name = "CORPUS_DIR", value_hint = ValueHint::DirPath)]
     corpus_dir: PathBuf,
     /// Output corpus directory.
-    #[arg(long, short, value_name = "DIR", value_hint = ValueHint::DirPath)]
+    #[arg(long = "corpus-out", value_name = "DIR", value_hint = ValueHint::DirPath)]
     out: PathBuf,
 }
 
@@ -197,8 +197,8 @@ impl FuzzCminArgs {
 
         // Best-effort re-check to narrow the TOCTOU window from the check above.
         // `rename` is not portably no-clobber (it replaces an empty target dir on
-        // Unix), so a concurrent writer racing the same `--out` is still the user's
-        // responsibility.
+        // Unix), so a concurrent writer racing the same `--corpus-out` is still the
+        // user's responsibility.
         if self.out.exists() {
             bail!("output corpus directory already exists: {}", self.out.display());
         }
@@ -324,7 +324,7 @@ pub struct FuzzTminArgs {
     #[arg(value_name = "INPUT", value_hint = ValueHint::FilePath)]
     input: PathBuf,
     /// Output corpus file.
-    #[arg(long, short, value_name = "FILE", value_hint = ValueHint::FilePath)]
+    #[arg(long = "corpus-out", value_name = "FILE", value_hint = ValueHint::FilePath)]
     out: PathBuf,
     /// Maximum candidate replays to attempt.
     #[arg(long, default_value_t = 5000, value_name = "N")]
@@ -526,61 +526,15 @@ struct FuzzMinimizeTestArgs {
     #[command(flatten)]
     evm: EvmArgs,
     #[command(flatten)]
-    build: FuzzMinimizeBuildArgs,
+    build: BuildOpts,
 }
 
 impl FuzzMinimizeTestArgs {
     async fn prepare_session(self) -> Result<FuzzMinimizeReplaySession> {
         let mut test = TestArgs::parse_from(["test", "-q"]);
-        test.set_fuzz_minimize_replay_options(
-            self.global,
-            self.evm,
-            self.build.into(),
-            self.filter,
-        );
+        test.set_fuzz_minimize_replay_options(self.global, self.evm, self.build, self.filter);
         test.enable_fuzz_only();
         prepare_minimize_session(&mut test).await
-    }
-}
-
-// This is intentionally narrower than `BuildOpts`: `cmin`/`tmin` reserve
-// `-o/--out` for corpus output, while full `BuildOpts` uses it for artifact output.
-#[derive(Clone, Debug, Default, Parser)]
-struct FuzzMinimizeBuildArgs {
-    /// Specify the solc version, or a path to a local solc, to build with.
-    #[arg(
-        long = "use",
-        alias = "compiler-version",
-        help_heading = "Compiler options",
-        value_name = "SOLC_VERSION"
-    )]
-    use_solc: Option<String>,
-
-    /// Do not access the network.
-    #[arg(long, help_heading = "Compiler options")]
-    offline: bool,
-
-    /// Use the Yul intermediate representation compilation pipeline.
-    #[arg(long, help_heading = "Compiler options")]
-    via_ir: bool,
-
-    #[command(flatten)]
-    compiler: CompilerOpts,
-
-    #[command(flatten)]
-    project_paths: ProjectPathOpts,
-}
-
-impl From<FuzzMinimizeBuildArgs> for BuildOpts {
-    fn from(args: FuzzMinimizeBuildArgs) -> Self {
-        Self {
-            use_solc: args.use_solc,
-            offline: args.offline,
-            via_ir: args.via_ir,
-            compiler: args.compiler,
-            project_paths: args.project_paths,
-            ..Default::default()
-        }
     }
 }
 
@@ -811,6 +765,8 @@ mod tests {
             "Target",
             "corpus",
             "--out",
+            "artifacts",
+            "--corpus-out",
             "min-corpus",
         ])
         .unwrap();
@@ -824,7 +780,7 @@ mod tests {
             "--mt",
             "testFuzz",
             "corpus/input.json",
-            "--out",
+            "--corpus-out",
             "min.json",
         ])
         .unwrap();

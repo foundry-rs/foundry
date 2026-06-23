@@ -326,7 +326,7 @@ corpus/00000000-0000-0000-0000-000000000002-2.json (1 txs)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["fuzz", "cmin", "--mc", "ForgeFuzzShowTargetTest", "corpus", "--out", "cmin"])
+        .args(["fuzz", "cmin", "--mc", "ForgeFuzzShowTargetTest", "corpus", "--corpus-out", "cmin"])
         .assert_success()
         .stdout_eq(str![[r#"
 minimized corpus: kept 1/2 entries in cmin
@@ -342,7 +342,7 @@ minimized corpus: kept 1/2 entries in cmin
             "--mc",
             "ForgeFuzzShowTargetTest",
             "corpus/00000000-0000-0000-0000-000000000001-1.json",
-            "--out",
+            "--corpus-out",
             "cmin-file",
         ])
         .assert_success()
@@ -360,7 +360,7 @@ minimized corpus: kept 1/1 entries in cmin-file
             "--mc",
             "ForgeFuzzShowTargetTest",
             "corpus/00000000-0000-0000-0000-000000000001-1.json",
-            "--out",
+            "--corpus-out",
             "min.json",
         ])
         .assert_success();
@@ -419,7 +419,15 @@ contract ForgeFuzzCminCoverageTest is Test {
 
     let cmin = cmd
         .forge_fuse()
-        .args(["fuzz", "cmin", "--mc", "ForgeFuzzCminCoverageTest", "corpus", "--out", "cmin"])
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzCminCoverageTest",
+            "corpus",
+            "--corpus-out",
+            "cmin",
+        ])
         .assert_success();
     let stdout = String::from_utf8(cmin.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("minimized corpus: kept 2/2 entries in cmin"), "{stdout}");
@@ -455,7 +463,7 @@ contract ForgeFuzzTminReasonTest {
             "--mc",
             "ForgeFuzzTminReasonTest",
             "corpus/reason.json",
-            "--out",
+            "--corpus-out",
             "min-reason.json",
         ])
         .assert_success();
@@ -538,7 +546,7 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
             "--mt",
             "invariant_ok",
             &corpus_entry,
-            "--out",
+            "--corpus-out",
             "min-fail-on-revert.json",
         ])
         .assert_success();
@@ -743,13 +751,13 @@ forgetest_init!(forge_fuzz_rejects_machine, |prj, cmd| {
         vec!["--machine", "fuzz", "run"],
         vec!["--machine", "fuzz", "replay"],
         vec!["--machine", "fuzz", "show", "corpus"],
-        vec!["--machine", "fuzz", "cmin", "corpus", "--out", "cmin"],
+        vec!["--machine", "fuzz", "cmin", "corpus", "--corpus-out", "cmin"],
         vec![
             "--machine",
             "fuzz",
             "tmin",
             "corpus/00000000-0000-0000-0000-000000000001-1.json",
-            "--out",
+            "--corpus-out",
             "min-machine.json",
         ],
     ] {
@@ -792,7 +800,7 @@ contract ForgeFuzzZeroReplayTest {
             "--mt",
             "testFuzz_noMatch",
             "corpus",
-            "--out",
+            "--corpus-out",
             "cmin",
         ])
         .assert_failure();
@@ -840,7 +848,7 @@ contract ForgeFuzzZeroReplayTest {
             "--mt",
             "testFuzz_branch",
             "wrong-corpus",
-            "--out",
+            "--corpus-out",
             "zero-replay-cmin",
         ])
         .assert_failure();
@@ -857,7 +865,7 @@ contract ForgeFuzzZeroReplayTest {
             "--mt",
             "testFuzz_branch",
             "corpus",
-            "--out",
+            "--corpus-out",
             "cmin",
         ])
         .assert_success();
@@ -873,7 +881,7 @@ contract ForgeFuzzZeroReplayTest {
             "--mt",
             "testFuzz_branch",
             "wrong-corpus/00000000-0000-0000-0000-000000000002-2.json",
-            "--out",
+            "--corpus-out",
             "min.json",
         ])
         .assert_failure();
@@ -941,7 +949,7 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
             "--mt",
             "testFuzz_SetNumber",
             "fuzz_corpus",
-            "--out",
+            "--corpus-out",
             "cmin-root",
         ])
         .assert_success();
