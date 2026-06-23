@@ -1253,7 +1253,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
 
         if let Some(cheatcodes) = self.cheatcodes.as_deref_mut() {
             // Handle mocked functions, replace bytecode address with mock if matched.
-            if let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address) {
+            if !cheatcodes.mocked_functions.is_empty()
+                && let Some(mocks) = cheatcodes.mocked_functions.get(&call.bytecode_address)
+            {
                 let input_bytes = call.input.bytes(ecx);
                 // Check if any mock function set for call data or if catch-all mock function set
                 // for selector.
