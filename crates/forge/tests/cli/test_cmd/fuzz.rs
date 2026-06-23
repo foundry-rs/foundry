@@ -1186,7 +1186,131 @@ Ran 2 tests for test/CounterTest.t.sol:CounterTest
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 
-"#]]);
+    "#]]);
+});
+
+forgetest_init!(forge_fuzz_replay_respects_fuzz_fail_on_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.fail_on_revert = true;
+    });
+    prj.add_source(
+        "Reverter.sol",
+        r#"
+contract Reverter {
+    function boom(uint256 value) public pure {
+        value;
+        revert("boom");
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "ForgeFuzzReplayFailOnRevert.t.sol",
+        r#"
+import {Reverter} from "../src/Reverter.sol";
+
+contract ForgeFuzzReplayFailOnRevertTest {
+    Reverter reverter;
+
+    function setUp() public {
+        reverter = new Reverter();
+    }
+
+    function testFuzz_callsReverter(uint256 value) public view {
+        reverter.boom(value);
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let artifact = std::fs::read_to_string(
+        prj.root()
+            .join("out/ForgeFuzzReplayFailOnRevert.t.sol/ForgeFuzzReplayFailOnRevertTest.json"),
+    )
+    .unwrap();
+    let artifact: Value = serde_json::from_str(&artifact).unwrap();
+    let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone()).unwrap();
+    let function =
+        abi.functions().find(|function| function.name == "testFuzz_callsReverter").unwrap();
+    let calldata = format!("0x{}{:064x}", hex::encode(function.selector()), 1);
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = format!(
+        r#"[{{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"{calldata}",
+  "value":"0x0"
+}}]"#
+    );
+    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzReplayFailOnRevertTest",
+            "--corpus-dir",
+            "corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("failed during replay: fuzz call"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_replays_persisted_handler_failures, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "AlwaysAssert.sol",
+        r#"
+contract AlwaysAssert {
+    function boom() external { assert(false); }
+}
+   "#,
+    );
+    prj.add_test(
+        "ForgeFuzzReplayHandlerFailure.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {AlwaysAssert} from "../src/AlwaysAssert.sol";
+
+contract ForgeFuzzReplayHandlerFailureTest is Test {
+    AlwaysAssert h;
+
+    function setUp() public {
+        h = new AlwaysAssert();
+        targetContract(address(h));
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgeFuzzReplayHandlerFailureTest", "--mt", "invariant_ok"])
+        .assert_failure();
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzReplayHandlerFailureTest",
+            "--mt",
+            "invariant_ok",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("Assertion Tests: 1 assertion bug(s) found"), "{stdout}");
+    assert!(!stdout.contains("[SKIP: no persisted invariant failure reproduced"), "{stdout}");
 });
 
 // Test 256 runs regardless number of test rejects.

@@ -1755,7 +1755,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
         let runner = self.invariant_runner();
-        let invariant_config = self.config.invariant.clone();
+        let mut invariant_config = self.config.invariant.clone();
+        if self.cr.mcr.tcfg.fuzz_failure_replay {
+            invariant_config.runs = 0;
+        }
         let invariant_config = &invariant_config;
         let is_optimization = is_optimization_invariant(func);
 
@@ -1848,6 +1851,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &showmap,
                 ShowmapReplayTarget {
                     fuzzed_function: None,
+                    fuzz_fail_on_revert: false,
                     fuzzed_contracts: Some(&targeted),
                     invariant_address: Some(invariant_address),
                     invariant_fns: &invariant_fns,
@@ -1970,6 +1974,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 },
                 ShowmapReplayTarget {
                     fuzzed_function: None,
+                    fuzz_fail_on_revert: false,
                     fuzzed_contracts: Some(&targeted),
                     invariant_address: Some(invariant_contract.address),
                     invariant_fns: &invariant_contract.invariant_fns,
@@ -2127,17 +2132,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
-        // `forge fuzz replay` (without `--corpus-dir`) only replays persisted failures and
-        // must never start a fresh campaign. If we reach this point the persisted primary
-        // failure (if any) no longer reproduces, so report a skip instead of fuzzing.
-        if self.cr.mcr.tcfg.fuzz_failure_replay {
-            self.result.single_skip(SkipReason(Some(format!(
-                "no persisted invariant failure reproduced for {}",
-                invariant_contract.anchor().name
-            ))));
-            return self.result;
-        }
-
         // Replay persisted handler bugs; feed still-reproducing ones into the campaign,
         // delete stale files in place.
         let persisted_handler_failures = replay_persisted_handler_failures(
@@ -2146,6 +2140,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.clone_executor(),
             &replay_ctx,
         );
+
+        // `forge fuzz replay` (without `--corpus-dir`) only replays persisted failures and
+        // must never start a fresh campaign. If handler bugs still reproduce, surface them
+        // through the normal invariant result path below; otherwise report a skip.
+        if self.cr.mcr.tcfg.fuzz_failure_replay && persisted_handler_failures.is_empty() {
+            self.result.single_skip(SkipReason(Some(format!(
+                "no persisted invariant failure reproduced for {}",
+                invariant_contract.anchor().name
+            ))));
+            return self.result;
+        }
 
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
@@ -2606,6 +2611,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &showmap,
                 ShowmapReplayTarget {
                     fuzzed_function: Some(func),
+                    fuzz_fail_on_revert: fuzz_config.fail_on_revert,
                     fuzzed_contracts: None,
                     invariant_address: None,
                     invariant_fns: &[],
@@ -2634,6 +2640,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 },
                 ShowmapReplayTarget {
                     fuzzed_function: Some(func),
+                    fuzz_fail_on_revert: fuzz_config.fail_on_revert,
                     fuzzed_contracts: None,
                     invariant_address: None,
                     invariant_fns: &[],

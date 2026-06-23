@@ -114,6 +114,7 @@ pub struct ShowmapStats {
 /// Test target metadata needed to replay corpus entries.
 pub struct ShowmapReplayTarget<'a> {
     pub fuzzed_function: Option<&'a Function>,
+    pub fuzz_fail_on_revert: bool,
     pub fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
     pub invariant_address: Option<Address>,
     pub invariant_fns: &'a [(&'a Function, bool)],
@@ -342,9 +343,10 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                     break;
                 }
             } else if !opts.emit_files {
-                let success = if call_result.reverter.is_some_and(|reverter| {
-                    reverter != target_addr && reverter != CHEATCODE_ADDRESS
-                }) {
+                let success = if !target.fuzz_fail_on_revert
+                    && call_result.reverter.is_some_and(|reverter| {
+                        reverter != target_addr && reverter != CHEATCODE_ADDRESS
+                    }) {
                     true
                 } else {
                     executor.is_raw_call_mut_success(target_addr, &mut call_result, false)
@@ -488,10 +490,10 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
                 record_replay_failure(&mut observation.failure, failure);
             }
         } else {
-            let success = if call_result
-                .reverter
-                .is_some_and(|reverter| reverter != target_addr && reverter != CHEATCODE_ADDRESS)
-            {
+            let success = if !target.fuzz_fail_on_revert
+                && call_result.reverter.is_some_and(|reverter| {
+                    reverter != target_addr && reverter != CHEATCODE_ADDRESS
+                }) {
                 true
             } else {
                 executor.is_raw_call_mut_success(target_addr, &mut call_result, false)
