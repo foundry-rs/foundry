@@ -27,7 +27,10 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
-use foundry_evm_core::{constants::CHEATCODE_ADDRESS, evm::FoundryEvmNetwork};
+use foundry_evm_core::{
+    constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
+    evm::FoundryEvmNetwork,
+};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
@@ -110,7 +113,7 @@ pub struct ShowmapReplayTarget<'a> {
     pub fuzzed_function: Option<&'a Function>,
     pub fuzzed_contracts: Option<&'a FuzzRunIdentifiedContracts>,
     pub invariant_address: Option<Address>,
-    pub invariant_fns: &'a [&'a Function],
+    pub invariant_fns: &'a [(&'a Function, bool)],
     pub dynamic: Option<&'a DynamicTargetCtx<'a>>,
 }
 
@@ -224,6 +227,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
 
             // Stateful tests need the tx committed so subsequent calls see its effects.
             if target.fuzzed_contracts.is_some() {
+                let fail_on_revert =
+                    target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
                 if !opts.emit_files
                     && let Some(failure) = invariant_handler_failure(
                         tx.call_details.target,
@@ -234,6 +239,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                             .unwrap_or_default(),
                         call_result.reverter,
                         did_fail_on_assert(&call_result, &call_result.state_changeset),
+                        fail_on_revert,
                         &call_result,
                     )
                 {
@@ -321,7 +327,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     fuzzed_function: Option<&Function>,
     fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     invariant_address: Option<Address>,
-    invariant_fns: &[&Function],
+    invariant_fns: &[(&Function, bool)],
     dynamic: Option<&DynamicTargetCtx<'_>>,
 ) -> Result<ReplayObservation> {
     let mut observation = ReplayObservation::default();
@@ -356,11 +362,14 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
 
         if fuzzed_contracts.is_some() {
             if observation.failure.is_none() {
+                let fail_on_revert =
+                    invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
                 observation.failure = invariant_handler_failure(
                     target,
                     selector,
                     reverter,
                     did_fail_on_assert(&call_result, &call_result.state_changeset),
+                    fail_on_revert,
                     &call_result,
                 );
             }
@@ -398,9 +407,12 @@ fn invariant_handler_failure<FEN: FoundryEvmNetwork>(
     selector: Selector,
     reverter: Option<Address>,
     assertion_failure: bool,
+    fail_on_revert: bool,
     call_result: &crate::executors::RawCallResult<FEN>,
 ) -> Option<String> {
-    assertion_failure.then(|| {
+    let failed = assertion_failure
+        || (fail_on_revert && call_result.reverted && call_result.result.as_ref() != MAGIC_ASSUME);
+    failed.then(|| {
         format!(
             "handler:{target:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
             call_result.exit_reason,
@@ -412,13 +424,13 @@ fn invariant_handler_failure<FEN: FoundryEvmNetwork>(
 fn broken_invariant<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
-    invariant_fns: &[&Function],
+    invariant_fns: &[(&Function, bool)],
 ) -> Result<Option<String>> {
-    for invariant in invariant_fns {
+    for (invariant, _) in invariant_fns {
         let (call_result, success) = call_invariant_function(
             executor,
             invariant_address,
-            (*invariant).abi_encode_input(&[])?.into(),
+            invariant.abi_encode_input(&[])?.into(),
         )?;
         if !success {
             return Ok(Some(format!(
@@ -585,9 +597,28 @@ mod tests {
             Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
             Some(Address::with_last_byte(2)),
             did_fail_on_assert(&call_result, &call_result.state_changeset),
+            false,
             &call_result,
         );
         assert_eq!(failure, None);
+    }
+
+    #[test]
+    fn invariant_handler_failure_reports_fail_on_revert() {
+        let call_result = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
+            exit_reason: Some(InstructionResult::Revert),
+            ..Default::default()
+        };
+        let failure = invariant_handler_failure(
+            Address::with_last_byte(1),
+            Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
+            Some(Address::with_last_byte(2)),
+            did_fail_on_assert(&call_result, &call_result.state_changeset),
+            true,
+            &call_result,
+        );
+        assert!(failure.is_some());
     }
 
     #[test]

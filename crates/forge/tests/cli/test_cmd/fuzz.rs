@@ -463,6 +463,119 @@ contract ForgeFuzzTminReasonTest {
     assert!(min.contains(&calldata_two), "{min}");
 });
 
+forgetest_init!(forge_fuzz_replay_invariant_fail_on_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.fail_on_revert = false;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+    });
+    prj.add_test(
+        "ForgeFuzzInvariantFailOnRevertReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
+    function setUp() public {
+        targetContract(address(this));
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = this.revertHandler.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function revertHandler(uint256 value) external pure {
+        value;
+        revert("boom");
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+    cmd.args([
+        "test",
+        "--mc",
+        "ForgeFuzzInvariantFailOnRevertReplayTest",
+        "--mt",
+        "invariant_ok",
+        "-q",
+    ])
+    .assert_success();
+
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+    });
+    let mut dirs = vec![prj.root().join("invariant_corpus")];
+    let mut corpus_entry = None;
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "json") {
+                corpus_entry = Some(path);
+                break;
+            }
+        }
+        if corpus_entry.is_some() {
+            break;
+        }
+    }
+    let corpus_entry = corpus_entry.expect("generated invariant corpus entry");
+    let corpus_entry = corpus_entry.strip_prefix(prj.root()).unwrap().to_str().unwrap().to_string();
+
+    let replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzInvariantFailOnRevertReplayTest",
+            "--mt",
+            "invariant_ok",
+            "--corpus-dir",
+            "invariant_corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("failed during replay: handler:"), "{stdout}");
+
+    let tmin = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzInvariantFailOnRevertReplayTest",
+            "--mt",
+            "invariant_ok",
+            &corpus_entry,
+            "--out",
+            "min-fail-on-revert.json",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("preserved original failure"), "{stdout}");
+
+    let showmap = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "ForgeFuzzInvariantFailOnRevertReplayTest",
+            "--mt",
+            "invariant_ok",
+            "--showmap-out",
+            "showmap",
+            "--showmap-corpus-dir",
+            "invariant_corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(showmap.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[PASS] invariant_ok() (replay: 1 entries"), "{stdout}");
+});
+
 forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
     let worker0 = prj.root().join("corpus/worker0/corpus");
     let worker1 = prj.root().join("corpus/worker1/corpus");

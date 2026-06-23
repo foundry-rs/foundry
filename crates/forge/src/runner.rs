@@ -1837,8 +1837,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             };
             let dynamic = evm.dynamic_target_ctx();
-            let invariant_fns =
-                live_invariants.iter().map(|(invariant, _)| *invariant).collect::<Vec<_>>();
+            let invariant_fns = live_invariants
+                .iter()
+                .map(|(invariant, fail)| (*invariant, *fail))
+                .collect::<Vec<_>>();
             let invariant_address = self.address;
             return self.run_showmap(
                 func,
@@ -1949,11 +1951,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             };
             let dynamic = evm.dynamic_target_ctx();
-            let invariant_fns = invariant_contract
-                .invariant_fns
-                .iter()
-                .map(|(invariant, _)| *invariant)
-                .collect::<Vec<_>>();
             let mut evm_edge_indices = match minimize.evm_edge_indices.lock() {
                 Ok(indices) => indices,
                 Err(_) => {
@@ -1970,7 +1967,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 None,
                 Some(&targeted),
                 Some(invariant_contract.address),
-                &invariant_fns,
+                &invariant_contract.invariant_fns,
                 Some(&dynamic),
             ) {
                 Ok(observation) => {
