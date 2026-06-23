@@ -103,7 +103,17 @@ pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,
     /// The number of calls executed to attempt to break invariants in one run.
+    ///
+    /// When `min_depth` is set, this is the maximum depth and each run samples a depth in
+    /// `[min_depth, depth]`.
     pub depth: u32,
+    /// Optional minimum number of calls per invariant run.
+    ///
+    /// When set to a value in `1..depth`, each run samples a depth uniformly in
+    /// `[min_depth, depth]` instead of always using `depth`. Invalid values (`0`, `>= depth`, or
+    /// when `depth == 0`) fall back to the fixed-depth behavior.
+    #[serde(default)]
+    pub min_depth: Option<u32>,
     /// Worker selection mode used to shard invariant runs.
     ///
     /// Defaults to `1` for reproducible seeded campaigns. Use `auto` to derive the worker count
@@ -154,6 +164,9 @@ impl Default for InvariantConfig {
         Self {
             runs: 256,
             depth: 500,
+            // BENCH-ONLY: random depth enabled by default so `derek bench invariant` exercises it.
+            // Revert to `None` before merging the opt-in PR.
+            min_depth: Some(1),
             workers: InvariantWorkers::default(),
             fail_on_revert: false,
             call_override: false,
@@ -183,11 +196,69 @@ impl InvariantConfig {
     pub const fn has_delay(&self) -> bool {
         self.max_block_delay.is_some() || self.max_time_delay.is_some()
     }
+
+    /// Returns the `[min_depth, depth]` range to sample per-run depths from, or `None` when random
+    /// depth is disabled (no `min_depth`, `depth == 0`, or an invalid `min_depth`).
+    ///
+    /// A valid `min_depth` is in `1..depth`.
+    pub const fn random_depth_range(&self) -> Option<(u32, u32)> {
+        match self.min_depth {
+            Some(min) if min >= 1 && self.depth > 0 && min < self.depth => Some((min, self.depth)),
+            _ => None,
+        }
+    }
+
+    /// Returns the estimated per-run depth used by campaign sizing heuristics.
+    ///
+    /// Uses the rounded-up average of the random depth range when enabled, otherwise `depth`.
+    pub const fn estimated_depth(&self) -> u32 {
+        match self.random_depth_range() {
+            Some((min, max)) => (min + max).div_ceil(2),
+            None => self.depth,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn random_depth_range_is_only_active_for_valid_min_depth() {
+        let cfg = |depth, min_depth| InvariantConfig { depth, min_depth, ..Default::default() };
+        // Disabled by default.
+        assert_eq!(cfg(500, None).random_depth_range(), None);
+        // Valid range.
+        assert_eq!(cfg(500, Some(10)).random_depth_range(), Some((10, 500)));
+        assert_eq!(cfg(500, Some(1)).random_depth_range(), Some((1, 500)));
+        // Invalid: zero min, min >= depth, depth zero.
+        assert_eq!(cfg(500, Some(0)).random_depth_range(), None);
+        assert_eq!(cfg(500, Some(500)).random_depth_range(), None);
+        assert_eq!(cfg(500, Some(900)).random_depth_range(), None);
+        assert_eq!(cfg(0, Some(1)).random_depth_range(), None);
+    }
+
+    #[test]
+    fn estimated_depth_uses_rounded_average_when_random() {
+        let cfg = |depth, min_depth| InvariantConfig { depth, min_depth, ..Default::default() };
+        assert_eq!(cfg(500, None).estimated_depth(), 500);
+        assert_eq!(cfg(500, Some(100)).estimated_depth(), 300);
+        assert_eq!(cfg(10, Some(1)).estimated_depth(), 6);
+        // Invalid min_depth falls back to fixed depth.
+        assert_eq!(cfg(500, Some(0)).estimated_depth(), 500);
+    }
+
+    #[test]
+    fn min_depth_defaults_to_none() {
+        assert_eq!(InvariantConfig::default().min_depth, None);
+        // `min_depth` deserializes via `#[serde(default)]` when omitted.
+        let serialized = serde_json::to_value(InvariantConfig::default()).unwrap();
+        assert_eq!(serialized["min_depth"], serde_json::Value::Null);
+        let mut with_min = serialized;
+        with_min["min_depth"] = serde_json::json!(25);
+        let cfg: InvariantConfig = serde_json::from_value(with_min).unwrap();
+        assert_eq!(cfg.min_depth, Some(25));
+    }
 
     #[test]
     fn invariant_workers_accept_auto_and_fixed_counts() {

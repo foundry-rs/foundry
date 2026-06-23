@@ -39,6 +39,7 @@ use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
+    prelude::Rng,
     strategy::Strategy,
     test_runner::{RngAlgorithm, TestRng, TestRunner},
 };
@@ -188,6 +189,43 @@ fn max_invariant_workers_for_campaign(runs: u32, depth: u32) -> usize {
         .unwrap_or(usize::MAX)
 }
 
+/// Determines the number of calls (depth) to execute for a single invariant run.
+///
+/// When random depth is disabled (see [`InvariantConfig::random_depth_range`]) this returns the
+/// fixed `config.depth`. Otherwise it samples uniformly in `[min_depth, depth]`.
+///
+/// For seeded campaigns the depth is derived deterministically from the fuzz seed, worker id, and
+/// logical (global) run number, so the depth schedule is reproducible and independent of the
+/// corpus/input-generation RNG stream. Unseeded campaigns (already non-reproducible) sample from
+/// the worker's `branch_runner`.
+fn random_run_depth(
+    config: &InvariantConfig,
+    fuzz_seed: Option<U256>,
+    plan: InvariantWorkerPlan,
+    local_run: u32,
+    branch_runner: &mut TestRunner,
+) -> u32 {
+    let Some((min, max)) = config.random_depth_range() else {
+        return config.depth;
+    };
+
+    if let Some(seed) = fuzz_seed {
+        let logical_run = plan.first_global_run.wrapping_add(local_run);
+        let seed_data = [
+            b"foundry invariant random depth".as_slice(),
+            &seed.to_be_bytes::<32>(),
+            &plan.worker_id.to_be_bytes(),
+            &logical_run.to_be_bytes(),
+        ]
+        .concat();
+        let depth_seed = U256::from_be_bytes(keccak256(seed_data).0);
+        let mut rng = TestRng::from_seed(RngAlgorithm::ChaCha, &depth_seed.to_be_bytes::<32>());
+        rng.random_range(min..=max)
+    } else {
+        branch_runner.rng().random_range(min..=max)
+    }
+}
+
 fn auto_invariant_worker_count(
     available_threads: usize,
     invariant_campaign_anchors: usize,
@@ -208,7 +246,8 @@ fn invariant_worker_count_with_threads(
             if config.timeout.is_some() {
                 requested
             } else {
-                requested.min(max_invariant_workers_for_campaign(config.runs, config.depth))
+                requested
+                    .min(max_invariant_workers_for_campaign(config.runs, config.estimated_depth()))
             }
         }
     }
@@ -784,6 +823,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         base_executor.clone(),
                         worker_runner,
                         config.clone(),
+                        self.fuzz_seed,
                         setup_contracts,
                         project_contracts,
                         worker_plan,
@@ -820,6 +860,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 base_executor,
                 runner,
                 config,
+                self.fuzz_seed,
                 setup_contracts,
                 project_contracts,
                 worker_plan,
@@ -874,6 +915,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         mut executor: Executor<FEN>,
         runner: TestRunner,
         config: InvariantConfig,
+        fuzz_seed: Option<U256>,
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
         plan: InvariantWorkerPlan,
@@ -923,12 +965,22 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 &invariant_test.targeted_contracts,
             )?;
 
+            // Number of calls to execute for this run. Either the fixed `config.depth` or, when
+            // random depth is enabled, a per-run sampled depth in `[min_depth, depth]`.
+            let run_depth = random_run_depth(
+                &config,
+                fuzz_seed,
+                plan,
+                runs,
+                &mut invariant_test.test_data.branch_runner,
+            );
+
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
                 initial_seq[0].clone(),
                 // Before each run, we must reset the backend state.
                 executor.clone(),
-                config.depth as usize,
+                run_depth as usize,
             );
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
@@ -937,7 +989,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 return Err(eyre!("call reverted"));
             }
 
-            while current_run.depth < config.depth {
+            while current_run.depth < run_depth {
                 // Check if the timeout has been reached.
                 if campaign_state.should_stop() {
                     // Since we never record a revert here the test is still considered
@@ -1085,7 +1137,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     // - check_interval=0: only assert on the last call
                     // - check_interval=1 (default): assert after every call
                     // - check_interval=N: assert every N calls AND always on the last call
-                    let is_last_call = current_run.depth == config.depth - 1;
+                    let is_last_call = current_run.depth + 1 == run_depth;
                     // In optimization mode, always evaluate the invariant to track
                     // the best value at every prefix — check_interval only gates
                     // boolean invariant assertions.
@@ -1176,7 +1228,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         current_run.cmp_seq.push(call_cmp_values);
                     }
 
-                    if !continues || current_run.depth == config.depth - 1 {
+                    if !continues || current_run.depth + 1 == run_depth {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
                     // Bridge newly-recorded predicate breaks into `failure_metrics` even when
@@ -2384,5 +2436,75 @@ mod tests {
         assert_eq!(metrics.failures, 0);
         assert!(metrics.unique_failures.is_empty());
         assert_eq!(metrics.broken_handlers, 0);
+    }
+
+    fn depth_config(depth: u32, min_depth: Option<u32>) -> InvariantConfig {
+        InvariantConfig { depth, min_depth, ..Default::default() }
+    }
+
+    fn plan(worker_id: u32, first_global_run: u32) -> InvariantWorkerPlan {
+        InvariantWorkerPlan { worker_id, first_global_run, runs: 0 }
+    }
+
+    #[test]
+    fn random_depth_disabled_returns_fixed_depth() {
+        let seed = Some(U256::from(0x1234));
+        // No min_depth.
+        let config = depth_config(500, None);
+        for run in 0..50 {
+            assert_eq!(random_run_depth(&config, seed, plan(0, 0), run, &mut test_runner()), 500);
+        }
+        // Invalid: min_depth == 0, min_depth >= depth, depth == 0.
+        for cfg in
+            [depth_config(500, Some(0)), depth_config(500, Some(500)), depth_config(0, Some(1))]
+        {
+            assert_eq!(cfg.random_depth_range(), None);
+            assert_eq!(random_run_depth(&cfg, seed, plan(0, 0), 0, &mut test_runner()), cfg.depth);
+        }
+    }
+
+    #[test]
+    fn random_depth_stays_within_range() {
+        let config = depth_config(500, Some(10));
+        assert_eq!(config.random_depth_range(), Some((10, 500)));
+        // Seeded path.
+        for run in 0..500 {
+            let d =
+                random_run_depth(&config, Some(U256::from(7)), plan(0, 0), run, &mut test_runner());
+            assert!((10..=500).contains(&d), "seeded depth {d} out of range");
+        }
+        // Unseeded path.
+        let mut runner = seeded_test_runner(U256::from(99));
+        for _ in 0..500 {
+            let d = random_run_depth(&config, None, plan(0, 0), 0, &mut runner);
+            assert!((10..=500).contains(&d), "unseeded depth {d} out of range");
+        }
+    }
+
+    #[test]
+    fn random_depth_is_deterministic_for_same_seed_worker_run() {
+        let config = depth_config(500, Some(1));
+        let seed = Some(U256::from(0xabcdef_u64));
+        let a = random_run_depth(&config, seed, plan(2, 100), 5, &mut test_runner());
+        let b = random_run_depth(&config, seed, plan(2, 100), 5, &mut test_runner());
+        assert_eq!(a, b);
+        // Different logical run / worker / seed should (very likely) differ across the schedule.
+        let schedule = |s, w, base| {
+            (0..32)
+                .map(|r| random_run_depth(&config, Some(s), plan(w, base), r, &mut test_runner()))
+                .collect::<Vec<_>>()
+        };
+        let s0 = schedule(U256::from(1), 0, 0);
+        assert!(s0.iter().any(|&d| d != s0[0]), "depth schedule should vary across runs");
+        assert_ne!(s0, schedule(U256::from(2), 0, 0), "seed should change schedule");
+        assert_ne!(s0, schedule(U256::from(1), 1, 0), "worker should change schedule");
+    }
+
+    #[test]
+    fn estimated_depth_uses_average_when_random() {
+        assert_eq!(depth_config(500, None).estimated_depth(), 500);
+        assert_eq!(depth_config(500, Some(100)).estimated_depth(), 300);
+        // Rounded up.
+        assert_eq!(depth_config(10, Some(1)).estimated_depth(), 6);
     }
 }

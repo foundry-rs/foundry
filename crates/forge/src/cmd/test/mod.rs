@@ -213,6 +213,13 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_WORKERS", value_name = "WORKERS")]
     pub invariant_workers: Option<InvariantWorkers>,
 
+    /// Minimum number of calls per invariant run.
+    ///
+    /// When set to a value below `invariant.depth`, each run samples a depth in
+    /// `[min_depth, depth]` instead of always using `depth`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MIN_DEPTH", value_name = "MIN_DEPTH")]
+    pub invariant_min_depth: Option<u32>,
+
     /// Run only the fuzz case at the given 1-based run index.
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
     pub fuzz_run: Option<u32>,
@@ -2103,11 +2110,15 @@ impl Provider for TestArgs {
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
+        let mut invariant_dict = Dict::default();
         if let Some(invariant_workers) = self.invariant_workers {
-            dict.insert(
-                "invariant".to_string(),
-                Dict::from([("workers".to_string(), Value::serialize(invariant_workers)?)]).into(),
-            );
+            invariant_dict.insert("workers".to_string(), Value::serialize(invariant_workers)?);
+        }
+        if let Some(invariant_min_depth) = self.invariant_min_depth {
+            invariant_dict.insert("min_depth".to_string(), invariant_min_depth.into());
+        }
+        if !invariant_dict.is_empty() {
+            dict.insert("invariant".to_string(), invariant_dict.into());
         }
 
         let mut symbolic_dict = Dict::default();

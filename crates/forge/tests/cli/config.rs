@@ -1451,6 +1451,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "invariant": {
     "runs": 256,
     "depth": 500,
+    "min_depth": null,
     "workers": 1,
     "fail_on_revert": false,
     "call_override": false,
