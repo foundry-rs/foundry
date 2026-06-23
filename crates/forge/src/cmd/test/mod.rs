@@ -142,6 +142,11 @@ impl FuzzMinimizeReplaySession {
             .lock()
             .map_err(|_| eyre::eyre!("minimize observations lock poisoned"))?
             .clone();
+        // The session is built with exactly one matched fuzz/invariant target, so a
+        // replay that produces no observation means the target silently did not run.
+        if observations.is_empty() {
+            bail!("fuzz minimization replay produced no observation for the matched test");
+        }
         Ok(merge_replay_observations(observations))
     }
 }
@@ -153,7 +158,20 @@ fn replay_with_runner<FEN: FoundryEvmNetwork>(
 ) -> Result<()> {
     let mut runner = runner.clone();
     runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
-    let _ = runner.test_collect(filter)?;
+    let results = runner.test_collect(filter)?;
+    // Minimization replay encodes internal errors (executor failures, poisoned
+    // locks) as failed test results; surface them instead of silently dropping
+    // them so the minimizer doesn't act on an empty observation.
+    for (suite, suite_result) in results {
+        for (test, test_result) in suite_result.test_results {
+            if test_result.status == TestStatus::Failure {
+                bail!(
+                    "fuzz minimization replay failed for {suite}::{test}: {}",
+                    test_result.reason.as_deref().unwrap_or("unknown error")
+                );
+            }
+        }
+    }
     Ok(())
 }
 

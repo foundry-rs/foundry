@@ -69,10 +69,10 @@ contract ShowmapCounterTest is Test {
         ])
         .assert_success();
 
-    // Verify files were produced. Invariant tests share one corpus per contract, so
-    // the approach dir omits the function name; fuzz tests keep per-function dirs.
+    // Verify files were produced. Both fuzz and invariant tests get a per-(anchor)
+    // function approach dir so contracts with multiple campaigns don't collide.
     let out = prj.root().join("showmap_out");
-    let invariant_dir = find_approach_dir(&out, "ShowmapCounterTest");
+    let invariant_dir = find_approach_dir(&out, "ShowmapCounterTest__invariant_counter_called");
     let fuzz_dir = find_approach_dir(&out, "ShowmapCounterTest__testFuzz_SetNumber");
     let invariant_file = invariant_dir.join("t1.txt");
     let fuzz_file = fuzz_dir.join("t1.txt");
@@ -157,7 +157,7 @@ contract ShowmapCounterTest is Test {
 
     // Per-input mode writes one file per corpus entry inside the test's approach dir.
     let out = prj.root().join("showmap_out");
-    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest");
+    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest__invariant_counter_called");
     let entries: Vec<_> = std::fs::read_dir(&approach_dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -213,7 +213,7 @@ contract ShowmapCounterTest is Test {
 
     // Distinct trials become side-by-side files inside the same per-test approach dir.
     let out = prj.root().join("showmap_out");
-    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest");
+    let approach_dir = find_approach_dir(&out, "ShowmapCounterTest__invariant_counter_called");
     let t1 = approach_dir.join("t1.txt");
     let t2 = approach_dir.join("t2.txt");
     assert!(t1.exists(), "missing trial 1 file {}", t1.display());

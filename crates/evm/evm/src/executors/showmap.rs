@@ -21,6 +21,7 @@ use crate::{
         corpus_io::read_corpus_tree,
         invariant::{
             call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
+            snapshot_edge_fingerprint,
         },
     },
     inspectors::EdgeIndexMap,
@@ -127,6 +128,68 @@ pub struct InvariantReplayOptions {
     pub call_after_invariant: bool,
 }
 
+/// A structured, comparable identity for a failure observed during replay.
+///
+/// Used by `forge fuzz tmin` to decide whether a minimized candidate still
+/// reproduces the *same* failure. It deliberately keys on the failure site (and,
+/// for code paths within a single function, an edge-coverage fingerprint) rather
+/// than on raw revert bytes, so that:
+/// - the same bug reached with different revert arguments is still considered the
+///   same failure (avoids false negatives), and
+/// - distinct assertion sites that produce identical revert data (e.g. two
+///   `Panic(0x01)` paths) are kept distinct (avoids false positives).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplayFailure {
+    /// A stateless fuzz test call failed. Keyed by selector and code-path fingerprint.
+    Fuzz { selector: Selector, fingerprint: Option<B256> },
+    /// An invariant handler call hit an assertion or a `fail_on_revert` revert.
+    /// Keyed by `(target, selector)` site and code-path fingerprint, mirroring the
+    /// campaign's handler-bug deduplication.
+    Handler { target: Address, selector: Selector, fingerprint: Option<B256> },
+    /// A broken invariant predicate. Keyed by the invariant function name.
+    Invariant { name: String },
+    /// The `afterInvariant` hook reverted.
+    AfterInvariant,
+}
+
+impl ReplayFailure {
+    /// Whether this failure terminates the run (mirrors the campaign: handler-side
+    /// assertion bugs let the campaign keep running, everything else stops it).
+    const fn is_terminal(&self) -> bool {
+        !matches!(self, Self::Handler { .. })
+    }
+
+    /// Whether this failure is a broken invariant predicate (used to gate
+    /// `afterInvariant`, which the campaign skips only on predicate breaks).
+    const fn is_predicate(&self) -> bool {
+        matches!(self, Self::Invariant { .. } | Self::AfterInvariant)
+    }
+}
+
+impl fmt::Display for ReplayFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fuzz { selector, .. } => write!(f, "fuzz call {selector:?} failed"),
+            Self::Handler { target, selector, .. } => {
+                write!(f, "handler {selector:?} on {target:?} failed")
+            }
+            Self::Invariant { name } => write!(f, "invariant `{name}` broken"),
+            Self::AfterInvariant => f.write_str("afterInvariant broken"),
+        }
+    }
+}
+
+/// Records `failure` as the representative failure for an observation, preferring
+/// terminal failures over non-terminal (handler) ones and keeping the first of
+/// each class.
+fn record_replay_failure(slot: &mut Option<ReplayFailure>, failure: ReplayFailure) {
+    match slot {
+        None => *slot = Some(failure),
+        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *slot = Some(failure),
+        Some(_) => {}
+    }
+}
+
 /// Facts observed while replaying one candidate for minimization.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReplayObservation {
@@ -135,10 +198,11 @@ pub struct ReplayObservation {
     /// AFL-bucketed native sancov edge coverage for the candidate.
     pub sancov_edges: Vec<u8>,
     /// Comparable failure identity, if replaying this candidate fails.
-    pub failure: Option<String>,
+    pub failure: Option<ReplayFailure>,
     /// Number of replayable transactions executed.
     pub replayed: usize,
-    /// Number of transactions skipped because they do not target this fuzz/invariant context.
+    /// Number of transactions skipped because they do not target this fuzz/invariant
+    /// context, or were rejected via `vm.assume`.
     pub skipped: usize,
 }
 
@@ -205,21 +269,20 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let mut executor = executor.clone();
         // Targets deployed during this entry, cleared after the entry.
         let mut created: Vec<Address> = Vec::new();
-        let total_replayable = tx_seq
-            .iter()
-            .filter(|tx| {
-                WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts)
-            })
-            .count();
-        let mut replayed = 0usize;
+        let fail_on_revert =
+            target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
+        // Number of committed (non-`vm.assume`) calls, used to gate invariant checks.
+        let mut accepted = 0usize;
+        let mut entry_failure: Option<ReplayFailure> = None;
         for tx in &tx_seq {
             if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
                 continue;
             }
             had_replayable = true;
-            replayed += 1;
 
             let mut call_result = execute_tx(&mut executor, tx)?;
+            // Snapshot the edge fingerprint before any coverage merge zeroes the buffer.
+            let fingerprint = snapshot_edge_fingerprint(&call_result);
             // Coverage-collection asymmetry across calls within a stateful sequence:
             // - line_coverage is per-call: `Executor::call_raw` returns a fresh HitMap each time,
             //   so we can simply accumulate it.
@@ -236,6 +299,12 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                 }
             }
 
+            // `vm.assume` rejects are discarded by the campaign: coverage is still
+            // collected (above) but the call is neither committed nor checked.
+            if call_result.result.as_ref() == MAGIC_ASSUME {
+                continue;
+            }
+
             register_replay_created(
                 &call_result.state_changeset,
                 target.dynamic,
@@ -243,49 +312,37 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                 &mut created,
             );
 
+            let target_addr = tx.call_details.target;
+            let selector =
+                tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
+
             // Stateful tests need the tx committed so subsequent calls see its effects.
             if target.fuzzed_contracts.is_some() {
-                let fail_on_revert =
-                    target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
+                accepted += 1;
                 if !opts.emit_files
                     && let Some(failure) = invariant_handler_failure(
-                        tx.call_details.target,
-                        tx.call_details
-                            .calldata
-                            .get(..4)
-                            .map(Selector::from_slice)
-                            .unwrap_or_default(),
-                        call_result.reverter,
+                        target_addr,
+                        selector,
                         did_fail_on_assert(&call_result, &call_result.state_changeset),
                         fail_on_revert,
                         &call_result,
+                        fingerprint,
                     )
                 {
-                    rollback_replay_created(target.fuzzed_contracts, created);
-                    return Err(eyre::eyre!(
-                        "corpus entry {} failed during replay: {failure}",
-                        entry.path.display()
-                    ));
+                    entry_failure = Some(failure);
+                    break;
                 }
                 executor.commit(&mut call_result);
                 if !opts.emit_files
-                    && should_check_invariant(
-                        replayed,
-                        total_replayable,
-                        target.invariant_replay.check_interval,
-                    )
+                    && should_check_invariant(accepted, target.invariant_replay.check_interval)
                     && let Some(address) = target.invariant_address
                     && let Some(failure) =
                         broken_invariant(&executor, address, target.invariant_fns)?
                 {
-                    rollback_replay_created(target.fuzzed_contracts, created);
-                    return Err(eyre::eyre!(
-                        "corpus entry {} broke invariant during replay: {failure}",
-                        entry.path.display()
-                    ));
+                    entry_failure = Some(failure);
+                    break;
                 }
             } else if !opts.emit_files {
-                let target_addr = tx.call_details.target;
                 let success = if call_result.reverter.is_some_and(|reverter| {
                     reverter != target_addr && reverter != CHEATCODE_ADDRESS
                 }) {
@@ -294,26 +351,32 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                     executor.is_raw_call_mut_success(target_addr, &mut call_result, false)
                 };
                 if !success {
-                    rollback_replay_created(target.fuzzed_contracts, created);
-                    return Err(eyre::eyre!(
-                        "corpus entry {} failed during replay: {:?}:0x{}",
-                        entry.path.display(),
-                        call_result.exit_reason,
-                        hex::encode(&call_result.result)
-                    ));
+                    entry_failure = Some(ReplayFailure::Fuzz { selector, fingerprint });
+                    break;
                 }
             }
         }
+        // Final invariant + afterInvariant checks (replay mode only): mirror the
+        // campaign's "always check on the last call", and run afterInvariant unless a
+        // predicate already broke.
         if !opts.emit_files
-            && had_replayable
+            && entry_failure.is_none()
+            && accepted > 0
             && target.fuzzed_contracts.is_some()
-            && target.invariant_replay.call_after_invariant
             && let Some(address) = target.invariant_address
-            && let Some(failure) = broken_after_invariant(&executor, address)?
         {
+            if let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)? {
+                entry_failure = Some(failure);
+            } else if target.invariant_replay.call_after_invariant
+                && let Some(failure) = broken_after_invariant(&executor, address)?
+            {
+                entry_failure = Some(failure);
+            }
+        }
+        if let Some(failure) = entry_failure {
             rollback_replay_created(target.fuzzed_contracts, created);
             return Err(eyre::eyre!(
-                "corpus entry {} broke invariant during replay: {failure}",
+                "corpus entry {} failed during replay: {failure}",
                 entry.path.display()
             ));
         }
@@ -367,30 +430,34 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
     executor.inspector_mut().collect_edge_coverage(true);
     executor.inspector_mut().collect_sancov_edges(true);
 
+    let fail_on_revert = target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
     let mut created = Vec::new();
-    let total_replayable = input
-        .sequence
-        .iter()
-        .filter(|tx| {
-            WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts)
-        })
-        .count();
+    // Number of committed (non-`vm.assume`) calls, used to gate invariant checks.
+    let mut accepted = 0usize;
     for tx in input.sequence {
         if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
             observation.skipped += 1;
             continue;
         }
-        observation.replayed += 1;
         let mut call_result = execute_tx(&mut executor, tx)?;
         let target_addr = tx.call_details.target;
         let selector =
             tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
-        let reverter = call_result.reverter;
+        // Snapshot the edge fingerprint before `merge_all_coverage` zeroes the buffer.
+        let fingerprint = snapshot_edge_fingerprint(&call_result);
         call_result.merge_all_coverage(
             &mut observation.evm_edges,
             input.evm_edge_indices,
             &mut observation.sancov_edges,
         );
+
+        // `vm.assume` rejects are discarded by the campaign: coverage is still merged
+        // (above) but the call is neither committed, checked, nor treated as a failure.
+        if call_result.result.as_ref() == MAGIC_ASSUME {
+            observation.skipped += 1;
+            continue;
+        }
+        observation.replayed += 1;
 
         register_replay_created(
             &call_result.state_changeset,
@@ -400,29 +467,26 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
         );
 
         if target.fuzzed_contracts.is_some() {
-            if observation.failure.is_none() {
-                let fail_on_revert =
-                    target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
-                observation.failure = invariant_handler_failure(
-                    target_addr,
-                    selector,
-                    reverter,
-                    did_fail_on_assert(&call_result, &call_result.state_changeset),
-                    fail_on_revert,
-                    &call_result,
-                );
+            accepted += 1;
+            if let Some(failure) = invariant_handler_failure(
+                target_addr,
+                selector,
+                did_fail_on_assert(&call_result, &call_result.state_changeset),
+                fail_on_revert,
+                &call_result,
+                fingerprint,
+            ) {
+                record_replay_failure(&mut observation.failure, failure);
             }
             executor.commit(&mut call_result);
-            if observation.failure.is_none()
-                && should_check_invariant(
-                    observation.replayed,
-                    total_replayable,
-                    target.invariant_replay.check_interval,
-                )
+            // Skip the predicate check only when a predicate already broke; handler
+            // bugs are non-terminal and the campaign keeps checking.
+            if !observation.failure.as_ref().is_some_and(ReplayFailure::is_predicate)
+                && should_check_invariant(accepted, target.invariant_replay.check_interval)
                 && let Some(address) = target.invariant_address
                 && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
             {
-                observation.failure = Some(failure);
+                record_replay_failure(&mut observation.failure, failure);
             }
         } else {
             let success = if call_result
@@ -433,65 +497,73 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             } else {
                 executor.is_raw_call_mut_success(target_addr, &mut call_result, false)
             };
-            if !success && observation.failure.is_none() {
-                observation.failure = Some(format!(
-                    "fuzz:{target_addr:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
-                    call_result.exit_reason,
-                    hex::encode(&call_result.result)
-                ));
+            if !success {
+                record_replay_failure(
+                    &mut observation.failure,
+                    ReplayFailure::Fuzz { selector, fingerprint },
+                );
             }
         }
+
+        // The campaign stops a run on a terminal failure (broken predicate / failed
+        // fuzz call); handler-side assertion bugs let it continue.
+        if observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal) {
+            break;
+        }
     }
-    if observation.failure.is_none()
-        && observation.replayed > 0
+    // Mirror the campaign's "always check on the last call" by running a final
+    // predicate check, unless a predicate already broke.
+    if !observation.failure.as_ref().is_some_and(ReplayFailure::is_predicate)
+        && accepted > 0
+        && target.fuzzed_contracts.is_some()
+        && let Some(address) = target.invariant_address
+        && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
+    {
+        record_replay_failure(&mut observation.failure, failure);
+    }
+    // `afterInvariant` runs unless a predicate broke (handler bugs don't suppress it).
+    if !observation.failure.as_ref().is_some_and(ReplayFailure::is_predicate)
+        && accepted > 0
         && target.fuzzed_contracts.is_some()
         && target.invariant_replay.call_after_invariant
         && let Some(address) = target.invariant_address
         && let Some(failure) = broken_after_invariant(&executor, address)?
     {
-        observation.failure = Some(failure);
+        record_replay_failure(&mut observation.failure, failure);
     }
     rollback_replay_created(target.fuzzed_contracts, created);
     Ok(observation)
 }
 
+/// Returns a [`ReplayFailure::Handler`] if a handler call should be treated as a
+/// bug, mirroring the campaign: assertion failures always count, plain reverts only
+/// count under `fail_on_revert` and are never counted for `vm.assume` rejects.
 fn invariant_handler_failure<FEN: FoundryEvmNetwork>(
     target: Address,
     selector: Selector,
-    reverter: Option<Address>,
     assertion_failure: bool,
     fail_on_revert: bool,
     call_result: &crate::executors::RawCallResult<FEN>,
-) -> Option<String> {
+    fingerprint: Option<B256>,
+) -> Option<ReplayFailure> {
     let failed = assertion_failure
         || (fail_on_revert && call_result.reverted && call_result.result.as_ref() != MAGIC_ASSUME);
-    failed.then(|| {
-        format!(
-            "handler:{target:?}:{selector:?}:{reverter:?}:{:?}:0x{}",
-            call_result.exit_reason,
-            hex::encode(&call_result.result)
-        )
-    })
+    failed.then_some(ReplayFailure::Handler { target, selector, fingerprint })
 }
 
 fn broken_invariant<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
     invariant_fns: &[(&Function, bool)],
-) -> Result<Option<String>> {
+) -> Result<Option<ReplayFailure>> {
     for (invariant, _) in invariant_fns {
-        let (call_result, success) = call_invariant_function(
+        let (_, success) = call_invariant_function(
             executor,
             invariant_address,
             invariant.abi_encode_input(&[])?.into(),
         )?;
         if !success {
-            return Ok(Some(format!(
-                "invariant:{}:{:?}:0x{}",
-                invariant.name,
-                call_result.exit_reason,
-                hex::encode(&call_result.result)
-            )));
+            return Ok(Some(ReplayFailure::Invariant { name: invariant.name.clone() }));
         }
     }
     Ok(None)
@@ -500,26 +572,21 @@ fn broken_invariant<FEN: FoundryEvmNetwork>(
 fn broken_after_invariant<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     invariant_address: Address,
-) -> Result<Option<String>> {
-    let (call_result, success) = call_after_invariant_function(executor, invariant_address)?;
-    if !success {
-        return Ok(Some(format!(
-            "afterInvariant:{:?}:0x{}",
-            call_result.exit_reason,
-            hex::encode(&call_result.result)
-        )));
-    }
-    Ok(None)
+) -> Result<Option<ReplayFailure>> {
+    let (_, success) = call_after_invariant_function(executor, invariant_address)?;
+    Ok((!success).then_some(ReplayFailure::AfterInvariant))
 }
 
-fn should_check_invariant(replayed: usize, total_replayable: usize, check_interval: u32) -> bool {
-    debug_assert!(replayed > 0);
-    let is_last_call = replayed == total_replayable;
-    if check_interval == 0 {
-        is_last_call
-    } else {
-        check_interval == 1 || replayed.is_multiple_of(check_interval as usize) || is_last_call
-    }
+/// Whether the invariant predicate should be evaluated after the `accepted`-th
+/// committed (non-`vm.assume`) call.
+///
+/// Mirrors the campaign: with `check_interval == 0` only the final call is checked
+/// (callers additionally perform a final check after the sequence ends); with
+/// `check_interval == 1` every call is checked; otherwise every N-th call.
+fn should_check_invariant(accepted: usize, check_interval: u32) -> bool {
+    debug_assert!(accepted > 0);
+    check_interval == 1
+        || (check_interval > 1 && accepted.is_multiple_of(check_interval as usize))
 }
 
 /// Saturating-add per-(bytecode, pc) hits from a `HitMaps` snapshot into `dst`.
@@ -555,7 +622,13 @@ fn write_showmap_file(path: &Path, evm: &EvmShowmap, san: &[u64]) -> Result<usiz
     if !has_evm && !has_san {
         return Ok(0);
     }
-    let mut w = BufWriter::new(File::create_new(path)?);
+    let mut w = BufWriter::new(File::create_new(path).map_err(|err| {
+        eyre::eyre!(
+            "failed to create showmap file {}: {err}; pick a different --showmap-trial or remove \
+             the existing file",
+            path.display()
+        )
+    })?);
     write_evm(&mut w, evm)?;
     write_sancov(&mut w, san)?;
     w.flush()?;
@@ -664,6 +737,67 @@ mod tests {
     }
 
     #[test]
+    fn should_check_invariant_matches_campaign_intervals() {
+        // check_interval == 1: every accepted call.
+        assert!(should_check_invariant(1, 1));
+        assert!(should_check_invariant(2, 1));
+        // check_interval == 0: never inline (callers do a final check instead).
+        assert!(!should_check_invariant(1, 0));
+        assert!(!should_check_invariant(5, 0));
+        // check_interval == N: every N-th accepted call.
+        assert!(!should_check_invariant(1, 3));
+        assert!(!should_check_invariant(2, 3));
+        assert!(should_check_invariant(3, 3));
+        assert!(should_check_invariant(6, 3));
+    }
+
+    #[test]
+    fn record_replay_failure_prefers_terminal_then_keeps_first() {
+        let handler = ReplayFailure::Handler {
+            target: Address::ZERO,
+            selector: Selector::from([1, 2, 3, 4]),
+            fingerprint: None,
+        };
+        let predicate = ReplayFailure::Invariant { name: "inv".to_string() };
+
+        // Handler recorded first, then upgraded by a terminal predicate failure.
+        let mut slot = None;
+        record_replay_failure(&mut slot, handler.clone());
+        assert_eq!(slot, Some(handler.clone()));
+        record_replay_failure(&mut slot, predicate.clone());
+        assert_eq!(slot, Some(predicate.clone()));
+        // A later handler failure does not displace an existing terminal failure.
+        record_replay_failure(&mut slot, handler.clone());
+        assert_eq!(slot, Some(predicate.clone()));
+
+        // First terminal failure wins over a subsequent terminal failure.
+        let mut slot = None;
+        record_replay_failure(&mut slot, predicate.clone());
+        record_replay_failure(&mut slot, ReplayFailure::AfterInvariant);
+        assert_eq!(slot, Some(predicate));
+
+        assert!(!handler.is_terminal());
+        assert!(ReplayFailure::AfterInvariant.is_predicate());
+    }
+
+    #[test]
+    fn replay_failure_handler_distinguishes_code_paths_by_fingerprint() {
+        let site = (Address::with_last_byte(7), Selector::from([9, 9, 9, 9]));
+        let a = ReplayFailure::Handler {
+            target: site.0,
+            selector: site.1,
+            fingerprint: Some(B256::with_last_byte(1)),
+        };
+        let b = ReplayFailure::Handler {
+            target: site.0,
+            selector: site.1,
+            fingerprint: Some(B256::with_last_byte(2)),
+        };
+        // Same site, different code path => distinct identities (no false positive).
+        assert_ne!(a, b);
+    }
+
+    #[test]
     fn invariant_handler_failure_ignores_plain_revert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
@@ -673,10 +807,10 @@ mod tests {
         let failure = invariant_handler_failure(
             Address::with_last_byte(1),
             Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
-            Some(Address::with_last_byte(2)),
             did_fail_on_assert(&call_result, &call_result.state_changeset),
             false,
             &call_result,
+            None,
         );
         assert_eq!(failure, None);
     }
@@ -691,10 +825,10 @@ mod tests {
         let failure = invariant_handler_failure(
             Address::with_last_byte(1),
             Selector::from([0xaa, 0xbb, 0xcc, 0xdd]),
-            Some(Address::with_last_byte(2)),
             did_fail_on_assert(&call_result, &call_result.state_changeset),
             true,
             &call_result,
+            None,
         );
         assert!(failure.is_some());
     }

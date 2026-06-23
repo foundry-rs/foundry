@@ -2127,6 +2127,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
+        // `forge fuzz replay` (without `--corpus-dir`) only replays persisted failures and
+        // must never start a fresh campaign. If we reach this point the persisted primary
+        // failure (if any) no longer reproduces, so report a skip instead of fuzzing.
+        if self.cr.mcr.tcfg.fuzz_failure_replay {
+            self.result.single_skip(SkipReason(Some(format!(
+                "no persisted invariant failure reproduced for {}",
+                invariant_contract.anchor().name
+            ))));
+            return self.result;
+        }
+
         // Replay persisted handler bugs; feed still-reproducing ones into the campaign,
         // delete stale files in place.
         let persisted_handler_failures = replay_persisted_handler_failures(
@@ -2666,7 +2677,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             };
 
-            if !failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector) {
+            if failure.calldata.get(..4).is_none_or(|selector| func.selector() != selector) {
                 let result = FuzzTestResult {
                     skipped: true,
                     reason: Some(format!(
@@ -2815,16 +2826,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
 
         // Fold test identity into the approach dir so each `<approach>/` contains
-        // trials of a single test — what `differential-coverage` expects. Invariant
-        // tests share one corpus per contract, so omit the function name for them
-        // to avoid emitting duplicate approach dirs that replay the same corpus.
+        // trials of a single test — what `differential-coverage` expects. The
+        // (anchor) function name is included for invariant tests too so contracts
+        // with multiple invariant campaigns don't collide on the same approach dir
+        // (which `File::create_new` would reject). Distinct anchors sharing one
+        // corpus simply produce equivalent, separately-named approach dirs.
         let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
-        let approach = if target.fuzzed_contracts.is_some() {
-            format!("{}__{safe_id}", showmap.approach)
-        } else {
-            let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
-            format!("{}__{safe_id}__{safe_fn}", showmap.approach)
-        };
+        let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
+        let approach = format!("{}__{safe_id}__{safe_fn}", showmap.approach);
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
             approach,

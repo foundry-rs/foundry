@@ -195,6 +195,14 @@ impl FuzzCminArgs {
         let staging_path = staging_out.path().to_path_buf();
         let summary = self.run_to(&staging_path).await?;
 
+        // Best-effort re-check to narrow the TOCTOU window from the check above.
+        // `rename` is not portably no-clobber (it replaces an empty target dir on
+        // Unix), so a concurrent writer racing the same `--out` is still the user's
+        // responsibility.
+        if self.out.exists() {
+            bail!("output corpus directory already exists: {}", self.out.display());
+        }
+
         if let Err(err) = std::fs::rename(&staging_path, &self.out) {
             return Err(err).with_context(|| {
                 format!(
@@ -262,15 +270,27 @@ impl FuzzCminArgs {
         }
 
         if total > 0 && replayed == 0 {
-            if unreadable > 0 {
+            let corpus = self.corpus_dir.display();
+            // `skipped` also counts unreadable entries; the remainder are txs that
+            // existed but did not target the matched test (filter mismatch / `vm.assume`).
+            let mismatched = skipped.saturating_sub(unreadable);
+            if unreadable == total {
+                bail!("replayed 0 transactions from {corpus}; all {unreadable} corpus entries could not be read");
+            }
+            if mismatched > 0 {
                 bail!(
-                    "replayed 0 transactions from {}; {unreadable} corpus entries could not be read",
-                    self.corpus_dir.display()
+                    "replayed 0 transactions from {corpus}; {mismatched} transactions did not match \
+                     the test — check that --mc/--mt match the corpus entries"
                 );
             }
             bail!(
-                "replayed 0 transactions from {}; check that --mc/--mt match the corpus entries",
-                self.corpus_dir.display()
+                "replayed 0 transactions from {corpus}; corpus entries were empty\
+                 {}",
+                if unreadable > 0 {
+                    format!(" or unreadable ({unreadable} unreadable)")
+                } else {
+                    String::new()
+                }
             );
         }
 
@@ -556,22 +576,38 @@ impl From<FuzzMinimizeBuildArgs> for BuildOpts {
     }
 }
 
-struct QuietShellGuard {
-    previous: OutputMode,
-}
+/// Forces the global shell into [`OutputMode::Quiet`] while any guard is alive.
+///
+/// Guards are reference-counted so nested/overlapping scopes (e.g. a replay guard
+/// taken while a `prepare` guard is held across an `.await`) restore the original
+/// output mode only once the outermost guard is dropped, instead of an inner guard
+/// prematurely restoring it.
+struct QuietShellGuard;
+
+static QUIET_STATE: Mutex<(usize, Option<OutputMode>)> = Mutex::new((0, None));
 
 impl QuietShellGuard {
     fn new() -> Self {
-        let mut shell = Shell::get();
-        let previous = shell.output_mode();
-        shell.set_output_mode(OutputMode::Quiet);
-        Self { previous }
+        let mut state = QUIET_STATE.lock().unwrap_or_else(|err| err.into_inner());
+        if state.0 == 0 {
+            let mut shell = Shell::get();
+            state.1 = Some(shell.output_mode());
+            shell.set_output_mode(OutputMode::Quiet);
+        }
+        state.0 += 1;
+        Self
     }
 }
 
 impl Drop for QuietShellGuard {
     fn drop(&mut self) {
-        Shell::get().set_output_mode(self.previous);
+        let mut state = QUIET_STATE.lock().unwrap_or_else(|err| err.into_inner());
+        state.0 -= 1;
+        if state.0 == 0
+            && let Some(previous) = state.1.take()
+        {
+            Shell::get().set_output_mode(previous);
+        }
     }
 }
 
@@ -616,58 +652,58 @@ fn minimize_sequence(
     max_attempts: usize,
     attempts: &mut usize,
 ) -> Result<()> {
+    // Drop individual txs, mutating in place and rolling back rejected removals so
+    // each attempt only clones the sequence once (inside `accepts_candidate`).
     let mut idx = 0;
     while idx < sequence.len() && *attempts < max_attempts {
-        let mut candidate = sequence.clone();
-        candidate.remove(idx);
-        if accepts_candidate(
-            session,
-            evm_edge_indices.clone(),
-            original,
-            candidate.clone(),
-            max_attempts,
-            attempts,
-        )? {
-            *sequence = candidate;
+        let removed = sequence.remove(idx);
+        if accepts_candidate(session, evm_edge_indices.clone(), original, sequence, max_attempts, attempts)?
+        {
+            // Keep the removal; the next tx now occupies `idx`.
         } else {
+            sequence.insert(idx, removed);
             idx += 1;
         }
     }
 
+    // Strip redundant per-tx metadata (default warp/roll/value).
     let mut idx = 0;
     while idx < sequence.len() && *attempts < max_attempts {
-        let mut candidate = sequence.clone();
-        cleanup_metadata(&mut candidate[idx]);
-        if accepts_candidate(
+        let restore = sequence[idx].clone();
+        cleanup_metadata(&mut sequence[idx]);
+        if !accepts_candidate(
             session,
             evm_edge_indices.clone(),
             original,
-            candidate.clone(),
+            sequence,
             max_attempts,
             attempts,
         )? {
-            *sequence = candidate;
+            sequence[idx] = restore;
         }
         idx += 1;
     }
 
+    // Simplify calldata words.
     let mut tx_idx = 0;
     while tx_idx < sequence.len() && *attempts < max_attempts {
         for calldata in calldata_candidates(sequence[tx_idx].call_details.calldata.as_ref()) {
             if *attempts >= max_attempts {
                 break;
             }
-            let mut candidate = sequence.clone();
-            candidate[tx_idx].call_details.calldata = calldata.into();
-            if accepts_candidate(
+            let restore = std::mem::replace(
+                &mut sequence[tx_idx].call_details.calldata,
+                calldata.into(),
+            );
+            if !accepts_candidate(
                 session,
                 evm_edge_indices.clone(),
                 original,
-                candidate.clone(),
+                sequence,
                 max_attempts,
                 attempts,
             )? {
-                *sequence = candidate;
+                sequence[tx_idx].call_details.calldata = restore;
             }
         }
         tx_idx += 1;
@@ -679,7 +715,7 @@ fn accepts_candidate(
     session: &FuzzMinimizeReplaySession,
     evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
     original: &ReplayObservation,
-    candidate: Vec<BasicTxDetails>,
+    candidate: &[BasicTxDetails],
     max_attempts: usize,
     attempts: &mut usize,
 ) -> Result<bool> {
@@ -687,7 +723,7 @@ fn accepts_candidate(
         return Ok(false);
     }
     *attempts += 1;
-    let observed = replay_candidate(session, evm_edge_indices, candidate)?;
+    let observed = replay_candidate(session, evm_edge_indices, candidate.to_vec())?;
     if let Some(failure) = &original.failure {
         Ok(observed.failure.as_ref() == Some(failure))
     } else {

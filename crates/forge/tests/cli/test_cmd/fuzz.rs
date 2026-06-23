@@ -139,6 +139,48 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
     ]]);
 });
 
+// `forge fuzz replay` (without `--corpus-dir`) must not start a fresh invariant
+// campaign when there is no persisted failure to replay; it should skip instead.
+forgetest_init!(forge_fuzz_replay_invariant_skips_without_persisted_failure, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzReplayInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplayInvariantTest is Test {
+    uint256 total;
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function doThing(uint256 x) public {
+        total += x;
+    }
+
+    function invariant_holds() public view {
+        assertGe(total, 0);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "replay", "--mc", "ForgeFuzzReplayInvariantTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForgeFuzzReplayInvariant.t.sol:ForgeFuzzReplayInvariantTest
+[SKIP: no persisted invariant failure reproduced for invariant_holds] invariant_holds() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+});
+
 forgetest_init!(forge_fuzz_replay_replays_persisted_fuzz_failure, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.runs = 32;
@@ -538,7 +580,7 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
         ])
         .assert_failure();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("failed during replay: handler:"), "{stdout}");
+    assert!(stdout.contains("failed during replay: handler "), "{stdout}");
 
     let tmin = cmd
         .forge_fuse()
@@ -724,7 +766,7 @@ contract ForgeFuzzInvariantReplaySequenceTest is Test {
         ])
         .assert_failure();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("broke invariant during replay: afterInvariant:"), "{stdout}");
+    assert!(stdout.contains("failed during replay: afterInvariant broken"), "{stdout}");
 });
 
 forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {

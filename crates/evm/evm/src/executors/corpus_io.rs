@@ -134,9 +134,22 @@ pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
     Ok(entries)
 }
 
+/// Strips a trailing `suffix` from `name`, comparing case-insensitively.
+fn strip_suffix_ci<'a>(name: &'a str, suffix: &str) -> Option<&'a str> {
+    let split = name.len().checked_sub(suffix.len())?;
+    name.is_char_boundary(split)
+        .then(|| name.split_at(split))
+        .filter(|(_, tail)| tail.eq_ignore_ascii_case(suffix))
+        .map(|(head, _)| head)
+}
+
 /// Parses a corpus filename of the form `<uuid>-<timestamp>.json[.gz]`.
+///
+/// The `.json` / `.gz` extensions are matched case-insensitively so corpus files
+/// written with upper-case extensions are still discovered.
 pub fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
-    let name = name.trim_end_matches(".gz").trim_end_matches(".json");
+    let name = strip_suffix_ci(name, ".gz").unwrap_or(name);
+    let name = strip_suffix_ci(name, ".json").unwrap_or(name);
     let (uuid_str, timestamp_str) =
         name.rsplit_once('-').ok_or_else(|| eyre!("invalid corpus filename format: {name}"))?;
     Ok((Uuid::parse_str(uuid_str)?, timestamp_str.parse()?))
@@ -177,6 +190,31 @@ mod tests {
 
         let entries = read_corpus_tree(&dir).unwrap();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn parse_corpus_filename_is_case_insensitive_for_extensions() {
+        let uuid = "00000000-0000-0000-0000-000000000001";
+        let (parsed_uuid, ts) = parse_corpus_filename(&format!("{uuid}-7.JSON.GZ")).unwrap();
+        assert_eq!(parsed_uuid, Uuid::parse_str(uuid).unwrap());
+        assert_eq!(ts, 7);
+
+        let (parsed_uuid, ts) = parse_corpus_filename(&format!("{uuid}-9.Json")).unwrap();
+        assert_eq!(parsed_uuid, Uuid::parse_str(uuid).unwrap());
+        assert_eq!(ts, 9);
+    }
+
+    #[test]
+    fn read_corpus_tree_discovers_uppercase_extensions() {
+        let dir = temp_dir();
+        let corpus = dir.join("ExampleTest").join("testFuzz_value").join("worker0").join("corpus");
+        std::fs::create_dir_all(&corpus).unwrap();
+        let entry = corpus.join("00000000-0000-0000-0000-000000000001-1.JSON.GZ");
+        std::fs::write(&entry, "[]").unwrap();
+
+        let entries = read_corpus_tree(&dir).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, entry);
     }
 
     #[test]
