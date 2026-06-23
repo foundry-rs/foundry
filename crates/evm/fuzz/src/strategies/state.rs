@@ -380,7 +380,9 @@ impl FuzzDictionary {
         }
 
         // Insert samples collected from current call in fuzz dictionary.
-        self.insert_sample_values(samples, run_depth);
+        if !samples.is_empty() {
+            self.insert_sample_values(samples, run_depth);
+        }
     }
 
     /// Insert values from call state changeset into fuzz dictionary.
