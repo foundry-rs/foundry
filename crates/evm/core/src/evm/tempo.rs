@@ -12,10 +12,12 @@ use revm::{
     interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
     state::Bytecode,
 };
+use std::{cell::RefCell, rc::Rc};
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
 use tempo_precompiles::{
     extend_tempo_precompiles,
     storage::{StorageActions, StorageCtx},
+    storage_credits::NonCreditableSlots,
 };
 use tempo_revm::{
     TempoInvalidTransaction, TempoTxEnv, evm::TempoContext, gas_params::tempo_gas_params,
@@ -101,7 +103,12 @@ impl FoundryEvmFactory for TempoEvmFactory {
         let networks = tempo_evm.inspector().get_networks();
         networks.inject_precompiles(tempo_evm.precompiles_mut());
         let cfg = tempo_evm.cfg.clone();
-        extend_tempo_precompiles(tempo_evm.precompiles_mut(), &cfg, StorageActions::disabled());
+        extend_tempo_precompiles(
+            tempo_evm.precompiles_mut(),
+            &cfg,
+            StorageActions::disabled(),
+            Rc::new(RefCell::new(NonCreditableSlots::empty())),
+        );
 
         initialize_tempo_evm(&mut tempo_evm, is_forked);
         tempo_evm
