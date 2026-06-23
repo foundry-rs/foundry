@@ -348,15 +348,9 @@ impl FuzzTminArgs {
                 self.input.display()
             );
         }
-        let mut attempts = 0usize;
-        minimize_sequence(
-            &session,
-            evm_edge_indices,
-            &original,
-            &mut sequence,
-            self.max_attempts,
-            &mut attempts,
-        )?;
+        let mut ctx =
+            MinimizeContext::new(&session, evm_edge_indices, &original, self.max_attempts);
+        minimize_sequence(&mut ctx, &mut sequence)?;
 
         if is_gzip_path(&self.out) {
             fs::write_json_gzip_file(&self.out, &sequence)?;
@@ -365,8 +359,9 @@ impl FuzzTminArgs {
         }
         sh_println!("minimized entry: {} txs -> {}", sequence.len(), self.out.display())?;
         sh_println!(
-            "removed {} txs after {attempts} candidate replays",
-            before_txs - sequence.len()
+            "removed {} txs after {} candidate replays",
+            before_txs - sequence.len(),
+            ctx.attempts
         )?;
         if original.failure.is_some() {
             sh_println!("preserved original failure")?;
@@ -606,27 +601,57 @@ fn merge_new_edge_vec(cumulative: &mut Vec<u8>, candidate: &[u8]) -> bool {
     improved
 }
 
-fn minimize_sequence(
-    session: &FuzzMinimizeReplaySession,
+/// State shared across a `tmin` minimization pass: the replay session, the
+/// baseline observation candidates must match, and an attempt budget.
+struct MinimizeContext<'a> {
+    session: &'a FuzzMinimizeReplaySession,
     evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
-    original: &ReplayObservation,
-    sequence: &mut Vec<BasicTxDetails>,
+    original: &'a ReplayObservation,
     max_attempts: usize,
-    attempts: &mut usize,
+    attempts: usize,
+}
+
+impl<'a> MinimizeContext<'a> {
+    fn new(
+        session: &'a FuzzMinimizeReplaySession,
+        evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
+        original: &'a ReplayObservation,
+        max_attempts: usize,
+    ) -> Self {
+        Self { session, evm_edge_indices, original, max_attempts, attempts: 0 }
+    }
+
+    fn at_budget(&self) -> bool {
+        self.attempts >= self.max_attempts
+    }
+
+    /// Replays `candidate` and reports whether it still reproduces `original`
+    /// (the same failure, or full coverage of the original's edges).
+    fn accepts(&mut self, candidate: &[BasicTxDetails]) -> Result<bool> {
+        if self.at_budget() {
+            return Ok(false);
+        }
+        self.attempts += 1;
+        let observed =
+            replay_candidate(self.session, self.evm_edge_indices.clone(), candidate.to_vec())?;
+        if let Some(failure) = &self.original.failure {
+            Ok(observed.failure.as_ref() == Some(failure))
+        } else {
+            Ok(observed.failure.is_none() && covers_edges(&observed, self.original))
+        }
+    }
+}
+
+fn minimize_sequence(
+    ctx: &mut MinimizeContext<'_>,
+    sequence: &mut Vec<BasicTxDetails>,
 ) -> Result<()> {
     // Drop individual txs, mutating in place and rolling back rejected removals so
-    // each attempt only clones the sequence once (inside `accepts_candidate`).
+    // each attempt only clones the sequence once (inside `MinimizeContext::accepts`).
     let mut idx = 0;
-    while idx < sequence.len() && *attempts < max_attempts {
+    while idx < sequence.len() && !ctx.at_budget() {
         let removed = sequence.remove(idx);
-        if accepts_candidate(
-            session,
-            evm_edge_indices.clone(),
-            original,
-            sequence,
-            max_attempts,
-            attempts,
-        )? {
+        if ctx.accepts(sequence)? {
             // Keep the removal; the next tx now occupies `idx`.
         } else {
             sequence.insert(idx, removed);
@@ -636,17 +661,10 @@ fn minimize_sequence(
 
     // Strip redundant per-tx metadata (default warp/roll/value).
     let mut idx = 0;
-    while idx < sequence.len() && *attempts < max_attempts {
+    while idx < sequence.len() && !ctx.at_budget() {
         let restore = sequence[idx].clone();
         cleanup_metadata(&mut sequence[idx]);
-        if !accepts_candidate(
-            session,
-            evm_edge_indices.clone(),
-            original,
-            sequence,
-            max_attempts,
-            attempts,
-        )? {
+        if !ctx.accepts(sequence)? {
             sequence[idx] = restore;
         }
         idx += 1;
@@ -654,47 +672,20 @@ fn minimize_sequence(
 
     // Simplify calldata words.
     let mut tx_idx = 0;
-    while tx_idx < sequence.len() && *attempts < max_attempts {
+    while tx_idx < sequence.len() && !ctx.at_budget() {
         for calldata in calldata_candidates(sequence[tx_idx].call_details.calldata.as_ref()) {
-            if *attempts >= max_attempts {
+            if ctx.at_budget() {
                 break;
             }
             let restore =
                 std::mem::replace(&mut sequence[tx_idx].call_details.calldata, calldata.into());
-            if !accepts_candidate(
-                session,
-                evm_edge_indices.clone(),
-                original,
-                sequence,
-                max_attempts,
-                attempts,
-            )? {
+            if !ctx.accepts(sequence)? {
                 sequence[tx_idx].call_details.calldata = restore;
             }
         }
         tx_idx += 1;
     }
     Ok(())
-}
-
-fn accepts_candidate(
-    session: &FuzzMinimizeReplaySession,
-    evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
-    original: &ReplayObservation,
-    candidate: &[BasicTxDetails],
-    max_attempts: usize,
-    attempts: &mut usize,
-) -> Result<bool> {
-    if *attempts >= max_attempts {
-        return Ok(false);
-    }
-    *attempts += 1;
-    let observed = replay_candidate(session, evm_edge_indices, candidate.to_vec())?;
-    if let Some(failure) = &original.failure {
-        Ok(observed.failure.as_ref() == Some(failure))
-    } else {
-        Ok(observed.failure.is_none() && covers_edges(&observed, original))
-    }
 }
 
 fn covers_edges(candidate: &ReplayObservation, original: &ReplayObservation) -> bool {
