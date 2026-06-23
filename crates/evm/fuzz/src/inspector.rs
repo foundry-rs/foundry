@@ -55,6 +55,7 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         }
     }
 
+    #[inline]
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && ecx.tx().caller() != inputs.caller {
@@ -79,6 +80,7 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         None
     }
 
+    #[inline]
     fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, _outcome: &mut CallOutcome) {
         if let Some(ref mut call_generator) = self.call_generator {
             // Decrement depth when any call ends while inside an override
