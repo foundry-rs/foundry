@@ -441,11 +441,11 @@ impl FuzzDictionary {
         let code = &code[..len];
         for inst in InstIter::new(code) {
             // Don't add 0 to the dictionary as it's already present.
-            if !inst.immediate.is_empty()
-                && let Some(push_value) = U256::try_from_be_slice(inst.immediate)
-                && push_value != U256::ZERO
-            {
-                self.insert_value_u256(push_value);
+            if !inst.immediate.is_empty() {
+                let push_value = U256::from_be_slice(inst.immediate);
+                if push_value != U256::ZERO {
+                    self.insert_value_u256(push_value);
+                }
             }
         }
     }
