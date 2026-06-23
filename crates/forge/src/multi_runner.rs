@@ -702,16 +702,22 @@ impl MultiContractRunnerBuilder {
         })?;
 
         let analysis = Arc::new(analysis);
+        let fuzz_max_literals = self.config.fuzz.dictionary.max_fuzz_dictionary_literals;
+        let invariant_max_literals = self.config.invariant.dictionary.max_fuzz_dictionary_literals;
         let fuzz_literals = LiteralsDictionary::new(
             Some(analysis.clone()),
             Some(self.config.project_paths()),
-            self.config.fuzz.dictionary.max_fuzz_dictionary_literals,
+            fuzz_max_literals,
         );
-        let invariant_literals = LiteralsDictionary::new(
-            Some(analysis.clone()),
-            Some(self.config.project_paths()),
-            self.config.invariant.dictionary.max_fuzz_dictionary_literals,
-        );
+        let invariant_literals = if invariant_max_literals == fuzz_max_literals {
+            fuzz_literals.clone()
+        } else {
+            LiteralsDictionary::new(
+                Some(analysis.clone()),
+                Some(self.config.project_paths()),
+                invariant_max_literals,
+            )
+        };
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,

@@ -197,6 +197,8 @@ impl PartialEq for InvariantConfig {
             && self.max_assume_rejects == other.max_assume_rejects
             && self.gas_report_samples == other.gas_report_samples
             && self.corpus == other.corpus
+            && self.corpus_random_sequence_weight_configured
+                == other.corpus_random_sequence_weight_configured
             && self.failure_persist_dir == other.failure_persist_dir
             && self.show_metrics == other.show_metrics
             && self.timeout == other.timeout
@@ -279,6 +281,16 @@ mod tests {
     fn invariant_workers_reject_zero() {
         let err = serde_json::from_str::<InvariantWorkers>(r#"0"#).unwrap_err();
         assert!(err.to_string().contains("greater than 0"));
+    }
+
+    #[test]
+    fn invariant_config_equality_includes_corpus_random_sequence_provenance() {
+        let explicit = InvariantConfig {
+            corpus_random_sequence_weight_configured: true,
+            ..InvariantConfig::default()
+        };
+
+        assert_ne!(InvariantConfig::default(), explicit);
     }
 
     #[test]

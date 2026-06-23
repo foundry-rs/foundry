@@ -186,8 +186,6 @@ fn invariant_suite_configs_match(
 
 fn invariant_campaign_configs_match(left: &InvariantConfig, right: &InvariantConfig) -> bool {
     left == right
-        && left.corpus_random_sequence_weight_configured
-            == right.corpus_random_sequence_weight_configured
 }
 
 fn select_invariant_campaigns<'a>(

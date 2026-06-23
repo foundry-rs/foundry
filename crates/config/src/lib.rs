@@ -1012,9 +1012,16 @@ impl Config {
             figment = figment.merge(remappings);
         }
 
+        let invariant_corpus_random_sequence_weight_configured = self
+            .invariant
+            .corpus_random_sequence_weight_configured
+            || figment
+                .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
+                .unwrap_or_else(|_| figment.contains("invariant.corpus_random_sequence_weight"));
+
         // normalize defaults
         figment = self.normalize_defaults(figment);
-        if figment.contains("invariant.corpus_random_sequence_weight") {
+        if invariant_corpus_random_sequence_weight_configured {
             figment = figment.merge(("invariant.corpus_random_sequence_weight_configured", true));
         }
 
@@ -2565,7 +2572,9 @@ impl FigmentProviders {
 }
 
 fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
-    figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
+    figment.find_metadata(key).is_some_and(|metadata| {
+        metadata.name.as_ref() != "Foundry Config" || metadata.source.is_some()
+    })
 }
 
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
@@ -3030,6 +3039,10 @@ mod tests {
     // from file, causing testing problem when comparing to those created from `default()`, etc.
     fn clear_warning(config: &mut Config) {
         config.warnings = vec![];
+    }
+
+    fn mark_serialized_invariant_corpus_weight(config: &mut Config) {
+        config.invariant.corpus_random_sequence_weight_configured = true;
     }
 
     #[test]
@@ -4763,7 +4776,9 @@ mod tests {
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
             let mut other = Config::load().unwrap();
             clear_warning(&mut other);
-            assert_eq!(default, other);
+            let mut serialized_default = default;
+            mark_serialized_invariant_corpus_weight(&mut serialized_default);
+            assert_eq!(serialized_default, other);
 
             Ok(())
         });
@@ -4832,6 +4847,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
+            mark_serialized_invariant_corpus_weight(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);
@@ -4882,6 +4898,7 @@ mod tests {
 
             let s = loaded.to_string_pretty().unwrap();
             jail.create_file("foundry.toml", &s)?;
+            mark_serialized_invariant_corpus_weight(&mut loaded);
 
             let mut reloaded = Config::load().unwrap();
             clear_warning(&mut reloaded);

@@ -1506,7 +1506,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             config.corpus.clone(),
             strategy.boxed(),
             corpus_seed,
-        );
+        )?;
 
         if let Err(err) =
             worker.seed_from_test_traces(invariant_contract, &targeted_contracts, executor)
