@@ -553,9 +553,43 @@ contract ForgeFuzzZeroReplayTest {
             "cmin",
         ])
         .assert_failure();
-    let stdout = String::from_utf8(cmin.get_output().stderr.clone()).unwrap();
-    assert!(stdout.contains("replayed 0 transactions from corpus"), "{stdout}");
+    let stderr = String::from_utf8(cmin.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains(
+            "fuzz minimization requires exactly one matched fuzz or invariant test; matched 0"
+        ),
+        "{stderr}"
+    );
     assert!(!prj.root().join("cmin").exists());
+
+    let wrong_corpus = prj.root().join("wrong-corpus");
+    std::fs::create_dir_all(&wrong_corpus).unwrap();
+    let wrong_entry = r#"[{
+  "sender":"0x0000000000000000000000000000000000000001",
+  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+  "calldata":"0xdeadbeef0000000000000000000000000000000000000000000000000000000000000001",
+  "value":"0x0"
+}]"#;
+    std::fs::write(wrong_corpus.join("00000000-0000-0000-0000-000000000002-2.json"), wrong_entry)
+        .unwrap();
+
+    let zero_replay_cmin = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_branch",
+            "wrong-corpus",
+            "--out",
+            "zero-replay-cmin",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(zero_replay_cmin.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("replayed 0 transactions from wrong-corpus"), "{stderr}");
+    assert!(!prj.root().join("zero-replay-cmin").exists());
 
     cmd.forge_fuse()
         .args([
@@ -580,8 +614,8 @@ contract ForgeFuzzZeroReplayTest {
             "--mc",
             "ForgeFuzzZeroReplayTest",
             "--mt",
-            "testFuzz_noMatch",
-            "corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "testFuzz_branch",
+            "wrong-corpus/00000000-0000-0000-0000-000000000002-2.json",
             "--out",
             "min.json",
         ])
@@ -589,7 +623,7 @@ contract ForgeFuzzZeroReplayTest {
     let stderr = String::from_utf8(tmin.get_output().stderr.clone()).unwrap();
     assert!(
         stderr.contains(
-            "replayed 0 transactions from corpus/00000000-0000-0000-0000-000000000001-1.json"
+            "replayed 0 transactions from wrong-corpus/00000000-0000-0000-0000-000000000002-2.json"
         ),
         "{stderr}"
     );
@@ -642,7 +676,17 @@ contract ForgeFuzzGeneratedCorpusTest is Test {
 
     let cmin = cmd
         .forge_fuse()
-        .args(["fuzz", "cmin", "fuzz_corpus", "--out", "cmin-root"])
+        .args([
+            "fuzz",
+            "cmin",
+            "--mc",
+            "ForgeFuzzGeneratedCorpusTest",
+            "--mt",
+            "testFuzz_SetNumber",
+            "fuzz_corpus",
+            "--out",
+            "cmin-root",
+        ])
         .assert_success();
     let cmin_stdout = String::from_utf8(cmin.get_output().stdout.clone()).unwrap();
     assert!(!cmin_stdout.contains("kept 0/0 entries"), "{cmin_stdout}");
