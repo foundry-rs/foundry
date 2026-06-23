@@ -612,6 +612,14 @@ pub struct TestArgs {
     /// Analogous to `--invariant-timeout` for invariant campaigns.
     #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
     pub mutation_timeout: Option<u32>,
+
+    /// Override optimizer runs for mutation testing compile-and-test runs.
+    #[arg(long, value_name = "RUNS", requires = "mutate")]
+    pub mutation_optimizer_runs: Option<u32>,
+
+    /// Override via-ir for mutation testing compile-and-test runs.
+    #[arg(long, default_missing_value = "true", num_args = 0..=1, requires = "mutate")]
+    pub mutation_via_ir: Option<bool>,
 }
 
 impl TestArgs {
@@ -1529,6 +1537,9 @@ impl TestArgs {
                      paths:\n{paths}"
                 );
             }
+
+            let mut config_for_mutation = config_for_mutation;
+            apply_mutation_compiler_overrides(&mut config_for_mutation);
 
             let json_output = shell::is_json();
             let selected_sources_relative = self
@@ -2518,13 +2529,39 @@ impl Provider for TestArgs {
         }
 
         // Mutation-testing CLI overrides
-        if let Some(timeout) = self.mutation_timeout {
+        if self.mutation_timeout.is_some()
+            || self.mutation_optimizer_runs.is_some()
+            || self.mutation_via_ir.is_some()
+        {
             let mut mutation_dict = Dict::default();
-            mutation_dict.insert("timeout".to_string(), timeout.into());
+            if let Some(timeout) = self.mutation_timeout {
+                mutation_dict.insert("timeout".to_string(), timeout.into());
+            }
+            if let Some(optimizer_runs) = self.mutation_optimizer_runs {
+                mutation_dict.insert("optimizer_runs".to_string(), optimizer_runs.into());
+            }
+            if let Some(via_ir) = self.mutation_via_ir {
+                mutation_dict.insert("via_ir".to_string(), via_ir.into());
+            }
             dict.insert("mutation".to_string(), mutation_dict.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+const fn apply_mutation_compiler_overrides(config: &mut Config) {
+    if let Some(optimizer_runs) = config.mutation.optimizer_runs {
+        let default_optimizer_settings =
+            matches!(config.optimizer, Some(false)) && matches!(config.optimizer_runs, Some(200));
+        config.optimizer_runs = Some(optimizer_runs as usize);
+        if default_optimizer_settings {
+            config.optimizer = None;
+        }
+        config.normalize_optimizer_settings();
+    }
+    if let Some(via_ir) = config.mutation.via_ir {
+        config.via_ir = via_ir;
     }
 }
 
@@ -2872,6 +2909,61 @@ mod tests {
             TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
         assert_eq!(args.fuzz_run, Some(10));
         assert_eq!(args.fuzz_worker, Some(2));
+    }
+
+    #[test]
+    fn mutation_compiler_overrides_are_extracted() {
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--mutate",
+            "--mutation-optimizer-runs",
+            "1",
+            "--mutation-via-ir",
+            "false",
+        ]);
+        assert_eq!(args.mutation_optimizer_runs, Some(1));
+        assert_eq!(args.mutation_via_ir, Some(false));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<u32>("mutation.optimizer_runs").unwrap(), 1);
+        assert!(!figment.extract_inner::<bool>("mutation.via_ir").unwrap());
+    }
+
+    #[test]
+    fn mutation_compiler_overrides_update_only_mutation_config_clone() {
+        let mut config = Config {
+            optimizer_runs: Some(999),
+            via_ir: true,
+            mutation: foundry_config::MutationConfig {
+                optimizer_runs: Some(1),
+                via_ir: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        apply_mutation_compiler_overrides(&mut config);
+
+        assert_eq!(config.optimizer_runs, Some(1));
+        assert!(!config.via_ir);
+    }
+
+    #[test]
+    fn mutation_optimizer_runs_normalize_default_optimizer_settings() {
+        let mut config = Config {
+            optimizer: Some(false),
+            optimizer_runs: Some(200),
+            mutation: foundry_config::MutationConfig {
+                optimizer_runs: Some(1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        apply_mutation_compiler_overrides(&mut config);
+
+        assert_eq!(config.optimizer, Some(true));
+        assert_eq!(config.optimizer_runs, Some(1));
     }
 
     #[test]

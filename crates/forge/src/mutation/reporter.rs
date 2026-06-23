@@ -102,7 +102,8 @@ impl MutationReporter {
                 "{}",
                 Paint::yellow(
                     "Timed-out mutants dominate this run. Increase --mutation-timeout or use a \
-                     faster mutation profile, for example lower optimizer_runs or disable via_ir."
+                     faster mutation profile, for example lower --mutation-optimizer-runs or set \
+                     --mutation-via-ir false."
                 )
                 .bold()
             );

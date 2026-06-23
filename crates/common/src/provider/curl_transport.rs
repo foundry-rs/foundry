@@ -1,7 +1,9 @@
 //! Transport that outputs equivalent curl commands instead of making RPC requests.
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
+use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{TransportError, TransportFut};
+use eyre::Context;
 use serde_json::Value;
 use tower::Service;
 use url::Url;
@@ -9,6 +11,24 @@ use url::Url;
 /// Escapes a string for use in a single-quoted shell argument.
 fn shell_escape(s: &str) -> String {
     s.replace('\'', "'\"'\"'")
+}
+
+/// Build a JWT using a secret
+fn build_jwt(jwt_secret: &str) -> eyre::Result<String> {
+    // Decode jwt from hex, then generate claims (iat with current timestamp)
+    let secret = JwtSecret::from_hex(jwt_secret)?;
+    let claims = Claims::default();
+    let token = secret.encode(&claims)?;
+    Ok(token)
+}
+
+/// Appends a JWT Authorization header to a curl command.
+fn append_jwt_auth(cmd: &mut String, jwt_secret: &str) -> eyre::Result<()> {
+    let jwt = build_jwt(jwt_secret).wrap_err("Invalid --jwt-secret provided")?;
+
+    cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt.as_str())));
+
+    Ok(())
 }
 
 /// Generates a curl command for an RPC request.
@@ -20,8 +40,8 @@ pub fn generate_curl_command(
     method: &str,
     params: Value,
     headers: Option<&[String]>,
-    jwt: Option<&str>,
-) -> String {
+    jwt_secret: Option<&str>,
+) -> eyre::Result<String> {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -34,8 +54,8 @@ pub fn generate_curl_command(
     let mut cmd = String::from("curl -X POST");
     cmd.push_str(" -H 'Content-Type: application/json'");
 
-    if let Some(jwt) = jwt {
-        cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt)));
+    if let Some(secret) = jwt_secret {
+        append_jwt_auth(&mut cmd, secret)?;
     }
 
     if let Some(hdrs) = headers {
@@ -47,7 +67,7 @@ pub fn generate_curl_command(
     cmd.push_str(&format!(" --data-raw '{escaped_payload}'"));
     cmd.push_str(&format!(" '{}'", shell_escape(url)));
 
-    cmd
+    Ok(cmd)
 }
 
 /// A transport that prints curl commands instead of executing RPC requests.
@@ -76,22 +96,22 @@ impl CurlTransport {
         self
     }
 
-    /// Set the JWT for the transport.
+    /// Set the JWT Secret for the transport.
     pub fn with_jwt(mut self, jwt: Option<String>) -> Self {
         self.jwt = jwt;
         self
     }
 
     /// Generate a curl command for a request.
-    fn generate_curl_command(&self, req: &RequestPacket) -> String {
+    fn generate_curl_command(&self, req: &RequestPacket) -> eyre::Result<String> {
         let payload_str = serde_json::to_string(req).unwrap_or_default();
         let escaped_payload = shell_escape(&payload_str);
 
         let mut cmd = String::from("curl -X POST");
         cmd.push_str(" -H 'Content-Type: application/json'");
 
-        if let Some(jwt) = &self.jwt {
-            cmd.push_str(&format!(" -H 'Authorization: Bearer {}'", shell_escape(jwt)));
+        if let Some(jwt_secret) = &self.jwt {
+            append_jwt_auth(&mut cmd, jwt_secret)?;
         }
 
         for h in &self.headers {
@@ -101,19 +121,24 @@ impl CurlTransport {
         cmd.push_str(&format!(" --data-raw '{escaped_payload}'"));
         cmd.push_str(&format!(" '{}'", shell_escape(self.url.as_str())));
 
-        cmd
+        Ok(cmd)
     }
 
     /// Handle a request by printing the curl command.
     pub fn request(&self, req: RequestPacket) -> TransportFut<'static> {
-        let curl_cmd = self.generate_curl_command(&req);
+        let curl_cmd_result = self.generate_curl_command(&req);
 
         Box::pin(async move {
-            // Print the curl command to stdout
-            let _ = crate::sh_println!("{curl_cmd}");
-
-            // Exit cleanly after printing the curl command
-            std::process::exit(0);
+            match curl_cmd_result {
+                Ok(curl_cmd) => {
+                    let _ = crate::sh_println!("{curl_cmd}");
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    let _ = crate::sh_eprintln!("Error: {e:?}");
+                    std::process::exit(1);
+                }
+            }
         })
     }
 }
@@ -171,7 +196,7 @@ mod tests {
     fn test_basic_curl_command() {
         let transport = CurlTransport::new("https://eth.example.com".parse().unwrap());
         let req = make_test_request();
-        let cmd = transport.generate_curl_command(&req);
+        let cmd = transport.generate_curl_command(&req).unwrap();
         assert!(cmd.contains("eth_blockNumber"));
         assert!(cmd.contains("https://eth.example.com"));
         assert!(cmd.contains("jsonrpc"));
@@ -182,17 +207,28 @@ mod tests {
         let transport = CurlTransport::new("https://eth.example.com".parse().unwrap())
             .with_headers(vec!["X-Custom: value".to_string()]);
         let req = make_test_request();
-        let cmd = transport.generate_curl_command(&req);
+        let cmd = transport.generate_curl_command(&req).unwrap();
         assert!(cmd.contains("X-Custom: value"));
     }
 
     #[test]
     fn test_curl_with_jwt() {
+        let jwt_secret = "5c43996d0d150a81f06ae452fce38120d97a4156650aec7487b3384bfe32edae";
         let transport = CurlTransport::new("https://eth.example.com".parse().unwrap())
-            .with_jwt(Some("my-jwt-token".to_string()));
+            .with_jwt(Some(jwt_secret.to_string()));
         let req = make_test_request();
-        let cmd = transport.generate_curl_command(&req);
-        assert!(cmd.contains("Authorization: Bearer my-jwt-token"));
+        let cmd = transport.generate_curl_command(&req).unwrap();
+
+        let jwt = cmd
+            .split("Authorization: Bearer ")
+            .nth(1)
+            .expect("missing Authorization header")
+            .split('\'')
+            .next()
+            .expect("malformed Authorization header");
+
+        let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+        secret.validate(jwt).unwrap();
     }
 
     #[test]
