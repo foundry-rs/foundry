@@ -4,7 +4,7 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
-    multi_runner::{TestContract, TestRunnerConfig},
+    multi_runner::{TestContract, TestRunnerConfig, symbolic_entrypoints_enabled},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
@@ -736,7 +736,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
-        let symbolic_enabled = self.config.symbolic.enabled;
+        let symbolic_enabled = symbolic_entrypoints_enabled(
+            self.config.symbolic.enabled,
+            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+        );
         let functions = self
             .contract
             .abi
@@ -921,7 +924,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = if self.config.symbolic.enabled && is_symbolic_entrypoint(func) {
+                let kind = if symbolic_enabled && is_symbolic_entrypoint(func) {
                     TestFunctionKind::SymbolicTest
                 } else {
                     func.test_function_kind()
