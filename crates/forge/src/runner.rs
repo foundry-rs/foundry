@@ -2846,12 +2846,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         func.name,
                     );
                 }
-                self.result.replay_result(
-                    stats.corpus_entries,
-                    stats.showmap_files,
-                    stats.skipped_entries,
-                    duration,
-                );
+                if !showmap.emit_files && stats.corpus_entries == 0 {
+                    self.result.replay_skip(format!(
+                        "replayed 0 corpus entries from {}",
+                        corpus_dir.display()
+                    ));
+                } else {
+                    self.result.replay_result(
+                        stats.corpus_entries,
+                        stats.showmap_files,
+                        stats.skipped_entries,
+                        duration,
+                    );
+                }
             }
             Err(e) => {
                 self.result.single_fail(Some(e.to_string()));

@@ -834,6 +834,23 @@ contract ForgeFuzzZeroReplayTest {
     std::fs::write(wrong_corpus.join("00000000-0000-0000-0000-000000000002-2.json"), wrong_entry)
         .unwrap();
 
+    let zero_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzZeroReplayTest",
+            "--mt",
+            "testFuzz_branch",
+            "--corpus-dir",
+            "wrong-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(zero_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: replayed 0 corpus entries from wrong-corpus]"), "{stdout}");
+    assert!(!stdout.contains("[PASS] testFuzz_branch(uint256) (replay: 0 entries"), "{stdout}");
+
     let zero_replay_cmin = cmd
         .forge_fuse()
         .args([
