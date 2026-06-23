@@ -668,8 +668,17 @@ impl TestArgs {
         self.showmap_override = Some(showmap);
     }
 
-    /// Sets test filters for internal callers.
-    pub(crate) fn set_filter(&mut self, filter: FilterArgs) {
+    /// Sets replay-critical options for internal fuzz minimizer callers.
+    pub(crate) fn set_fuzz_minimize_replay_options(
+        &mut self,
+        global: GlobalArgs,
+        evm: EvmArgs,
+        build: BuildOpts,
+        filter: FilterArgs,
+    ) {
+        self.global = global;
+        self.evm = evm;
+        self.build = build;
         self.filter = filter;
     }
 

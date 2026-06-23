@@ -8,6 +8,7 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::Selector;
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use eyre::{Context, Result, bail};
+use foundry_cli::opts::{BuildOpts, CompilerOpts, EvmArgs, GlobalArgs, ProjectPathOpts};
 use foundry_common::{
     fmt::format_tokens_raw,
     fs, sh_println,
@@ -175,7 +176,7 @@ impl FuzzShowArgs {
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzCminArgs {
     #[command(flatten)]
-    filter: FilterArgs,
+    test: FuzzMinimizeTestArgs,
     /// Input corpus directory.
     #[arg(value_name = "CORPUS_DIR", value_hint = ValueHint::DirPath)]
     corpus_dir: PathBuf,
@@ -220,7 +221,7 @@ impl FuzzCminArgs {
     }
 
     async fn run_to(&self, out_dir: &Path) -> Result<CminSummary> {
-        let mut test = minimizer_test_args(self.filter.clone());
+        let mut test = minimizer_test_args(self.test.clone());
         test.enable_fuzz_only();
         let session = prepare_minimize_session(&mut test).await?;
         let mut kept = 0usize;
@@ -298,7 +299,7 @@ fn temporary_cmin_out(out: &Path) -> Result<TempDir> {
 #[derive(Clone, Debug, Parser)]
 pub struct FuzzTminArgs {
     #[command(flatten)]
-    filter: FilterArgs,
+    test: FuzzMinimizeTestArgs,
     /// Input corpus file.
     #[arg(value_name = "INPUT", value_hint = ValueHint::FilePath)]
     input: PathBuf,
@@ -318,7 +319,7 @@ impl FuzzTminArgs {
 
         let mut sequence = read_sequence(&self.input)?;
         let before_txs = sequence.len();
-        let mut test = minimizer_test_args(self.filter);
+        let mut test = minimizer_test_args(self.test);
         test.enable_fuzz_only();
         let session = prepare_minimize_session(&mut test).await?;
         let evm_edge_indices = Arc::new(Mutex::new(EdgeIndexMap::default()));
@@ -498,10 +499,61 @@ fn is_gzip_path(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
 }
 
-fn minimizer_test_args(filter: FilterArgs) -> TestArgs {
+#[derive(Clone, Debug, Parser)]
+struct FuzzMinimizeTestArgs {
+    #[command(flatten)]
+    global: GlobalArgs,
+    #[command(flatten)]
+    filter: FilterArgs,
+    #[command(flatten)]
+    evm: EvmArgs,
+    #[command(flatten)]
+    build: FuzzMinimizeBuildArgs,
+}
+
+#[derive(Clone, Debug, Default, Parser)]
+struct FuzzMinimizeBuildArgs {
+    /// Specify the solc version, or a path to a local solc, to build with.
+    #[arg(
+        long = "use",
+        alias = "compiler-version",
+        help_heading = "Compiler options",
+        value_name = "SOLC_VERSION"
+    )]
+    use_solc: Option<String>,
+
+    /// Do not access the network.
+    #[arg(long, help_heading = "Compiler options")]
+    offline: bool,
+
+    /// Use the Yul intermediate representation compilation pipeline.
+    #[arg(long, help_heading = "Compiler options")]
+    via_ir: bool,
+
+    #[command(flatten)]
+    compiler: CompilerOpts,
+
+    #[command(flatten)]
+    project_paths: ProjectPathOpts,
+}
+
+fn minimizer_test_args(args: FuzzMinimizeTestArgs) -> TestArgs {
     let mut test = TestArgs::parse_from(["test", "-q"]);
-    test.set_filter(filter);
+    test.set_fuzz_minimize_replay_options(args.global, args.evm, args.build.into(), args.filter);
     test
+}
+
+impl From<FuzzMinimizeBuildArgs> for BuildOpts {
+    fn from(args: FuzzMinimizeBuildArgs) -> Self {
+        Self {
+            use_solc: args.use_solc,
+            offline: args.offline,
+            via_ir: args.via_ir,
+            compiler: args.compiler,
+            project_paths: args.project_paths,
+            ..Default::default()
+        }
+    }
 }
 
 struct QuietShellGuard {
@@ -693,4 +745,40 @@ const fn calldata_word_replacements() -> [[u8; 32]; 3] {
     one[31] = 1;
     let minus_one = [0xffu8; 32];
     [zero, one, minus_one]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minimizers_accept_replay_test_args() {
+        FuzzArgs::try_parse_from([
+            "forge",
+            "cmin",
+            "--fork-url",
+            "http://localhost:8545",
+            "--via-ir",
+            "--mc",
+            "Target",
+            "corpus",
+            "--out",
+            "min-corpus",
+        ])
+        .unwrap();
+
+        FuzzArgs::try_parse_from([
+            "forge",
+            "tmin",
+            "--fork-url",
+            "http://localhost:8545",
+            "--via-ir",
+            "--mt",
+            "testFuzz",
+            "corpus/input.json",
+            "--out",
+            "min.json",
+        ])
+        .unwrap();
+    }
 }
