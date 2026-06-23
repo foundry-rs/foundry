@@ -353,7 +353,11 @@ impl FuzzDictionary {
             let mut log_decoded = false;
             // Try to decode log with events from contract abi.
             if let Some(abi) = abi {
+                let topic0 = log.topics().first().copied();
                 for event in abi.events() {
+                    if !event.anonymous && topic0 != Some(event.selector()) {
+                        continue;
+                    }
                     if let Ok(decoded_event) = event.decode_log(log) {
                         samples.extend(decoded_event.indexed);
                         samples.extend(decoded_event.body);
@@ -651,5 +655,64 @@ impl FuzzDictionary {
     /// Test-only helper to seed the dictionary with literal values.
     pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
         self.literal_values.set(map);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_json_abi::{Event, EventParam};
+
+    fn uint_event(name: &str) -> Event {
+        Event {
+            name: name.to_owned(),
+            inputs: vec![EventParam {
+                ty: "uint256".to_owned(),
+                indexed: false,
+                ..Default::default()
+            }],
+            anonymous: false,
+        }
+    }
+
+    #[test]
+    fn log_values_decode_only_matching_event_selector() {
+        let matching = uint_event("Value");
+        let mut abi = JsonAbi::new();
+        abi.events.insert("Other".to_owned(), vec![uint_event("Other")]);
+        abi.events.insert(matching.name.clone(), vec![matching.clone()]);
+
+        let value = U256::from(7);
+        let log = Log::new_unchecked(
+            Address::ZERO,
+            vec![matching.selector()],
+            Bytes::copy_from_slice(&value.to_be_bytes::<32>()),
+        );
+
+        let mut dict = FuzzDictionary::default();
+        dict.insert_logs_values(Some(&abi), &[log], 16);
+
+        let uint_samples = dict.samples(&DynSolType::Uint(256)).expect("decoded uint samples");
+        assert!(uint_samples.contains(&B256::from(value)));
+    }
+
+    #[test]
+    fn log_values_fall_back_to_raw_values_for_unknown_selector() {
+        let mut abi = JsonAbi::new();
+        abi.events.insert("Value".to_owned(), vec![uint_event("Value")]);
+
+        let topic = B256::repeat_byte(0x42);
+        let value = U256::from(9);
+        let log = Log::new_unchecked(
+            Address::ZERO,
+            vec![topic],
+            Bytes::copy_from_slice(&value.to_be_bytes::<32>()),
+        );
+
+        let mut dict = FuzzDictionary::default();
+        dict.insert_logs_values(Some(&abi), &[log], 16);
+
+        assert!(dict.values().contains(&topic));
+        assert!(dict.values().contains(&B256::from(value)));
     }
 }
