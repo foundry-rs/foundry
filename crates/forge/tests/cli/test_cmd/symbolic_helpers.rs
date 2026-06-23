@@ -24,8 +24,8 @@ macro_rules! skip_unless_z3 {
 ///
 /// - `[METRICS]` — symbolic metrics line suffix (engine internal metrics change with solver
 ///   heuristic / engine path-pruning changes).
-/// - `[SENDER]` — rendered symbolic senders / target addresses, which the
-///   solver picks freely from an unconstrained address pool.
+/// - `[SENDER]` — rendered symbolic senders / target addresses, which the solver picks freely from
+///   an unconstrained address pool.
 pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
         ("[METRICS]", r"(?:paths: \d+, queries: \d+(?:, smt: \d+, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), hard-arith: \d+, solver: \d+ms)?|runs: \d+, calls: \d+, reverts: \d+)"),
