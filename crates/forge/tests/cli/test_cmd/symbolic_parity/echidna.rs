@@ -100,6 +100,106 @@ contract EchidnaFlagsParity is Test {
 });
 
 // ---------------------------------------------------------------------------
+// Echidna basic/revert.sol — stateful revert counterexample shrinking.
+// ---------------------------------------------------------------------------
+// Source: https://github.com/crytic/echidna/blob/master/tests/solidity/basic/revert.sol
+// Echidna's suite asserts this shrinks to one `f(int,address,address)` call.
+forgetest_init!(echidna_revert_magic_args_parity, |prj, cmd| {
+    skip_unless_z3!("echidna_revert_magic_args_parity");
+
+    prj.add_test(
+        "EchidnaRevertParity.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract EchidnaRevertTarget {
+    int256 private state;
+
+    function f(int256 x, address, address z) public {
+        require(z != address(0));
+        state = x;
+    }
+
+    function echidna_fails_on_revert() public view returns (bool) {
+        if (state < 0) revert();
+        return true;
+    }
+}
+
+contract EchidnaRevertParity is Test {
+    EchidnaRevertTarget target;
+
+    function setUp() public {
+        target = new EchidnaRevertTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 20
+    /// forge-config: default.invariant.shrink_run_limit = 10000
+    function invariant_no_revert() public view {
+        assertTrue(target.echidna_fails_on_revert());
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-test",
+            "invariant_no_revert",
+            "--fuzz-seed",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "invariant_no_revert()");
+    let failure = result["invariant_failures"].as_array().unwrap().first().unwrap();
+    let minimization = &failure["minimization"];
+    assert_eq!(failure["artifact"], minimization["minimized"]);
+    assert_eq!(minimization["minimized_sequence_len"], 1);
+    assert!(
+        minimization["original_sequence_len"].as_u64().unwrap()
+            > minimization["minimized_sequence_len"].as_u64().unwrap()
+    );
+    assert!(minimization["accepted"].as_u64().unwrap() > 0);
+
+    let minimized = read_artifact_ref(&minimization["minimized"]);
+    assert_eq!(minimized["replay"]["status"], "confirmed");
+    let call = &minimized["calls"][0];
+    assert_eq!(call["function_name"], "f");
+    let args = call["args"].as_str().unwrap();
+    let args: Vec<_> = args.split(',').map(str::trim).collect();
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[0], "-1");
+    assert_eq!(args[1], "0x0000000000000000000000000000000000000000");
+    assert_ne!(args[2], "0x0000000000000000000000000000000000000000");
+
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--replay-symbolic-artifact",
+            minimization["minimized"]["path"].as_str().unwrap(),
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        str![[r#"
+invariant_no_revert()
+"#]],
+    );
+});
+
+// ---------------------------------------------------------------------------
 // Echidna values/darray.sol — dynamic address[] calldata shrinking.
 // ---------------------------------------------------------------------------
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/values/darray.sol
