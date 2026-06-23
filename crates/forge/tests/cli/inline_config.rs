@@ -199,7 +199,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(config_inline_isolate, |prj, cmd| {
     use serde::{Deserialize, Deserializer};
     use std::{fs, path::Path};
@@ -224,21 +223,21 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
                 dummy = new Dummy();
             }
 
-            /// forge-config: default.isolate = true
+            /// forge-config: default.isolate = false
+            function test_non_isolate() public {
+                vm.startSnapshotGas("testNonIsolatedFunction");
+                dummy.setNumber(1);
+                vm.stopSnapshotGas();
+            }
+
             function test_isolate() public {
                 vm.startSnapshotGas("testIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
-
-            function test_non_isolate() public {
-                vm.startSnapshotGas("testNonIsolatedFunction");
-                dummy.setNumber(2);
-                vm.stopSnapshotGas();
-            }
         }
 
-        /// forge-config: default.isolate = true
+        /// forge-config: default.isolate = false
         contract ContractConfig is Test {
             Dummy dummy;
 
@@ -247,8 +246,8 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
 
             function test_non_isolate() public {
-                vm.startSnapshotGas("testIsolatedContract");
-                dummy.setNumber(3);
+                vm.startSnapshotGas("testNonIsolatedContract");
+                dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
         }
@@ -290,7 +289,7 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     #[serde(rename_all = "camelCase")]
     struct ContractConfig {
         #[serde(deserialize_with = "string_to_u64")]
-        test_isolated_contract: u64,
+        test_non_isolated_contract: u64,
     }
 
     fn string_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -315,17 +314,16 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
     let contract_config: ContractConfig =
         read_snapshot(&prj.root().join("snapshots/ContractConfig.json"));
 
-    // FunctionConfig {
-    //     test_isolated_function: 48926,
-    //     test_non_isolated_function: 27722,
-    // }
-
-    // ContractConfig {
-    //     test_isolated_contract: 48926,
-    // }
-
-    assert!(function_config.test_isolated_function > function_config.test_non_isolated_function);
-    assert_eq!(function_config.test_isolated_function, contract_config.test_isolated_contract);
+    assert!(
+        function_config.test_isolated_function > function_config.test_non_isolated_function,
+        "isolated gas ({}) should be greater than non-isolated gas ({})",
+        function_config.test_isolated_function,
+        function_config.test_non_isolated_function
+    );
+    assert_eq!(
+        function_config.test_non_isolated_function,
+        contract_config.test_non_isolated_contract
+    );
 });
 
 forgetest_init!(config_inline_evm_version, |prj, cmd| {

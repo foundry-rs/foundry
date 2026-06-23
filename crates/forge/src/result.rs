@@ -1,6 +1,9 @@
 //! Test outcomes.
 
-use crate::{fuzz::BaseCounterExample, gas_report::GasReport};
+use crate::{
+    fuzz::{BaseCounterExample, BasicTxDetails},
+    gas_report::GasReport,
+};
 use alloy_primitives::{
     Address, Bytes, I256, Log, Selector, U256,
     map::{AddressHashMap, HashMap},
@@ -13,7 +16,7 @@ use foundry_evm::{
     coverage::HitMaps,
     decode::SkipReason,
     executors::{RawCallResult, invariant::InvariantMetrics},
-    fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
+    fuzz::{CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats, SymbolicStopReason};
@@ -32,6 +35,8 @@ pub(crate) fn invariant_campaign_display_name(contract_name: &str) -> String {
 
 const INVARIANT_CAMPAIGN_FALLBACK_NAME: &str = "Invariant campaign";
 const SYMBOLIC_RESULT_SCHEMA_VERSION: u32 = 1;
+pub const SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA: &str = "foundry:symbolic.counterexample@v1";
+pub const SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA_VERSION: u32 = 1;
 
 const fn symbolic_result_schema_version() -> u32 {
     SYMBOLIC_RESULT_SCHEMA_VERSION
@@ -294,6 +299,117 @@ fn test_failure_exit_code() -> i32 {
 mod tests {
     use super::*;
 
+    const SYMBOLIC_RESULT_SCHEMA_JSON: &str =
+        include_str!("../../evm/symbolic/assets/symbolic-result.schema.json");
+    const SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON: &str =
+        include_str!("../../evm/symbolic/assets/symbolic-counterexample.schema.json");
+
+    fn schema_defs(schema: &serde_json::Value) -> &serde_json::Map<String, serde_json::Value> {
+        schema["$defs"].as_object().expect("schema $defs object")
+    }
+
+    fn assert_counterexample_schema_refs_resolve_offline() {
+        let counterexample_schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON).unwrap();
+        let result_schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_RESULT_SCHEMA_JSON).unwrap();
+        let result_defs = schema_defs(&result_schema);
+        let counterexample_defs = schema_defs(&counterexample_schema);
+
+        fn visit_refs(
+            value: &serde_json::Value,
+            result_defs: &serde_json::Map<String, serde_json::Value>,
+            counterexample_defs: &serde_json::Map<String, serde_json::Value>,
+        ) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    if let Some(reference) = map.get("$ref").and_then(serde_json::Value::as_str) {
+                        if let Some(name) = reference.strip_prefix(
+                            "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/",
+                        ) {
+                            assert!(result_defs.contains_key(name), "unresolved ref {reference}");
+                        } else if let Some(name) = reference.strip_prefix("#/$defs/") {
+                            assert!(
+                                counterexample_defs.contains_key(name),
+                                "unresolved ref {reference}"
+                            );
+                        } else {
+                            panic!("unexpected schema ref {reference}");
+                        }
+                    }
+                    for child in map.values() {
+                        visit_refs(child, result_defs, counterexample_defs);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for child in values {
+                        visit_refs(child, result_defs, counterexample_defs);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        visit_refs(&counterexample_schema, result_defs, counterexample_defs);
+    }
+
+    fn assert_counterexample_artifact_shape(value: &serde_json::Value) {
+        assert_counterexample_schema_refs_resolve_offline();
+        let object = value.as_object().expect("artifact object");
+        for key in [
+            "schema_version",
+            "schema",
+            "kind",
+            "test",
+            "replay",
+            "replay_semantics",
+            "bounds",
+            "solver",
+            "assumptions",
+            "call_trace",
+            "calls",
+        ] {
+            assert!(object.contains_key(key), "missing required artifact key {key}");
+        }
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
+        assert!(matches!(value["kind"].as_str(), Some("single_call" | "sequence")));
+        assert!(value["replay_semantics"].is_object());
+        assert!(!value["calls"].as_array().expect("calls array").is_empty());
+        for call in value["calls"].as_array().unwrap() {
+            let call = call.as_object().expect("call object");
+            for key in [
+                "warp",
+                "roll",
+                "sender",
+                "target",
+                "calldata",
+                "value",
+                "contract_name",
+                "function_name",
+                "signature",
+                "args",
+                "raw_args",
+            ] {
+                assert!(call.contains_key(key), "missing required call key {key}");
+            }
+            for key in ["warp", "roll", "value"] {
+                let Some(encoded) = call[key].as_str() else { continue };
+                let Some(hex) = encoded.strip_prefix("0x") else {
+                    panic!("{key} must be 0x-prefixed hex quantity: {encoded}");
+                };
+                assert!(
+                    hex == "0" || !hex.starts_with('0'),
+                    "{key} must be compact hex quantity without leading zeros: {encoded}"
+                );
+                assert!(
+                    hex.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                    "{key} must be hex quantity: {encoded}"
+                );
+            }
+        }
+    }
+
     fn outcome_with_failed_invariant_workers(workers: &[usize]) -> TestOutcome {
         let test_results = workers
             .iter()
@@ -353,6 +469,80 @@ mod tests {
         .unwrap();
 
         assert_eq!(kind.invariant_workers(), Some(1));
+    }
+
+    #[test]
+    fn symbolic_counterexample_artifact_serializes_sequence_calls() {
+        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
+        let call = SymbolicCounterexampleCall {
+            warp: Some(U256::from(12)),
+            roll: Some(U256::from(3)),
+            sender: Address::ZERO,
+            target: Address::ZERO,
+            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            value: Some(U256::from(9)),
+            contract_name: Some("Target".to_string()),
+            function_name: Some("step".to_string()),
+            signature: Some("step()".to_string()),
+            args: Some(String::new()),
+            raw_args: Some(String::new()),
+        };
+        let artifact = SymbolicCounterexampleArtifact::new(
+            SymbolicCounterexampleArtifactKind::Sequence,
+            SymbolicCounterexampleTestIdentity {
+                contract: "InvariantTest".to_string(),
+                test: "invariant_counter()".to_string(),
+            },
+            &symbolic,
+            SymbolicCounterexampleReplaySemantics { fail_on_revert: false },
+            vec![call.clone(), call],
+        );
+
+        let value = serde_json::to_value(artifact).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
+        assert_eq!(value["kind"], "sequence");
+        assert_eq!(value["replay_semantics"]["fail_on_revert"], false);
+        assert_eq!(value["calls"].as_array().unwrap().len(), 2);
+        assert_eq!(value["calls"][0]["calldata"], "0x12345678");
+        assert_eq!(value["calls"][0]["warp"], "0xc");
+        assert_eq!(value["calls"][0]["roll"], "0x3");
+        assert_eq!(value["calls"][0]["value"], "0x9");
+        assert_counterexample_artifact_shape(&value);
+    }
+
+    #[test]
+    fn symbolic_counterexample_artifact_serializes_zero_quantities_compactly() {
+        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
+        let call = SymbolicCounterexampleCall {
+            warp: Some(U256::ZERO),
+            roll: Some(U256::ZERO),
+            sender: Address::ZERO,
+            target: Address::ZERO,
+            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            value: Some(U256::ZERO),
+            contract_name: Some("Target".to_string()),
+            function_name: Some("step".to_string()),
+            signature: Some("step()".to_string()),
+            args: Some(String::new()),
+            raw_args: Some(String::new()),
+        };
+        let artifact = SymbolicCounterexampleArtifact::new(
+            SymbolicCounterexampleArtifactKind::Sequence,
+            SymbolicCounterexampleTestIdentity {
+                contract: "InvariantTest".to_string(),
+                test: "invariant_counter()".to_string(),
+            },
+            &symbolic,
+            SymbolicCounterexampleReplaySemantics { fail_on_revert: false },
+            vec![call],
+        );
+
+        let value = serde_json::to_value(artifact).unwrap();
+        assert_eq!(value["calls"][0]["warp"], "0x0");
+        assert_eq!(value["calls"][0]["roll"], "0x0");
+        assert_eq!(value["calls"][0]["value"], "0x0");
+        assert_counterexample_artifact_shape(&value);
     }
 }
 
@@ -537,6 +727,9 @@ pub enum InvariantFailure {
         /// Counterexample sequence, when one is available.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         counterexample: Option<CounterExample>,
+        /// Durable replay artifact for this counterexample, when one was written.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact: Option<SymbolicArtifactRef>,
         /// Path where the counterexample was persisted for re-running and shrinking.
         persisted_path: std::path::PathBuf,
         /// Whether this failure is the stable campaign anchor.
@@ -559,6 +752,9 @@ pub enum InvariantFailure {
         /// Counterexample sequence leading up to (and including) the failing call.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         counterexample: Option<CounterExample>,
+        /// Durable replay artifact for this counterexample, when one was written.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact: Option<SymbolicArtifactRef>,
     },
 }
 
@@ -591,6 +787,13 @@ impl InvariantFailure {
             Self::Predicate { counterexample, .. } | Self::Handler { counterexample, .. } => {
                 counterexample.as_ref()
             }
+        }
+    }
+
+    /// Durable replay artifact for this failure, when one was written.
+    pub const fn artifact(&self) -> Option<&SymbolicArtifactRef> {
+        match self {
+            Self::Predicate { artifact, .. } | Self::Handler { artifact, .. } => artifact.as_ref(),
         }
     }
 }
@@ -629,6 +832,12 @@ pub struct SymbolicResult {
     pub replay: SymbolicReplayMetadata,
     /// Concrete counterexample data, when the solver produced a candidate.
     pub counterexample: Option<SymbolicCounterexample>,
+    /// Durable counterexample artifact, when one was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<SymbolicArtifactRef>,
+    /// Deterministic concrete minimization details, when a replayed counterexample was minimized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimization: Option<SymbolicCounterexampleMinimization>,
 }
 
 impl SymbolicResult {
@@ -703,6 +912,75 @@ impl SymbolicResult {
             call_trace,
             replay,
             counterexample,
+            artifact: None,
+            minimization: None,
+        }
+    }
+
+    /// Attaches a durable replay artifact reference to this symbolic result.
+    pub fn with_artifact(mut self, artifact: SymbolicArtifactRef) -> Self {
+        self.artifact = Some(artifact);
+        self
+    }
+
+    /// Attaches deterministic minimization metadata to this symbolic result.
+    pub fn with_minimization(mut self, minimization: SymbolicCounterexampleMinimization) -> Self {
+        self.minimization = Some(minimization);
+        self
+    }
+}
+
+/// Reference to a durable symbolic counterexample artifact.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolicArtifactRef {
+    /// Artifact schema id.
+    pub schema: String,
+    /// Path to the artifact file.
+    pub path: std::path::PathBuf,
+}
+
+impl SymbolicArtifactRef {
+    /// Creates a reference to a symbolic counterexample artifact.
+    pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
+        Self { schema: SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA.to_string(), path: path.into() }
+    }
+}
+
+/// Before/after artifact references and counters for concrete symbolic counterexample minimization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolicCounterexampleMinimization {
+    /// Original confirmed replay artifact before minimization.
+    pub original: SymbolicArtifactRef,
+    /// Minimized confirmed replay artifact after minimization.
+    pub minimized: SymbolicArtifactRef,
+    /// Number of concrete replay candidates tried.
+    pub attempts: usize,
+    /// Number of replay candidates accepted.
+    pub accepted: usize,
+    /// ABI calldata byte length before minimization.
+    pub original_calldata_bytes: usize,
+    /// ABI calldata byte length after minimization.
+    pub minimized_calldata_bytes: usize,
+}
+
+impl SymbolicCounterexampleMinimization {
+    /// Creates concrete minimization metadata.
+    pub const fn new(
+        original: SymbolicArtifactRef,
+        minimized: SymbolicArtifactRef,
+        attempts: usize,
+        accepted: usize,
+        original_calldata_bytes: usize,
+        minimized_calldata_bytes: usize,
+    ) -> Self {
+        Self {
+            original,
+            minimized,
+            attempts,
+            accepted,
+            original_calldata_bytes,
+            minimized_calldata_bytes,
         }
     }
 }
@@ -939,6 +1217,7 @@ pub enum SymbolicReplayStatus {
 
 /// Replay metadata for symbolic counterexample candidates.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolicReplayMetadata {
     /// Whether the symbolic outcome required concrete replay.
     pub required: bool,
@@ -999,6 +1278,172 @@ impl From<&BaseCounterExample> for SymbolicCounterexample {
     }
 }
 
+/// Durable symbolic counterexample artifact.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolicCounterexampleArtifact {
+    /// Artifact schema version.
+    pub schema_version: u32,
+    /// Artifact schema id.
+    pub schema: String,
+    /// Whether this counterexample is a single test call or a stateful sequence.
+    pub kind: SymbolicCounterexampleArtifactKind,
+    /// Test identity that produced this counterexample.
+    pub test: SymbolicCounterexampleTestIdentity,
+    /// Concrete replay metadata for the counterexample candidate.
+    pub replay: SymbolicReplayMetadata,
+    /// Replay semantics that must remain stable when this artifact is replayed.
+    pub replay_semantics: SymbolicCounterexampleReplaySemantics,
+    /// Effective bounds used by this symbolic run.
+    pub bounds: SymbolicBounds,
+    /// Solver identity and counters collected during this run.
+    pub solver: SymbolicSolverMetadata,
+    /// Soundness assumptions that bound what a `pass` proves.
+    pub assumptions: Vec<SymbolicAssumption>,
+    /// Where an agent can find the concrete replay trace, when one was produced.
+    pub call_trace: SymbolicCallTrace,
+    /// Concrete replay calls.
+    pub calls: Vec<SymbolicCounterexampleCall>,
+}
+
+impl SymbolicCounterexampleArtifact {
+    /// Creates a durable symbolic counterexample artifact from a symbolic result and call list.
+    pub fn new(
+        kind: SymbolicCounterexampleArtifactKind,
+        test: SymbolicCounterexampleTestIdentity,
+        symbolic: &SymbolicResult,
+        replay_semantics: SymbolicCounterexampleReplaySemantics,
+        calls: Vec<SymbolicCounterexampleCall>,
+    ) -> Self {
+        Self {
+            schema_version: SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA_VERSION,
+            schema: SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA.to_string(),
+            kind,
+            test,
+            replay: symbolic.replay.clone(),
+            replay_semantics,
+            bounds: symbolic.bounds.clone(),
+            solver: symbolic.solver.clone(),
+            assumptions: symbolic.assumptions.clone(),
+            call_trace: symbolic.call_trace.clone(),
+            calls,
+        }
+    }
+}
+
+/// Concrete replay semantics captured when a symbolic artifact is confirmed.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolicCounterexampleReplaySemantics {
+    /// Whether an invariant sequence replay treats any target-call revert as a failure.
+    pub fail_on_revert: bool,
+}
+
+/// Symbolic counterexample artifact shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolicCounterexampleArtifactKind {
+    /// A single stateless symbolic test call.
+    SingleCall,
+    /// A stateful sequence of calls.
+    Sequence,
+}
+
+/// Test identity for a symbolic counterexample artifact.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolicCounterexampleTestIdentity {
+    /// Contract identifier as reported by Forge.
+    pub contract: String,
+    /// Test function signature.
+    pub test: String,
+}
+
+/// One concrete call in a symbolic counterexample artifact.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolicCounterexampleCall {
+    /// Amount to increase block timestamp before executing the call.
+    pub warp: Option<U256>,
+    /// Amount to increase block number before executing the call.
+    pub roll: Option<U256>,
+    /// Sender used for the call.
+    pub sender: Address,
+    /// Target address called.
+    pub target: Address,
+    /// ABI-encoded calldata for replay.
+    pub calldata: Bytes,
+    /// Ether value sent with the call, when any.
+    pub value: Option<U256>,
+    /// Human-readable contract identifier, when known.
+    pub contract_name: Option<String>,
+    /// ABI function name, when known.
+    pub function_name: Option<String>,
+    /// ABI function signature, when known.
+    pub signature: Option<String>,
+    /// Pretty-formatted ABI arguments, when decoded.
+    pub args: Option<String>,
+    /// Raw ABI arguments, when decoded.
+    pub raw_args: Option<String>,
+}
+
+impl SymbolicCounterexampleCall {
+    /// Creates an artifact call from Foundry's base counterexample shape.
+    pub fn from_base_counterexample(
+        counterexample: &BaseCounterExample,
+        default_sender: Address,
+        default_target: Address,
+    ) -> Self {
+        Self {
+            warp: counterexample.warp,
+            roll: counterexample.roll,
+            sender: counterexample.sender.unwrap_or(default_sender),
+            target: counterexample.addr.unwrap_or(default_target),
+            calldata: counterexample.calldata.clone(),
+            value: counterexample.value,
+            contract_name: counterexample.contract_name.clone(),
+            function_name: counterexample.func_name.clone(),
+            signature: counterexample.signature.clone(),
+            args: counterexample.args.clone(),
+            raw_args: counterexample.raw_args.clone(),
+        }
+    }
+
+    /// Creates Foundry's display counterexample shape from an artifact call.
+    pub fn to_base_counterexample(&self) -> BaseCounterExample {
+        BaseCounterExample {
+            warp: self.warp,
+            roll: self.roll,
+            sender: Some(self.sender),
+            addr: Some(self.target),
+            calldata: self.calldata.clone(),
+            value: self.value,
+            contract_name: self.contract_name.clone(),
+            func_name: self.function_name.clone(),
+            signature: self.signature.clone(),
+            args: self.args.clone(),
+            raw_args: self.raw_args.clone(),
+            traces: None,
+            show_solidity: false,
+            fuzz: Default::default(),
+        }
+    }
+
+    /// Converts an artifact call into Foundry's invariant replay transaction shape.
+    pub fn to_basic_tx_details(&self) -> BasicTxDetails {
+        BasicTxDetails {
+            warp: self.warp,
+            roll: self.roll,
+            sender: self.sender,
+            call_details: CallDetails {
+                target: self.target,
+                calldata: self.calldata.clone(),
+                value: self.value,
+            },
+        }
+    }
+}
+
 /// The result of an executed test.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
@@ -1045,6 +1490,17 @@ pub struct TestResult {
 
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
+
+    /// Legacy durable replay artifact for the top-level counterexample, when one was written.
+    ///
+    /// Prefer [`Self::counterexample_artifacts`] for new consumers; this compatibility field is
+    /// maintained by [`Self::add_counterexample_artifact`] for older JSON readers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterexample_artifact: Option<SymbolicArtifactRef>,
+
+    /// All durable replay artifacts produced for this test result, normalized for JSON consumers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub counterexample_artifacts: Vec<SymbolicArtifactRef>,
 
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
@@ -1111,6 +1567,16 @@ impl fmt::Display for TestResult {
 }
 
 impl TestResult {
+    /// Adds a durable replay artifact to the normalized list and legacy top-level field.
+    pub fn add_counterexample_artifact(&mut self, artifact: SymbolicArtifactRef) {
+        if !self.counterexample_artifacts.contains(&artifact) {
+            self.counterexample_artifacts.push(artifact.clone());
+        }
+        if self.counterexample_artifact.is_none() {
+            self.counterexample_artifact = Some(artifact);
+        }
+    }
+
     fn render_status_block(
         &self,
         user_facing: bool,
@@ -1541,12 +2007,14 @@ impl TestResult {
         replayed_entirely: bool,
         invariant_name: &String,
         replay_reason: Option<String>,
+        calls: usize,
+        reverts: usize,
         call_sequence: Vec<BaseCounterExample>,
     ) {
         self.kind = TestKind::Invariant {
             runs: 1,
-            calls: 1,
-            reverts: 1,
+            calls,
+            reverts,
             workers: default_invariant_workers(),
             metrics: HashMap::default(),
             failed_corpus_replays: 0,
@@ -1561,6 +2029,21 @@ impl TestResult {
             }
         });
         self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
+    }
+
+    /// Returns the success result for a replayed invariant test.
+    pub fn invariant_replay_success(&mut self, call_count: usize, reverts: usize) {
+        self.kind = TestKind::Invariant {
+            runs: 1,
+            calls: call_count,
+            reverts,
+            workers: default_invariant_workers(),
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+            optimization_best_value: None,
+        };
+        self.status = TestStatus::Success;
+        self.reason = None;
     }
 
     /// Returns the fail result for invariant test setup.
@@ -1622,6 +2105,16 @@ impl TestResult {
         // sequence" rendered on success). Invariant check-mode failures live entirely in
         // `invariant_failures`; `reason`/`counterexample` stay `None` for invariant tests.
         self.counterexample = counterexample;
+        let artifacts = self
+            .invariant_failures
+            .iter()
+            .chain(&self.invariant_handler_failures)
+            .filter_map(InvariantFailure::artifact)
+            .cloned()
+            .collect::<Vec<_>>();
+        for artifact in artifacts {
+            self.add_counterexample_artifact(artifact);
+        }
         self.gas_report_traces = gas_report_traces;
     }
 
@@ -1675,6 +2168,13 @@ impl TestResult {
         self.status = status;
         self.reason = reason;
         self.counterexample = counterexample;
+        if let Some(artifact) = symbolic.artifact.clone() {
+            self.add_counterexample_artifact(artifact);
+        }
+        if let Some(minimization) = symbolic.minimization.clone() {
+            self.add_counterexample_artifact(minimization.original);
+            self.add_counterexample_artifact(minimization.minimized);
+        }
         self.symbolic = Some(symbolic);
         self.duration = Duration::default();
     }

@@ -4,9 +4,14 @@ use crate::{
     decode::decode_console_logs,
     diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
-    multi_runner::{MultiNetworkConfig, ShowmapConfig, matches_artifact},
+    multi_runner::{
+        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, matches_artifact,
+    },
     mutation::{MutationRunConfig, run_mutation_testing},
-    result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
+    result::{
+        SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
+        SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
+    },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -97,6 +102,31 @@ impl From<ShowmapDomainArg> for ShowmapDomain {
             ShowmapDomainArg::Sancov => Self::Sancov,
             ShowmapDomainArg::Both => Self::Both,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TestExecutionOptions {
+    pub(crate) coverage: bool,
+    pub(crate) should_debug: bool,
+    pub(crate) decode_internal: InternalTraceMode,
+    pub(crate) multi_network: MultiNetworkConfig,
+    pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+}
+
+impl TestExecutionOptions {
+    pub(crate) fn default_run() -> Self {
+        Self {
+            coverage: false,
+            should_debug: false,
+            decode_internal: InternalTraceMode::None,
+            multi_network: MultiNetworkConfig::default(),
+            replay_symbolic_artifact: None,
+        }
+    }
+
+    pub(crate) fn coverage() -> Self {
+        Self { coverage: true, ..Self::default_run() }
     }
 }
 
@@ -227,6 +257,29 @@ pub struct TestArgs {
     /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC")]
     pub symbolic: bool,
+
+    /// Replay a durable symbolic counterexample artifact emitted by `forge test --symbolic`.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with_all = [
+            "debug",
+            "flamegraph",
+            "flamechart",
+            "rerun",
+            "fuzz_input_file",
+            "showmap_out",
+            "path",
+            "test_pattern",
+            "test_pattern_inverse",
+            "contract_pattern",
+            "contract_pattern_inverse",
+            "path_pattern",
+            "no-match-path",
+        ],
+    )]
+    pub replay_symbolic_artifact: Option<PathBuf>,
 
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
@@ -429,6 +482,14 @@ pub struct TestArgs {
     /// Analogous to `--invariant-timeout` for invariant campaigns.
     #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
     pub mutation_timeout: Option<u32>,
+
+    /// Override optimizer runs for mutation testing compile-and-test runs.
+    #[arg(long, value_name = "RUNS", requires = "mutate")]
+    pub mutation_optimizer_runs: Option<u32>,
+
+    /// Override via-ir for mutation testing compile-and-test runs.
+    #[arg(long, default_missing_value = "true", num_args = 0..=1, requires = "mutate")]
+    pub mutation_via_ir: Option<bool>,
 }
 
 impl TestArgs {
@@ -456,6 +517,79 @@ impl TestArgs {
             domain: self.showmap_domain.into(),
             corpus_dir: self.showmap_corpus_dir.clone(),
         })
+    }
+
+    fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
+        let Some(path) = &self.replay_symbolic_artifact else {
+            return Ok(None);
+        };
+
+        if !self.filter.is_empty() || self.path.is_some() {
+            bail!(
+                "`--replay-symbolic-artifact` cannot be combined with test selection filters; \
+                 the artifact selects its original target"
+            );
+        }
+
+        let value = foundry_common::fs::read_json_file::<serde_json::Value>(path).wrap_err(
+            format!("failed to read symbolic counterexample artifact {}", path.display()),
+        )?;
+        let schema_version =
+            value.get("schema_version").and_then(serde_json::Value::as_u64).ok_or_else(|| {
+                eyre::eyre!(
+                    "symbolic counterexample artifact {} is missing numeric schema_version",
+                    path.display()
+                )
+            })?;
+        if schema_version != 1 {
+            bail!(
+                "unsupported symbolic counterexample artifact schema version {} in {}",
+                schema_version,
+                path.display()
+            );
+        }
+        let schema = value.get("schema").and_then(serde_json::Value::as_str).ok_or_else(|| {
+            eyre::eyre!(
+                "symbolic counterexample artifact {} is missing string schema",
+                path.display()
+            )
+        })?;
+        if schema != SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA {
+            bail!(
+                "unsupported symbolic counterexample artifact schema `{}` in {}",
+                schema,
+                path.display()
+            );
+        }
+        let artifact = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).wrap_err(
+            format!("failed to parse symbolic counterexample artifact {}", path.display()),
+        )?;
+        if artifact.calls.is_empty() {
+            bail!("symbolic counterexample artifact {} has no calls", path.display());
+        }
+        if artifact.replay.status != SymbolicReplayStatus::Confirmed {
+            bail!(
+                "symbolic counterexample artifact {} replay status must be confirmed, got {:?}",
+                path.display(),
+                artifact.replay.status,
+            );
+        }
+        let Some((artifact_path, contract_name)) = artifact.test.contract.rsplit_once(':') else {
+            bail!(
+                "symbolic counterexample artifact {} test.contract must be `path:Contract`, got `{}`",
+                path.display(),
+                artifact.test.contract,
+            );
+        };
+        if artifact_path.is_empty() || contract_name.is_empty() {
+            bail!(
+                "symbolic counterexample artifact {} test.contract must be `path:Contract`, got `{}`",
+                path.display(),
+                artifact.test.contract,
+            );
+        }
+
+        Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
     }
 
     /// Reject flags whose stdout shape conflicts with the NDJSON stream
@@ -551,6 +685,8 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
+        let symbolic_artifact_replay = self.load_symbolic_artifact_replay()?;
+
         // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
         // identifiers it constructs are project-relative. Match that here for the filter check
         // (notably for the `--rerun` failure list, which is persisted relative) but return the
@@ -563,7 +699,13 @@ impl TestArgs {
                     return true;
                 }
                 let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-                matches_artifact(test_filter, &stripped, abi, config.symbolic.enabled)
+                matches_artifact(
+                    test_filter,
+                    &stripped,
+                    abi,
+                    config.symbolic.enabled,
+                    symbolic_artifact_replay.as_ref(),
+                )
             })
             .map(|(id, _)| id.source)
             .collect())
@@ -612,7 +754,30 @@ impl TestArgs {
         // Set up the project.
         let project = config.project()?;
 
-        let filter = self.filter(&config)?;
+        let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
+
+        let mut filter = self.filter(&config)?;
+        if let Some(replay) = &replay_symbolic_artifact {
+            let filter_args = filter.args_mut();
+            filter_args.test_pattern_inverse = None;
+            filter_args.contract_pattern_inverse = None;
+            filter_args.path_pattern_inverse = None;
+            let (path, contract) = replay
+                .artifact
+                .test
+                .contract
+                .rsplit_once(':')
+                .map_or(("", replay.artifact.test.contract.as_str()), |(path, contract)| {
+                    (path, contract)
+                });
+            filter_args.test_pattern =
+                Some(Regex::new(&format!("^{}$", regex::escape(&replay.artifact.test.test)))?);
+            filter_args.contract_pattern =
+                Some(Regex::new(&format!("^{}$", regex::escape(contract)))?);
+            if !path.is_empty() {
+                filter_args.path_pattern = Some(globset::escape(path).parse::<GlobMatcher>()?);
+            }
+        }
         trace!(target: "forge::test", ?filter, "using filter");
 
         let mut compiler = ProjectCompiler::new()
@@ -630,20 +795,31 @@ impl TestArgs {
             emit_machine_compile_error(&output);
         }
 
-        self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
+        self.run_tests(
+            &project.paths.root,
+            config,
+            evm_opts,
+            &output,
+            &filter,
+            TestExecutionOptions {
+                replay_symbolic_artifact,
+                ..TestExecutionOptions::default_run()
+            },
+        )
+        .await
     }
 
     /// Executes all the tests in the project.
     ///
     /// See [`Self::compile_and_run`] for more details.
-    pub async fn run_tests(
+    pub(crate) async fn run_tests(
         &mut self,
         project_root: &Path,
         mut config: Config,
         mut evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
+        mut execution: TestExecutionOptions,
     ) -> Result<TestOutcome> {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -673,11 +849,14 @@ impl TestArgs {
             if self.junit {
                 conflicts.push("--junit");
             }
-            if coverage {
+            if execution.coverage {
                 conflicts.push("coverage");
             }
             if self.showmap_out.is_some() {
                 conflicts.push("--showmap-out");
+            }
+            if self.replay_symbolic_artifact.is_some() {
+                conflicts.push("--replay-symbolic-artifact");
             }
             if !conflicts.is_empty() {
                 bail!(
@@ -704,7 +883,7 @@ impl TestArgs {
             .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
 
         // Create test options from general project settings and compiler output.
-        let should_debug = self.debug;
+        execution.should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 
         // Determine executor verbosity.
@@ -754,16 +933,15 @@ impl TestArgs {
 
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
+            execution.decode_internal = decode_internal;
+            execution.multi_network = MultiNetworkConfig::default();
             self.dispatch_network(
                 &evm_opts,
                 config,
                 evm_opts.clone(),
                 output,
                 filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                MultiNetworkConfig::default(),
+                execution.clone(),
             )
             .await?
         } else {
@@ -779,12 +957,13 @@ impl TestArgs {
                     evm_opts.clone(),
                     output,
                     filter,
-                    coverage,
-                    should_debug,
-                    decode_internal,
-                    MultiNetworkConfig {
-                        all_override_networks: all_override_networks.clone(),
-                        pass_network: None,
+                    TestExecutionOptions {
+                        decode_internal,
+                        multi_network: MultiNetworkConfig {
+                            all_override_networks: all_override_networks.clone(),
+                            pass_network: None,
+                        },
+                        ..execution.clone()
                     },
                 )
                 .await?;
@@ -800,12 +979,13 @@ impl TestArgs {
                         pass_evm_opts.clone(),
                         output,
                         filter,
-                        coverage,
-                        should_debug,
-                        decode_internal,
-                        MultiNetworkConfig {
-                            all_override_networks: all_override_networks.clone(),
-                            pass_network: Some(network),
+                        TestExecutionOptions {
+                            decode_internal,
+                            multi_network: MultiNetworkConfig {
+                                all_override_networks: all_override_networks.clone(),
+                                pass_network: Some(network),
+                            },
+                            ..execution.clone()
                         },
                     )
                     .await?;
@@ -824,6 +1004,25 @@ impl TestArgs {
 
             (libraries, outcome)
         };
+
+        if let Some(replay) = &execution.replay_symbolic_artifact {
+            let replayed = outcome.tests().count();
+            if replayed == 0 {
+                bail!(
+                    "symbolic artifact target `{}::{}` was not found",
+                    replay.artifact.test.contract,
+                    replay.artifact.test.test
+                );
+            }
+            if replayed > 1 {
+                bail!(
+                    "symbolic artifact target `{}::{}` matched {} tests; replay requires exactly one target",
+                    replay.artifact.test.contract,
+                    replay.artifact.test.test,
+                    replayed
+                );
+            }
+        }
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -866,7 +1065,7 @@ impl TestArgs {
             }
         }
 
-        if should_debug {
+        if execution.should_debug {
             // Get first non-empty suite result. We will have only one such entry.
             let (_, _, test_result) =
                 outcome.remove_first().ok_or_eyre("no tests were executed")?;
@@ -1081,6 +1280,9 @@ impl TestArgs {
                 );
             }
 
+            let mut config_for_mutation = config_for_mutation;
+            apply_mutation_compiler_overrides(&mut config_for_mutation);
+
             let json_output = shell::is_json();
             let selected_sources_relative = self
                 .get_sources_to_compile(&config_for_mutation, filter)?
@@ -1137,17 +1339,13 @@ impl TestArgs {
     }
 
     /// Build the test runner and execute tests for a specific network type.
-    #[allow(clippy::too_many_arguments)]
     async fn build_and_run_tests<FEN: FoundryEvmNetwork>(
         &self,
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        should_debug: bool,
-        decode_internal: InternalTraceMode,
-        multi_network: MultiNetworkConfig,
+        execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork_block) =
@@ -1156,16 +1354,17 @@ impl TestArgs {
         let config = Arc::new(config);
         let showmap = self.showmap_config();
         let runner = MultiContractRunnerBuilder::new(config.clone())
-            .set_debug(should_debug)
-            .set_decode_internal(decode_internal)
+            .set_debug(execution.should_debug)
+            .set_decode_internal(execution.decode_internal)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
-            .set_coverage(coverage)
-            .with_multi_network(multi_network)
+            .set_coverage(execution.coverage)
+            .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
+            .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
@@ -1174,7 +1373,6 @@ impl TestArgs {
     }
 
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
-    #[allow(clippy::too_many_arguments)]
     async fn dispatch_network(
         &self,
         dispatch_opts: &EvmOpts,
@@ -1182,50 +1380,22 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        should_debug: bool,
-        decode_internal: InternalTraceMode,
-        multi_network: MultiNetworkConfig,
+        execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         if dispatch_opts.networks.is_tempo() {
-            self.build_and_run_tests::<TempoEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                multi_network,
-            )
-            .await
+            self.build_and_run_tests::<TempoEvmNetwork>(config, evm_opts, output, filter, execution)
+                .await
         } else {
             #[cfg(feature = "optimism")]
             if dispatch_opts.networks.is_optimism() {
                 return self
                     .build_and_run_tests::<OpEvmNetwork>(
-                        config,
-                        evm_opts,
-                        output,
-                        filter,
-                        coverage,
-                        should_debug,
-                        decode_internal,
-                        multi_network,
+                        config, evm_opts, output, filter, execution,
                     )
                     .await;
             }
-            self.build_and_run_tests::<EthEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                multi_network,
-            )
-            .await
+            self.build_and_run_tests::<EthEvmNetwork>(config, evm_opts, output, filter, execution)
+                .await
         }
     }
 
@@ -1449,6 +1619,9 @@ impl TestArgs {
                     !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
                     sh_println!("{}", result.short_result_with_suite(name, &contract_name))?;
+                    for artifact in &result.counterexample_artifacts {
+                        sh_warn!("Counterexample artifact: {}", artifact.path.display())?;
+                    }
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind
@@ -1999,13 +2172,39 @@ impl Provider for TestArgs {
         }
 
         // Mutation-testing CLI overrides
-        if let Some(timeout) = self.mutation_timeout {
+        if self.mutation_timeout.is_some()
+            || self.mutation_optimizer_runs.is_some()
+            || self.mutation_via_ir.is_some()
+        {
             let mut mutation_dict = Dict::default();
-            mutation_dict.insert("timeout".to_string(), timeout.into());
+            if let Some(timeout) = self.mutation_timeout {
+                mutation_dict.insert("timeout".to_string(), timeout.into());
+            }
+            if let Some(optimizer_runs) = self.mutation_optimizer_runs {
+                mutation_dict.insert("optimizer_runs".to_string(), optimizer_runs.into());
+            }
+            if let Some(via_ir) = self.mutation_via_ir {
+                mutation_dict.insert("via_ir".to_string(), via_ir.into());
+            }
             dict.insert("mutation".to_string(), mutation_dict.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+const fn apply_mutation_compiler_overrides(config: &mut Config) {
+    if let Some(optimizer_runs) = config.mutation.optimizer_runs {
+        let default_optimizer_settings =
+            matches!(config.optimizer, Some(false)) && matches!(config.optimizer_runs, Some(200));
+        config.optimizer_runs = Some(optimizer_runs as usize);
+        if default_optimizer_settings {
+            config.optimizer = None;
+        }
+        config.normalize_optimizer_settings();
+    }
+    if let Some(via_ir) = config.mutation.via_ir {
+        config.via_ir = via_ir;
     }
 }
 
@@ -2353,6 +2552,61 @@ mod tests {
             TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
         assert_eq!(args.fuzz_run, Some(10));
         assert_eq!(args.fuzz_worker, Some(2));
+    }
+
+    #[test]
+    fn mutation_compiler_overrides_are_extracted() {
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--mutate",
+            "--mutation-optimizer-runs",
+            "1",
+            "--mutation-via-ir",
+            "false",
+        ]);
+        assert_eq!(args.mutation_optimizer_runs, Some(1));
+        assert_eq!(args.mutation_via_ir, Some(false));
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<u32>("mutation.optimizer_runs").unwrap(), 1);
+        assert!(!figment.extract_inner::<bool>("mutation.via_ir").unwrap());
+    }
+
+    #[test]
+    fn mutation_compiler_overrides_update_only_mutation_config_clone() {
+        let mut config = Config {
+            optimizer_runs: Some(999),
+            via_ir: true,
+            mutation: foundry_config::MutationConfig {
+                optimizer_runs: Some(1),
+                via_ir: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        apply_mutation_compiler_overrides(&mut config);
+
+        assert_eq!(config.optimizer_runs, Some(1));
+        assert!(!config.via_ir);
+    }
+
+    #[test]
+    fn mutation_optimizer_runs_normalize_default_optimizer_settings() {
+        let mut config = Config {
+            optimizer: Some(false),
+            optimizer_runs: Some(200),
+            mutation: foundry_config::MutationConfig {
+                optimizer_runs: Some(1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        apply_mutation_compiler_overrides(&mut config);
+
+        assert_eq!(config.optimizer, Some(true));
+        assert_eq!(config.optimizer_runs, Some(1));
     }
 
     #[test]

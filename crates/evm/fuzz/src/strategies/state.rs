@@ -1,5 +1,7 @@
 use crate::{
-    BasicTxDetails, invariant::FuzzRunIdentifiedContracts, strategies::literals::LiteralsDictionary,
+    BasicTxDetails, Fuzzer,
+    invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
+    strategies::literals::LiteralsDictionary,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
@@ -10,7 +12,6 @@ use alloy_primitives::{
 use foundry_common::{
     ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
 };
-use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
 use revm::{
@@ -132,6 +133,13 @@ impl InvariantFuzzState {
         }
     }
 
+    pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
+        let mut dict = self.inner.borrow_mut();
+        for value in fuzzer.collected_values.drain(..) {
+            dict.insert_value(value);
+        }
+    }
+
     /// Collects state changes from a [StateChangeset] and logs into an [InvariantFuzzState]
     /// according to the given [FuzzDictionaryConfig].
     #[allow(clippy::too_many_arguments)]
@@ -147,12 +155,18 @@ impl InvariantFuzzState {
     ) {
         let mut dict = self.inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
-        let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
-        dict.insert_logs_values(target_abi, logs, run_depth);
-        dict.insert_result_values(target_function, result, run_depth);
-        // Get storage layouts for contracts in the state changeset
-        let storage_layouts = targets.get_storage_layouts();
-        dict.insert_new_state_values(state_changeset, &storage_layouts, mapping_slots);
+        let (target_abi, target_function) = if logs.is_empty() && result.is_empty() {
+            (None, None)
+        } else {
+            targets.fuzzed_artifacts(tx)
+        };
+        if !logs.is_empty() {
+            dict.insert_logs_values(target_abi, logs, run_depth);
+        }
+        if !result.is_empty() {
+            dict.insert_result_values(target_function, result, run_depth);
+        }
+        dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
     }
 
     /// Collects typed trace-cmp operands from sancov-instrumented code.
@@ -374,7 +388,7 @@ impl FuzzDictionary {
     fn insert_new_state_values(
         &mut self,
         state_changeset: &StateChangeset,
-        storage_layouts: &HashMap<Address, Arc<StorageLayout>>,
+        targets: &TargetedContracts,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         for (address, account) in state_changeset {
@@ -384,8 +398,12 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let slot_identifier =
-                    storage_layouts.get(address).map(|layout| SlotIdentifier::new(layout.clone()));
+                let slot_identifier = targets.get(address).and_then(|contract| {
+                    contract
+                        .storage_layout
+                        .as_ref()
+                        .map(|layout| SlotIdentifier::new(Arc::clone(layout)))
+                });
                 trace!(
                     "{address:?} has mapping_slots {}",
                     mapping_slots.is_some_and(|m| m.contains_key(address))
@@ -442,7 +460,7 @@ impl FuzzDictionary {
         mapping_slots: Option<&MappingSlots>,
     ) {
         let slot = B256::from(*slot);
-        let value = B256::from(*value);
+        let value_word = B256::from(*value);
 
         // Always insert the slot itself
         self.insert_value(slot);
@@ -451,15 +469,18 @@ impl FuzzDictionary {
         if let Some(slot_identifier) = slot_identifier
             // Identify slot type.
             && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots)
-            && slot_info.decode(value).is_some()
+            && slot_info.decode(value_word).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
             if !self.samples_seeded {
                 self.seed_samples();
             }
-            self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
+            self.sample_values
+                .entry(slot_info.slot_type.dyn_sol_type)
+                .or_default()
+                .insert(value_word);
         } else {
-            self.insert_value_u256(value.into());
+            self.insert_value_u256(*value);
         }
     }
 
