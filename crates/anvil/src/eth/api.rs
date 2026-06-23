@@ -1176,7 +1176,9 @@ impl<N: Network> EthApi<N> {
                 // pad to `count_pre` to keep the pre-fork segment aligned with the gas arrays;
                 // otherwise the merged response would come back short and misaligned, the exact
                 // failure this fixes.
-                response.base_fee_per_blob_gas.extend(pre.base_fee_per_blob_gas.into_iter().take(take));
+                response
+                    .base_fee_per_blob_gas
+                    .extend(pre.base_fee_per_blob_gas.into_iter().take(take));
                 response.base_fee_per_blob_gas.resize(take, 0);
                 response.blob_gas_used_ratio.extend(pre.blob_gas_used_ratio.into_iter().take(take));
                 response.blob_gas_used_ratio.resize(take, 0.0);
@@ -1223,9 +1225,9 @@ impl<N: Network> EthApi<N> {
                             &storage_info,
                             blob_params,
                         );
-                        // The block was found above, but a missing stored block/receipts makes the
-                        // helper hand back a zero-filled item. Error out rather than serve synthetic
-                        // data for a block we already confirmed exists.
+                        // The block was found above, but missing stored block/receipts make the
+                        // helper hand back a zero-filled item. Error out rather than serve
+                        // synthetic data for a block we already confirmed exists.
                         let block_number = block_number
                             .ok_or(FeeHistoryError::BlockNotFound(BlockNumber::Number(n)))?;
                         warmed.push((block_number, item.clone()));
