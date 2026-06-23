@@ -7,7 +7,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.8.6"
+FOUNDRYUP_INSTALLER_VERSION="1.9.0"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -18,6 +18,27 @@ FOUNDRY_BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/HEAD/found
 FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 FOUNDRYUP_JOBS=""
 FOUNDRYUP_IGNORE_VERIFICATION=false
+
+# ----------------------------------------------------------------------------
+# Rust foundryup migration shim
+#
+# The bash foundryup is being replaced by the Rust rewrite
+# (https://github.com/foundry-rs/foundryup). When opted in, this script
+# bootstraps the Rust `foundryup` binary into a sidecar location and execs it,
+# migrating the caller (including GitHub Actions that re-fetch this script).
+#
+# Migration is OPT-IN for now: set FOUNDRYUP_MIGRATE=1 to use the Rust
+# foundryup. The default path remains the legacy bash implementation until the
+# migration is proven, after which the default will flip.
+# ----------------------------------------------------------------------------
+
+# Pinned Rust foundryup installer version to bootstrap from.
+FOUNDRYUP_BOOTSTRAP_VERSION="${FOUNDRYUP_BOOTSTRAP_VERSION:-0.0.5}"
+# `foundryup-init.sh` for the pinned bootstrap version.
+FOUNDRYUP_INIT_URL="https://raw.githubusercontent.com/foundry-rs/foundryup/v${FOUNDRYUP_BOOTSTRAP_VERSION}/foundryup-init.sh"
+# Sidecar home for the Rust foundryup binary. Kept separate from the bash shim
+# at $FOUNDRY_BIN_DIR/foundryup so the installer never overwrites this script.
+FOUNDRYUP_RUST_HOME="${FOUNDRYUP_RUST_HOME:-"$FOUNDRY_DIR/foundryup"}"
 
 # Retry/backoff settings used for `fetch` (GitHub API calls).
 # Recovers from transient HTTP 403/429/5xx responses returned by
@@ -814,7 +835,59 @@ Contribute : https://github.com/foundry-rs/foundry/blob/HEAD/CONTRIBUTING.md
 }
 
 
+# Absolute path to the sidecar Rust foundryup binary (with `.exe` on Windows).
+rust_foundryup_bin() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s\n' "$FOUNDRYUP_RUST_HOME/bin/foundryup.exe" ;;
+    *)                    printf '%s\n' "$FOUNDRYUP_RUST_HOME/bin/foundryup" ;;
+  esac
+}
+
+# Bootstraps the Rust foundryup binary into the sidecar home if it is not
+# already present. Idempotent: a no-op once the binary exists.
+ensure_rust_foundryup() {
+  local _bin
+  _bin="$(rust_foundryup_bin)"
+  [ -x "$_bin" ] && return 0
+
+  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..."
+
+  local _init
+  _init="$(mktemp)"
+  ensure download "$FOUNDRYUP_INIT_URL" "$_init"
+
+  # Run the installer with:
+  #  - FOUNDRY_DIR pointed at the sidecar home, so it installs to
+  #    $FOUNDRYUP_RUST_HOME/bin/foundryup instead of overwriting this shim.
+  #  - FOUNDRYUP_VERSION scoped to the installer invocation only (it means the
+  #    installer version here, but the Foundry tool version to the Rust binary),
+  #    so it never leaks into the user's environment.
+  ensure env FOUNDRY_DIR="$FOUNDRYUP_RUST_HOME" FOUNDRYUP_VERSION="$FOUNDRYUP_BOOTSTRAP_VERSION" \
+    sh "$_init" -y
+  rm -f "$_init"
+
+  # The v0.0.5 installer writes the Windows binary without a `.exe` extension;
+  # normalize it so the exec below resolves correctly.
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      if [ ! -x "$_bin" ] && [ -f "$FOUNDRYUP_RUST_HOME/bin/foundryup" ]; then
+        mv -f "$FOUNDRYUP_RUST_HOME/bin/foundryup" "$_bin"
+      fi
+      ;;
+  esac
+
+  [ -x "$_bin" ] || err "failed to bootstrap the Rust foundryup binary"
+}
+
 # Skip execution when sourced by tests.
 if [ "${FOUNDRYUP_TEST:-0}" != "1" ]; then
-  main "$@"
+  # Opt-in migration to the Rust foundryup. When enabled, the user's
+  # environment (including FOUNDRY_DIR and any FOUNDRYUP_VERSION) is preserved
+  # for the exec, so the Rust binary installs Foundry into the usual location.
+  if [ "${FOUNDRYUP_MIGRATE:-0}" = "1" ]; then
+    ensure_rust_foundryup
+    exec "$(rust_foundryup_bin)" "$@"
+  else
+    main "$@"
+  fi
 fi
