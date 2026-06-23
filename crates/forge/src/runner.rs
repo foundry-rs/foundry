@@ -10,10 +10,11 @@ use crate::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
         SymbolicCallTrace, SymbolicCounterexample, SymbolicCounterexampleArtifact,
         SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
-        SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
-        SymbolicReplayMetadata, SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup,
-        TestStatus, invariant_campaign_display_name,
+        SymbolicCounterexampleMinimization, SymbolicCounterexampleReplaySemantics,
+        SymbolicCounterexampleTestIdentity, SymbolicReplayMetadata, SymbolicReplayStatus,
+        SymbolicResult, TestResult, TestSetup, TestStatus, invariant_campaign_display_name,
     },
+    symbolic_minimizer::minimize_single_call_counterexample,
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
@@ -23,7 +24,7 @@ use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAd
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, FuzzCorpusConfig, InlineConfig, InvariantConfig};
 use foundry_evm::{
-    constants::CALLER,
+    constants::{CALLER, CHEATCODE_ADDRESS},
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
@@ -31,7 +32,7 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
-            check_sequence, execute_tx_and_register_created, replay_error,
+            check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
         replay_corpus_to_showmap,
@@ -1088,6 +1089,68 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         )
     }
 
+    fn symbolic_single_call_preserves_failure(
+        &self,
+        call: &SymbolicCounterexampleCall,
+        expected_reason: Option<&str>,
+    ) -> bool {
+        self.replay_confirmed_symbolic_single_call(call, expected_reason).is_ok()
+    }
+
+    fn replay_confirmed_symbolic_single_call(
+        &self,
+        call: &SymbolicCounterexampleCall,
+        expected_reason: Option<&str>,
+    ) -> Result<(RawCallResult<FEN>, Option<String>), String> {
+        let Some(expected_reason) = expected_reason else {
+            return Err("candidate replay has no stable failure reason to compare".to_string());
+        };
+
+        let mut executor = self.clone_executor();
+        let raw_call_result = execute_tx(&mut executor, &call.to_basic_tx_details())
+            .map_err(|err| err.to_string())?;
+        if executor.is_raw_call_success(
+            self.address,
+            Cow::Borrowed(&raw_call_result.state_changeset),
+            &raw_call_result,
+            false,
+        ) {
+            return Err("candidate replay succeeded".to_string());
+        }
+
+        let reason = self.symbolic_raw_call_failure_reason(&raw_call_result)?;
+        if reason.as_deref() != Some(expected_reason) {
+            return Err(format!(
+                "candidate replay failed with different reason: expected `{}`, got `{}`",
+                expected_reason,
+                reason.as_deref().unwrap_or("")
+            ));
+        }
+
+        Ok((raw_call_result, reason))
+    }
+
+    fn symbolic_raw_call_failure_reason(
+        &self,
+        raw_call_result: &RawCallResult<FEN>,
+    ) -> Result<Option<String>, String> {
+        if raw_call_result.reverter == Some(CHEATCODE_ADDRESS)
+            && let Some(reason) = SkipReason::decode(&raw_call_result.result)
+        {
+            return Err(format!("vm.skip during concrete replay: {reason}"));
+        }
+
+        if raw_call_result.reverted
+            || raw_call_result.exit_reason.is_some_and(|reason| !reason.is_ok())
+        {
+            Ok(Some(
+                self.revert_decoder().decode(&raw_call_result.result, raw_call_result.exit_reason),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Configures this runner with the inline configuration for the contract.
     fn apply_function_inline_config(&mut self, func: &Function) -> Result<()> {
         if self.inline_config.contains_function(self.cr.name, &func.name) {
@@ -1239,7 +1302,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     BaseCounterExample::from_fuzz_call(calldata.clone(), args.clone(), None);
                 let symbolic_counterexample =
                     SymbolicCounterexample::from(&candidate_counterexample);
-                let (mut raw_call_result, reason) = match self.executor.call(
+                let (raw_call_result, reason) = match self.executor.call(
                     self.sender,
                     self.address,
                     func,
@@ -1293,9 +1356,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 };
 
-                let success = self.executor.is_raw_call_mut_success(
+                let success = self.executor.is_raw_call_success(
                     self.address,
-                    &mut raw_call_result,
+                    Cow::Borrowed(&raw_call_result.state_changeset),
+                    &raw_call_result,
                     false,
                 );
                 let call_trace =
@@ -1305,8 +1369,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     args,
                     raw_call_result.traces.clone(),
                 );
-                self.result.extend(raw_call_result);
                 if success {
+                    self.result.extend(raw_call_result);
                     let reason = "symbolic counterexample did not replay".to_string();
                     let symbolic_result = SymbolicResult::incomplete(
                         &self.config.symbolic,
@@ -1325,29 +1389,115 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         symbolic_result,
                     );
                 } else {
+                    let original_base_counterexample = base_counterexample;
+                    let original_call = SymbolicCounterexampleCall::from_base_counterexample(
+                        &original_base_counterexample,
+                        self.sender,
+                        self.address,
+                    );
+                    let original_symbolic_counterexample =
+                        SymbolicCounterexample::from(&original_base_counterexample);
+                    let mut final_call = original_call.clone();
+                    let mut final_raw_call_result = raw_call_result;
+                    let mut final_reason = reason;
+                    let mut minimization = None;
+
+                    if final_reason.is_some()
+                        && let Some(candidate) = minimize_single_call_counterexample(
+                            func,
+                            &original_call,
+                            self.tcfg.config.invariant.shrink_run_limit as usize,
+                            |candidate| {
+                                self.symbolic_single_call_preserves_failure(
+                                    candidate,
+                                    final_reason.as_deref(),
+                                )
+                            },
+                        )
+                    {
+                        if candidate.changed() {
+                            match self.replay_confirmed_symbolic_single_call(
+                                &candidate.minimized_call,
+                                final_reason.as_deref(),
+                            ) {
+                                Ok((raw_call_result, reason)) => {
+                                    final_call = candidate.minimized_call.clone();
+                                    final_raw_call_result = raw_call_result;
+                                    final_reason = reason;
+                                    minimization = Some(candidate);
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        %err,
+                                        "discarding symbolic counterexample minimization result that no longer replays"
+                                    );
+                                }
+                            }
+                        } else {
+                            minimization = Some(candidate);
+                        }
+                    }
+
+                    let call_trace = SymbolicCallTrace::test_result_traces(
+                        final_raw_call_result.traces.is_some(),
+                    );
+                    let mut base_counterexample = final_call.to_base_counterexample();
+                    base_counterexample.traces = final_raw_call_result.traces.clone();
+                    let symbolic_counterexample =
+                        SymbolicCounterexample::from(&base_counterexample);
+                    self.result.extend(final_raw_call_result);
+
                     let mut symbolic_result = SymbolicResult::fail_counterexample(
                         &self.config.symbolic,
                         stats,
                         call_trace,
                         symbolic_counterexample,
                     );
-                    if let Some(artifact) = self.persist_symbolic_counterexample_artifact(
-                        &func.signature(),
-                        &func.signature(),
+                    let signature = func.signature();
+                    let minimized_artifact = self.persist_symbolic_counterexample_artifact(
+                        &signature,
+                        &signature,
                         &symbolic_result,
                         SymbolicCounterexampleArtifactKind::SingleCall,
-                        vec![SymbolicCounterexampleCall::from_base_counterexample(
-                            &base_counterexample,
-                            self.sender,
-                            self.address,
-                        )],
-                    ) {
+                        vec![final_call],
+                    );
+                    if let Some(artifact) = minimized_artifact.clone() {
                         symbolic_result = symbolic_result.with_artifact(artifact);
+                    }
+
+                    if let Some(minimization) = minimization {
+                        let original_symbolic_result = SymbolicResult::fail_counterexample(
+                            &self.config.symbolic,
+                            stats,
+                            SymbolicCallTrace::none(),
+                            original_symbolic_counterexample,
+                        );
+                        let original_artifact = self.persist_symbolic_counterexample_artifact(
+                            &signature,
+                            &format!("original__{signature}"),
+                            &original_symbolic_result,
+                            SymbolicCounterexampleArtifactKind::SingleCall,
+                            vec![minimization.original_call.clone()],
+                        );
+                        if let (Some(original), Some(minimized)) =
+                            (original_artifact, minimized_artifact)
+                        {
+                            symbolic_result = symbolic_result.with_minimization(
+                                SymbolicCounterexampleMinimization::new(
+                                    original,
+                                    minimized,
+                                    minimization.attempts,
+                                    minimization.accepted,
+                                    minimization.original_call.calldata.len(),
+                                    minimization.minimized_call.calldata.len(),
+                                ),
+                            );
+                        }
                     }
                     let counterexample = CounterExample::Single(base_counterexample);
                     self.result.symbolic_result(
                         TestStatus::Failure,
-                        reason,
+                        final_reason,
                         Some(counterexample),
                         symbolic_result,
                     );
@@ -1396,17 +1546,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     ));
                     return self.result;
                 }
-                if let Err(err) =
-                    validate_single_call_symbolic_replay(func, call, self.address, self.sender)
-                {
+                if let Err(err) = validate_single_call_symbolic_replay(func, call, self.address) {
                     self.result.single_fail(Some(err));
-                    return self.result;
-                }
-                if call.warp.is_some() || call.roll.is_some() {
-                    self.result.single_fail(Some(
-                        "single-call symbolic artifact replay does not support warp or roll"
-                            .to_string(),
-                    ));
                     return self.result;
                 }
 
@@ -1414,13 +1555,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     return self.result;
                 }
 
-                let executor = self.clone_executor();
-                match executor.call_raw(
-                    call.sender,
-                    call.target,
-                    call.calldata.clone(),
-                    call.value.unwrap_or(U256::ZERO),
-                ) {
+                let mut executor = self.clone_executor();
+                match execute_tx(&mut executor, &call.to_basic_tx_details()) {
                     Ok(raw_call_result) => {
                         let replay_success = executor.is_raw_call_success(
                             self.address,
@@ -2941,7 +3077,6 @@ fn validate_single_call_symbolic_replay(
     func: &Function,
     call: &SymbolicCounterexampleCall,
     test_address: Address,
-    expected_sender: Address,
 ) -> Result<(), String> {
     if call.target != test_address {
         return Err(format!(
@@ -2949,18 +3084,7 @@ fn validate_single_call_symbolic_replay(
             call.target, test_address
         ));
     }
-    if call.sender != expected_sender {
-        return Err(format!(
-            "single-call symbolic artifact sender {} does not match configured sender {}",
-            call.sender, expected_sender
-        ));
-    }
-    if call.value.is_some_and(|value| !value.is_zero()) {
-        return Err(
-            "single-call symbolic artifact replay does not support non-zero value".to_string()
-        );
-    }
-    if !call.calldata.get(..4).is_some_and(|selector| func.selector() == selector) {
+    if call.calldata.get(..4).is_none_or(|selector| func.selector() != selector) {
         return Err(format!(
             "single-call symbolic artifact calldata does not match `{}` selector",
             func.signature()

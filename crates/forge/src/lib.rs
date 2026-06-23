@@ -35,6 +35,7 @@ pub use runner::ContractRunner;
 
 mod progress;
 pub mod result;
+mod symbolic_minimizer;
 
 // TODO: remove
 pub use foundry_common::traits::TestFilter;
