@@ -154,6 +154,17 @@ pub struct InvariantMetrics {
     pub discards: usize,
 }
 
+impl InvariantMetrics {
+    const fn record_call(&mut self, reverted: bool, discarded: bool) {
+        self.calls += 1;
+        if discarded {
+            self.discards += 1;
+        } else if reverted {
+            self.reverts += 1;
+        }
+    }
+}
+
 /// Campaign-level throughput metrics for invariant progress reporting.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct InvariantThroughputMetrics {
@@ -391,6 +402,9 @@ struct InvariantTestData {
     line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
     metrics: Map<String, InvariantMetrics>,
+    // Cache from fuzzed (target, selector) to its metric key. Only resolved keys are cached and
+    // they are invalidated when targets change (see `invalidate_metric_key_cache`).
+    metric_key_cache: Map<(Address, Selector), String>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -430,6 +444,7 @@ impl InvariantTest {
             gas_report_traces: vec![],
             line_coverage: None,
             metrics: Map::default(),
+            metric_key_cache: Map::default(),
             branch_runner,
             optimization_best_value: None,
             optimization_best_sequence: vec![],
@@ -461,22 +476,58 @@ impl InvariantTest {
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
     fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
-        if let Some(metric_key) = self.targeted_contracts.targets().fuzzed_metric_key(tx_details) {
-            let test_metrics = &mut self.test_data.metrics;
-            let invariant_metrics = test_metrics.entry(metric_key).or_default();
-            invariant_metrics.calls += 1;
-            if discarded {
-                invariant_metrics.discards += 1;
-            } else if reverted {
-                invariant_metrics.reverts += 1;
+        let Some(selector) = tx_details
+            .call_details
+            .calldata
+            .get(..4)
+            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+            .map(Selector::from)
+        else {
+            return;
+        };
+        let cache_key = (tx_details.call_details.target, selector);
+
+        if let Some(metric_key) = self.test_data.metric_key_cache.get(&cache_key) {
+            if let Some(invariant_metrics) = self.test_data.metrics.get_mut(metric_key) {
+                invariant_metrics.record_call(reverted, discarded);
+            } else {
+                self.test_data
+                    .metrics
+                    .entry(metric_key.to_owned())
+                    .or_default()
+                    .record_call(reverted, discarded);
             }
+            return;
         }
+
+        // Not cached: resolve from the current target set. Unresolved keys aren't cached so a tx
+        // whose target isn't known yet is re-resolved once that target is added.
+        let Some(metric_key) = self
+            .targeted_contracts
+            .targets()
+            .fuzzed_metric_key_for_selector(tx_details.call_details.target, selector)
+        else {
+            return;
+        };
+        self.test_data.metric_key_cache.insert(cache_key, metric_key.clone());
+        self.test_data.metrics.entry(metric_key).or_default().record_call(reverted, discarded);
+    }
+
+    /// Drops cached metric keys for the given addresses, keeping the cache coherent when targets
+    /// are added or removed (an address can be reused for a different artifact across runs).
+    fn invalidate_metric_key_cache(&mut self, addresses: &[Address]) {
+        if addresses.is_empty() {
+            return;
+        }
+        self.test_data.metric_key_cache.retain(|(addr, _), _| !addresses.contains(addr));
     }
 
     /// End invariant test run by collecting results, cleaning collected artifacts and reverting
     /// created fuzz state.
     fn end_run<FEN: FoundryEvmNetwork>(&mut self, run: InvariantTestRun<FEN>, gas_samples: usize) {
-        // We clear all the targeted contracts created during this run.
+        // Clear contracts created during this run, dropping their cached metric keys so a reused
+        // address can't resolve to a stale contract in a later run.
+        self.invalidate_metric_key_cache(&run.created_contracts);
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
 
         if self.test_data.gas_report_traces.len() < gas_samples {
@@ -1008,6 +1059,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                     // Collect created contracts and add to fuzz targets only if targeted contracts
                     // are updatable.
+                    let created_before = current_run.created_contracts.len();
                     if let Err(error) =
                         &invariant_test.targeted_contracts.collect_created_contracts(
                             &state_changeset,
@@ -1019,6 +1071,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     {
                         warn!(target: "forge::test", "{error}");
                     }
+                    // Drop cached metric keys for newly added targets (reused address).
+                    invariant_test.invalidate_metric_key_cache(
+                        &current_run.created_contracts[created_before..],
+                    );
                     current_run
                         .fuzz_runs
                         .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });

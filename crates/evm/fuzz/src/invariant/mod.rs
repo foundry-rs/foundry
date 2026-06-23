@@ -165,25 +165,30 @@ impl TargetedContracts {
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
-        self.inner.get(&tx.call_details.target).and_then(|contract| {
-            tx.call_details.calldata.get(..4).and_then(|selector| {
-                contract
-                    .abi
-                    .functions()
-                    .find(|f| f.selector() == selector)
-                    .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
+        tx.call_details
+            .calldata
+            .get(..4)
+            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+            .map(Selector::from)
+            .and_then(|selector| {
+                self.fuzzed_metric_key_for_selector(tx.call_details.target, selector)
             })
-        })
     }
 
-    /// Returns a map of contract addresses to their storage layouts.
-    pub fn get_storage_layouts(&self) -> HashMap<Address, Arc<StorageLayout>> {
-        self.inner
-            .iter()
-            .filter_map(|(addr, c)| {
-                c.storage_layout.as_ref().map(|layout| (*addr, Arc::clone(layout)))
-            })
-            .collect()
+    /// Identifies fuzzed contract and function from target and selector and returns unique metric
+    /// key composed from contract identifier and function name.
+    pub fn fuzzed_metric_key_for_selector(
+        &self,
+        target: Address,
+        selector: Selector,
+    ) -> Option<String> {
+        self.inner.get(&target).and_then(|contract| {
+            contract
+                .abi
+                .functions()
+                .find(|f| f.selector() == selector)
+                .map(|function| format!("{}.{}", contract.identifier.as_str(), function.name))
+        })
     }
 }
 
