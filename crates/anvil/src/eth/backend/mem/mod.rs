@@ -171,11 +171,13 @@ use revm::{
     state::AccountInfo,
 };
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fmt::{self, Debug},
     io::{Read, Write},
     ops::{Mul, Not},
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -185,6 +187,7 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
     storage::{StorageActions, StorageCtx},
+    storage_credits::NonCreditableSlots,
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
 };
@@ -1191,7 +1194,12 @@ impl<N: Network> Backend<N> {
         cfg_env: &CfgEnv<TempoHardfork>,
     ) {
         self.inject_precompiles(precompiles);
-        extend_tempo_precompiles(precompiles, cfg_env, StorageActions::disabled());
+        extend_tempo_precompiles(
+            precompiles,
+            cfg_env,
+            StorageActions::disabled(),
+            Rc::new(RefCell::new(NonCreditableSlots::empty())),
+        );
     }
 
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
