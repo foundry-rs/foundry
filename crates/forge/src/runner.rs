@@ -1546,6 +1546,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     ));
                     return self.result;
                 }
+                // Single-call artifacts are concrete replay inputs: sender, value, warp, and roll
+                // are intentionally taken from the artifact. Validation only checks that the call
+                // still targets this test function.
                 if let Err(err) = validate_single_call_symbolic_replay(func, call, self.address) {
                     self.result.single_fail(Some(err));
                     return self.result;
