@@ -1185,7 +1185,20 @@ Ran 2 tests for test/CounterTest.t.sol:CounterTest
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
 
-    "#]]);
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/CounterTest.t.sol:CounterTest
+[FAIL: assertion failed: [..]; counterexample: calldata=[..] args=[..]] testFuzz_SetNumberAssert(uint256) (runs: 0, [AVG_GAS])
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[..]] testFuzz_SetNumberRequire(uint256) (runs: 0, [AVG_GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
 });
 
 forgetest_init!(forge_fuzz_replay_respects_fuzz_fail_on_revert, |prj, cmd| {
