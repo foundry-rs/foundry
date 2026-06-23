@@ -23,9 +23,10 @@ use path_slash::PathExt;
 use regex::Regex;
 use serde_json::{Map, Value};
 use solar::{
-    ast::LitKind,
     sema::{
-        hir::{ElementaryType, ExprKind, Hir, ItemId, NatSpecKind, TypeKind},
+        Gcx,
+        eval::ConstantEvaluator,
+        hir::{ElementaryType, ItemId, NatSpecKind, TypeKind, VariableId},
         interface::source_map::FileName,
     },
 };
@@ -448,9 +449,10 @@ fn print_table(
 /// - `slot_count`: 0 for packable value types; ≥ 1 for slot-boundary types (arrays, structs,
 ///   mappings, string, bytes). The packing algorithm advances `current_slot` by this amount.
 fn hir_type_storage_info<'hir>(
-    hir: &Hir<'hir>,
+    gcx: Gcx<'hir>,
     kind: &TypeKind<'hir>,
 ) -> (String, u64, u64, &'static str) {
+    let hir = &gcx.hir;
     match kind {
         TypeKind::Elementary(et) => match et {
             ElementaryType::Address(_) => ("address".to_string(), 20, 0, "inplace"),
@@ -475,17 +477,19 @@ fn hir_type_storage_info<'hir>(
         },
         TypeKind::Array(arr) => {
             let (elem_label, elem_bytes, elem_slots, _) =
-                hir_type_storage_info(hir, &arr.element.kind);
-            // Try to evaluate a literal array size for precise slot counting.
+                hir_type_storage_info(gcx, &arr.element.kind);
+            // Use Solar's constant evaluator to resolve the array size expression, including
+            // non-literal sizes like `uint256 constant N = 5; uint256[N] arr`.
             let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
-                if let ExprKind::Lit(lit) = size_expr.kind {
-                    if let LitKind::Number(n) = lit.kind { n.try_into().ok() } else { None }
-                } else {
-                    None
-                }
+                ConstantEvaluator::new(gcx)
+                    .try_eval(size_expr)
+                    .ok()
+                    .and_then(|s| s.as_u256())
+                    .and_then(|n| n.try_into().ok())
+                    .filter(|&n: &u64| n > 0)
             });
             match fixed_len {
-                Some(n) if n > 0 => {
+                Some(n) => {
                     let label = format!("{elem_label}[{n}]");
                     let (number_of_bytes, slot_count) = if elem_slots == 0 {
                         // Packable element: compute tight packing.
@@ -501,12 +505,12 @@ fn hir_type_storage_info<'hir>(
                     (label, number_of_bytes, slot_count, "inplace")
                 }
                 // Dynamic array or unresolvable size: 1 slot base.
-                _ => (format!("{elem_label}[]"), 32, 1, "dynamic_array"),
+                None => (format!("{elem_label}[]"), 32, 1, "dynamic_array"),
             }
         }
         TypeKind::Mapping(m) => {
-            let (key_label, ..) = hir_type_storage_info(hir, &m.key.kind);
-            let (val_label, ..) = hir_type_storage_info(hir, &m.value.kind);
+            let (key_label, ..) = hir_type_storage_info(gcx, &m.key.kind);
+            let (val_label, ..) = hir_type_storage_info(gcx, &m.value.kind);
             (format!("mapping({key_label} => {val_label})"), 32, 1, "mapping")
         }
         TypeKind::Custom(ItemId::Struct(id)) => {
@@ -517,7 +521,7 @@ fn hir_type_storage_info<'hir>(
                 format!("struct {}", s.name.as_str())
             };
             // Recursively compute the struct's slot count via the same packing rules.
-            let slot_count = struct_slot_count(hir, s.fields);
+            let slot_count = struct_slot_count(gcx, s.fields);
             (label, slot_count * 32, slot_count, "inplace")
         }
         TypeKind::Custom(ItemId::Enum(id)) => {
@@ -531,7 +535,7 @@ fn hir_type_storage_info<'hir>(
         }
         TypeKind::Custom(ItemId::Udvt(id)) => {
             let u = hir.udvt(*id);
-            let (_, bytes, slots, encoding) = hir_type_storage_info(hir, &u.ty.kind);
+            let (_, bytes, slots, encoding) = hir_type_storage_info(gcx, &u.ty.kind);
             let label = if let Some(cid) = u.contract {
                 format!("{}.{}", hir.contract(cid).name.as_str(), u.name.as_str())
             } else {
@@ -545,12 +549,13 @@ fn hir_type_storage_info<'hir>(
 }
 
 /// Computes the number of 32-byte slots consumed by a sequence of struct fields.
-fn struct_slot_count<'hir>(hir: &Hir<'hir>, fields: &[solar::sema::hir::VariableId]) -> u64 {
+fn struct_slot_count<'hir>(gcx: Gcx<'hir>, fields: &'hir [VariableId]) -> u64 {
+    let hir = &gcx.hir;
     let mut current_slot: u64 = 0;
     let mut current_offset: u64 = 0;
     for &var_id in fields {
         let var = hir.variable(var_id);
-        let (_, byte_size, slot_count, _) = hir_type_storage_info(hir, &var.ty.kind);
+        let (_, byte_size, slot_count, _) = hir_type_storage_info(gcx, &var.ty.kind);
         if slot_count > 0 {
             if current_offset > 0 {
                 current_slot += 1;
@@ -567,6 +572,112 @@ fn struct_slot_count<'hir>(hir: &Hir<'hir>, fields: &[solar::sema::hir::Variable
     }
     // Any partially-filled final slot counts as a full slot.
     if current_offset > 0 { current_slot + 1 } else { current_slot }
+}
+
+/// Inserts `kind`'s [`StorageType`] entry into `types`, recursively populating composite metadata:
+/// arrays get a `"base"` key, mappings get `key`/`value`, structs get a `"members"` array.
+///
+/// Returns the type label used as the key in `types` and as `Storage.storage_type`.
+fn register_type_recursive<'hir>(
+    gcx: Gcx<'hir>,
+    kind: &TypeKind<'hir>,
+    types: &mut BTreeMap<String, StorageType>,
+) -> String {
+    let (label, byte_size, _, encoding) = hir_type_storage_info(gcx, kind);
+
+    if types.contains_key(&label) {
+        return label;
+    }
+
+    let st = match kind {
+        TypeKind::Array(arr) => {
+            let base = register_type_recursive(gcx, &arr.element.kind, types);
+            let mut other = BTreeMap::new();
+            other.insert("base".to_string(), Value::String(base));
+            StorageType {
+                encoding: encoding.to_string(),
+                key: None,
+                label: label.clone(),
+                number_of_bytes: byte_size.to_string(),
+                value: None,
+                other,
+            }
+        }
+        TypeKind::Mapping(m) => {
+            let key_type = register_type_recursive(gcx, &m.key.kind, types);
+            let val_type = register_type_recursive(gcx, &m.value.kind, types);
+            StorageType {
+                encoding: encoding.to_string(),
+                key: Some(key_type),
+                label: label.clone(),
+                number_of_bytes: byte_size.to_string(),
+                value: Some(val_type),
+                other: BTreeMap::new(),
+            }
+        }
+        TypeKind::Custom(ItemId::Struct(id)) => {
+            let hir = &gcx.hir;
+            let s = hir.strukt(*id);
+            let mut cur_slot: u64 = 0;
+            let mut cur_offset: u64 = 0;
+            let mut members: Vec<Value> = Vec::new();
+            for &var_id in s.fields {
+                let var = hir.variable(var_id);
+                let field_name =
+                    var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
+                let (field_type, field_bytes, field_slots, _) =
+                    hir_type_storage_info(gcx, &var.ty.kind);
+                let (fs, fo) = if field_slots > 0 {
+                    if cur_offset > 0 {
+                        cur_slot += 1;
+                        cur_offset = 0;
+                    }
+                    let s = cur_slot;
+                    cur_slot += field_slots;
+                    (s, 0u64)
+                } else {
+                    if cur_offset + field_bytes > 32 {
+                        cur_slot += 1;
+                        cur_offset = 0;
+                    }
+                    let s = cur_slot;
+                    let o = cur_offset;
+                    cur_offset += field_bytes;
+                    (s, o)
+                };
+                register_type_recursive(gcx, &var.ty.kind, types);
+                members.push(serde_json::json!({
+                    "astId": 0,
+                    "contract": label,
+                    "label": field_name,
+                    "offset": fo,
+                    "slot": fs.to_string(),
+                    "type": field_type,
+                }));
+            }
+            let mut other = BTreeMap::new();
+            other.insert("members".to_string(), Value::Array(members));
+            StorageType {
+                encoding: encoding.to_string(),
+                key: None,
+                label: label.clone(),
+                number_of_bytes: byte_size.to_string(),
+                value: None,
+                other,
+            }
+        }
+        _ => StorageType {
+            encoding: encoding.to_string(),
+            key: None,
+            label: label.clone(),
+            number_of_bytes: byte_size.to_string(),
+            value: None,
+            other: BTreeMap::new(),
+        },
+    };
+
+    types.insert(label.clone(), st);
+    label
 }
 
 /// Collects ERC-7201 namespaced storage entries for the target contract using Solar HIR.
@@ -649,8 +760,8 @@ fn collect_erc7201_entries(
             for &var_id in strukt.fields {
                 let var = hir.variable(var_id);
                 let field_name = var.name.map(|n| n.name.as_str().to_string()).unwrap_or_default();
-                let (type_label, byte_size, slot_count, encoding) =
-                    hir_type_storage_info(hir, &var.ty.kind);
+                let (type_label, byte_size, slot_count, _encoding) =
+                    hir_type_storage_info(gcx, &var.ty.kind);
 
                 let (field_slot, field_offset) = if slot_count > 0 {
                     // Slot-boundary type: align to a fresh slot, then consume slot_count slots.
@@ -685,14 +796,7 @@ fn collect_erc7201_entries(
                     storage_type: type_label.clone(),
                 });
 
-                types.entry(type_label.clone()).or_insert_with(|| StorageType {
-                    encoding: encoding.to_string(),
-                    key: None,
-                    label: type_label,
-                    number_of_bytes: byte_size.to_string(),
-                    value: None,
-                    other: BTreeMap::new(),
-                });
+                register_type_recursive(gcx, &var.ty.kind, &mut types);
             }
         }
 

@@ -1614,10 +1614,16 @@ contract Arrays {
       "label": "bool",
       "numberOfBytes": "1"
     },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
     "uint256[2]": {
       "encoding": "inplace",
       "label": "uint256[2]",
-      "numberOfBytes": "64"
+      "numberOfBytes": "64",
+      "base": "uint256"
     }
   }
 }
@@ -1687,7 +1693,30 @@ contract Nested {
     "struct Nested.TwoSlot": {
       "encoding": "inplace",
       "label": "struct Nested.TwoSlot",
-      "numberOfBytes": "64"
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Nested.TwoSlot",
+          "label": "a",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint256"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Nested.TwoSlot",
+          "label": "b",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
     }
   }
 }
@@ -1748,6 +1777,470 @@ contract Child is Base {}
       "encoding": "inplace",
       "label": "address",
       "numberOfBytes": "20"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.mapping") = 0x56c527eed7d0b46b202df7b27d5beedb3795e24989b4531cc9fdbefdf683b100
+// Mappings must carry populated key/value references in storageLayout.types.
+forgetest!(can_inspect_erc7201_mapping_types, |prj, cmd| {
+    prj.add_source(
+        "Mapping.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Mapping {
+    /// @custom:storage-location erc7201:test.mapping
+    struct MapStorage {
+        mapping(address => uint256) balances;
+    }
+
+    function _storage() private pure returns (MapStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.mapping")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Mapping", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Mapping [erc7201:test.mapping]",
+      "label": "balances",
+      "offset": 0,
+      "slot": "0x56c527eed7d0b46b202df7b27d5beedb3795e24989b4531cc9fdbefdf683b100",
+      "type": "mapping(address => uint256)"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "mapping(address => uint256)": {
+      "encoding": "mapping",
+      "key": "address",
+      "label": "mapping(address => uint256)",
+      "numberOfBytes": "32",
+      "value": "uint256"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.dynarray") = 0x5e9fbe99608ff647079d38f7c90233a009c7e81628b7a331162c48bd41e75600
+// Dynamic arrays must carry a populated base reference in storageLayout.types.
+forgetest!(can_inspect_erc7201_dynamic_array_base, |prj, cmd| {
+    prj.add_source(
+        "DynArray.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract DynArray {
+    /// @custom:storage-location erc7201:test.dynarray
+    struct DynStorage {
+        uint256[] values;
+    }
+
+    function _storage() private pure returns (DynStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.dynarray")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "DynArray", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "DynArray [erc7201:test.dynarray]",
+      "label": "values",
+      "offset": 0,
+      "slot": "0x5e9fbe99608ff647079d38f7c90233a009c7e81628b7a331162c48bd41e75600",
+      "type": "uint256[]"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "uint256[]": {
+      "encoding": "dynamic_array",
+      "label": "uint256[]",
+      "numberOfBytes": "32",
+      "base": "uint256"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.constarray") = 0x2b5bacd3ce006455af41fefff7b4ac4c38a8aa9f7f1611e491ea9413ca199100
+// Fixed arrays sized by a constant expression (not a literal) must resolve the size correctly.
+forgetest!(can_inspect_erc7201_const_expr_array_size, |prj, cmd| {
+    prj.add_source(
+        "ConstArray.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+uint256 constant SLOTS = 3;
+
+contract ConstArray {
+    /// @custom:storage-location erc7201:test.constarray
+    struct ConstArrayStorage {
+        uint256[SLOTS] values;
+    }
+
+    function _storage() private pure returns (ConstArrayStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.constarray")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "ConstArray", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "ConstArray [erc7201:test.constarray]",
+      "label": "values",
+      "offset": 0,
+      "slot": "0x2b5bacd3ce006455af41fefff7b4ac4c38a8aa9f7f1611e491ea9413ca199100",
+      "type": "uint256[3]"
+    }
+  ],
+  "types": {
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "uint256[3]": {
+      "encoding": "inplace",
+      "label": "uint256[3]",
+      "numberOfBytes": "96",
+      "base": "uint256"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.composite") = 0x81ae721f920fedc11581a214debb56ba6198e52123849352f75511a326eb7b00
+// Array-of-struct: base must point to the struct type, which must itself carry members.
+// Pair{uint256,address} = 2 slots; Pair[2] = 4 slots.
+forgetest!(can_inspect_erc7201_array_of_struct, |prj, cmd| {
+    prj.add_source(
+        "Composite.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Composite {
+    struct Pair {
+        uint256 a;
+        address b;
+    }
+
+    /// @custom:storage-location erc7201:test.composite
+    struct CompositeStorage {
+        Pair[2] pairs;
+    }
+
+    function _storage() private pure returns (CompositeStorage storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.composite")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Composite", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Composite [erc7201:test.composite]",
+      "label": "pairs",
+      "offset": 0,
+      "slot": "0x81ae721f920fedc11581a214debb56ba6198e52123849352f75511a326eb7b00",
+      "type": "struct Composite.Pair[2]"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "struct Composite.Pair": {
+      "encoding": "inplace",
+      "label": "struct Composite.Pair",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Composite.Pair",
+          "label": "a",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint256"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Composite.Pair",
+          "label": "b",
+          "offset": 0,
+          "slot": "1",
+          "type": "address"
+        }
+      ]
+    },
+    "struct Composite.Pair[2]": {
+      "encoding": "inplace",
+      "label": "struct Composite.Pair[2]",
+      "numberOfBytes": "128",
+      "base": "struct Composite.Pair"
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.deepmapping") = 0xf3683f60db86b0b051284bbd846b2bbe66a86997292a57e82f40f5e8a330a700
+// Mapping whose value is a struct: key/value AND the struct's members must all be populated.
+forgetest!(can_inspect_erc7201_mapping_to_struct, |prj, cmd| {
+    prj.add_source(
+        "DeepMapping.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract DeepMapping {
+    struct Token {
+        address owner;
+        uint256 amount;
+    }
+
+    /// @custom:storage-location erc7201:test.deepmapping
+    struct TokenRegistry {
+        mapping(uint256 => Token) tokens;
+    }
+
+    function _storage() private pure returns (TokenRegistry storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.deepmapping")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "DeepMapping", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "DeepMapping [erc7201:test.deepmapping]",
+      "label": "tokens",
+      "offset": 0,
+      "slot": "0xf3683f60db86b0b051284bbd846b2bbe66a86997292a57e82f40f5e8a330a700",
+      "type": "mapping(uint256 => struct DeepMapping.Token)"
+    }
+  ],
+  "types": {
+    "address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "mapping(uint256 => struct DeepMapping.Token)": {
+      "encoding": "mapping",
+      "key": "uint256",
+      "label": "mapping(uint256 => struct DeepMapping.Token)",
+      "numberOfBytes": "32",
+      "value": "struct DeepMapping.Token"
+    },
+    "struct DeepMapping.Token": {
+      "encoding": "inplace",
+      "label": "struct DeepMapping.Token",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct DeepMapping.Token",
+          "label": "owner",
+          "offset": 0,
+          "slot": "0",
+          "type": "address"
+        },
+        {
+          "astId": 0,
+          "contract": "struct DeepMapping.Token",
+          "label": "amount",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
+// erc7201("test.struct3") = 0x2519de6936a0f3f35369a45024b659776437a50d0982ecf943e2488b087abf00
+// Three-level struct chain: the members of the outer struct reference an inner struct that
+// itself must be recursively expanded with its own members.
+// Inner{Point p (2 slots), uint256 z}: slot_count=3. Point{x,y}: slot_count=2.
+forgetest!(can_inspect_erc7201_three_level_struct, |prj, cmd| {
+    prj.add_source(
+        "Struct3.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Struct3 {
+    struct Point {
+        uint256 x;
+        uint256 y;
+    }
+
+    struct Inner {
+        Point p;
+        uint256 z;
+    }
+
+    /// @custom:storage-location erc7201:test.struct3
+    struct Data3 {
+        Inner data;
+    }
+
+    function _storage() private pure returns (Data3 storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.struct3")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Struct3", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Struct3 [erc7201:test.struct3]",
+      "label": "data",
+      "offset": 0,
+      "slot": "0x2519de6936a0f3f35369a45024b659776437a50d0982ecf943e2488b087abf00",
+      "type": "struct Struct3.Inner"
+    }
+  ],
+  "types": {
+    "struct Struct3.Inner": {
+      "encoding": "inplace",
+      "label": "struct Struct3.Inner",
+      "numberOfBytes": "96",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Inner",
+          "label": "p",
+          "offset": 0,
+          "slot": "0",
+          "type": "struct Struct3.Point"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Inner",
+          "label": "z",
+          "offset": 0,
+          "slot": "2",
+          "type": "uint256"
+        }
+      ]
+    },
+    "struct Struct3.Point": {
+      "encoding": "inplace",
+      "label": "struct Struct3.Point",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Point",
+          "label": "x",
+          "offset": 0,
+          "slot": "0",
+          "type": "uint256"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Struct3.Point",
+          "label": "y",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
     },
     "uint256": {
       "encoding": "inplace",
