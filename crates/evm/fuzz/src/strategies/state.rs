@@ -397,7 +397,7 @@ impl FuzzDictionary {
             // Insert push bytes.
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
-            if self.config.include_storage {
+            if self.config.include_storage && !account.storage.is_empty() {
                 let slot_identifier = targets.get(address).and_then(|contract| {
                     contract
                         .storage_layout
