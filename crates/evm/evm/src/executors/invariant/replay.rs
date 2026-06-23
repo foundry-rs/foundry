@@ -47,10 +47,10 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs {
         let mut call_result = execute_tx(&mut executor, tx)?;
-        logs.extend(call_result.logs.clone());
-        debug_bytecodes.extend(call_result.debug_bytecodes.clone());
+        logs.append(&mut call_result.logs);
+        debug_bytecodes.extend(std::mem::take(&mut call_result.debug_bytecodes));
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-        HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
+        HitMaps::merge_opt(line_coverage, call_result.line_coverage.take());
 
         // Commit state changes to persist across calls in the sequence.
         executor.commit(&mut call_result);
