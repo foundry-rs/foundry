@@ -262,6 +262,31 @@ impl From<ShowmapDomainArg> for ShowmapDomain {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TestExecutionOptions {
+    pub(crate) coverage: bool,
+    pub(crate) should_debug: bool,
+    pub(crate) decode_internal: InternalTraceMode,
+    pub(crate) multi_network: MultiNetworkConfig,
+    pub(crate) replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+}
+
+impl TestExecutionOptions {
+    pub(crate) fn default_run() -> Self {
+        Self {
+            coverage: false,
+            should_debug: false,
+            decode_internal: InternalTraceMode::None,
+            multi_network: MultiNetworkConfig::default(),
+            replay_symbolic_artifact: None,
+        }
+    }
+
+    pub(crate) fn coverage() -> Self {
+        Self { coverage: true, ..Self::default_run() }
+    }
+}
+
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Test options")]
@@ -867,6 +892,8 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
+        let symbolic_artifact_replay = self.load_symbolic_artifact_replay()?;
+
         // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
         // identifiers it constructs are project-relative. Match that here for the filter check
         // (notably for the `--rerun` failure list, which is persisted relative) but return the
@@ -879,7 +906,13 @@ impl TestArgs {
                     return true;
                 }
                 let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-                matches_artifact(test_filter, &stripped, abi, config.symbolic.enabled)
+                matches_artifact(
+                    test_filter,
+                    &stripped,
+                    abi,
+                    config.symbolic.enabled,
+                    symbolic_artifact_replay.as_ref(),
+                )
             })
             .map(|(id, _)| id.source)
             .collect())
@@ -900,8 +933,10 @@ impl TestArgs {
             evm_opts,
             &output,
             &filter,
-            false,
-            replay_symbolic_artifact,
+            TestExecutionOptions {
+                replay_symbolic_artifact,
+                ..TestExecutionOptions::default_run()
+            },
         )
         .await
     }
@@ -954,9 +989,6 @@ impl TestArgs {
         let project_root = project.paths.root.clone();
 
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
-        if replay_symbolic_artifact.is_some() {
-            config.symbolic.enabled = true;
-        }
 
         let mut filter = self.filter(&config)?;
         if let Some(replay) = &replay_symbolic_artifact {
@@ -1089,16 +1121,14 @@ impl TestArgs {
     /// Executes all the tests in the project.
     ///
     /// See [`Self::compile_and_run`] for more details.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn run_tests(
+    pub(crate) async fn run_tests(
         &mut self,
         project_root: &Path,
         mut config: Config,
         mut evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+        mut execution: TestExecutionOptions,
     ) -> Result<TestOutcome> {
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
@@ -1128,7 +1158,7 @@ impl TestArgs {
             if self.junit {
                 conflicts.push("--junit");
             }
-            if coverage {
+            if execution.coverage {
                 conflicts.push("coverage");
             }
             if self.showmap_out.is_some() {
@@ -1162,7 +1192,7 @@ impl TestArgs {
             .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
 
         // Create test options from general project settings and compiler output.
-        let should_debug = self.debug;
+        execution.should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 
         // Determine executor verbosity.
@@ -1212,17 +1242,15 @@ impl TestArgs {
 
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
+            execution.decode_internal = decode_internal;
+            execution.multi_network = MultiNetworkConfig::default();
             self.dispatch_network(
                 &evm_opts,
                 config,
                 evm_opts.clone(),
                 output,
                 filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                MultiNetworkConfig::default(),
-                replay_symbolic_artifact.clone(),
+                execution.clone(),
             )
             .await?
         } else {
@@ -1238,14 +1266,14 @@ impl TestArgs {
                     evm_opts.clone(),
                     output,
                     filter,
-                    coverage,
-                    should_debug,
-                    decode_internal,
-                    MultiNetworkConfig {
-                        all_override_networks: all_override_networks.clone(),
-                        pass_network: None,
+                    TestExecutionOptions {
+                        decode_internal,
+                        multi_network: MultiNetworkConfig {
+                            all_override_networks: all_override_networks.clone(),
+                            pass_network: None,
+                        },
+                        ..execution.clone()
                     },
-                    replay_symbolic_artifact.clone(),
                 )
                 .await?;
 
@@ -1260,14 +1288,14 @@ impl TestArgs {
                         pass_evm_opts.clone(),
                         output,
                         filter,
-                        coverage,
-                        should_debug,
-                        decode_internal,
-                        MultiNetworkConfig {
-                            all_override_networks: all_override_networks.clone(),
-                            pass_network: Some(network),
+                        TestExecutionOptions {
+                            decode_internal,
+                            multi_network: MultiNetworkConfig {
+                                all_override_networks: all_override_networks.clone(),
+                                pass_network: Some(network),
+                            },
+                            ..execution.clone()
                         },
-                        replay_symbolic_artifact.clone(),
                     )
                     .await?;
                 merge_outcomes(&mut outcome, pass_outcome);
@@ -1286,7 +1314,7 @@ impl TestArgs {
             (libraries, outcome)
         };
 
-        if let Some(replay) = &replay_symbolic_artifact {
+        if let Some(replay) = &execution.replay_symbolic_artifact {
             let replayed = outcome.tests().count();
             if replayed == 0 {
                 bail!(
@@ -1346,7 +1374,7 @@ impl TestArgs {
             }
         }
 
-        if should_debug {
+        if execution.should_debug {
             // Get first non-empty suite result. We will have only one such entry.
             let (_, _, test_result) =
                 outcome.remove_first().ok_or_eyre("no tests were executed")?;
@@ -1620,18 +1648,13 @@ impl TestArgs {
     }
 
     /// Build the test runner and execute tests for a specific network type.
-    #[allow(clippy::too_many_arguments)]
     async fn build_and_run_tests<FEN: FoundryEvmNetwork>(
         &self,
         config: Config,
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        should_debug: bool,
-        decode_internal: InternalTraceMode,
-        multi_network: MultiNetworkConfig,
-        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+        execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork_block) =
@@ -1640,19 +1663,19 @@ impl TestArgs {
         let config = Arc::new(config);
         let showmap = self.showmap_config()?;
         let runner = MultiContractRunnerBuilder::new(config.clone())
-            .set_debug(should_debug)
-            .set_decode_internal(decode_internal)
+            .set_debug(execution.should_debug)
+            .set_decode_internal(execution.decode_internal)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
-            .set_coverage(coverage)
-            .with_multi_network(multi_network)
+            .set_coverage(execution.coverage)
+            .with_multi_network(execution.multi_network)
             .with_showmap(showmap)
             .with_fuzz_only(self.fuzz_only)
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
-            .with_symbolic_artifact_replay(replay_symbolic_artifact)
+            .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
@@ -1684,7 +1707,6 @@ impl TestArgs {
     }
 
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
-    #[allow(clippy::too_many_arguments)]
     async fn dispatch_network(
         &self,
         dispatch_opts: &EvmOpts,
@@ -1692,54 +1714,22 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         filter: &ProjectPathsAwareFilter,
-        coverage: bool,
-        should_debug: bool,
-        decode_internal: InternalTraceMode,
-        multi_network: MultiNetworkConfig,
-        replay_symbolic_artifact: Option<SymbolicArtifactReplayConfig>,
+        execution: TestExecutionOptions,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         if dispatch_opts.networks.is_tempo() {
-            self.build_and_run_tests::<TempoEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                multi_network,
-                replay_symbolic_artifact,
-            )
-            .await
+            self.build_and_run_tests::<TempoEvmNetwork>(config, evm_opts, output, filter, execution)
+                .await
         } else {
             #[cfg(feature = "optimism")]
             if dispatch_opts.networks.is_optimism() {
                 return self
                     .build_and_run_tests::<OpEvmNetwork>(
-                        config,
-                        evm_opts,
-                        output,
-                        filter,
-                        coverage,
-                        should_debug,
-                        decode_internal,
-                        multi_network,
-                        replay_symbolic_artifact,
+                        config, evm_opts, output, filter, execution,
                     )
                     .await;
             }
-            self.build_and_run_tests::<EthEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                multi_network,
-                replay_symbolic_artifact,
-            )
-            .await
+            self.build_and_run_tests::<EthEvmNetwork>(config, evm_opts, output, filter, execution)
+                .await
         }
     }
 

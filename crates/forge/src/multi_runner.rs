@@ -3,7 +3,7 @@
 use crate::{
     ContractRunner, TestFilter,
     progress::TestsProgress,
-    result::{SuiteResult, SymbolicCounterexampleArtifact},
+    result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
         count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
@@ -101,11 +101,25 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         contract_id: &str,
         func: &Function,
     ) -> bool {
-        matches_test_function(filter, contract_id, func, self.config.symbolic.enabled)
+        matches_test_function(
+            filter,
+            contract_id,
+            func,
+            symbolic_entrypoints_enabled(
+                self.config.symbolic.enabled,
+                self.tcfg.symbolic_artifact_replay.as_ref(),
+            ),
+        )
     }
 
     fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-        matches_artifact(filter, id, abi, self.config.symbolic.enabled)
+        matches_artifact(
+            filter,
+            id,
+            abi,
+            self.config.symbolic.enabled,
+            self.tcfg.symbolic_artifact_replay.as_ref(),
+        )
     }
 
     /// Returns an iterator over all contracts that match the filter.
@@ -139,7 +153,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(|(_, c)| c.abi.functions())
             .filter(|func| {
-                func.is_any_test() || (self.config.symbolic.enabled && is_symbolic_entrypoint(func))
+                func.is_any_test()
+                    || (symbolic_entrypoints_enabled(
+                        self.config.symbolic.enabled,
+                        self.tcfg.symbolic_artifact_replay.as_ref(),
+                    ) && is_symbolic_entrypoint(func))
             })
     }
 
@@ -688,7 +706,10 @@ impl MultiContractRunnerBuilder {
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
                 && abi.functions().any(|func| {
                     func.name.is_any_test()
-                        || self.config.symbolic.enabled && is_symbolic_entrypoint(func)
+                        || symbolic_entrypoints_enabled(
+                            self.config.symbolic.enabled,
+                            self.symbolic_artifact_replay.as_ref(),
+                        ) && is_symbolic_entrypoint(func)
                 })
             {
                 linker.ensure_linked(contract, id)?;
@@ -782,6 +803,7 @@ pub fn matches_artifact(
     id: &ArtifactId,
     abi: &JsonAbi,
     symbolic_enabled: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
 ) -> bool {
     matches_contract(
         filter,
@@ -789,8 +811,18 @@ pub fn matches_artifact(
         &id.name,
         &id.identifier(),
         abi.functions(),
-        symbolic_enabled,
+        symbolic_entrypoints_enabled(symbolic_enabled, symbolic_artifact_replay),
     )
+}
+
+pub fn symbolic_entrypoints_enabled(
+    symbolic_enabled: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
+) -> bool {
+    symbolic_enabled
+        || symbolic_artifact_replay.is_some_and(|artifact| {
+            artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
+        })
 }
 
 pub(crate) fn matches_contract(

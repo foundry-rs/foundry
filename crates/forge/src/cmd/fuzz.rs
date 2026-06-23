@@ -612,7 +612,7 @@ struct MinimizeContext<'a> {
 }
 
 impl<'a> MinimizeContext<'a> {
-    fn new(
+    const fn new(
         session: &'a FuzzMinimizeReplaySession,
         evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
         original: &'a ReplayObservation,
@@ -621,7 +621,7 @@ impl<'a> MinimizeContext<'a> {
         Self { session, evm_edge_indices, original, max_attempts, attempts: 0 }
     }
 
-    fn at_budget(&self) -> bool {
+    const fn at_budget(&self) -> bool {
         self.attempts >= self.max_attempts
     }
 
