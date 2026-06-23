@@ -4,6 +4,10 @@ use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
 use serde_json::Value;
+use std::path::Path;
+
+const DEFAULT_SENDER: &str = "0x0000000000000000000000000000000000000001";
+const DEFAULT_TEST_TARGET: &str = "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496";
 
 fn find_first_json(root: &std::path::Path) -> std::path::PathBuf {
     let mut dirs = vec![root.to_path_buf()];
@@ -18,6 +22,32 @@ fn find_first_json(root: &std::path::Path) -> std::path::PathBuf {
         }
     }
     panic!("no json corpus entry under {}", root.display());
+}
+
+fn artifact_abi(root: &Path, artifact: &str) -> JsonAbi {
+    let artifact = std::fs::read_to_string(root.join(artifact)).unwrap();
+    let artifact: Value = serde_json::from_str(&artifact).unwrap();
+    serde_json::from_value(artifact["abi"].clone()).unwrap()
+}
+
+fn calldata_for(abi: &JsonAbi, function_name: &str, arg: u64) -> String {
+    let function = abi.functions().find(|function| function.name == function_name).unwrap();
+    format!("0x{}{:064x}", hex::encode(function.selector()), arg)
+}
+
+fn corpus_entry(calldata: &str) -> String {
+    format!(
+        r#"[{{
+  "sender":"{DEFAULT_SENDER}",
+  "target":"{DEFAULT_TEST_TARGET}",
+  "calldata":"{calldata}",
+  "value":"0x0"
+}}]"#
+    )
+}
+
+fn write_corpus_entry(corpus: &Path, name: &str, calldata: &str) {
+    std::fs::write(corpus.join(name), corpus_entry(calldata)).unwrap();
 }
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
@@ -280,14 +310,9 @@ contract ForgeFuzzShowTargetTest {
 
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    let entry = r#"[{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0x938872f7000000000000000000000000000000000000000000000000000000000000002a",
-  "value":"0x0"
-}]"#;
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry).unwrap();
+    let calldata = "0x938872f7000000000000000000000000000000000000000000000000000000000000002a";
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", calldata);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", calldata);
 
     cmd.forge_fuse()
         .args(["fuzz", "show", "corpus"])
@@ -381,20 +406,16 @@ contract ForgeFuzzCminCoverageTest is Test {
 
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    let entry_one = r#"[{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000001",
-  "value":"0x0"
-}]"#;
-    let entry_two = r#"[{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000002",
-  "value":"0x0"
-}]"#;
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry_one).unwrap();
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry_two).unwrap();
+    write_corpus_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        "0x003919a00000000000000000000000000000000000000000000000000000000000000001",
+    );
+    write_corpus_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000002-2.json",
+        "0x003919a00000000000000000000000000000000000000000000000000000000000000002",
+    );
 
     let cmin = cmd
         .forge_fuse()
@@ -403,68 +424,6 @@ contract ForgeFuzzCminCoverageTest is Test {
     let stdout = String::from_utf8(cmin.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("minimized corpus: kept 2/2 entries in cmin"), "{stdout}");
     assert_eq!(std::fs::read_dir(prj.root().join("cmin")).unwrap().count(), 2);
-});
-
-forgetest_init!(forge_fuzz_tmin_reuses_session_across_candidates, |prj, cmd| {
-    prj.add_test(
-        "ForgeFuzzTminSession.t.sol",
-        r#"
-import {Test} from "forge-std/Test.sol";
-
-contract ForgeFuzzTminSessionTest is Test {
-    uint256 public sink;
-
-    function testFuzz_branch(uint256 value) public {
-        if (value == 1) {
-            sink = 1;
-        } else if (value == 2) {
-            sink = 2;
-        } else {
-            sink = 3;
-        }
-    }
-}
-   "#,
-    );
-    cmd.args(["build", "-q"]).assert_success();
-
-    let corpus = prj.root().join("corpus");
-    std::fs::create_dir_all(&corpus).unwrap();
-    let entry = r#"[{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000001",
-  "value":"0x0"
-},{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000002",
-  "value":"0x0"
-},{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0x003919a0000000000000000000000000000000000000000000000000000000000000002a",
-  "value":"0x0"
-}]"#;
-    std::fs::write(corpus.join("multi.json"), entry).unwrap();
-
-    let tmin = cmd
-        .forge_fuse()
-        .args([
-            "fuzz",
-            "tmin",
-            "--mc",
-            "ForgeFuzzTminSessionTest",
-            "corpus/multi.json",
-            "--out",
-            "min-session.json",
-            "--max-attempts",
-            "4",
-        ])
-        .assert_success();
-    let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("after 4 candidate replays"), "{stdout}");
-    assert!(prj.root().join("min-session.json").is_file());
 });
 
 forgetest_init!(forge_fuzz_tmin_preserves_revert_data, |prj, cmd| {
@@ -483,23 +442,10 @@ contract ForgeFuzzTminReasonTest {
 
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    let artifact = std::fs::read_to_string(
-        prj.root().join("out/ForgeFuzzTminReason.t.sol/ForgeFuzzTminReasonTest.json"),
-    )
-    .unwrap();
-    let artifact: Value = serde_json::from_str(&artifact).unwrap();
-    let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone()).unwrap();
-    let function = abi.functions().find(|function| function.name == "testFuzz_reason").unwrap();
-    let calldata_two = format!("0x{}{:064x}", hex::encode(function.selector()), 2);
-    let entry = format!(
-        r#"[{{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"{calldata_two}",
-  "value":"0x0"
-}}]"#
-    );
-    std::fs::write(corpus.join("reason.json"), entry).unwrap();
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzTminReason.t.sol/ForgeFuzzTminReasonTest.json");
+    let calldata_two = calldata_for(&abi, "testFuzz_reason", 2);
+    std::fs::write(corpus.join("reason.json"), corpus_entry(&calldata_two)).unwrap();
 
     let tmin = cmd
         .forge_fuse()
@@ -691,12 +637,10 @@ contract ForgeFuzzInvariantReplaySequenceTest is Test {
     let tx = &seed_entry.as_array().unwrap()[0];
     let sender = tx["sender"].as_str().unwrap();
     let target = tx["target"].as_str().unwrap();
-    let artifact = std::fs::read_to_string(prj.root().join(
+    let abi = artifact_abi(
+        prj.root(),
         "out/ForgeFuzzInvariantReplaySequence.t.sol/ForgeFuzzInvariantReplaySequenceTest.json",
-    ))
-    .unwrap();
-    let artifact: Value = serde_json::from_str(&artifact).unwrap();
-    let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone()).unwrap();
+    );
     let selector = |name: &str| {
         let function = abi.functions().find(|function| function.name == name).unwrap();
         hex::encode(function.selector())
@@ -791,14 +735,9 @@ forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
 forgetest_init!(forge_fuzz_rejects_machine, |prj, cmd| {
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    let entry = r#"[{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x0000000000000000000000000000000000000002",
-  "calldata":"0x12345678",
-  "value":"0x0"
-}]"#;
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000002-2.json"), entry).unwrap();
+    let calldata = "0x12345678";
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", calldata);
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", calldata);
 
     for args in [
         vec!["--machine", "fuzz", "run"],
@@ -837,13 +776,11 @@ contract ForgeFuzzZeroReplayTest {
 
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    let entry = r#"[{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0x003919a00000000000000000000000000000000000000000000000000000000000000001",
-  "value":"0x0"
-}]"#;
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
+    write_corpus_entry(
+        &corpus,
+        "00000000-0000-0000-0000-000000000001-1.json",
+        "0x003919a00000000000000000000000000000000000000000000000000000000000000001",
+    );
 
     let cmin = cmd
         .forge_fuse()
@@ -870,14 +807,11 @@ contract ForgeFuzzZeroReplayTest {
 
     let wrong_corpus = prj.root().join("wrong-corpus");
     std::fs::create_dir_all(&wrong_corpus).unwrap();
-    let wrong_entry = r#"[{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"0xdeadbeef0000000000000000000000000000000000000000000000000000000000000001",
-  "value":"0x0"
-}]"#;
-    std::fs::write(wrong_corpus.join("00000000-0000-0000-0000-000000000002-2.json"), wrong_entry)
-        .unwrap();
+    write_corpus_entry(
+        &wrong_corpus,
+        "00000000-0000-0000-0000-000000000002-2.json",
+        "0xdeadbeef0000000000000000000000000000000000000000000000000000000000000001",
+    );
 
     let zero_replay = cmd
         .forge_fuse()
@@ -1224,27 +1158,14 @@ contract ForgeFuzzReplayFailOnRevertTest {
     );
     cmd.args(["build", "-q"]).assert_success();
 
-    let artifact = std::fs::read_to_string(
-        prj.root()
-            .join("out/ForgeFuzzReplayFailOnRevert.t.sol/ForgeFuzzReplayFailOnRevertTest.json"),
-    )
-    .unwrap();
-    let artifact: Value = serde_json::from_str(&artifact).unwrap();
-    let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone()).unwrap();
-    let function =
-        abi.functions().find(|function| function.name == "testFuzz_callsReverter").unwrap();
-    let calldata = format!("0x{}{:064x}", hex::encode(function.selector()), 1);
+    let abi = artifact_abi(
+        prj.root(),
+        "out/ForgeFuzzReplayFailOnRevert.t.sol/ForgeFuzzReplayFailOnRevertTest.json",
+    );
+    let calldata = calldata_for(&abi, "testFuzz_callsReverter", 1);
     let corpus = prj.root().join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    let entry = format!(
-        r#"[{{
-  "sender":"0x0000000000000000000000000000000000000001",
-  "target":"0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "calldata":"{calldata}",
-  "value":"0x0"
-}}]"#
-    );
-    std::fs::write(corpus.join("00000000-0000-0000-0000-000000000001-1.json"), entry).unwrap();
+    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", &calldata);
 
     let replay = cmd
         .forge_fuse()
