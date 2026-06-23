@@ -5012,14 +5012,7 @@ contract ZeroRuns is Test {
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 3 tests for test/ZeroRuns.t.sol:ZeroRuns
-[PASS] invariant_zeroDepth() (runs: 256, calls: 256, reverts: 256)
-
-╭----------+-------------+-------+---------+----------╮
-| Contract | Selector    | Calls | Reverts | Discards |
-+=====================================================+
-| Handler  | doSomething | 256   | 256     | 0        |
-╰----------+-------------+-------+---------+----------╯
-
+[PASS] invariant_zeroDepth() (runs: 256, calls: 0, reverts: 0)
 [PASS] invariant_zeroRuns() (runs: 0, calls: 0, reverts: 0)
 [PASS] test_fuzzZeroRuns(uint256) (runs: 0, [AVG_GAS])
 Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]

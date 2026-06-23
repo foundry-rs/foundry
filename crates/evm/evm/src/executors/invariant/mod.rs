@@ -180,7 +180,7 @@ fn max_invariant_workers_for_campaign(runs: u32, depth: u32) -> usize {
 
 fn invariant_run_depth(config: &InvariantConfig, runner: &mut TestRunner) -> u32 {
     match config.depth_mode {
-        InvariantDepthMode::Fixed => config.depth.max(1),
+        InvariantDepthMode::Fixed => config.depth,
         InvariantDepthMode::Random => {
             let min_depth = config.min_depth.max(1);
             if config.depth <= min_depth {
@@ -2190,7 +2190,7 @@ mod tests {
     }
 
     #[test]
-    fn invariant_run_depth_fixed_zero_never_returns_zero() {
+    fn invariant_run_depth_fixed_zero_preserves_zero() {
         let mut runner = test_runner();
         let config = InvariantConfig {
             depth: 0,
@@ -2198,7 +2198,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(invariant_run_depth(&config, &mut runner), 1);
+        assert_eq!(invariant_run_depth(&config, &mut runner), 0);
     }
 
     #[test]

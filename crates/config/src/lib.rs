@@ -1017,7 +1017,9 @@ impl Config {
             .corpus_random_sequence_weight_configured
             || figment
                 .extract_inner::<bool>("invariant.corpus_random_sequence_weight_configured")
-                .unwrap_or_else(|_| figment.contains("invariant.corpus_random_sequence_weight"));
+                .unwrap_or_else(|_| {
+                    figment_value_is_configured(&figment, "invariant.corpus_random_sequence_weight")
+                });
 
         // normalize defaults
         figment = self.normalize_defaults(figment);
@@ -2572,9 +2574,7 @@ impl FigmentProviders {
 }
 
 fn figment_value_is_configured(figment: &Figment, key: &str) -> bool {
-    figment.find_metadata(key).is_some_and(|metadata| {
-        metadata.name.as_ref() != "Foundry Config" || metadata.source.is_some()
-    })
+    figment.find_metadata(key).is_some_and(|metadata| metadata.name.as_ref() != "Foundry Config")
 }
 
 /// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
@@ -5138,6 +5138,28 @@ mod tests {
                 FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
             );
             assert!(loaded.invariant.corpus_random_sequence_weight_configured);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_fuzz_corpus_random_sequence_weight_fallback_does_not_mark_invariant_configured() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [fuzz]
+                corpus_random_sequence_weight = 10
+            "#,
+            )?;
+
+            let loaded = Config::load().unwrap();
+            assert_eq!(
+                loaded.invariant.corpus.corpus_random_sequence_weight,
+                FuzzCorpusConfig::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT
+            );
+            assert!(!loaded.invariant.corpus_random_sequence_weight_configured);
 
             Ok(())
         });
