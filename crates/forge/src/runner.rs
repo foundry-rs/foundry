@@ -1102,6 +1102,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         call: &SymbolicCounterexampleCall,
         expected_reason: Option<&str>,
     ) -> Result<(RawCallResult<FEN>, Option<String>), String> {
+        let Some(expected_reason) = expected_reason else {
+            return Err("candidate replay has no stable failure reason to compare".to_string());
+        };
+
         let mut executor = self.clone_executor();
         let raw_call_result = execute_tx(&mut executor, &call.to_basic_tx_details())
             .map_err(|err| err.to_string())?;
@@ -1115,10 +1119,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let reason = self.symbolic_raw_call_failure_reason(&raw_call_result)?;
-        if reason.as_deref() != expected_reason {
+        if reason.as_deref() != Some(expected_reason) {
             return Err(format!(
                 "candidate replay failed with different reason: expected `{}`, got `{}`",
-                expected_reason.unwrap_or(""),
+                expected_reason,
                 reason.as_deref().unwrap_or("")
             ));
         }
