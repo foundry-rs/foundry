@@ -884,6 +884,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         call: &mut CallInputs,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Option<CallOutcome> {
+        // `lastFrameGas` is scoped to the current top-level frame. Clear any cached value when a
+        // new non-cheatcode frame begins so a test/transaction cannot observe gas from a previous
+        // one. Cheatcode and console calls must keep the cache so `vm.lastFrameGas()` can read it.
+        if ecx.journal().depth() <= 1
+            && call.target_address != CHEATCODE_ADDRESS
+            && call.target_address != HARDHAT_CONSOLE_ADDRESS
+        {
+            self.gas_metering.last_frame_gas = None;
+        }
+
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
             ecx.cfg_mut().set_spec_and_mainnet_gas_params(spec_id);
@@ -1517,13 +1527,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         ecx: &mut FoundryContextFor<'_, FEN>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if ecx.journal().depth() <= 1
-            && inputs.target_address != CHEATCODE_ADDRESS
-            && inputs.target_address != HARDHAT_CONSOLE_ADDRESS
-        {
-            self.gas_metering.last_frame_gas = None;
-        }
-
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 

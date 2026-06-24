@@ -85,6 +85,17 @@ abstract contract LastCallGasFixture is Test {
     }
 }
 
+contract LastFrameGasSetupIsolationTest is Test {
+    function setUp() public {
+        new Target();
+    }
+
+    function testRevertNoCachedLastFrameGasAfterSetUp() public {
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+}
+
 /// forge-config: default.isolate = true
 contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordLastFrameGasFromCall() public {
