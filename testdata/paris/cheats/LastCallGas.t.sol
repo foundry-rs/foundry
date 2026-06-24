@@ -35,6 +35,18 @@ contract TargetCreate2 {
     }
 }
 
+contract RevertingTarget {
+    function fail() public pure {
+        revert("failed");
+    }
+}
+
+contract RevertingConstructor {
+    constructor() {
+        revert("failed");
+    }
+}
+
 abstract contract LastCallGasFixture is Test {
     Target public target;
 
@@ -91,6 +103,30 @@ contract LastFrameGasSetupIsolationTest is Test {
     }
 
     function testRevertNoCachedLastFrameGasAfterSetUp() public {
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+}
+
+contract LastFrameGasExpectedRevertTest is Test {
+    RevertingTarget public target;
+
+    function setUp() public {
+        target = new RevertingTarget();
+    }
+
+    function testExpectedRevertCallDoesNotRecordLastFrameGas() public {
+        vm.expectRevert();
+        target.fail();
+
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testExpectedRevertCreateDoesNotRecordLastFrameGas() public {
+        vm.expectRevert();
+        new RevertingConstructor();
+
         vm._expectCheatcodeRevert();
         vm.lastFrameGas();
     }

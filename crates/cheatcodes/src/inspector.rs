@@ -2131,19 +2131,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
         }
 
-        if curr_depth > 0 {
-            // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
-            // retrieve the gas usage of the last call or create.
-            let gas = outcome.result.gas;
-            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
-                gasLimit: gas.limit(),
-                gasTotalUsed: gas.total_gas_spent(),
-                gasMemoryUsed: 0,
-                gasRefunded: gas.refunded(),
-                gasRemaining: gas.remaining(),
-            });
-        }
-
         // Handle expected reverts.
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record the would-be deployed address as the reverter, picking the innermost
@@ -2196,6 +2183,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     }
                 };
             }
+        }
+
+        if curr_depth > 0 {
+            // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
+            // retrieve the gas usage of the last call or create.
+            let gas = outcome.result.gas;
+            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
+                gasLimit: gas.limit(),
+                gasTotalUsed: gas.total_gas_spent(),
+                gasMemoryUsed: 0,
+                gasRefunded: gas.refunded(),
+                gasRemaining: gas.remaining(),
+            });
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
