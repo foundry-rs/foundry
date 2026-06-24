@@ -106,14 +106,6 @@ pub struct FuzzReplayArgs {
 }
 
 impl FuzzReplayArgs {
-    const fn is_junit(&self) -> bool {
-        self.test.junit
-    }
-
-    const fn is_watch(&self) -> bool {
-        self.test.is_watch()
-    }
-
     async fn run(mut self) -> Result<TestOutcome> {
         self.test.enable_fuzz_only();
         if self.corpus_dir.is_none() {
