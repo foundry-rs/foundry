@@ -99,8 +99,10 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Fuzz(cmd) => {
+            cmd.reject_unsupported_flags()?;
+            let silent = cmd.is_junit() || shell::is_json();
             let outcome = global.block_on(cmd.run())?;
-            outcome.ensure_ok(shell::is_json())
+            outcome.ensure_ok(silent)
         }
         ForgeSubcommand::Script(cmd) => global.block_on(cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {

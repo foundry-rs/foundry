@@ -23,6 +23,7 @@ use foundry_evm::{
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -58,6 +59,26 @@ impl FuzzArgs {
             }
         }
     }
+
+    pub const fn is_junit(&self) -> bool {
+        match &self.command {
+            FuzzSubcommands::Run(args) => args.junit,
+            FuzzSubcommands::Replay(args) => args.is_junit(),
+            FuzzSubcommands::Show(_) | FuzzSubcommands::Cmin(_) | FuzzSubcommands::Tmin(_) => false,
+        }
+    }
+
+    pub fn reject_unsupported_flags(&self) -> Result<()> {
+        match &self.command {
+            FuzzSubcommands::Run(args) if args.is_watch() => {
+                bail!("`--watch` is not supported for `forge fuzz run`")
+            }
+            FuzzSubcommands::Replay(args) if args.is_watch() => {
+                bail!("`--watch` is not supported for `forge fuzz replay`")
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -85,6 +106,14 @@ pub struct FuzzReplayArgs {
 }
 
 impl FuzzReplayArgs {
+    const fn is_junit(&self) -> bool {
+        self.test.junit
+    }
+
+    const fn is_watch(&self) -> bool {
+        self.test.is_watch()
+    }
+
     async fn run(mut self) -> Result<TestOutcome> {
         self.test.enable_fuzz_only();
         if self.corpus_dir.is_none() {
@@ -333,10 +362,6 @@ pub struct FuzzTminArgs {
 
 impl FuzzTminArgs {
     async fn run(self) -> Result<()> {
-        if self.out.exists() {
-            bail!("output corpus file already exists: {}", self.out.display());
-        }
-
         let mut sequence = read_sequence(&self.input)?;
         let before_txs = sequence.len();
         let session = self.test.prepare_session().await?;
@@ -352,10 +377,20 @@ impl FuzzTminArgs {
             MinimizeContext::new(&session, evm_edge_indices, &original, self.max_attempts);
         minimize_sequence(&mut ctx, &mut sequence)?;
 
-        if is_gzip_path(&self.out) {
-            fs::write_json_gzip_file(&self.out, &sequence)?;
+        let write_result = if is_gzip_path(&self.out) {
+            fs::write_json_gzip_file_create_new(&self.out, &sequence)
         } else {
-            fs::write_json_file(&self.out, &sequence)?;
+            fs::write_json_file_create_new(&self.out, &sequence)
+        };
+        if let Err(err) = write_result {
+            if matches!(
+                err,
+                foundry_common::errors::FsPathError::CreateFile { ref source, .. }
+                    if source.kind() == ErrorKind::AlreadyExists
+            ) {
+                bail!("output corpus file already exists: {}", self.out.display());
+            }
+            return Err(err.into());
         }
         sh_println!("minimized entry: {} txs -> {}", sequence.len(), self.out.display())?;
         sh_println!(

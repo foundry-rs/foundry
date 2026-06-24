@@ -264,6 +264,61 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
+forgetest_init!(forge_fuzz_junit_output_stays_xml_only_on_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzJunitFailure.t.sol",
+        r#"
+contract ForgeFuzzJunitFailureTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        value;
+        require(false);
+    }
+}
+   "#,
+    );
+
+    let run = cmd
+        .forge_fuse()
+        .args(["fuzz", "run", "--junit", "--mc", "ForgeFuzzJunitFailureTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(run.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("<testsuites"), "{stdout}");
+    assert!(!stdout.contains("Failing tests:"), "{stdout}");
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--junit", "--mc", "ForgeFuzzJunitFailureTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("<testsuites"), "{stdout}");
+    assert!(!stdout.contains("Failing tests:"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzWatchTest.t.sol",
+        r#"
+contract ForgeFuzzWatchTest {
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+
+    let run = cmd.forge_fuse().args(["fuzz", "run", "--watch"]).assert_failure();
+    let stderr = String::from_utf8(run.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("`--watch` is not supported for `forge fuzz run`"), "{stderr}");
+
+    let replay = cmd.forge_fuse().args(["fuzz", "replay", "--watch"]).assert_failure();
+    let stderr = String::from_utf8(replay.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("`--watch` is not supported for `forge fuzz replay`"), "{stderr}");
+});
+
 forgetest_init!(forge_showmap_skips_symbolic_tests, |prj, cmd| {
     prj.add_test(
         "ForgeShowmapSymbolic.t.sol",
@@ -367,6 +422,42 @@ minimized corpus: kept 1/1 entries in cmin-file
     let stdout = String::from_utf8(tmin.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("minimized entry: 1 txs -> min.json"), "{stdout}");
     assert!(prj.root().join("min.json").is_file());
+
+    let existing_out = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzShowTargetTest",
+            "corpus/00000000-0000-0000-0000-000000000001-1.json",
+            "--corpus-out",
+            "min.json",
+        ])
+        .assert_failure();
+    let stderr = String::from_utf8(existing_out.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("output corpus file already exists: min.json"), "{stderr}");
+
+    #[cfg(unix)]
+    {
+        let victim = prj.root().join("victim.json");
+        std::os::unix::fs::symlink(&victim, prj.root().join("dangling.json")).unwrap();
+        let dangling_out = cmd
+            .forge_fuse()
+            .args([
+                "fuzz",
+                "tmin",
+                "--mc",
+                "ForgeFuzzShowTargetTest",
+                "corpus/00000000-0000-0000-0000-000000000001-1.json",
+                "--corpus-out",
+                "dangling.json",
+            ])
+            .assert_failure();
+        let stderr = String::from_utf8(dangling_out.get_output().stderr.clone()).unwrap();
+        assert!(stderr.contains("output corpus file already exists: dangling.json"), "{stderr}");
+        assert!(!victim.exists());
+    }
 
     let show_min = cmd.forge_fuse().args(["fuzz", "show", "min.json"]).assert_success();
     let stdout = String::from_utf8(show_min.get_output().stdout.clone()).unwrap();

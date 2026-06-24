@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 const WORKER_DIR_PREFIX: &str = "worker";
 const CORPUS_SUBDIR: &str = "corpus";
+const MAX_CORPUS_TREE_DEPTH: usize = 64;
+const MAX_CORPUS_TREE_DIRS: usize = 10_000;
+const MAX_CORPUS_ENTRIES: usize = 1_000_000;
 
 /// Returns every `worker*/corpus/` under `root`, or `[root]` if none exist.
 pub fn canonical_replay_dirs(root: &Path) -> Vec<PathBuf> {
@@ -20,9 +23,9 @@ pub fn canonical_replay_dirs(root: &Path) -> Vec<PathBuf> {
         .filter_map(|e| {
             let p = e.path();
             let name = p.file_name()?.to_str()?;
-            (p.is_dir() && name.starts_with(WORKER_DIR_PREFIX))
+            (e.file_type().ok()?.is_dir() && name.starts_with(WORKER_DIR_PREFIX))
                 .then(|| p.join(CORPUS_SUBDIR))
-                .filter(|d| d.is_dir())
+                .filter(|d| is_dir_no_symlink(d))
         })
         .collect();
     dirs.sort();
@@ -72,7 +75,7 @@ pub fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
         let entry =
             res.inspect_err(|err| debug!(%err, "failed to read corpus directory entry")).ok()?;
         let path = entry.path();
-        if !path.is_file() {
+        if !entry.file_type().ok()?.is_file() {
             return None;
         }
         let name = path.file_name()?.to_str()?;
@@ -91,25 +94,62 @@ pub fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
 /// Reads corpus files from a file, corpus directory, worker corpus directory, or generated corpus
 /// root such as `<root>/<contract>/<test>/worker0/corpus`.
 pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
-    if path.is_file() {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| eyre!("corpus path does not exist or is not readable: {}", path.display()))?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(eyre!("corpus path must not be a symlink: {}", path.display()));
+    }
+    if file_type.is_file() {
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
         let (uuid, timestamp) = parse_corpus_filename(name).unwrap_or((Uuid::nil(), 0));
         return Ok(vec![CorpusDirEntry { path: path.to_path_buf(), uuid, timestamp }]);
     }
 
-    if !path.is_dir() {
+    if !file_type.is_dir() {
         return Err(eyre!("corpus path does not exist or is not readable: {}", path.display()));
     }
 
     let mut seen_uuids = HashSet::new();
+    let mut visited_dirs = HashSet::new();
     let mut entries = Vec::new();
-    let mut stack = vec![path.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for replay_dir in canonical_replay_dirs(&dir) {
-            entries
-                .extend(read_corpus_dir(&replay_dir).filter(|entry| seen_uuids.insert(entry.uuid)));
+    let mut stack = vec![(path.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        let canonical = match dir.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(err) => {
+                debug!(%err, ?dir, "failed to canonicalize corpus tree directory");
+                continue;
+            }
+        };
+        if !visited_dirs.insert(canonical) {
+            continue;
+        }
+        if visited_dirs.len() > MAX_CORPUS_TREE_DIRS {
+            return Err(eyre!(
+                "corpus tree exceeds directory limit of {MAX_CORPUS_TREE_DIRS}: {}",
+                path.display()
+            ));
         }
 
+        for replay_dir in canonical_replay_dirs(&dir) {
+            for entry in read_corpus_dir(&replay_dir) {
+                if seen_uuids.insert(entry.uuid) {
+                    entries.push(entry);
+                    if entries.len() > MAX_CORPUS_ENTRIES {
+                        return Err(eyre!(
+                            "corpus tree exceeds entry limit of {MAX_CORPUS_ENTRIES}: {}",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+
+        if depth >= MAX_CORPUS_TREE_DEPTH {
+            debug!(?dir, "skipping corpus tree directory beyond depth limit");
+            continue;
+        }
         let children = match std::fs::read_dir(&dir) {
             Ok(children) => children,
             Err(err) => {
@@ -124,14 +164,24 @@ pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
                 continue;
             };
             let child_path = child.path();
-            if child_path.is_dir() {
-                stack.push(child_path);
+            let Ok(child_type) = child
+                .file_type()
+                .inspect_err(|err| debug!(%err, "failed to read corpus tree entry type"))
+            else {
+                continue;
+            };
+            if child_type.is_dir() {
+                stack.push((child_path, depth + 1));
             }
         }
     }
 
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+fn is_dir_no_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
 }
 
 /// Strips a trailing `suffix` from `name`, comparing case-insensitively.
@@ -190,6 +240,42 @@ mod tests {
 
         let entries = read_corpus_tree(&dir).unwrap();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_corpus_tree_rejects_top_level_symlink() {
+        let dir = temp_dir();
+        let corpus = dir.join("corpus");
+        let link = dir.join("link");
+        std::fs::create_dir_all(&corpus).unwrap();
+        std::os::unix::fs::symlink(&corpus, &link).unwrap();
+
+        let err = match read_corpus_tree(&link) {
+            Ok(_) => panic!("top-level symlink should be rejected"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("must not be a symlink"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_corpus_tree_skips_symlinked_directories() {
+        let dir = temp_dir();
+        let corpus = dir.join("corpus");
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&corpus).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_entry = outside.join("00000000-0000-0000-0000-000000000001-1.json");
+        std::fs::write(&outside_entry, "[]").unwrap();
+        std::os::unix::fs::symlink(&outside, corpus.join("link")).unwrap();
+
+        let entries = read_corpus_tree(&corpus).unwrap();
+        assert!(
+            entries.is_empty(),
+            "{:?}",
+            entries.iter().map(|entry| &entry.path).collect::<Vec<_>>()
+        );
     }
 
     #[test]
