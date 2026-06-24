@@ -1396,7 +1396,7 @@ impl WorkerCorpus {
         // sequence's length is less than depth or randomly, to occasionally intermix new txs.
         let fresh_weight = self.config.corpus_random_sequence_weight.min(100);
         let generate_fresh = fresh_weight > 0 && test_runner.rng().random_ratio(fresh_weight, 100);
-        if depth > sequence.len().saturating_sub(1) || generate_fresh {
+        if depth >= sequence.len() || generate_fresh {
             return self.new_tx(test_runner);
         }
 
@@ -2152,6 +2152,20 @@ mod tests {
 
         assert_eq!(input, Bytes::from(vec![0x44]));
         assert!(manager.current_mutated_index.is_none());
+    }
+
+    #[test]
+    fn generate_next_input_handles_empty_sequence_with_fresh_weight_disabled() {
+        let mut config = corpus_config(temp_corpus_dir());
+        config.corpus_random_sequence_weight = 0;
+        let generated = basic_tx_with_calldata(vec![0x55]);
+        let mut manager =
+            worker_corpus_with_config(0, config, generated.clone(), WorkerCorpusSeed::default());
+        let mut runner = TestRunner::default();
+
+        let input = manager.generate_next_input(&mut runner, &[], false, 0).unwrap();
+
+        assert_eq!(input.call_details.calldata, generated.call_details.calldata);
     }
 
     #[test]
