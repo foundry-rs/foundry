@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use alloy_sol_types::SolValue;
 use foundry_evm_core::evm::FoundryEvmNetwork;
-use revm::context::ContextTr;
+use revm::context::{Cfg, ContextTr};
 use spec::Vm::{assumeImplicitApprovalCall, isImplicitlyApprovedCall};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_precompiles::address_registry;
@@ -19,7 +19,7 @@ use foundry_evm_core::constants::MAGIC_ASSUME;
 fn active_tempo_hardfork<FEN: FoundryEvmNetwork>(
     ccx: &CheatsCtxt<'_, '_, FEN>,
 ) -> Option<TempoHardfork> {
-    let spec = *ccx.ecx.cfg().spec();
+    let spec = ccx.ecx.cfg().spec();
     TempoHardfork::from_str(&spec.evm_version_name()).ok()
 }
 

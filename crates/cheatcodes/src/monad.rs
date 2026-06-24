@@ -23,7 +23,6 @@ use monad_revm::{
 };
 use revm::{
     context::{ContextTr, JournalTr},
-    inspector::JournalExt,
     precompile::PrecompileHalt,
     primitives::Log,
 };

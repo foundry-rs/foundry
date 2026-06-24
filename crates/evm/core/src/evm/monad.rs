@@ -84,6 +84,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = MonadEvmHandler::<I>::new();
+        let reservoir = frame.reservoir();
 
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
@@ -91,7 +92,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 
         let mut frame_result = handler.inspect_run_exec_loop(self, first_frame_input)?;
 
-        handler.last_frame_result(self, &mut frame_result)?;
+        handler.last_frame_result(self, reservoir, &mut frame_result)?;
 
         Ok(frame_result)
     }

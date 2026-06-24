@@ -1376,7 +1376,7 @@ impl Cheatcode for setEvmVersionCall {
 
 impl Cheatcode for getEvmVersionCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let spec = *ccx.ecx.cfg().spec();
+        let spec = ccx.ecx.cfg().spec();
         Ok(spec.evm_version_name().to_lowercase().abi_encode())
     }
 }
