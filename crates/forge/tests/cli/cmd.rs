@@ -2253,6 +2253,91 @@ contract Struct3 {
 "#]]);
 });
 
+// erc7201("test.recursive") = 0x5c23e053b910ebb063cfd12509998b5de792f3e025459f15aaa45e15f0e0e800
+// Recursive struct type: Node references itself through a mapping value type.
+forgetest!(can_inspect_erc7201_recursive_struct, |prj, cmd| {
+    prj.add_source(
+        "Recursive.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Recursive {
+    struct Node {
+        mapping(uint256 => Node) children;
+        uint256 value;
+    }
+
+    /// @custom:storage-location erc7201:test.recursive
+    struct NodeRegistry {
+        Node root;
+    }
+
+    function _storage() private pure returns (NodeRegistry storage $) {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("test.recursive")) - 1)) & ~bytes32(uint256(0xff));
+        assembly { $.slot := slot }
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["inspect", "Recursive", "storageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{
+  "storage": [
+    {
+      "astId": 0,
+      "contract": "Recursive [erc7201:test.recursive]",
+      "label": "root",
+      "offset": 0,
+      "slot": "0x5c23e053b910ebb063cfd12509998b5de792f3e025459f15aaa45e15f0e0e800",
+      "type": "struct Recursive.Node"
+    }
+  ],
+  "types": {
+    "mapping(uint256 => struct Recursive.Node)": {
+      "encoding": "mapping",
+      "key": "uint256",
+      "label": "mapping(uint256 => struct Recursive.Node)",
+      "numberOfBytes": "32",
+      "value": "struct Recursive.Node"
+    },
+    "struct Recursive.Node": {
+      "encoding": "inplace",
+      "label": "struct Recursive.Node",
+      "numberOfBytes": "64",
+      "members": [
+        {
+          "astId": 0,
+          "contract": "struct Recursive.Node",
+          "label": "children",
+          "offset": 0,
+          "slot": "0",
+          "type": "mapping(uint256 => struct Recursive.Node)"
+        },
+        {
+          "astId": 0,
+          "contract": "struct Recursive.Node",
+          "label": "value",
+          "offset": 0,
+          "slot": "1",
+          "type": "uint256"
+        }
+      ]
+    },
+    "uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();

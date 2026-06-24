@@ -448,6 +448,70 @@ fn print_table(
     Ok(())
 }
 
+/// Returns the canonical Solidity label for a type.
+fn hir_type_label<'hir>(gcx: Gcx<'hir>, kind: &TypeKind<'hir>) -> String {
+    let hir = &gcx.hir;
+    match kind {
+        TypeKind::Elementary(et) => match et {
+            ElementaryType::Address(_) => "address".to_string(),
+            ElementaryType::Bool => "bool".to_string(),
+            ElementaryType::String => "string".to_string(),
+            ElementaryType::Bytes => "bytes".to_string(),
+            ElementaryType::Int(size) => format!("int{}", size.bits()),
+            ElementaryType::UInt(size) => format!("uint{}", size.bits()),
+            ElementaryType::FixedBytes(size) => format!("bytes{}", size.bytes()),
+            ElementaryType::Fixed(m, n) => format!("fixed{}x{}", m.bits(), n.get()),
+            ElementaryType::UFixed(m, n) => format!("ufixed{}x{}", m.bits(), n.get()),
+        },
+        TypeKind::Array(arr) => {
+            let elem_label = hir_type_label(gcx, &arr.element.kind);
+            let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
+                ConstantEvaluator::new(gcx)
+                    .try_eval(size_expr)
+                    .ok()
+                    .and_then(|s| s.as_u256())
+                    .and_then(|n| n.try_into().ok())
+                    .filter(|&n: &u64| n > 0)
+            });
+            match fixed_len {
+                Some(n) => format!("{elem_label}[{n}]"),
+                None => format!("{elem_label}[]"),
+            }
+        }
+        TypeKind::Mapping(m) => {
+            let key_label = hir_type_label(gcx, &m.key.kind);
+            let val_label = hir_type_label(gcx, &m.value.kind);
+            format!("mapping({key_label} => {val_label})")
+        }
+        TypeKind::Custom(ItemId::Struct(id)) => {
+            let s = hir.strukt(*id);
+            if let Some(cid) = s.contract {
+                format!("struct {}.{}", hir.contract(cid).name.as_str(), s.name.as_str())
+            } else {
+                format!("struct {}", s.name.as_str())
+            }
+        }
+        TypeKind::Custom(ItemId::Enum(id)) => {
+            let e = hir.enumm(*id);
+            if let Some(cid) = e.contract {
+                format!("enum {}.{}", hir.contract(cid).name.as_str(), e.name.as_str())
+            } else {
+                format!("enum {}", e.name.as_str())
+            }
+        }
+        TypeKind::Custom(ItemId::Udvt(id)) => {
+            let u = hir.udvt(*id);
+            if let Some(cid) = u.contract {
+                format!("{}.{}", hir.contract(cid).name.as_str(), u.name.as_str())
+            } else {
+                u.name.as_str().to_string()
+            }
+        }
+        TypeKind::Function(_) => "function".to_string(),
+        TypeKind::Custom(_) | TypeKind::Err(_) => "unknown".to_string(),
+    }
+}
+
 /// Returns `(label, number_of_bytes, slot_count, encoding)` for a HIR type in storage context.
 ///
 /// - `number_of_bytes`: actual data bytes (used in `StorageType.numberOfBytes`)
@@ -458,31 +522,21 @@ fn hir_type_storage_info<'hir>(
     kind: &TypeKind<'hir>,
 ) -> (String, u64, u64, &'static str) {
     let hir = &gcx.hir;
-    match kind {
+    let label = hir_type_label(gcx, kind);
+    let (byte_size, slot_count, encoding) = match kind {
         TypeKind::Elementary(et) => match et {
-            ElementaryType::Address(_) => ("address".to_string(), 20, 0, "inplace"),
-            ElementaryType::Bool => ("bool".to_string(), 1, 0, "inplace"),
-            ElementaryType::String => ("string".to_string(), 32, 1, "bytes"),
-            ElementaryType::Bytes => ("bytes".to_string(), 32, 1, "bytes"),
-            ElementaryType::Int(size) => {
-                (format!("int{}", size.bits()), size.bytes() as u64, 0, "inplace")
-            }
-            ElementaryType::UInt(size) => {
-                (format!("uint{}", size.bits()), size.bytes() as u64, 0, "inplace")
-            }
-            ElementaryType::FixedBytes(size) => {
-                (format!("bytes{}", size.bytes()), size.bytes() as u64, 0, "inplace")
-            }
-            ElementaryType::Fixed(m, n) => {
-                (format!("fixed{}x{}", m.bits(), n.get()), m.bytes() as u64, 0, "inplace")
-            }
-            ElementaryType::UFixed(m, n) => {
-                (format!("ufixed{}x{}", m.bits(), n.get()), m.bytes() as u64, 0, "inplace")
-            }
+            ElementaryType::Address(_) => (20u64, 0u64, "inplace"),
+            ElementaryType::Bool => (1, 0, "inplace"),
+            ElementaryType::String => (32, 1, "bytes"),
+            ElementaryType::Bytes => (32, 1, "bytes"),
+            ElementaryType::Int(size) => (size.bytes() as u64, 0, "inplace"),
+            ElementaryType::UInt(size) => (size.bytes() as u64, 0, "inplace"),
+            ElementaryType::FixedBytes(size) => (size.bytes() as u64, 0, "inplace"),
+            ElementaryType::Fixed(m, _) => (m.bytes() as u64, 0, "inplace"),
+            ElementaryType::UFixed(m, _) => (m.bytes() as u64, 0, "inplace"),
         },
         TypeKind::Array(arr) => {
-            let (elem_label, elem_bytes, elem_slots, _) =
-                hir_type_storage_info(gcx, &arr.element.kind);
+            let (_, elem_bytes, elem_slots, _) = hir_type_storage_info(gcx, &arr.element.kind);
             // Use Solar's constant evaluator to resolve the array size expression, including
             // non-literal sizes like `uint256 constant N = 5; uint256[N] arr`.
             let fixed_len: Option<u64> = arr.size.and_then(|size_expr| {
@@ -495,61 +549,36 @@ fn hir_type_storage_info<'hir>(
             });
             match fixed_len {
                 Some(n) => {
-                    let label = format!("{elem_label}[{n}]");
-                    let (number_of_bytes, slot_count) = if elem_slots == 0 {
+                    if elem_slots == 0 {
                         // Packable element: compute tight packing.
                         // elements_per_slot = floor(32 / elem_bytes), minimum 1.
                         let per_slot = (32u64 / elem_bytes).max(1);
                         let slots = n.div_ceil(per_slot);
-                        (n * elem_bytes, slots)
+                        (n * elem_bytes, slots, "inplace")
                     } else {
                         // Slot-boundary element (e.g. T is itself an array or struct).
                         let slots = n * elem_slots;
-                        (slots * 32, slots)
-                    };
-                    (label, number_of_bytes, slot_count, "inplace")
+                        (slots * 32, slots, "inplace")
+                    }
                 }
                 // Dynamic array or unresolvable size: 1 slot base.
-                None => (format!("{elem_label}[]"), 32, 1, "dynamic_array"),
+                None => (32, 1, "dynamic_array"),
             }
         }
-        TypeKind::Mapping(m) => {
-            let (key_label, ..) = hir_type_storage_info(gcx, &m.key.kind);
-            let (val_label, ..) = hir_type_storage_info(gcx, &m.value.kind);
-            (format!("mapping({key_label} => {val_label})"), 32, 1, "mapping")
-        }
+        TypeKind::Mapping(_) => (32, 1, "mapping"),
         TypeKind::Custom(ItemId::Struct(id)) => {
-            let s = hir.strukt(*id);
-            let label = if let Some(cid) = s.contract {
-                format!("struct {}.{}", hir.contract(cid).name.as_str(), s.name.as_str())
-            } else {
-                format!("struct {}", s.name.as_str())
-            };
-            let slot_count = pack_fields(gcx, s.fields, |_, _, _, _| {});
-            (label, slot_count * 32, slot_count, "inplace")
+            let slot_count = pack_fields(gcx, hir.strukt(*id).fields, |_, _, _, _| {});
+            (slot_count * 32, slot_count, "inplace")
         }
-        TypeKind::Custom(ItemId::Enum(id)) => {
-            let e = hir.enumm(*id);
-            let label = if let Some(cid) = e.contract {
-                format!("enum {}.{}", hir.contract(cid).name.as_str(), e.name.as_str())
-            } else {
-                format!("enum {}", e.name.as_str())
-            };
-            (label, 1, 0, "inplace")
-        }
+        TypeKind::Custom(ItemId::Enum(_)) => (1, 0, "inplace"),
         TypeKind::Custom(ItemId::Udvt(id)) => {
-            let u = hir.udvt(*id);
-            let (_, bytes, slots, encoding) = hir_type_storage_info(gcx, &u.ty.kind);
-            let label = if let Some(cid) = u.contract {
-                format!("{}.{}", hir.contract(cid).name.as_str(), u.name.as_str())
-            } else {
-                u.name.as_str().to_string()
-            };
-            (label, bytes, slots, encoding)
+            let (_, bytes, slots, encoding) = hir_type_storage_info(gcx, &hir.udvt(*id).ty.kind);
+            (bytes, slots, encoding)
         }
-        TypeKind::Function(_) => ("function".to_string(), 24, 0, "inplace"),
-        TypeKind::Custom(_) | TypeKind::Err(_) => ("unknown".to_string(), 32, 1, "inplace"),
-    }
+        TypeKind::Function(_) => (24, 0, "inplace"),
+        TypeKind::Custom(_) | TypeKind::Err(_) => (32, 1, "inplace"),
+    };
+    (label, byte_size, slot_count, encoding)
 }
 
 /// Runs Solidity's storage packing algorithm over `fields`, invoking
@@ -633,6 +662,23 @@ fn register_type_recursive<'hir>(
         TypeKind::Custom(ItemId::Struct(id)) => {
             let hir = &gcx.hir;
             let s = hir.strukt(*id);
+            // Placeholder inserted before recursing so self-referential types hit contains_key;
+            // overwritten by the real entry at the end of this function.
+            {
+                let mut placeholder_other = BTreeMap::new();
+                placeholder_other.insert("members".to_string(), Value::Array(vec![]));
+                types.insert(
+                    label.clone(),
+                    StorageType {
+                        encoding: encoding.to_string(),
+                        key: None,
+                        label: label.clone(),
+                        number_of_bytes: byte_size.to_string(),
+                        value: None,
+                        other: placeholder_other,
+                    },
+                );
+            }
             let mut members: Vec<Value> = Vec::new();
             pack_fields(gcx, s.fields, |var_id, field_type, fs, fo| {
                 let var = hir.variable(var_id);
