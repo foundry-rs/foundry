@@ -962,16 +962,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // Grab the different calldatas expected.
         if let Some(expected_calls_for_target) = self.expected_calls.get_mut(&call.bytecode_address)
         {
+            let input = call.input.as_bytes(ecx);
+            let value = call.transfer_value();
+
             // Match every partial/full calldata
             for (calldata, (expected, actual_count)) in expected_calls_for_target {
                 // Increment actual times seen if...
                 // The calldata is at most, as big as this call's input, and
-                if calldata.len() <= call.input.len() &&
+                if calldata.len() <= input.len() &&
                     // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
-                    *calldata == call.input.bytes(ecx)[..calldata.len()] &&
+                    input.get(..calldata.len()) == Some(calldata.as_ref()) &&
                     // The value matches, if provided
-                    expected
-                        .value.is_none_or(|value| Some(value) == call.transfer_value()) &&
+                    expected.value.is_none_or(|expected_value| Some(expected_value) == value) &&
                     // The gas matches, if provided
                     expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
@@ -1024,18 +1026,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
-            let ctx = MockCallDataContext {
-                calldata: call.input.bytes(ecx),
-                value: call.transfer_value(),
-            };
+            let input = call.input.bytes(ecx);
+            let value = call.transfer_value();
+            let ctx = MockCallDataContext { calldata: input.clone(), value };
 
             if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
                 Some(queue) => Some(queue),
                 None => mocks
                     .iter_mut()
                     .find(|(mock, _)| {
-                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
+                        input.get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.is_none_or(|mock_value| Some(mock_value) == value)
                     })
                     .map(|(_, v)| v),
             } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())

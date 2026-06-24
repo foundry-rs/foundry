@@ -515,8 +515,9 @@ impl SymbolicExecutor {
                         false_state.pc = fallthrough;
 
                         let true_feasible = self.take_loop_jump(&mut true_state, fallthrough, dest)
-                            && self.solver.is_sat(&true_state.constraints)?;
-                        let false_feasible = self.solver.is_sat(&false_state.constraints)?;
+                            && self.branch_is_sat_or_defer(&true_state.constraints)?;
+                        let false_feasible =
+                            self.branch_is_sat_or_defer(&false_state.constraints)?;
                         trace!(true_feasible, false_feasible, "JUMPI symbolic branch");
                         if true_feasible {
                             worklist.push_back(true_state);

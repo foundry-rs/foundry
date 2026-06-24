@@ -4,23 +4,27 @@ use crate::{
     MultiContractRunner, TestFilter,
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
-    multi_runner::{TestContract, TestRunnerConfig},
+    multi_runner::{TestContract, TestRunnerConfig, symbolic_entrypoints_enabled},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
-        InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicCallTrace,
-        SymbolicCounterexample, SymbolicReplayMetadata, SymbolicResult, TestResult, TestSetup,
-        TestStatus, invariant_campaign_display_name,
+        InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
+        SymbolicCallTrace, SymbolicCounterexample, SymbolicCounterexampleArtifact,
+        SymbolicCounterexampleArtifactKind, SymbolicCounterexampleCall,
+        SymbolicCounterexampleMinimization, SymbolicCounterexampleReplaySemantics,
+        SymbolicCounterexampleTestIdentity, SymbolicReplayMetadata, SymbolicReplayStatus,
+        SymbolicResult, TestResult, TestSetup, TestStatus, invariant_campaign_display_name,
     },
+    symbolic_minimizer::minimize_single_call_counterexample,
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
+use alloy_primitives::{Address, Bytes, Selector, U256, address, hex, keccak256, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, FuzzCorpusConfig, InlineConfig, InvariantConfig};
 use foundry_evm::{
-    constants::CALLER,
+    constants::{CALLER, CHEATCODE_ADDRESS},
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
@@ -28,7 +32,8 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
-            check_sequence, replay_error, replay_handler_failure_sequence, replay_run,
+            check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
+            replay_handler_failure_sequence, replay_run,
         },
         replay_corpus_to_showmap,
     },
@@ -42,7 +47,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_evm_symbolic::{
-    SymbolicExecutor, SymbolicRunInput, SymbolicRunResult, SymbolicStopReason,
+    SymbolicExecutor, SymbolicRunInput, SymbolicRunResult, SymbolicStats, SymbolicStopReason,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -235,6 +240,34 @@ mod tests {
 
     const CONTRACT_NAME: &str = "src/Test.t.sol:InvariantTest";
 
+    #[test]
+    fn symbolic_artifact_file_name_hashes_full_identity() {
+        let single = symbolic_artifact_file_name(
+            "src/A.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::SingleCall,
+        );
+        let same_file_component_different_contract = symbolic_artifact_file_name(
+            "src/B.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::SingleCall,
+        );
+        let same_contract_different_kind = symbolic_artifact_file_name(
+            "src/A.t.sol:Contract",
+            "test_collision()",
+            SymbolicCounterexampleArtifactKind::Sequence,
+        );
+
+        assert_ne!(single, same_file_component_different_contract);
+        assert_ne!(single, same_contract_different_kind);
+
+        let hash = single
+            .strip_prefix("test_collision__-")
+            .and_then(|value| value.strip_suffix(".json"))
+            .expect("file name should include sanitized value prefix and json suffix");
+        assert_eq!(hash.len(), 32);
+    }
+
     fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
         let config = Config::default();
         count_runnable_invariant_campaign_anchors(
@@ -277,6 +310,27 @@ mod tests {
                 function: Some("invariantTwo".to_string()),
                 line: "1:1".to_string(),
                 docs: "forge-config: default.invariant.depth = 1".to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(count_anchors(&abi, &inline_config), 2);
+    }
+
+    #[test]
+    fn runnable_campaign_anchor_count_splits_boolean_suite_when_corpus_weight_provenance_differs() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+        ])
+        .unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTwo".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.corpus_random_sequence_weight = 10"
+                    .to_string(),
             })
             .unwrap();
 
@@ -704,7 +758,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
-        let symbolic_enabled = self.config.symbolic.enabled;
+        let symbolic_enabled = symbolic_entrypoints_enabled(
+            self.config.symbolic.enabled,
+            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+        );
         let functions = self
             .contract
             .abi
@@ -728,6 +785,90 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
         });
+
+        if let Some(replay) = &self.mcr.tcfg.symbolic_artifact_replay {
+            let artifact = &replay.artifact;
+            let replay_functions = functions
+                .iter()
+                .filter(|func| func.signature() == artifact.test.test)
+                .copied()
+                .collect::<Vec<_>>();
+
+            if replay_functions.is_empty() {
+                if !self.mcr.tcfg.multi_network.all_override_networks.is_empty() {
+                    return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
+                }
+                return SuiteResult::new(
+                    start.elapsed(),
+                    [(
+                        artifact.test.test.clone(),
+                        TestResult::fail(format!(
+                            "symbolic artifact target `{}` was not found in `{}`",
+                            artifact.test.test, artifact.test.contract,
+                        )),
+                    )]
+                    .into(),
+                    warnings,
+                );
+            }
+            if replay_functions.len() > 1 {
+                return SuiteResult::new(
+                    start.elapsed(),
+                    [(
+                        artifact.test.test.clone(),
+                        TestResult::fail(format!(
+                            "symbolic artifact target `{}` matched {} functions in `{}`",
+                            artifact.test.test,
+                            replay_functions.len(),
+                            artifact.test.contract,
+                        )),
+                    )]
+                    .into(),
+                    warnings,
+                );
+            }
+
+            let test_results = replay_functions
+                .into_iter()
+                .map(|func| {
+                    let start = Instant::now();
+                    let kind = match artifact.kind {
+                        SymbolicCounterexampleArtifactKind::SingleCall => {
+                            TestFunctionKind::SymbolicTest
+                        }
+                        SymbolicCounterexampleArtifactKind::Sequence => func.test_function_kind(),
+                    };
+                    if artifact.kind == SymbolicCounterexampleArtifactKind::Sequence
+                        && !kind.is_invariant_test()
+                    {
+                        return (
+                            func.signature(),
+                            TestResult::fail(format!(
+                                "sequence symbolic artifact must target an invariant test, but matched {} function `{}`",
+                                kind.name(),
+                                func.signature(),
+                            )),
+                        );
+                    }
+                    let invariants =
+                        if artifact.kind == SymbolicCounterexampleArtifactKind::Sequence {
+                            std::slice::from_ref(&func)
+                        } else {
+                            &[][..]
+                        };
+                    let mut res = FunctionRunner::new(&self, &setup).run_symbolic_artifact_replay(
+                        func,
+                        invariants,
+                        call_after_invariant,
+                    );
+                    res.duration = start.elapsed();
+                    debug!(%kind, path = %replay.path.display(), "replayed symbolic artifact");
+                    (func.signature(), res)
+                })
+                .collect::<BTreeMap<_, _>>();
+
+            return SuiteResult::new(start.elapsed(), test_results, warnings);
+        }
 
         let test_fail_functions =
             functions.iter().filter(|func| func.test_function_kind().is_any_test_fail());
@@ -805,7 +946,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = if self.config.symbolic.enabled && is_symbolic_entrypoint(func) {
+                let kind = if symbolic_enabled && is_symbolic_entrypoint(func) {
                     TestFunctionKind::SymbolicTest
                 } else {
                     func.test_function_kind()
@@ -888,6 +1029,150 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     /// Returns whether verbose symbolic diagnostics should be rendered after progress clears.
     fn should_defer_symbolic_diagnostics(&self) -> bool {
         self.cr.progress.is_some() && self.config.symbolic.dump_smt
+    }
+
+    fn persist_symbolic_counterexample_artifact(
+        &self,
+        test_name: &str,
+        artifact_file_name: &str,
+        symbolic: &SymbolicResult,
+        kind: SymbolicCounterexampleArtifactKind,
+        calls: Vec<SymbolicCounterexampleCall>,
+    ) -> Option<SymbolicArtifactRef> {
+        let dir = self
+            .config
+            .cache_path
+            .join("symbolic")
+            .join(sanitize_symbolic_artifact_component(self.cr.name));
+        // Use a stable per-test artifact path so the latest counterexample replaces older ones.
+        let path = dir.join(symbolic_artifact_file_name(self.cr.name, artifact_file_name, kind));
+        let artifact = SymbolicCounterexampleArtifact::new(
+            kind,
+            SymbolicCounterexampleTestIdentity {
+                contract: self.cr.name.to_string(),
+                test: test_name.to_string(),
+            },
+            symbolic,
+            SymbolicCounterexampleReplaySemantics {
+                fail_on_revert: self.config.invariant.fail_on_revert,
+            },
+            calls,
+        );
+
+        if let Err(err) = foundry_common::fs::create_dir_all(&dir) {
+            tracing::error!(%err, path = %dir.display(), "Failed to create symbolic artifact dir");
+            return None;
+        }
+        if let Err(err) = foundry_common::fs::write_json_file(&path, &artifact) {
+            tracing::error!(%err, path = %path.display(), "Failed to write symbolic artifact");
+            return None;
+        }
+
+        Some(SymbolicArtifactRef::new(path))
+    }
+
+    fn persist_invariant_sequence_counterexample_artifact(
+        &self,
+        test_name: &str,
+        artifact_file_name: &str,
+        call_sequence: &[BaseCounterExample],
+    ) -> Option<SymbolicArtifactRef> {
+        if call_sequence.is_empty() {
+            return None;
+        }
+        if !self.config.symbolic.enabled {
+            return None;
+        }
+
+        let symbolic_result = SymbolicResult::incomplete(
+            &self.config.symbolic,
+            SymbolicStopReason::Error,
+            "concrete replay confirmed stateful counterexample",
+            SymbolicStats::default(),
+            SymbolicReplayMetadata::confirmed(),
+            SymbolicCallTrace::none(),
+            None,
+        );
+        let calls = call_sequence
+            .iter()
+            .map(|counterexample| {
+                SymbolicCounterexampleCall::from_base_counterexample(
+                    counterexample,
+                    CALLER,
+                    self.address,
+                )
+            })
+            .collect();
+
+        self.persist_symbolic_counterexample_artifact(
+            test_name,
+            artifact_file_name,
+            &symbolic_result,
+            SymbolicCounterexampleArtifactKind::Sequence,
+            calls,
+        )
+    }
+
+    fn symbolic_single_call_preserves_failure(
+        &self,
+        call: &SymbolicCounterexampleCall,
+        expected_reason: Option<&str>,
+    ) -> bool {
+        self.replay_confirmed_symbolic_single_call(call, expected_reason).is_ok()
+    }
+
+    fn replay_confirmed_symbolic_single_call(
+        &self,
+        call: &SymbolicCounterexampleCall,
+        expected_reason: Option<&str>,
+    ) -> Result<(RawCallResult<FEN>, Option<String>), String> {
+        let Some(expected_reason) = expected_reason else {
+            return Err("candidate replay has no stable failure reason to compare".to_string());
+        };
+
+        let mut executor = self.clone_executor();
+        let raw_call_result = execute_tx(&mut executor, &call.to_basic_tx_details())
+            .map_err(|err| err.to_string())?;
+        if executor.is_raw_call_success(
+            self.address,
+            Cow::Borrowed(&raw_call_result.state_changeset),
+            &raw_call_result,
+            false,
+        ) {
+            return Err("candidate replay succeeded".to_string());
+        }
+
+        let reason = self.symbolic_raw_call_failure_reason(&raw_call_result)?;
+        if reason.as_deref() != Some(expected_reason) {
+            return Err(format!(
+                "candidate replay failed with different reason: expected `{}`, got `{}`",
+                expected_reason,
+                reason.as_deref().unwrap_or("")
+            ));
+        }
+
+        Ok((raw_call_result, reason))
+    }
+
+    fn symbolic_raw_call_failure_reason(
+        &self,
+        raw_call_result: &RawCallResult<FEN>,
+    ) -> Result<Option<String>, String> {
+        if raw_call_result.reverter == Some(CHEATCODE_ADDRESS)
+            && let Some(reason) = SkipReason::decode(&raw_call_result.result)
+        {
+            return Err(format!("vm.skip during concrete replay: {reason}"));
+        }
+
+        if raw_call_result.reverted
+            || raw_call_result.exit_reason.is_some_and(|reason| !reason.is_ok())
+        {
+            Ok(Some(
+                self.revert_decoder().decode(&raw_call_result.result, raw_call_result.exit_reason),
+            ))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Configures this runner with the inline configuration for the contract.
@@ -1037,10 +1322,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 );
             }
             SymbolicRunResult::Counterexample { args, calldata, stats } => {
-                let symbolic_counterexample = SymbolicCounterexample::from(
-                    &BaseCounterExample::from_fuzz_call(calldata.clone(), args.clone(), None),
-                );
-                let (mut raw_call_result, reason) = match self.executor.call(
+                let candidate_counterexample =
+                    BaseCounterExample::from_fuzz_call(calldata.clone(), args.clone(), None);
+                let symbolic_counterexample =
+                    SymbolicCounterexample::from(&candidate_counterexample);
+                let (raw_call_result, reason) = match self.executor.call(
                     self.sender,
                     self.address,
                     func,
@@ -1052,19 +1338,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
                     Err(EvmError::Skip(reason)) => {
                         let replay_reason = format!("vm.skip during concrete replay: {reason}");
+                        let symbolic_result = SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            SymbolicStopReason::Error,
+                            "concrete replay skipped the symbolic counterexample",
+                            stats,
+                            SymbolicReplayMetadata::skipped(replay_reason),
+                            SymbolicCallTrace::none(),
+                            Some(symbolic_counterexample),
+                        );
                         self.result.symbolic_result(
                             TestStatus::Skipped,
                             reason.0,
                             None,
-                            SymbolicResult::incomplete(
-                                &self.config.symbolic,
-                                SymbolicStopReason::Error,
-                                "concrete replay skipped the symbolic counterexample",
-                                stats,
-                                SymbolicReplayMetadata::skipped(replay_reason),
-                                SymbolicCallTrace::none(),
-                                Some(symbolic_counterexample),
-                            ),
+                            symbolic_result,
                         );
                         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
                         self.result.symbolic_diagnostics = symbolic_diagnostics;
@@ -1072,19 +1359,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                     Err(err) => {
                         let reason = err.to_string();
+                        let symbolic_result = SymbolicResult::incomplete(
+                            &self.config.symbolic,
+                            SymbolicStopReason::Error,
+                            reason.clone(),
+                            stats,
+                            SymbolicReplayMetadata::error(reason.clone()),
+                            SymbolicCallTrace::none(),
+                            Some(symbolic_counterexample),
+                        );
                         self.result.symbolic_result(
                             TestStatus::Failure,
-                            Some(reason.clone()),
+                            Some(reason),
                             None,
-                            SymbolicResult::incomplete(
-                                &self.config.symbolic,
-                                SymbolicStopReason::Error,
-                                reason.clone(),
-                                stats,
-                                SymbolicReplayMetadata::error(reason),
-                                SymbolicCallTrace::none(),
-                                Some(symbolic_counterexample),
-                            ),
+                            symbolic_result,
                         );
                         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
                         self.result.symbolic_diagnostics = symbolic_diagnostics;
@@ -1092,9 +1380,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 };
 
-                let success = self.executor.is_raw_call_mut_success(
+                let success = self.executor.is_raw_call_success(
                     self.address,
-                    &mut raw_call_result,
+                    Cow::Borrowed(&raw_call_result.state_changeset),
+                    &raw_call_result,
                     false,
                 );
                 let call_trace =
@@ -1104,36 +1393,137 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     args,
                     raw_call_result.traces.clone(),
                 );
-                self.result.extend(raw_call_result);
                 if success {
+                    self.result.extend(raw_call_result);
                     let reason = "symbolic counterexample did not replay".to_string();
+                    let symbolic_result = SymbolicResult::incomplete(
+                        &self.config.symbolic,
+                        SymbolicStopReason::Error,
+                        reason.clone(),
+                        stats,
+                        SymbolicReplayMetadata::mismatch(reason.clone()),
+                        call_trace,
+                        Some(symbolic_counterexample),
+                    );
                     let counterexample = CounterExample::Single(base_counterexample);
                     self.result.symbolic_result(
                         TestStatus::Failure,
-                        Some(reason.clone()),
+                        Some(reason),
                         Some(counterexample),
-                        SymbolicResult::incomplete(
-                            &self.config.symbolic,
-                            SymbolicStopReason::Error,
-                            reason.clone(),
-                            stats,
-                            SymbolicReplayMetadata::mismatch(reason),
-                            call_trace,
-                            Some(symbolic_counterexample),
-                        ),
+                        symbolic_result,
                     );
                 } else {
+                    let original_base_counterexample = base_counterexample;
+                    let original_call = SymbolicCounterexampleCall::from_base_counterexample(
+                        &original_base_counterexample,
+                        self.sender,
+                        self.address,
+                    );
+                    let original_symbolic_counterexample =
+                        SymbolicCounterexample::from(&original_base_counterexample);
+                    let mut final_call = original_call.clone();
+                    let mut final_raw_call_result = raw_call_result;
+                    let mut final_reason = reason;
+                    let mut minimization = None;
+
+                    if final_reason.is_some()
+                        && let Some(candidate) = minimize_single_call_counterexample(
+                            func,
+                            &original_call,
+                            self.tcfg.config.invariant.shrink_run_limit as usize,
+                            |candidate| {
+                                self.symbolic_single_call_preserves_failure(
+                                    candidate,
+                                    final_reason.as_deref(),
+                                )
+                            },
+                        )
+                    {
+                        if candidate.changed() {
+                            match self.replay_confirmed_symbolic_single_call(
+                                &candidate.minimized_call,
+                                final_reason.as_deref(),
+                            ) {
+                                Ok((raw_call_result, reason)) => {
+                                    final_call = candidate.minimized_call.clone();
+                                    final_raw_call_result = raw_call_result;
+                                    final_reason = reason;
+                                    minimization = Some(candidate);
+                                }
+                                Err(err) => {
+                                    warn!(
+                                        %err,
+                                        "discarding symbolic counterexample minimization result that no longer replays"
+                                    );
+                                }
+                            }
+                        } else {
+                            minimization = Some(candidate);
+                        }
+                    }
+
+                    let call_trace = SymbolicCallTrace::test_result_traces(
+                        final_raw_call_result.traces.is_some(),
+                    );
+                    let mut base_counterexample = final_call.to_base_counterexample();
+                    base_counterexample.traces = final_raw_call_result.traces.clone();
+                    let symbolic_counterexample =
+                        SymbolicCounterexample::from(&base_counterexample);
+                    self.result.extend(final_raw_call_result);
+
+                    let mut symbolic_result = SymbolicResult::fail_counterexample(
+                        &self.config.symbolic,
+                        stats,
+                        call_trace,
+                        symbolic_counterexample,
+                    );
+                    let signature = func.signature();
+                    let minimized_artifact = self.persist_symbolic_counterexample_artifact(
+                        &signature,
+                        &signature,
+                        &symbolic_result,
+                        SymbolicCounterexampleArtifactKind::SingleCall,
+                        vec![final_call],
+                    );
+                    if let Some(artifact) = minimized_artifact.clone() {
+                        symbolic_result = symbolic_result.with_artifact(artifact);
+                    }
+
+                    if let Some(minimization) = minimization {
+                        let original_symbolic_result = SymbolicResult::fail_counterexample(
+                            &self.config.symbolic,
+                            stats,
+                            SymbolicCallTrace::none(),
+                            original_symbolic_counterexample,
+                        );
+                        let original_artifact = self.persist_symbolic_counterexample_artifact(
+                            &signature,
+                            &format!("original__{signature}"),
+                            &original_symbolic_result,
+                            SymbolicCounterexampleArtifactKind::SingleCall,
+                            vec![minimization.original_call.clone()],
+                        );
+                        if let (Some(original), Some(minimized)) =
+                            (original_artifact, minimized_artifact)
+                        {
+                            symbolic_result = symbolic_result.with_minimization(
+                                SymbolicCounterexampleMinimization::new(
+                                    original,
+                                    minimized,
+                                    minimization.attempts,
+                                    minimization.accepted,
+                                    minimization.original_call.calldata.len(),
+                                    minimization.minimized_call.calldata.len(),
+                                ),
+                            );
+                        }
+                    }
                     let counterexample = CounterExample::Single(base_counterexample);
                     self.result.symbolic_result(
                         TestStatus::Failure,
-                        reason,
+                        final_reason,
                         Some(counterexample),
-                        SymbolicResult::fail_counterexample(
-                            &self.config.symbolic,
-                            stats,
-                            call_trace,
-                            symbolic_counterexample,
-                        ),
+                        symbolic_result,
                     );
                 }
             }
@@ -1141,6 +1531,236 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
         self.result.symbolic_diagnostics = symbolic_diagnostics;
+        self.result
+    }
+
+    /// Replays a durable symbolic counterexample artifact against this freshly set up test.
+    fn run_symbolic_artifact_replay(
+        mut self,
+        func: &Function,
+        invariants: &[&Function],
+        call_after_invariant: bool,
+    ) -> TestResult {
+        let Some(replay) = &self.cr.mcr.tcfg.symbolic_artifact_replay else {
+            self.result.single_fail(Some("missing symbolic artifact replay config".to_string()));
+            return self.result;
+        };
+        let artifact = &replay.artifact;
+        if let Err(e) = self.apply_function_inline_config(func) {
+            self.result.single_fail(Some(e.to_string()));
+            return self.result;
+        }
+
+        match artifact.kind {
+            SymbolicCounterexampleArtifactKind::SingleCall => {
+                if artifact.replay.status != SymbolicReplayStatus::Confirmed {
+                    self.result.single_fail(Some(format!(
+                        "single-call symbolic artifact replay status must be confirmed, got {:?}",
+                        artifact.replay.status
+                    )));
+                    return self.result;
+                }
+                let Some(call) = artifact.calls.first() else {
+                    self.result.single_fail(Some("symbolic artifact has no calls".to_string()));
+                    return self.result;
+                };
+                if artifact.calls.len() != 1 {
+                    self.result.single_fail(Some(
+                        "single-call symbolic artifact must contain exactly one call".to_string(),
+                    ));
+                    return self.result;
+                }
+                // Single-call artifacts are concrete replay inputs: sender, value, warp, and roll
+                // are intentionally taken from the artifact. Validation only checks that the call
+                // still targets this test function.
+                if let Err(err) = validate_single_call_symbolic_replay(func, call, self.address) {
+                    self.result.single_fail(Some(err));
+                    return self.result;
+                }
+
+                if self.prepare_test(func).is_err() {
+                    return self.result;
+                }
+
+                let mut executor = self.clone_executor();
+                match execute_tx(&mut executor, &call.to_basic_tx_details()) {
+                    Ok(raw_call_result) => {
+                        let replay_success = executor.is_raw_call_success(
+                            self.address,
+                            Cow::Borrowed(&raw_call_result.state_changeset),
+                            &raw_call_result,
+                            false,
+                        );
+                        if replay_success {
+                            self.result.single_result(true, None, raw_call_result);
+                        } else {
+                            match raw_call_result.into_evm_error(Some(self.revert_decoder())) {
+                                EvmError::Execution(err) => {
+                                    let reason = if err.reason.is_empty() {
+                                        artifact.replay.reason.clone()
+                                    } else {
+                                        Some(err.reason.clone())
+                                    };
+                                    self.result.single_result(false, reason, err.raw);
+                                    self.result.counterexample =
+                                        Some(CounterExample::Single(call.to_base_counterexample()));
+                                }
+                                EvmError::Skip(reason) => self.result.single_skip(reason),
+                                err => {
+                                    self.result.counterexample =
+                                        Some(CounterExample::Single(call.to_base_counterexample()));
+                                    self.result.single_fail(Some(err.to_string()));
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        self.result.counterexample =
+                            Some(CounterExample::Single(call.to_base_counterexample()));
+                        self.result.single_fail(Some(err.to_string()));
+                    }
+                }
+            }
+            SymbolicCounterexampleArtifactKind::Sequence => {
+                let Some(invariant) = invariants.first() else {
+                    self.result.single_fail(Some(
+                        "sequence symbolic artifact must target an invariant test".to_string(),
+                    ));
+                    return self.result;
+                };
+                if artifact.calls.is_empty() {
+                    self.result.single_fail(Some("symbolic artifact has no calls".to_string()));
+                    return self.result;
+                }
+
+                let calls = artifact
+                    .calls
+                    .iter()
+                    .map(SymbolicCounterexampleCall::to_base_counterexample)
+                    .collect::<Vec<_>>();
+                let txes = artifact
+                    .calls
+                    .iter()
+                    .map(SymbolicCounterexampleCall::to_basic_tx_details)
+                    .collect::<Vec<_>>();
+                let setup_contracts = load_contracts(
+                    self.setup.traces.iter().map(|(_, trace)| &trace.arena),
+                    &self.cr.mcr.known_contracts,
+                );
+                let mut evm = InvariantExecutor::new_with_fuzz_seed(
+                    self.clone_executor(),
+                    self.invariant_runner(),
+                    self.config.fuzz.seed,
+                    self.config.invariant.clone(),
+                    &setup_contracts,
+                    &self.cr.mcr.known_contracts,
+                    self.cr.num_invariant_campaign_anchors,
+                );
+                if let Err(err) = evm.select_contract_artifacts(self.address) {
+                    self.result.invariant_setup_fail(err);
+                    return self.result;
+                }
+                let (sender_filters, targeted) =
+                    match evm.select_contracts_and_senders(self.address) {
+                        Ok(selected) => selected,
+                        Err(err) => {
+                            self.result.invariant_setup_fail(err);
+                            return self.result;
+                        }
+                    };
+                {
+                    let dynamic_target_ctx = evm.dynamic_target_ctx();
+                    let mut validation_executor =
+                        targeted.is_updatable.then(|| self.clone_executor());
+                    let mut validation_created_contracts = Vec::new();
+                    for (idx, tx) in txes.iter().enumerate() {
+                        let Some(selector) = tx.call_details.calldata.get(..4) else {
+                            self.result.single_fail(Some(format!(
+                                "sequence symbolic artifact call {} has calldata shorter than a selector",
+                                idx + 1
+                            )));
+                            return self.result;
+                        };
+                        if !targeted.targets().can_replay(tx) {
+                            self.result.single_fail(Some(format!(
+                                "sequence symbolic artifact call {} targets unknown function {} on {}",
+                                idx + 1,
+                                hex::encode_prefixed(selector),
+                                tx.call_details.target
+                            )));
+                            return self.result;
+                        }
+                        if (!sender_filters.targeted.is_empty()
+                            && !sender_filters.targeted.contains(&tx.sender))
+                            || sender_filters.excluded.contains(&tx.sender)
+                        {
+                            self.result.single_fail(Some(format!(
+                                "sequence symbolic artifact call {} uses forbidden sender {}",
+                                idx + 1,
+                                tx.sender
+                            )));
+                            return self.result;
+                        }
+                        if let Some(validation_executor) = validation_executor.as_mut() {
+                            match execute_tx_and_register_created(
+                                validation_executor,
+                                tx,
+                                &targeted,
+                                &dynamic_target_ctx,
+                                &mut validation_created_contracts,
+                            ) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    self.result.single_fail(Some(format!(
+                                        "sequence symbolic artifact call {} failed during target validation: {err}",
+                                        idx + 1
+                                    )));
+                                    return self.result;
+                                }
+                            }
+                        }
+                    }
+                }
+                match check_sequence(
+                    self.clone_executor(),
+                    &txes,
+                    (0..txes.len()).collect(),
+                    self.setup.address,
+                    invariant.selector().to_vec().into(),
+                    CheckSequenceOptions {
+                        // Artifact replay executes every stored call in order, so each call's
+                        // warp/roll delta is applied directly. Accumulation is only needed when a
+                        // shrink candidate skips calls and must fold removed delays forward.
+                        accumulate_warp_roll: false,
+                        fail_on_revert: artifact.replay_semantics.fail_on_revert,
+                        expect_assertion_failure: false,
+                        call_after_invariant,
+                        rd: Some(self.revert_decoder()),
+                    },
+                ) {
+                    Ok((success, replayed_entirely, reason, calls_count, reverts)) => {
+                        if success {
+                            self.result.invariant_replay_success(calls_count, reverts);
+                        } else {
+                            self.result.invariant_replay_fail(
+                                replayed_entirely,
+                                &invariant.signature(),
+                                reason.or_else(|| artifact.replay.reason.clone()),
+                                calls_count,
+                                reverts,
+                                calls,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        self.result.counterexample =
+                            Some(CounterExample::Sequence(calls.len(), calls));
+                        self.result.single_fail(Some(err.to_string()));
+                    }
+                }
+            }
+        }
+
         self.result
     }
 
@@ -1321,7 +1941,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
         executor.inspector_mut().collect_edge_coverage_with_config(&invariant_config.corpus);
-        executor.inspector_mut().collect_evm_cmp_log(invariant_config.corpus.collect_evm_cmp_log());
         executor
             .inspector_mut()
             .collect_sancov_edges(invariant_config.corpus.collect_sancov_edges());
@@ -1491,7 +2110,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &mut call_sequence,
                 assertion_failure,
             );
-            if let Ok((success, replayed_entirely, replay_reason)) = replay
+            if let Ok((
+                success,
+                mut replayed_entirely,
+                mut replay_reason,
+                mut calls_count,
+                mut reverts,
+            )) = replay
                 && !success
             {
                 let warn =
@@ -1528,6 +2153,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ) {
                     Ok(replayed_call_sequence) if !replayed_call_sequence.is_empty() => {
                         call_sequence = replayed_call_sequence;
+                        let (_txes, replay) = replay_persisted_call_sequence(
+                            &replay_ctx,
+                            self.clone_executor(),
+                            &mut call_sequence,
+                            assertion_failure,
+                        );
+                        if let Ok((
+                            _success,
+                            updated_replayed_entirely,
+                            updated_replay_reason,
+                            updated_calls_count,
+                            updated_reverts,
+                        )) = replay
+                        {
+                            replayed_entirely = updated_replayed_entirely;
+                            replay_reason = updated_replay_reason;
+                            calls_count = updated_calls_count;
+                            reverts = updated_reverts;
+                        }
                         // Persist error in invariant failure dir.
                         record_invariant_failure(
                             failure_dir.as_path(),
@@ -1547,8 +2191,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     replayed_entirely,
                     &invariant_contract.anchor().name,
                     replay_reason,
-                    call_sequence,
+                    calls_count,
+                    reverts,
+                    call_sequence.clone(),
                 );
+                if let Some(artifact) = self.persist_invariant_sequence_counterexample_artifact(
+                    &invariant_contract.anchor().signature(),
+                    &format!("{}-replay", invariant_contract.anchor().signature()),
+                    &call_sequence,
+                ) {
+                    self.result.add_counterexample_artifact(artifact);
+                }
                 return self.result;
             }
         }
@@ -1684,7 +2337,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                     case_data.assertion_failure,
                                 );
                                 any_failure_persisted = true;
+                                let artifact = self
+                                    .persist_invariant_sequence_counterexample_artifact(
+                                        &invariant_contract.anchor().signature(),
+                                        &invariant_contract.anchor().signature(),
+                                        &call_sequence,
+                                    );
                                 Some(CounterExample::Sequence(calls.len(), call_sequence))
+                                    .map(|counterexample| (counterexample, artifact))
                             }
                             Ok(_) => None,
                             Err(err) => {
@@ -1697,10 +2357,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     // Handler bugs live in `handler_errors`; defensive None here.
                     InvariantFuzzError::HandlerAssertion(_) => None,
                 };
+                let (anchor_counterexample, artifact) = match anchor_counterexample {
+                    Some((counterexample, artifact)) => (Some(counterexample), artifact),
+                    None => (None, None),
+                };
                 invariant_failures.push(InvariantFailure::Predicate {
                     name: invariant_contract.anchor().name.clone(),
                     reason: error.revert_reason().unwrap_or_default(),
                     counterexample: anchor_counterexample,
+                    artifact,
                     persisted_path: primary_failure_file,
                     is_anchor: true,
                 });
@@ -1791,7 +2456,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                     case_data.assertion_failure,
                                 );
                                 any_failure_persisted = true;
-                                Some(CounterExample::Sequence(original_seq_len, call_sequence))
+                                let artifact = self
+                                    .persist_invariant_sequence_counterexample_artifact(
+                                        &invariant.signature(),
+                                        &invariant.signature(),
+                                        &call_sequence,
+                                    );
+                                Some((
+                                    CounterExample::Sequence(original_seq_len, call_sequence),
+                                    artifact,
+                                ))
                             }
                             Ok(_) => None,
                             Err(err) => {
@@ -1800,10 +2474,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             }
                         }
                     };
+                    let (secondary_counterexample, artifact) = match secondary_counterexample {
+                        Some((counterexample, artifact)) => (Some(counterexample), artifact),
+                        None => (None, None),
+                    };
                     invariant_failures.push(InvariantFailure::Predicate {
                         name: invariant.name.clone(),
                         reason: error.revert_reason().unwrap_or_default(),
                         counterexample: secondary_counterexample,
+                        artifact,
                         persisted_path: persisted_failure.clone(),
                         is_anchor: false,
                     });
@@ -1899,6 +2578,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         &current_settings,
                     );
                 }
+                let artifact = self.persist_invariant_sequence_counterexample_artifact(
+                    &invariant_contract.anchor().signature(),
+                    &format!("handler-{reverter}-{selector}"),
+                    &counterexample_calls,
+                );
 
                 let counterexample = if counterexample_calls.is_empty() {
                     None
@@ -1916,6 +2600,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     selector,
                     reason: failure.revert_reason.clone(),
                     counterexample,
+                    artifact,
                 }
             })
             .collect::<Vec<_>>();
@@ -2186,21 +2871,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn build_fuzz_state(&self, invariant: bool) -> EvmFuzzState {
         let config =
             if invariant { self.config.invariant.dictionary } else { self.config.fuzz.dictionary };
+        let literals =
+            if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
         if let Some(db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(
-                &self.setup.deployed_libs,
-                db,
-                config,
-                Some(&self.cr.mcr.fuzz_literals),
-            )
+            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         } else {
             let db = self.executor.backend().mem_db();
-            EvmFuzzState::new(
-                &self.setup.deployed_libs,
-                db,
-                config,
-                Some(&self.cr.mcr.fuzz_literals),
-            )
+            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         }
     }
 }
@@ -2238,8 +2915,9 @@ struct InvariantPersistedFailure {
     assertion_failure: bool,
 }
 
-/// Mirrors `check_sequence`'s return: `(success, replayed_entirely, optional_reason)`.
-type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>)>;
+/// Mirrors `check_sequence`'s return:
+/// `(success, replayed_entirely, optional_reason, calls, reverts)`.
+type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>, usize, usize)>;
 
 /// Borrowed context shared by primary-invariant and handler-side replay helpers.
 struct ReplayContext<'a> {
@@ -2393,6 +3071,45 @@ fn invariant_failure_dir(persist_dir: PathBuf, contract_name: &str) -> PathBuf {
 /// Returns the invariant test contract name without the file path prefix.
 fn invariant_contract_name(contract_name: &str) -> &str {
     contract_name.split(':').next_back().unwrap()
+}
+
+fn sanitize_symbolic_artifact_component(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' })
+        .collect::<String>();
+    if sanitized.is_empty() { "_".to_string() } else { sanitized }
+}
+
+fn symbolic_artifact_file_name(
+    contract_id: &str,
+    value: &str,
+    kind: SymbolicCounterexampleArtifactKind,
+) -> String {
+    let identity = format!("{contract_id}\0{value}\0{kind:?}");
+    let hash = keccak256(identity.as_bytes());
+    let hash = hex::encode(&hash[..16]);
+    format!("{}-{hash}.json", sanitize_symbolic_artifact_component(value))
+}
+
+fn validate_single_call_symbolic_replay(
+    func: &Function,
+    call: &SymbolicCounterexampleCall,
+    test_address: Address,
+) -> Result<(), String> {
+    if call.target != test_address {
+        return Err(format!(
+            "single-call symbolic artifact target {} does not match test contract {}",
+            call.target, test_address
+        ));
+    }
+    if call.calldata.get(..4).is_none_or(|selector| func.selector() != selector) {
+        return Err(format!(
+            "single-call symbolic artifact calldata does not match `{}` selector",
+            func.signature()
+        ));
+    }
+    Ok(())
 }
 
 /// Helper function to persist invariant failure.

@@ -5,7 +5,7 @@ pub mod auth;
 use crate::FoundryTransactionBuilder;
 use alloy_chains::Chain;
 use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, B256, Signature, address};
+use alloy_primitives::{Address, B256, Signature, TxKind, address};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
@@ -13,7 +13,10 @@ use eyre::{Context, Result};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
 pub use tempo_alloy::contracts::precompiles::PATH_USD_ADDRESS;
-use tempo_alloy::contracts::precompiles::{IFeeManager, ITIP20, TIP_FEE_MANAGER_ADDRESS};
+use tempo_alloy::contracts::precompiles::{
+    IFeeManager, IStablecoinDEX, ITIP20, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+};
+use tempo_primitives::TempoAddressExt;
 
 mod keystore;
 mod registry;
@@ -87,19 +90,31 @@ where
     if !chain.is_some_and(Chain::is_tempo) {
         return Ok(None);
     }
-    let Some(provider) = provider else {
-        return Ok(None);
-    };
-
     let fee_payer = fee_payer.or_else(|| tx.from());
-    let fee_token = if let Some(fee_payer) = fee_payer {
+    let calls = tx.tempo_calls();
+    let has_call_list = tx.has_tempo_call_list();
+    let is_aa = tx.is_tempo_aa();
+    let tx_from = tx.from();
+
+    let immediate_user_token =
+        infer_fee_token_from_set_user_token_call(&calls, is_aa, tx_from, fee_payer);
+    let stored_fee_token = if immediate_user_token.is_none()
+        && let (Some(provider), Some(fee_payer)) = (provider, fee_payer)
+    {
         stored_user_fee_token(provider, fee_payer).await?
     } else {
         None
     };
-    let Some(fee_token) = fee_token else {
-        return Ok(None);
-    };
+    let inferred_fee_token =
+        if immediate_user_token.is_none() && stored_fee_token.is_none() && !calls.is_empty() {
+            infer_fee_token_from_tip20_calls(&calls, tx_from, fee_payer)
+                .or_else(|| infer_fee_token_from_stablecoin_dex_calls(&calls, has_call_list))
+        } else {
+            None
+        };
+    let fee_token = immediate_user_token.or(stored_fee_token).or(inferred_fee_token);
+
+    let Some(fee_token) = fee_token else { return Ok(None) };
     tx.set_fee_token(fee_token);
     Ok(Some(fee_token))
 }
@@ -123,6 +138,83 @@ where
     let fee_token = IFeeManager::userTokensCall::abi_decode_returns(&output)
         .wrap_err("failed to decode Tempo fee token lookup")?;
     Ok((!fee_token.is_zero()).then_some(fee_token))
+}
+
+fn infer_fee_token_from_tip20_calls(
+    calls: &[(TxKind, &[u8])],
+    tx_from: Option<Address>,
+    fee_payer: Option<Address>,
+) -> Option<Address> {
+    if calls.is_empty() || !calls.iter().all(|(_, input)| is_tip20_fee_token_call(input)) {
+        return None;
+    }
+
+    let target = common_call_target(calls)?;
+    if fee_payer != tx_from {
+        return None;
+    }
+    target.is_tip20().then_some(target)
+}
+
+fn infer_fee_token_from_set_user_token_call(
+    calls: &[(TxKind, &[u8])],
+    is_aa: bool,
+    tx_from: Option<Address>,
+    fee_payer: Option<Address>,
+) -> Option<Address> {
+    if is_aa || fee_payer != tx_from {
+        return None;
+    }
+
+    let (to, input) = calls.first()?;
+    if *to != TxKind::Call(TIP_FEE_MANAGER_ADDRESS) {
+        return None;
+    }
+
+    let call = IFeeManager::setUserTokenCall::abi_decode(input).ok()?;
+    call.token.is_tip20().then_some(call.token)
+}
+
+fn infer_fee_token_from_stablecoin_dex_calls(
+    calls: &[(TxKind, &[u8])],
+    has_call_list: bool,
+) -> Option<Address> {
+    if has_call_list && calls.len() != 1 {
+        return None;
+    }
+    let (to, input) = calls.first()?;
+    if *to != TxKind::Call(STABLECOIN_DEX_ADDRESS) {
+        return None;
+    }
+    decode_stablecoin_dex_fee_token(input)
+}
+
+fn common_call_target(calls: &[(TxKind, &[u8])]) -> Option<Address> {
+    let mut targets = calls.iter().map(|(to, _)| match to {
+        TxKind::Call(target) => Some(*target),
+        TxKind::Create => None,
+    });
+    let target = targets.next()??;
+    targets.all(|next| next == Some(target)).then_some(target)
+}
+
+fn is_tip20_fee_token_call(input: &[u8]) -> bool {
+    input.get(..4).is_some_and(|selector| {
+        selector == ITIP20::transferCall::SELECTOR
+            || selector == ITIP20::transferWithMemoCall::SELECTOR
+    })
+}
+
+fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
+    let selector = input.get(..4)?;
+    let token = if selector == IStablecoinDEX::swapExactAmountInCall::SELECTOR {
+        IStablecoinDEX::swapExactAmountInCall::abi_decode(input).ok().map(|call| call.tokenIn)
+    } else if selector == IStablecoinDEX::swapExactAmountOutCall::SELECTOR {
+        IStablecoinDEX::swapExactAmountOutCall::abi_decode(input).ok().map(|call| call.tokenIn)
+    } else {
+        None
+    }?;
+    token.is_tip20().then_some(token)
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.

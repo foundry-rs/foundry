@@ -271,7 +271,6 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for loadCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        ccx.ensure_not_precompile(&target)?;
 
         ccx.ecx.journal_mut().load_account(target)?;
         let mut val = ccx

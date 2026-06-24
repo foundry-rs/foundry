@@ -33,6 +33,7 @@ pub mod storage;
 pub mod tempo;
 pub(crate) mod tempo_policy_args;
 pub mod tip20;
+pub mod tip403;
 pub mod trace;
 pub mod txpool;
 pub mod vaddr;
