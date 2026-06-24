@@ -331,6 +331,22 @@ impl WorkerCorpusSeed {
         }
     }
 
+    pub(crate) fn retain_replayable(&mut self, targeted_contracts: &TargetedContracts) {
+        let is_replayable =
+            |tx_seq: &[BasicTxDetails]| tx_seq.iter().all(|tx| targeted_contracts.can_replay(tx));
+        self.in_memory_corpus.retain(|entry| is_replayable(&entry.tx_seq));
+        self.metrics.corpus_count = self.in_memory_corpus.len();
+        self.metrics.favored_items =
+            self.in_memory_corpus.iter().filter(|entry| entry.is_favored).count();
+
+        if !self.optimization_best_sequence.is_empty()
+            && !is_replayable(&self.optimization_best_sequence)
+        {
+            self.optimization_best_value = None;
+            self.optimization_best_sequence.clear();
+        }
+    }
+
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
         executor: Option<&Executor<FEN>>,
@@ -2521,6 +2537,47 @@ mod tests {
 
         assert!(with_cmp.in_memory_corpus.iter().all(|entry| !entry.cmp_seq[0].is_empty()));
         assert!(without_cmp.in_memory_corpus.iter().all(|entry| entry.cmp_seq.is_empty()));
+    }
+
+    #[test]
+    fn retain_replayable_removes_off_target_corpus_entries() {
+        let target = Address::from([0x11; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+        let foo_selector = foo.selector();
+        let foo_tx = tx_for_function(target, &foo, &[]);
+        let bar_tx = tx_for_function(target, &bar, &[]);
+        let mut foo_entry = CorpusEntry::new(vec![foo_tx.clone()]);
+        foo_entry.is_favored = true;
+        let mut bar_entry = CorpusEntry::new(vec![bar_tx.clone()]);
+        bar_entry.is_favored = true;
+        let mut seed = WorkerCorpusSeed {
+            in_memory_corpus: vec![foo_entry, bar_entry],
+            metrics: CorpusMetrics { corpus_count: 2, favored_items: 2, ..Default::default() },
+            optimization_best_value: Some(I256::try_from(17).unwrap()),
+            optimization_best_sequence: vec![bar_tx],
+            ..Default::default()
+        };
+        let targeted_contracts =
+            targeted_contracts_with_selective_functions(target, vec![foo, bar], [foo_selector]);
+        let targets = targeted_contracts.targets();
+
+        seed.retain_replayable(&targets);
+
+        assert_eq!(seed.in_memory_corpus.len(), 1);
+        assert_eq!(seed.in_memory_corpus[0].tx_seq.len(), 1);
+        assert_eq!(
+            seed.in_memory_corpus[0].tx_seq[0].call_details.target,
+            foo_tx.call_details.target
+        );
+        assert_eq!(
+            seed.in_memory_corpus[0].tx_seq[0].call_details.calldata,
+            foo_tx.call_details.calldata
+        );
+        assert_eq!(seed.metrics.corpus_count, 1);
+        assert_eq!(seed.metrics.favored_items, 1);
+        assert!(seed.optimization_best_value.is_none());
+        assert!(seed.optimization_best_sequence.is_empty());
     }
 
     #[test]
