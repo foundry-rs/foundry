@@ -2,7 +2,6 @@ use crate::{
     Env,
     executors::{Executor, ExecutorBuilder},
 };
-// use alloy_eips::eip4788::BEACON_ROOTS_ADDRESS;
 use alloy_primitives::{Address, FixedBytes, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
