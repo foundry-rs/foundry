@@ -8,13 +8,23 @@ import {StdPrecompiles} from "tempo-std/StdPrecompiles.sol";
 import {StdTokens} from "tempo-std/StdTokens.sol";
 import {Mail} from "../src/Mail.sol";
 
+interface ITIP403Registry {
+    function validateReceivePolicy(address token, address sender, address receiver)
+        external
+        view
+        returns (bool authorized, uint8 blockedReason);
+}
+
 /// @notice Tests for direct mail sending (no signature verification).
 contract MailTest is Test {
+    address internal constant TIP403_REGISTRY = address(0x403c000000000000000000000000000000000000);
+
     ITIP20 public token;
     Mail public mail;
 
     address public constant ALICE = address(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266);
-    address public constant BOB = address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+    address public BOB;
+    uint256 internal BOB_PK;
 
     function setUp() public virtual {
         address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.PATH_USD_ADDRESS);
@@ -26,6 +36,8 @@ contract MailTest is Test {
         );
 
         ITIP20RolesAuth(address(token)).grantRole(token.ISSUER_ROLE(), address(this));
+
+        (BOB, BOB_PK) = _selectRecipient();
 
         mail = new Mail(token);
     }
@@ -61,13 +73,31 @@ contract MailTest is Test {
         assertEq(token.balanceOf(BOB), sendAmount);
         assertEq(token.balanceOf(ALICE), mintAmount - sendAmount);
     }
+
+    function _selectRecipient() internal returns (address recipient, uint256 privateKey) {
+        for (uint256 i; i < 16; i++) {
+            (recipient, privateKey) = makeAddrAndKey(string.concat("tempo-mail-bob-", vm.toString(i)));
+            if (_isRecipientAllowed(recipient)) return (recipient, privateKey);
+        }
+
+        revert("no receive-policy-safe recipient");
+    }
+
+    function _isRecipientAllowed(address recipient) internal view returns (bool) {
+        (bool ok, bytes memory data) = TIP403_REGISTRY.staticcall(
+            abi.encodeCall(ITIP403Registry.validateReceivePolicy, (address(token), ALICE, recipient))
+        );
+        if (!ok || data.length < 64) return true;
+
+        (bool authorized,) = abi.decode(data, (bool, uint8));
+        return authorized;
+    }
 }
 
 /// @notice Tests for relayed mail using the TIP-1020 SignatureVerifier precompile (requires T3+).
 contract MailRelayTest is MailTest {
     // secp256k1 keys (used by vm.sign / vm.addr)
     uint256 internal constant ALICE_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
-    uint256 internal constant BOB_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
 
     // P256 key (used by vm.signP256 / vm.publicKeyP256)
     uint256 internal constant CAROL_P256_PK = 0x1;
