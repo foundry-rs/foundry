@@ -843,14 +843,21 @@ rust_foundryup_bin() {
   esac
 }
 
-# Bootstraps the Rust foundryup binary into the sidecar home if it is not
-# already present. Idempotent: a no-op once the binary exists.
-ensure_rust_foundryup() {
-  local _bin
-  _bin="$(rust_foundryup_bin)"
-  [ -x "$_bin" ] && return 0
+# Prints the version of the sidecar Rust foundryup at $1 (e.g. `0.0.5`), or
+# nothing if it is not installed or the version cannot be determined. The
+# trailing `|| true` keeps a failing/unparsable `--version` from aborting under
+# `set -eo pipefail`, so the caller falls through to a reinstall instead.
+sidecar_version() {
+  [ -x "$1" ] || return 0
+  "$1" --version 2>/dev/null \
+    | sed -nE 's/^foundryup[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+    | head -1 || true
+}
 
-  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..."
+# Downloads `foundryup-init.sh` and installs the Rust foundryup into the
+# sidecar home, leaving the executable at $1.
+install_rust_foundryup() {
+  local _bin="$1"
 
   local _init
   _init="$(mktemp)"
@@ -877,6 +884,23 @@ ensure_rust_foundryup() {
   esac
 
   [ -x "$_bin" ] || err "failed to bootstrap the Rust foundryup binary"
+}
+
+# Ensures a Rust foundryup of at least $FOUNDRYUP_BOOTSTRAP_VERSION is present
+# in the sidecar home, (re)installing it otherwise. Reusing the sidecar only
+# when it is recent enough means a later $FOUNDRYUP_BOOTSTRAP_VERSION bump
+# actually migrates users who already bootstrapped an older binary, while a
+# self-updated newer binary is never downgraded.
+ensure_rust_foundryup() {
+  local _bin _have
+  _bin="$(rust_foundryup_bin)"
+  _have="$(sidecar_version "$_bin")"
+  if [ -n "$_have" ] && ! version_gt "$FOUNDRYUP_BOOTSTRAP_VERSION" "$_have"; then
+    return 0
+  fi
+
+  say "migrating to the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..."
+  install_rust_foundryup "$_bin"
 }
 
 # Skip execution when sourced by tests.
