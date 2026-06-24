@@ -2,7 +2,8 @@ use crate::{
     Env,
     executors::{Executor, ExecutorBuilder},
 };
-use alloy_primitives::{Address, FixedBytes, U256, address, map::HashMap};
+// use alloy_eips::eip4788::BEACON_ROOTS_ADDRESS;
+use alloy_primitives::{Address, FixedBytes, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::Context;
 use foundry_compilers::artifacts::EvmVersion;
@@ -97,22 +98,23 @@ impl TracingExecutor {
     pub fn process_beacon_block_root(
         &mut self,
         block_timestamp: u64,
+        beacon_root_address: Address,
         beacon_root: FixedBytes<32>,
     ) -> eyre::Result<()> {
-        const BEACON_ROOTS_ADDRESS: Address = address!("000F3df6D732807Ef1319fB7B8bB8522d0Beac02");
         const HISTORY_BUFFER_LENGTH: u64 = 8191;
 
         let timestamp_index = block_timestamp % HISTORY_BUFFER_LENGTH;
         let root_index = timestamp_index + HISTORY_BUFFER_LENGTH;
 
-        let timestamp_slot = U256::from(timestamp_index);
-        let root_slot = U256::from(root_index);
-
-        self.set_storage_slot(BEACON_ROOTS_ADDRESS, timestamp_slot, U256::from(block_timestamp))?;
+        self.set_storage_slot(
+            beacon_root_address,
+            U256::from(timestamp_index),
+            U256::from(block_timestamp),
+        )?;
 
         self.set_storage_slot(
-            BEACON_ROOTS_ADDRESS,
-            root_slot,
+            beacon_root_address,
+            U256::from(root_index),
             U256::from_be_bytes(beacon_root.into()),
         )?;
 

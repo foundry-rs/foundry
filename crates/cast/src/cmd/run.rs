@@ -1,5 +1,6 @@
 use crate::{debug::handle_traces, utils::apply_chain_and_block_specific_env_changes};
 use alloy_consensus::Transaction;
+use alloy_eips::eip4788::BEACON_ROOTS_ADDRESS;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
@@ -232,7 +233,11 @@ impl RunArgs {
 
         if let Some(parent_beacon_block_root) = parent_beacon_block_root {
             let timestamp: u64 = env.evm_env.block_env.timestamp.try_into().unwrap_or(0);
-            executor.process_beacon_block_root(timestamp, parent_beacon_block_root)?;
+            executor.process_beacon_block_root(
+                timestamp,
+                BEACON_ROOTS_ADDRESS,
+                parent_beacon_block_root,
+            )?;
         }
 
         let mut env = Env::new_with_spec_id(
