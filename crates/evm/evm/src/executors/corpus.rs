@@ -1370,8 +1370,9 @@ impl WorkerCorpus {
         // Mutate calldata.
         let mut arg_mutation_rounds =
             test_runner.rng().random_range(0..=function.inputs.len()).max(1);
-        let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
-            vec![0]
+        let single_input = function.inputs.len() <= 1;
+        let round_arg_idx: Vec<usize> = if single_input {
+            Vec::new()
         } else {
             (0..arg_mutation_rounds)
                 .map(|_| test_runner.rng().random_range(0..function.inputs.len()))
@@ -1382,7 +1383,7 @@ impl WorkerCorpus {
             .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
 
         while arg_mutation_rounds > 0 {
-            let idx = round_arg_idx[arg_mutation_rounds - 1];
+            let idx = if single_input { 0 } else { round_arg_idx[arg_mutation_rounds - 1] };
             prev_inputs[idx] = mutate_param_value(
                 &function
                     .inputs
@@ -1979,6 +1980,36 @@ mod tests {
         assert!(mutated);
         let decoded = function.abi_decode_input(&tx.call_details.calldata[4..]).unwrap();
         assert_eq!(decoded[0].as_uint().unwrap().0, replacement);
+    }
+
+    #[test]
+    fn abi_mutate_single_input_keeps_decodable_calldata() {
+        let function = Function::parse("testAbi(uint256)").unwrap();
+        let original = U256::from(7u64);
+        let calldata: Bytes =
+            function.abi_encode_input(&[DynSolValue::Uint(original, 256)]).unwrap().into();
+        let mut tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: foundry_evm_fuzz::CallDetails {
+                target: Address::ZERO,
+                calldata,
+                value: None,
+            },
+        };
+        let config =
+            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = TestRunner::new(config);
+        let manager = empty_worker_corpus(0, temp_corpus_dir());
+        let db = revm::database::CacheDB::<revm::database::EmptyDB>::default();
+        let state =
+            EvmFuzzState::new(&[], &db, foundry_config::FuzzDictionaryConfig::default(), None);
+
+        manager.abi_mutate(&mut tx, &function, &mut runner, &state).unwrap();
+
+        let decoded = function.abi_decode_input(&tx.call_details.calldata[4..]).unwrap();
+        assert_eq!(decoded.len(), 1);
     }
 
     fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {
