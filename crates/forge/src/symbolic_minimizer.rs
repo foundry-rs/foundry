@@ -3,8 +3,34 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Function as SolFunction, I256, U256};
 use itertools::Itertools;
+use std::collections::HashSet;
 
 const MAX_SUBSET_CANDIDATES_PER_PASS: usize = 256;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ReplayCallKey {
+    warp: Option<U256>,
+    roll: Option<U256>,
+    sender: Address,
+    target: Address,
+    calldata: Bytes,
+    value: Option<U256>,
+}
+
+fn replay_call_key(call: &SymbolicCounterexampleCall) -> ReplayCallKey {
+    ReplayCallKey {
+        warp: call.warp,
+        roll: call.roll,
+        sender: call.sender,
+        target: call.target,
+        calldata: call.calldata.clone(),
+        value: call.value.filter(|value| !value.is_zero()),
+    }
+}
+
+fn replay_sequence_key(calls: &[SymbolicCounterexampleCall]) -> Vec<ReplayCallKey> {
+    calls.iter().map(replay_call_key).collect()
+}
 
 /// Result of deterministic single-call counterexample minimization.
 #[derive(Clone, Debug)]
@@ -66,9 +92,11 @@ pub(crate) fn minimize_sequence_counterexample(
     let mut current_calls = original_calls.clone();
     let mut attempts = 0usize;
     let mut accepted = 0usize;
+    let mut tried_candidates = HashSet::from([replay_sequence_key(&current_calls)]);
 
     minimize_sequence_len(
         &mut current_calls,
+        &mut tried_candidates,
         max_attempts,
         &mut attempts,
         &mut accepted,
@@ -76,6 +104,7 @@ pub(crate) fn minimize_sequence_counterexample(
     );
     minimize_sequence_calldata(
         &mut current_calls,
+        &mut tried_candidates,
         max_attempts,
         &mut attempts,
         &mut accepted,
@@ -83,6 +112,7 @@ pub(crate) fn minimize_sequence_counterexample(
     );
     minimize_sequence_senders(
         &mut current_calls,
+        &mut tried_candidates,
         sender_candidates,
         max_attempts,
         &mut attempts,
@@ -91,6 +121,7 @@ pub(crate) fn minimize_sequence_counterexample(
     );
     minimize_sequence_values(
         &mut current_calls,
+        &mut tried_candidates,
         max_attempts,
         &mut attempts,
         &mut accepted,
@@ -102,6 +133,7 @@ pub(crate) fn minimize_sequence_counterexample(
 
 fn try_sequence_candidate(
     current_calls: &mut Vec<SymbolicCounterexampleCall>,
+    tried_candidates: &mut HashSet<Vec<ReplayCallKey>>,
     candidate_calls: Vec<SymbolicCounterexampleCall>,
     max_attempts: usize,
     attempts: &mut usize,
@@ -109,6 +141,9 @@ fn try_sequence_candidate(
     still_fails: &mut dyn FnMut(&[SymbolicCounterexampleCall]) -> bool,
 ) -> bool {
     if *attempts >= max_attempts || candidate_calls == *current_calls {
+        return false;
+    }
+    if !tried_candidates.insert(replay_sequence_key(&candidate_calls)) {
         return false;
     }
 
@@ -124,6 +159,7 @@ fn try_sequence_candidate(
 
 fn minimize_sequence_len(
     current_calls: &mut Vec<SymbolicCounterexampleCall>,
+    tried_candidates: &mut HashSet<Vec<ReplayCallKey>>,
     max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
@@ -140,6 +176,7 @@ fn minimize_sequence_len(
             let candidate_calls = sequence_without_call(current_calls, idx);
             if try_sequence_candidate(
                 current_calls,
+                tried_candidates,
                 candidate_calls,
                 max_attempts,
                 attempts,
@@ -178,6 +215,7 @@ fn add_optional_u256(left: Option<U256>, right: Option<U256>) -> Option<U256> {
 
 fn minimize_sequence_calldata(
     current_calls: &mut Vec<SymbolicCounterexampleCall>,
+    tried_candidates: &mut HashSet<Vec<ReplayCallKey>>,
     max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
@@ -204,6 +242,7 @@ fn minimize_sequence_calldata(
                 candidate_calls[idx] = candidate_call.clone();
                 try_sequence_candidate(
                     current_calls,
+                    tried_candidates,
                     candidate_calls,
                     max_attempts,
                     attempts,
@@ -224,6 +263,7 @@ fn minimize_sequence_calldata(
 
 fn minimize_sequence_senders(
     current_calls: &mut Vec<SymbolicCounterexampleCall>,
+    tried_candidates: &mut HashSet<Vec<ReplayCallKey>>,
     sender_candidates: &[Address],
     max_attempts: usize,
     attempts: &mut usize,
@@ -240,6 +280,7 @@ fn minimize_sequence_senders(
             candidate_calls[idx].sender = sender;
             try_sequence_candidate(
                 current_calls,
+                tried_candidates,
                 candidate_calls,
                 max_attempts,
                 attempts,
@@ -253,6 +294,7 @@ fn minimize_sequence_senders(
 
 fn minimize_sequence_values(
     current_calls: &mut Vec<SymbolicCounterexampleCall>,
+    tried_candidates: &mut HashSet<Vec<ReplayCallKey>>,
     max_attempts: usize,
     attempts: &mut usize,
     accepted: &mut usize,
@@ -260,13 +302,22 @@ fn minimize_sequence_values(
 ) {
     let mut idx = 0usize;
     while idx < current_calls.len() && *attempts < max_attempts {
-        minimize_call_value(current_calls, idx, max_attempts, attempts, accepted, still_fails);
+        minimize_call_value(
+            current_calls,
+            tried_candidates,
+            idx,
+            max_attempts,
+            attempts,
+            accepted,
+            still_fails,
+        );
         idx += 1;
     }
 }
 
 fn minimize_call_value(
     current_calls: &mut Vec<SymbolicCounterexampleCall>,
+    tried_candidates: &mut HashSet<Vec<ReplayCallKey>>,
     idx: usize,
     max_attempts: usize,
     attempts: &mut usize,
@@ -281,6 +332,7 @@ fn minimize_call_value(
     zero_candidate[idx].value = None;
     if try_sequence_candidate(
         current_calls,
+        tried_candidates,
         zero_candidate,
         max_attempts,
         attempts,
@@ -301,6 +353,7 @@ fn minimize_call_value(
         candidate_calls[idx].value = Some(candidate_value);
         if try_sequence_candidate(
             current_calls,
+            tried_candidates,
             candidate_calls,
             max_attempts,
             attempts,
@@ -333,6 +386,7 @@ pub(crate) fn minimize_single_call_counterexample(
     let mut current_call = call_with_args(function, call, &current_args)?;
     let mut attempts = 0usize;
     let mut accepted = 0usize;
+    let mut tried_calldata = HashSet::from([current_call.calldata.clone()]);
 
     let mut try_args = |candidate_args: &[DynSolValue]| {
         if attempts >= max_attempts {
@@ -341,7 +395,9 @@ pub(crate) fn minimize_single_call_counterexample(
         let Some(candidate_call) = call_with_args(function, call, candidate_args) else {
             return false;
         };
-        if candidate_call.calldata == current_call.calldata {
+        if candidate_call.calldata == current_call.calldata
+            || !tried_calldata.insert(candidate_call.calldata.clone())
+        {
             return false;
         }
 
@@ -1550,6 +1606,33 @@ mod tests {
     }
 
     #[test]
+    fn skips_duplicate_single_call_replay_candidates() {
+        let abi = JsonAbi::parse(["function check(uint256,uint256) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let start = call(
+            function,
+            vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Uint(U256::from(1), 256)],
+        );
+        let mut replayed = HashSet::new();
+
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                assert!(replayed.insert(candidate.calldata.clone()), "duplicate candidate replay");
+                false
+            },
+        )
+        .unwrap();
+
+        assert!(!minimized.changed());
+        assert_eq!(minimized.accepted, 0);
+        assert_eq!(minimized.attempts, 3);
+        assert_eq!(replayed.len(), minimized.attempts);
+    }
+
+    #[test]
     fn matches_echidna_contiguous_slice_examples() {
         let bytes_abi = JsonAbi::parse(["function check(bytes) external"]).unwrap();
         let bytes_function = bytes_abi.functions().next().unwrap();
@@ -1955,6 +2038,36 @@ mod tests {
         );
         assert!(minimized.changed());
         assert!(minimized.accepted > 0);
+    }
+
+    #[test]
+    fn skips_duplicate_sequence_replay_candidates() {
+        let abi = JsonAbi::parse(["function noop() external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let mut start = call(function, Vec::new());
+        start.sender = address(0xaaaa);
+        start.value = Some(U256::ZERO);
+        let sender = address(0x100);
+        let mut replays = 0usize;
+
+        let minimized = minimize_sequence_counterexample(
+            &[start],
+            &[sender, sender],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |calls| {
+                replays += 1;
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].sender, sender);
+                assert_eq!(calls[0].value, Some(U256::ZERO));
+                false
+            },
+        )
+        .unwrap();
+
+        assert!(!minimized.changed());
+        assert_eq!(minimized.accepted, 0);
+        assert_eq!(minimized.attempts, 1);
+        assert_eq!(replays, minimized.attempts);
     }
 
     #[test]
