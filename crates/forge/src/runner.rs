@@ -180,13 +180,9 @@ fn invariant_suite_configs_match(
     };
     rest.iter().all(|func| {
         inline_config_for(config, inline_config, contract_name, Some(func))
-            .map(|config| invariant_campaign_configs_match(&config.invariant, &anchor_config))
+            .map(|config| config.invariant == anchor_config)
             .unwrap_or(false)
     })
-}
-
-fn invariant_campaign_configs_match(left: &InvariantConfig, right: &InvariantConfig) -> bool {
-    left == right
 }
 
 fn select_invariant_campaigns<'a>(
