@@ -203,7 +203,8 @@ contract SymbolicOverlayCodeInvariant is Test {
 Failing tests:
 Encountered 1 failing test in test/SymbolicOverlayCodeInvariant.t.sol:SymbolicOverlayCodeInvariant
 [FAIL: assertion failed: 42 != 0]
-...
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] [SENDER] calldata=etchCounter() [ARGS]
  invariant_counterAlwaysReturnsZero() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded

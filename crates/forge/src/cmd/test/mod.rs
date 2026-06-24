@@ -42,7 +42,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, InlineConfig, InvariantWorkers, figment,
+    Config, InlineConfig, InvariantDepthMode, InvariantWorkers, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map, Value},
@@ -250,9 +250,127 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_TIMEOUT", value_name = "TIMEOUT")]
     pub fuzz_timeout: Option<u64>,
 
+    /// Percent of fuzz calldata generated from the dictionary.
+    #[arg(long, env = "FOUNDRY_FUZZ_DICTIONARY_WEIGHT", value_name = "PERCENT")]
+    pub fuzz_dictionary_weight: Option<u32>,
+
+    /// Maximum fuzz dictionary addresses, or `max`.
+    #[arg(long, env = "FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_ADDRESSES", value_name = "N|max")]
+    pub fuzz_dictionary_addresses: Option<String>,
+
+    /// Maximum fuzz dictionary values, or `max`.
+    #[arg(long, env = "FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_VALUES", value_name = "N|max")]
+    pub fuzz_dictionary_values: Option<String>,
+
+    /// Maximum fuzz dictionary literals, or `max`.
+    #[arg(long, env = "FOUNDRY_FUZZ_MAX_FUZZ_DICTIONARY_LITERALS", value_name = "N|max")]
+    pub fuzz_dictionary_literals: Option<String>,
+
+    /// Percent chance that coverage-guided fuzzing generates fresh input instead of mutating
+    /// corpus input.
+    #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
+    pub fuzz_corpus_random_sequence_weight: Option<u32>,
+
+    /// Percent chance that fuzzed payable calls carry non-zero msg.value.
+    #[arg(long, env = "FOUNDRY_FUZZ_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
+    pub fuzz_payable_value_weight: Option<u32>,
+
+    /// Corpus mutation weight for splice.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_SPLICE", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_splice: Option<u32>,
+
+    /// Corpus mutation weight for repeat.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_REPEAT", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_repeat: Option<u32>,
+
+    /// Corpus mutation weight for interleave.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_INTERLEAVE", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_interleave: Option<u32>,
+
+    /// Corpus mutation weight for prefix replacement.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_PREFIX", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_prefix: Option<u32>,
+
+    /// Corpus mutation weight for suffix replacement.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_SUFFIX", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_suffix: Option<u32>,
+
+    /// Corpus mutation weight for ABI argument mutation.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_ABI", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_abi: Option<u32>,
+
+    /// Corpus mutation weight for comparison-operand mutation.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_CMP", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_cmp: Option<u32>,
+
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
+
+    /// Number of calls executed to try to break invariants in one run.
+    #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH", value_name = "DEPTH")]
+    pub invariant_depth: Option<u32>,
+
+    /// Minimum sampled invariant depth when `--invariant-depth-mode random` is active.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MIN_DEPTH", value_name = "DEPTH")]
+    pub invariant_min_depth: Option<u32>,
+
+    /// How invariant run depth is selected.
+    #[arg(long, env = "FOUNDRY_INVARIANT_DEPTH_MODE", value_name = "fixed|random")]
+    pub invariant_depth_mode: Option<InvariantDepthMode>,
+
+    /// Percent of invariant calldata/senders generated from the dictionary.
+    #[arg(long, env = "FOUNDRY_INVARIANT_DICTIONARY_WEIGHT", value_name = "PERCENT")]
+    pub invariant_dictionary_weight: Option<u32>,
+
+    /// Maximum invariant dictionary addresses, or `max`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MAX_FUZZ_DICTIONARY_ADDRESSES", value_name = "N|max")]
+    pub invariant_dictionary_addresses: Option<String>,
+
+    /// Maximum invariant dictionary values, or `max`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MAX_FUZZ_DICTIONARY_VALUES", value_name = "N|max")]
+    pub invariant_dictionary_values: Option<String>,
+
+    /// Maximum invariant dictionary literals, or `max`.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MAX_FUZZ_DICTIONARY_LITERALS", value_name = "N|max")]
+    pub invariant_dictionary_literals: Option<String>,
+
+    /// Percent chance that coverage-guided invariant fuzzing injects fresh calls while extending
+    /// corpus sequences.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
+    pub invariant_corpus_random_sequence_weight: Option<u32>,
+
+    /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
+    #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
+    pub invariant_payable_value_weight: Option<u32>,
+
+    /// Corpus mutation weight for splice.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_SPLICE", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_splice: Option<u32>,
+
+    /// Corpus mutation weight for repeat.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_REPEAT", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_repeat: Option<u32>,
+
+    /// Corpus mutation weight for interleave.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_INTERLEAVE", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_interleave: Option<u32>,
+
+    /// Corpus mutation weight for prefix replacement.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_PREFIX", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_prefix: Option<u32>,
+
+    /// Corpus mutation weight for suffix replacement.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_SUFFIX", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_suffix: Option<u32>,
+
+    /// Corpus mutation weight for ABI argument mutation.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_ABI", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_abi: Option<u32>,
+
+    /// Corpus mutation weight for comparison-operand mutation.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_cmp: Option<u32>,
 
     /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC")]
@@ -2088,16 +2206,133 @@ impl Provider for TestArgs {
         if let Some(fuzz_timeout) = self.fuzz_timeout {
             fuzz_dict.insert("timeout".to_string(), fuzz_timeout.into());
         }
+        if let Some(fuzz_dictionary_weight) = self.fuzz_dictionary_weight {
+            fuzz_dict.insert("dictionary_weight".to_string(), fuzz_dictionary_weight.into());
+        }
+        if let Some(fuzz_dictionary_addresses) = self.fuzz_dictionary_addresses.clone() {
+            fuzz_dict.insert(
+                "max_fuzz_dictionary_addresses".to_string(),
+                fuzz_dictionary_addresses.into(),
+            );
+        }
+        if let Some(fuzz_dictionary_values) = self.fuzz_dictionary_values.clone() {
+            fuzz_dict
+                .insert("max_fuzz_dictionary_values".to_string(), fuzz_dictionary_values.into());
+        }
+        if let Some(fuzz_dictionary_literals) = self.fuzz_dictionary_literals.clone() {
+            fuzz_dict.insert(
+                "max_fuzz_dictionary_literals".to_string(),
+                fuzz_dictionary_literals.into(),
+            );
+        }
+        if let Some(fuzz_corpus_random_sequence_weight) = self.fuzz_corpus_random_sequence_weight {
+            fuzz_dict.insert(
+                "corpus_random_sequence_weight".to_string(),
+                fuzz_corpus_random_sequence_weight.into(),
+            );
+        }
+        if let Some(fuzz_payable_value_weight) = self.fuzz_payable_value_weight {
+            fuzz_dict.insert("payable_value_weight".to_string(), fuzz_payable_value_weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_splice {
+            fuzz_dict.insert("mutation_weight_splice".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_repeat {
+            fuzz_dict.insert("mutation_weight_repeat".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_interleave {
+            fuzz_dict.insert("mutation_weight_interleave".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_prefix {
+            fuzz_dict.insert("mutation_weight_prefix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_suffix {
+            fuzz_dict.insert("mutation_weight_suffix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_abi {
+            fuzz_dict.insert("mutation_weight_abi".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_cmp {
+            fuzz_dict.insert("mutation_weight_cmp".to_string(), weight.into());
+        }
         if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
             fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
 
+        let mut invariant_dict = Dict::default();
+        if let Some(invariant_depth) = self.invariant_depth {
+            invariant_dict.insert("depth".to_string(), invariant_depth.into());
+        }
+        if let Some(invariant_min_depth) = self.invariant_min_depth {
+            invariant_dict.insert("min_depth".to_string(), invariant_min_depth.into());
+        }
+        if let Some(invariant_depth_mode) = self.invariant_depth_mode {
+            invariant_dict
+                .insert("depth_mode".to_string(), Value::serialize(invariant_depth_mode)?);
+        }
         if let Some(invariant_workers) = self.invariant_workers {
-            dict.insert(
-                "invariant".to_string(),
-                Dict::from([("workers".to_string(), Value::serialize(invariant_workers)?)]).into(),
+            invariant_dict.insert("workers".to_string(), Value::serialize(invariant_workers)?);
+        }
+        if let Some(invariant_dictionary_weight) = self.invariant_dictionary_weight {
+            invariant_dict
+                .insert("dictionary_weight".to_string(), invariant_dictionary_weight.into());
+        }
+        if let Some(invariant_dictionary_addresses) = self.invariant_dictionary_addresses.clone() {
+            invariant_dict.insert(
+                "max_fuzz_dictionary_addresses".to_string(),
+                invariant_dictionary_addresses.into(),
             );
+        }
+        if let Some(invariant_dictionary_values) = self.invariant_dictionary_values.clone() {
+            invariant_dict.insert(
+                "max_fuzz_dictionary_values".to_string(),
+                invariant_dictionary_values.into(),
+            );
+        }
+        if let Some(invariant_dictionary_literals) = self.invariant_dictionary_literals.clone() {
+            invariant_dict.insert(
+                "max_fuzz_dictionary_literals".to_string(),
+                invariant_dictionary_literals.into(),
+            );
+        }
+        if let Some(invariant_corpus_random_sequence_weight) =
+            self.invariant_corpus_random_sequence_weight
+        {
+            invariant_dict.insert(
+                "corpus_random_sequence_weight".to_string(),
+                invariant_corpus_random_sequence_weight.into(),
+            );
+            invariant_dict
+                .insert("corpus_random_sequence_weight_configured".to_string(), true.into());
+        }
+        if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
+            invariant_dict
+                .insert("payable_value_weight".to_string(), invariant_payable_value_weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_splice {
+            invariant_dict.insert("mutation_weight_splice".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_repeat {
+            invariant_dict.insert("mutation_weight_repeat".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_interleave {
+            invariant_dict.insert("mutation_weight_interleave".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_prefix {
+            invariant_dict.insert("mutation_weight_prefix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_suffix {
+            invariant_dict.insert("mutation_weight_suffix".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_abi {
+            invariant_dict.insert("mutation_weight_abi".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_cmp {
+            invariant_dict.insert("mutation_weight_cmp".to_string(), weight.into());
+        }
+        if !invariant_dict.is_empty() {
+            dict.insert("invariant".to_string(), invariant_dict.into());
         }
 
         let mut symbolic_dict = Dict::default();
@@ -2657,6 +2892,122 @@ mod tests {
         }
 
         assert_eq!(args.unwrap().invariant_workers, Some(InvariantWorkers::Auto));
+    }
+
+    #[test]
+    fn fuzz_and_invariant_config_flags() {
+        let args = TestArgs::parse_from([
+            "foundry-cli",
+            "--fuzz-dictionary-weight",
+            "35",
+            "--fuzz-dictionary-addresses",
+            "max",
+            "--fuzz-dictionary-values",
+            "1234",
+            "--fuzz-dictionary-literals",
+            "4321",
+            "--fuzz-corpus-random-sequence-weight",
+            "55",
+            "--fuzz-payable-value-weight",
+            "12",
+            "--fuzz-mutation-weight-splice",
+            "4",
+            "--fuzz-mutation-weight-abi",
+            "3",
+            "--fuzz-mutation-weight-cmp",
+            "5",
+            "--invariant-depth",
+            "300",
+            "--invariant-min-depth",
+            "20",
+            "--invariant-depth-mode",
+            "random",
+            "--invariant-dictionary-weight",
+            "45",
+            "--invariant-dictionary-addresses",
+            "8765",
+            "--invariant-dictionary-values",
+            "max",
+            "--invariant-dictionary-literals",
+            "6789",
+            "--invariant-corpus-random-sequence-weight",
+            "25",
+            "--invariant-payable-value-weight",
+            "34",
+            "--invariant-mutation-weight-splice",
+            "2",
+            "--invariant-mutation-weight-cmp",
+            "7",
+        ]);
+
+        let figment = figment::Figment::from(&args);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.dictionary_weight").unwrap(), 35);
+        assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_addresses").unwrap(),
+            "max"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_values").unwrap(),
+            "1234"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_literals").unwrap(),
+            "4321"
+        );
+        assert_eq!(figment.extract_inner::<u32>("fuzz.corpus_random_sequence_weight").unwrap(), 55);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.payable_value_weight").unwrap(), 12);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
+        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
+        assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
+        assert_eq!(figment.extract_inner::<u32>("invariant.min_depth").unwrap(), 20);
+        assert_eq!(
+            figment.extract_inner::<InvariantDepthMode>("invariant.depth_mode").unwrap(),
+            InvariantDepthMode::Random
+        );
+        assert_eq!(figment.extract_inner::<u32>("invariant.dictionary_weight").unwrap(), 45);
+        assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_addresses").unwrap(),
+            "8765"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_values").unwrap(),
+            "max"
+        );
+        assert_eq!(
+            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_literals").unwrap(),
+            "6789"
+        );
+        assert_eq!(
+            figment.extract_inner::<u32>("invariant.corpus_random_sequence_weight").unwrap(),
+            25
+        );
+        assert_eq!(figment.extract_inner::<u32>("invariant.payable_value_weight").unwrap(), 34);
+        assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
+        assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
+
+        let config = Config::default().merge_inline_provider(&args).unwrap();
+        assert_eq!(config.fuzz.dictionary.dictionary_weight, 35);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_addresses, usize::MAX);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, 1234);
+        assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_literals, 4321);
+        assert_eq!(config.fuzz.corpus.corpus_random_sequence_weight, 55);
+        assert_eq!(config.fuzz.corpus.payable_value_weight, 12);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
+        assert_eq!(config.invariant.depth, 300);
+        assert_eq!(config.invariant.min_depth, 20);
+        assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
+        assert_eq!(config.invariant.dictionary.dictionary_weight, 45);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_addresses, 8765);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);
+        assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_literals, 6789);
+        assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
+        assert!(config.invariant.corpus_random_sequence_weight_configured);
+        assert_eq!(config.invariant.corpus.payable_value_weight, 34);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
     }
 
     #[test]

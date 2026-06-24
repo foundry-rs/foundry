@@ -1,10 +1,12 @@
 use crate::{
     BasicTxDetails, Fuzzer,
-    invariant::{FuzzRunIdentifiedContracts, TargetedContracts},
+    invariant::{
+        FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent, TargetedContracts,
+    },
     strategies::literals::LiteralsDictionary,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
     map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
@@ -155,13 +157,13 @@ impl InvariantFuzzState {
     ) {
         let mut dict = self.inner.borrow_mut();
         let targets = fuzzed_contracts.targets();
-        let (target_abi, target_function) = if logs.is_empty() && result.is_empty() {
+        let (target_contract, target_function) = if logs.is_empty() && result.is_empty() {
             (None, None)
         } else {
             targets.fuzzed_artifacts(tx)
         };
         if !logs.is_empty() {
-            dict.insert_logs_values(target_abi, logs, run_depth);
+            dict.insert_logs_values(target_contract, logs, run_depth);
         }
         if !result.is_empty() {
             dict.insert_result_values(target_function, result, run_depth);
@@ -346,22 +348,33 @@ impl FuzzDictionary {
     }
 
     /// Insert values from call log topics and data into fuzz dictionary.
-    fn insert_logs_values(&mut self, abi: Option<&JsonAbi>, logs: &[Log], run_depth: u32) {
+    fn insert_logs_values(
+        &mut self,
+        target_contract: Option<&TargetedContract>,
+        logs: &[Log],
+        run_depth: u32,
+    ) {
         let mut samples = Vec::new();
         // Decode logs with known events and collect samples from indexed fields and event body.
         for log in logs {
-            let mut log_decoded = false;
             // Try to decode log with events from contract abi.
-            if let Some(abi) = abi {
-                for event in abi.events() {
-                    if let Ok(decoded_event) = event.decode_log(log) {
-                        samples.extend(decoded_event.indexed);
-                        samples.extend(decoded_event.body);
-                        log_decoded = true;
-                        break;
-                    }
-                }
-            }
+            let log_decoded = if let Some(contract) = target_contract {
+                let matched_events = log
+                    .topics()
+                    .first()
+                    .and_then(|selector| {
+                        contract.event_lookup.by_topic(selector, log.topics().len() - 1)
+                    })
+                    .unwrap_or(&[]);
+                Self::decode_log_events(
+                    matched_events,
+                    contract.event_lookup.anonymous(),
+                    log,
+                    &mut samples,
+                )
+            } else {
+                false
+            };
 
             // If we weren't able to decode event then we insert raw data in fuzz dictionary.
             if !log_decoded {
@@ -381,6 +394,36 @@ impl FuzzDictionary {
 
         // Insert samples collected from current call in fuzz dictionary.
         self.insert_sample_values(samples, run_depth);
+    }
+
+    fn decode_log_events(
+        matched_events: &[TargetedContractEvent],
+        anonymous_events: &[TargetedContractEvent],
+        log: &Log,
+        samples: &mut Vec<DynSolValue>,
+    ) -> bool {
+        let mut matched = matched_events.iter().peekable();
+        let mut anonymous = anonymous_events.iter().peekable();
+        while matched.peek().is_some() || anonymous.peek().is_some() {
+            let event = match (matched.peek(), anonymous.peek()) {
+                (Some(matched_event), Some(anonymous_event)) => {
+                    if matched_event.order() < anonymous_event.order() {
+                        matched.next().unwrap()
+                    } else {
+                        anonymous.next().unwrap()
+                    }
+                }
+                (Some(_), None) => matched.next().unwrap(),
+                (None, Some(_)) => anonymous.next().unwrap(),
+                (None, None) => unreachable!(),
+            };
+            if let Ok(decoded_event) = event.event().decode_log(log) {
+                samples.extend(decoded_event.indexed);
+                samples.extend(decoded_event.body);
+                return true;
+            }
+        }
+        false
     }
 
     /// Insert values from call state changeset into fuzz dictionary.
@@ -654,5 +697,42 @@ impl FuzzDictionary {
     /// Test-only helper to seed the dictionary with literal values.
     pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
         self.literal_values.set(map);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_json_abi::{Event, JsonAbi};
+
+    #[test]
+    fn log_decoding_preserves_anonymous_event_priority() {
+        let mut abi = JsonAbi::new();
+        let anonymous_event =
+            Event::parse("event AEvent(bytes32 indexed topic, uint256 value) anonymous").unwrap();
+        let matched_event = Event::parse("event ZEvent(uint256 value)").unwrap();
+        let selector = matched_event.selector();
+        abi.events.entry(anonymous_event.name.clone()).or_default().push(anonymous_event);
+        abi.events.entry(matched_event.name.clone()).or_default().push(matched_event);
+        let contract = TargetedContract::new("Target".to_string(), abi);
+        let matched_events = contract.event_lookup.by_topic(&selector, 0).unwrap();
+        let word: B256 = U256::from(42).into();
+        let log = Log::new_unchecked(
+            Address::ZERO,
+            vec![selector],
+            Bytes::copy_from_slice(word.as_slice()),
+        );
+        let mut samples = Vec::new();
+
+        assert!(FuzzDictionary::decode_log_events(
+            matched_events,
+            contract.event_lookup.anonymous(),
+            &log,
+            &mut samples,
+        ));
+
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0], DynSolValue::FixedBytes(selector, 32));
+        assert_eq!(samples[1], DynSolValue::Uint(U256::from(42), 256));
     }
 }

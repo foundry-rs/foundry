@@ -97,13 +97,43 @@ fn fixed_workers(workers: usize) -> Result<InvariantWorkers, String> {
         .ok_or_else(|| "invariant workers must be greater than 0".to_string())
 }
 
+/// Per-run invariant depth selection mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvariantDepthMode {
+    /// Execute every invariant run up to the configured `depth`.
+    #[default]
+    Fixed,
+    /// Sample every invariant run depth uniformly between `min_depth` and `depth`.
+    #[serde(alias = "uniform")]
+    Random,
+}
+
+impl FromStr for InvariantDepthMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fixed" => Ok(Self::Fixed),
+            "random" | "uniform" => Ok(Self::Random),
+            value => {
+                Err(format!("unknown invariant depth mode `{value}`, expected `fixed` or `random`"))
+            }
+        }
+    }
+}
+
 /// Contains for invariant testing
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,
     /// The number of calls executed to attempt to break invariants in one run.
     pub depth: u32,
+    /// Minimum sampled run depth when `depth_mode = "random"`.
+    pub min_depth: u32,
+    /// How to choose the effective depth for each invariant run.
+    pub depth_mode: InvariantDepthMode,
     /// Worker selection mode used to shard invariant runs.
     ///
     /// Defaults to `1` for reproducible seeded campaigns. Use `auto` to derive the worker count
@@ -127,6 +157,10 @@ pub struct InvariantConfig {
     /// The fuzz corpus configuration.
     #[serde(flatten)]
     pub corpus: FuzzCorpusConfig,
+    /// Whether `corpus_random_sequence_weight` was supplied by a config provider.
+    #[serde(default, skip_serializing)]
+    #[doc(hidden)]
+    pub corpus_random_sequence_weight_configured: bool,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
@@ -149,11 +183,41 @@ pub struct InvariantConfig {
     pub check_interval: u32,
 }
 
+impl PartialEq for InvariantConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.runs == other.runs
+            && self.depth == other.depth
+            && self.min_depth == other.min_depth
+            && self.depth_mode == other.depth_mode
+            && self.workers == other.workers
+            && self.fail_on_revert == other.fail_on_revert
+            && self.call_override == other.call_override
+            && self.dictionary == other.dictionary
+            && self.shrink_run_limit == other.shrink_run_limit
+            && self.max_assume_rejects == other.max_assume_rejects
+            && self.gas_report_samples == other.gas_report_samples
+            && self.corpus == other.corpus
+            && self.corpus_random_sequence_weight_configured
+                == other.corpus_random_sequence_weight_configured
+            && self.failure_persist_dir == other.failure_persist_dir
+            && self.show_metrics == other.show_metrics
+            && self.timeout == other.timeout
+            && self.show_solidity == other.show_solidity
+            && self.max_time_delay == other.max_time_delay
+            && self.max_block_delay == other.max_block_delay
+            && self.check_interval == other.check_interval
+    }
+}
+
+impl Eq for InvariantConfig {}
+
 impl Default for InvariantConfig {
     fn default() -> Self {
         Self {
             runs: 256,
             depth: 500,
+            min_depth: 1,
+            depth_mode: InvariantDepthMode::default(),
             workers: InvariantWorkers::default(),
             fail_on_revert: false,
             call_override: false,
@@ -162,6 +226,7 @@ impl Default for InvariantConfig {
             max_assume_rejects: 65536,
             gas_report_samples: 256,
             corpus: FuzzCorpusConfig::default(),
+            corpus_random_sequence_weight_configured: false,
             failure_persist_dir: None,
             show_metrics: true,
             timeout: None,
@@ -216,5 +281,29 @@ mod tests {
     fn invariant_workers_reject_zero() {
         let err = serde_json::from_str::<InvariantWorkers>(r#"0"#).unwrap_err();
         assert!(err.to_string().contains("greater than 0"));
+    }
+
+    #[test]
+    fn invariant_config_equality_includes_corpus_random_sequence_provenance() {
+        let explicit = InvariantConfig {
+            corpus_random_sequence_weight_configured: true,
+            ..InvariantConfig::default()
+        };
+
+        assert_ne!(InvariantConfig::default(), explicit);
+    }
+
+    #[test]
+    fn invariant_depth_mode_accepts_fixed_and_random() {
+        assert_eq!("fixed".parse::<InvariantDepthMode>().unwrap(), InvariantDepthMode::Fixed);
+        assert_eq!("uniform".parse::<InvariantDepthMode>().unwrap(), InvariantDepthMode::Random);
+        assert_eq!(
+            serde_json::from_str::<InvariantDepthMode>(r#""random""#).unwrap(),
+            InvariantDepthMode::Random
+        );
+        assert_eq!(
+            serde_json::from_str::<InvariantDepthMode>(r#""uniform""#).unwrap(),
+            InvariantDepthMode::Random
+        );
     }
 }
