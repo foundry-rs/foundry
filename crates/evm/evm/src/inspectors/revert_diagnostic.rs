@@ -171,6 +171,10 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
     /// Tracks the first call with non-zero calldata that targets a non-contract address. Excludes
     /// precompiles and test addresses.
     fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        if inputs.input.is_empty() {
+            return None;
+        }
+
         let target = self.code_target_address(inputs);
 
         if IGNORE.contains(&target) || ctx.journal_ref().precompile_addresses().contains(&target) {
@@ -179,7 +183,6 @@ impl<CTX: ContextTr> Inspector<CTX> for RevertDiagnostic {
 
         if let Ok(state) = ctx.journal_mut().code(target)
             && state.is_empty()
-            && !inputs.input.is_empty()
         {
             self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
         }

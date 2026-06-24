@@ -299,7 +299,7 @@ impl BenchmarkProject {
         output.results.into_iter().next().ok_or_else(|| eyre::eyre!("No results from hyperfine"))
     }
 
-    /// Benchmark forge test
+    /// Benchmark forge test without isolation.
     pub fn bench_forge_test(
         &self,
         version: &str,
@@ -310,7 +310,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_test",
             version,
-            &self.cmd("forge test"),
+            &self.cmd("FOUNDRY_ISOLATE=false forge test"),
             runs,
             Some("forge build"),
             None,
@@ -358,7 +358,7 @@ impl BenchmarkProject {
         )
     }
 
-    /// Benchmark forge fuzz tests
+    /// Benchmark forge fuzz tests without isolation.
     pub fn bench_forge_fuzz_test(
         &self,
         version: &str,
@@ -369,7 +369,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_fuzz_test",
             version,
-            &self.cmd(r#"forge test --match-test "test[^(]*\([^)]+\)""#),
+            &self.cmd(r#"FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#),
             runs,
             Some("forge build"),
             None,

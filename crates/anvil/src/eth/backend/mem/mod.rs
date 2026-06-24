@@ -159,7 +159,7 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
@@ -1170,7 +1170,7 @@ impl<N: Network> Backend<N> {
         self.networks.inject_precompiles(precompiles);
 
         if let Some(factory) = &self.precompile_factory {
-            precompiles.extend_precompiles(factory.precompiles());
+            factory.install(precompiles);
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1185,13 +1185,21 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    fn inject_tempo_precompiles(
-        &self,
-        precompiles: &mut PrecompilesMap,
-        cfg_env: &CfgEnv<TempoHardfork>,
-    ) {
-        self.inject_precompiles(precompiles);
-        extend_tempo_precompiles(precompiles, cfg_env, StorageActions::disabled());
+    fn inject_tempo_precompiles<DB, I>(&self, evm: &mut tempo_evm::evm::TempoEvm<DB, I>)
+    where
+        DB: Database,
+        I: Inspector<TempoContext<DB>>,
+    {
+        self.inject_precompiles(evm.precompiles_mut());
+        // Re-extend Tempo precompiles, preserving shared non-creditable slots.
+        let cfg = evm.ctx().cfg.clone();
+        let non_creditable_slots = evm.non_creditable_slots();
+        extend_tempo_precompiles(
+            evm.precompiles_mut(),
+            &cfg,
+            StorageActions::disabled(),
+            non_creditable_slots,
+        );
     }
 
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
@@ -1308,8 +1316,7 @@ impl<N: Network> Backend<N> {
             tempo_env,
             inspector,
         );
-        let cfg = evm.cfg.clone();
-        self.inject_tempo_precompiles(evm.precompiles_mut(), &cfg);
+        self.inject_tempo_precompiles(&mut evm);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {

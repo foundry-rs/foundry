@@ -3733,7 +3733,10 @@ struct AnvilNodeInfo {
     network: Option<String>,
 }
 
-async fn is_tempo_hardfork_active<P>(provider: &P, hardfork: TempoHardfork) -> Result<bool>
+pub(crate) async fn is_tempo_hardfork_active<P>(
+    provider: &P,
+    hardfork: TempoHardfork,
+) -> Result<bool>
 where
     P: Provider<TempoNetwork>,
 {
