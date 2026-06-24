@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 /// Contains which contracts are to be targeted or excluded on an invariant test through their
 /// artifact identifiers.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ArtifactFilters {
     /// List of `contract_path:contract_name` along with selectors, which are to be targeted. If
     /// list of functions is not empty, target only those.
@@ -55,7 +55,7 @@ impl ArtifactFilters {
 /// clashing.
 ///
 /// `address(0)` is excluded by default.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SenderFilters {
     pub targeted: Vec<Address>,
     pub excluded: Vec<Address>,

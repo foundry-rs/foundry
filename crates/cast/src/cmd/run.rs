@@ -8,10 +8,13 @@ use alloy_evm::FromRecoveredTx;
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_primitives::{
     Address, Bytes, U256,
-    map::{AddressSet, HashMap},
+    map::{AddressHashMap, AddressSet},
 };
-use alloy_provider::Provider;
-use alloy_rpc_types::BlockTransactions;
+use alloy_provider::{Provider, ext::DebugApi};
+use alloy_rpc_types::{
+    BlockTransactions,
+    trace::geth::{GethDebugTracingOptions, PreStateConfig},
+};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -29,13 +32,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{
-            EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, TempoEvmNetwork,
-            TxEnvFor,
-        },
+        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -80,6 +82,14 @@ pub struct RunArgs {
     /// Disables the labels in the traces.
     #[arg(long, default_value_t = false)]
     disable_labels: bool,
+
+    /// Use debug_traceTransaction to fetch the prestate instead of replaying the block.
+    ///
+    /// This is significantly faster than replaying all previous transactions in the block, but
+    /// requires the node to expose the `debug_` namespace (most public RPCs don't). If the call
+    /// or response can't be used, cast silently falls back to replaying the block.
+    #[arg(long, default_value_t = false)]
+    prestate_tracer: bool,
 
     /// Label addresses in the trace.
     ///
@@ -126,14 +136,19 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            self.run_with_evm::<TempoEvmNetwork>().await
-        } else if evm_opts.networks.is_monad() {
-            self.run_with_evm::<MonadEvmNetwork>().await
-        } else if evm_opts.networks.is_optimism() {
-            self.run_with_evm::<OpEvmNetwork>().await
-        } else {
-            self.run_with_evm::<EthEvmNetwork>().await
+            return self.run_with_evm::<TempoEvmNetwork>().await;
         }
+
+        if evm_opts.networks.is_monad() {
+            return self.run_with_evm::<MonadEvmNetwork>().await;
+        }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_evm::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_evm::<EthEvmNetwork>().await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
@@ -189,6 +204,7 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
+        let mut resolved_tempo_hardfork = chain.is_tempo().then(|| config.evm_spec_id());
 
         evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
 
@@ -212,6 +228,9 @@ impl RunArgs {
                     evm_env.cfg_env.chain_id,
                     block.header().timestamp(),
                 ) {
+                    if let FoundryHardfork::Tempo(hardfork) = hardfork {
+                        resolved_tempo_hardfork = Some(hardfork);
+                    }
                     evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
                 } else if block.header().excess_blob_gas().is_some() {
                     // TODO: add glamsterdam header field checks in the future
@@ -245,11 +264,41 @@ impl RunArgs {
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
-        // Set the state to the moment right before the transaction
-        if !self.quick {
-            if !shell::is_json() {
-                sh_println!("Executing previous transactions from the block.")?;
+        // Set the state to the moment right before the transaction.
+        //
+        // When `--prestate-tracer` is set, opportunistically try to fetch the prestate directly
+        // via `debug_traceTransaction` (much faster than replaying the block). This requires the
+        // `debug_` namespace, which most nodes don't expose, so it is opt-in and silently falls
+        // back to replaying previous transactions in the block if the call or parsing fails.
+        let mut prestate_applied = false;
+        if !self.quick && self.prestate_tracer {
+            trace!(?tx_hash, "attempting to fetch prestate via debug_traceTransaction");
+            match provider
+                .debug_trace_transaction(
+                    tx_hash,
+                    GethDebugTracingOptions::prestate_tracer(PreStateConfig::default()),
+                )
+                .await
+            {
+                Ok(trace) => match trace.try_into_pre_state_frame() {
+                    Ok(pre_state_frame) => {
+                        executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
+                        prestate_applied = true;
+                        trace!("prestate trace applied successfully, skipping block replay");
+                    }
+                    Err(err) => {
+                        trace!(%err, "failed to parse prestate trace response");
+                    }
+                },
+                Err(err) => {
+                    trace!(?err, "debug_traceTransaction failed, falling back to block replay");
+                }
             }
+        }
+
+        // Fall back to replaying previous transactions if prestate trace wasn't applied.
+        if !self.quick && !prestate_applied {
+            sh_status!("Executing previous transactions from the block.")?;
 
             if let Some(block) = block {
                 let pb = init_progress(block.transactions().len() as u64, "tx");
@@ -346,6 +395,7 @@ impl RunArgs {
             decode_internal,
             disable_labels,
             self.trace_depth,
+            resolved_tempo_hardfork,
         )
         .await?;
 
@@ -356,8 +406,8 @@ impl RunArgs {
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,
-) -> Result<HashMap<Address, Bytes>> {
-    let mut contracts_bytecode = HashMap::default();
+) -> Result<AddressHashMap<Bytes>> {
+    let mut contracts_bytecode = AddressHashMap::default();
     if let Some(ref traces) = result.traces {
         contracts_bytecode.extend(gather_trace_addresses(traces).filter_map(|addr| {
             // All relevant bytecodes should already be cached in the executor.

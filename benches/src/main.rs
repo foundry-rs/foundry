@@ -2,7 +2,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
     BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details,
+    get_forge_version_details, install_local_version,
     results::{BenchmarkResults, HyperfineResult},
     switch_foundry_version,
 };
@@ -39,9 +39,15 @@ struct Cli {
     #[clap(long, default_value = ".")]
     output_dir: PathBuf,
 
-    /// Name of the output file (default: LATEST.md)
-    #[clap(long, default_value = "LATEST.md")]
-    output_file: String,
+    /// Name of the output file. Defaults to LATEST.md unless --json-output is set
+    /// without this flag, in which case no Markdown is written.
+    #[clap(long)]
+    output_file: Option<String>,
+
+    /// Filename for a flat JSON summary (benchmark/repo -> mean_seconds).
+    /// Resolved relative to --output-dir. Used by the nightly regression comparison script.
+    #[clap(long)]
+    json_output: Option<PathBuf>,
 
     /// Run only specific benchmarks (comma-separated:
     /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
@@ -216,12 +222,28 @@ fn main() -> Result<()> {
         }
     }
 
-    // Generate markdown report
-    sh_println!("📝 Generating report...");
-    let markdown = results.generate_markdown(&versions, &repos);
-    let output_path = cli.output_dir.join(cli.output_file);
-    fs::write(&output_path, markdown).wrap_err("Failed to write output file")?;
-    sh_println!("✅ Report written to: {}", output_path.display());
+    // Write Markdown report unless --json-output is set without an explicit --output-file.
+    let md_filename = match cli.output_file {
+        Some(f) => Some(f),
+        None if cli.json_output.is_none() => Some("LATEST.md".to_string()),
+        None => None,
+    };
+    if let Some(filename) = md_filename {
+        sh_println!("📝 Generating report...");
+        let markdown = results.generate_markdown(&versions, &repos);
+        let output_path = cli.output_dir.join(filename);
+        fs::write(&output_path, markdown).wrap_err("Failed to write output file")?;
+        sh_println!("✅ Report written to: {}", output_path.display());
+    }
+
+    if let Some(json_filename) = cli.json_output {
+        let summary = results.generate_json_summary(&versions);
+        let json =
+            serde_json::to_string_pretty(&summary).wrap_err("Failed to serialize JSON summary")?;
+        let json_path = cli.output_dir.join(json_filename);
+        fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
+        sh_println!("✅ JSON summary written to: {}", json_path.display());
+    }
 
     Ok(())
 }
@@ -232,6 +254,11 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
 
     for version in versions {
         sh_println!("Installing {version}...");
+
+        if version == "local" {
+            install_local_version()?;
+            continue;
+        }
 
         let status = Command::new("foundryup")
             .args(["--install", version, "--force"])

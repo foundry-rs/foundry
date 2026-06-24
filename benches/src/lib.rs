@@ -299,7 +299,7 @@ impl BenchmarkProject {
         output.results.into_iter().next().ok_or_else(|| eyre::eyre!("No results from hyperfine"))
     }
 
-    /// Benchmark forge test
+    /// Benchmark forge test without isolation.
     pub fn bench_forge_test(
         &self,
         version: &str,
@@ -310,7 +310,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_test",
             version,
-            &self.cmd("forge test"),
+            &self.cmd("FOUNDRY_ISOLATE=false forge test"),
             runs,
             Some("forge build"),
             None,
@@ -358,7 +358,7 @@ impl BenchmarkProject {
         )
     }
 
-    /// Benchmark forge fuzz tests
+    /// Benchmark forge fuzz tests without isolation.
     pub fn bench_forge_fuzz_test(
         &self,
         version: &str,
@@ -369,7 +369,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_fuzz_test",
             version,
-            &self.cmd(r#"forge test --match-test "test[^(]*\([^)]+\)""#),
+            &self.cmd(r#"FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#),
             runs,
             Some("forge build"),
             None,
@@ -444,9 +444,20 @@ impl BenchmarkProject {
     }
 }
 
-/// Switch to a specific foundry version
+/// The workspace root, embedded at compile time.
+/// `benches/` is one level below the workspace root.
+const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+
+/// Switch to a specific foundry version.
+///
+/// The special keyword `local` builds and activates the current workspace via
+/// `foundryup --path <workspace>` instead of `foundryup --use`.
 #[allow(unused_must_use)]
 pub fn switch_foundry_version(version: &str) -> Result<()> {
+    if version == "local" {
+        return install_local_version();
+    }
+
     let output = Command::new("foundryup")
         .args(["--use", version])
         .output()
@@ -466,6 +477,27 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     }
 
     sh_println!("  Successfully switched to version: {version}");
+    Ok(())
+}
+
+/// Build and activate the local workspace via `foundryup --path`.
+/// Uses cargo's incremental compilation so re-runs are fast.
+#[allow(unused_must_use)]
+pub fn install_local_version() -> Result<()> {
+    let workspace =
+        std::fs::canonicalize(WORKSPACE_ROOT).wrap_err("Failed to resolve workspace root")?;
+    sh_println!("  Building local workspace at {}", workspace.display());
+
+    let status = Command::new("foundryup")
+        .args(["--path", workspace.to_str().unwrap()])
+        .status()
+        .wrap_err("Failed to run foundryup --path")?;
+
+    if !status.success() {
+        eyre::bail!("foundryup --path failed for local workspace");
+    }
+
+    sh_println!("  Successfully activated local build");
     Ok(())
 }
 

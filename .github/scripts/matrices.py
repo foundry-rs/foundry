@@ -65,17 +65,19 @@ class Expanded:
         self.partition = partition
 
 
-profile = os.environ.get("PROFILE")
 is_pr = os.environ.get("EVENT_NAME") == "pull_request"
 t_linux_x86 = Target(
-    "ubuntu-latest", "x86_64-unknown-linux-gnu", "linux-amd64"
+    "depot-ubuntu-latest-16", "x86_64-unknown-linux-gnu", "linux-amd64"
 )
 t_linux_arm = Target(
-    "ubuntu-24.04-arm", "aarch64-unknown-linux-gnu", "linux-aarch64"
+    "depot-ubuntu-latest-arm-16", "aarch64-unknown-linux-gnu", "linux-aarch64"
 )
-t_macos = Target("macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
-t_windows = Target("windows-latest", "x86_64-pc-windows-msvc", "windows-amd64")
-targets = [t_linux_x86] if is_pr else [t_linux_x86, t_linux_arm, t_macos, t_windows]
+t_macos = Target("depot-macos-latest", "aarch64-apple-darwin", "macosx-aarch64")
+t_windows = Target("depot-windows-latest-16", "x86_64-pc-windows-msvc", "windows-amd64")
+if is_pr:
+    targets = [t_linux_x86]
+else:
+    targets = [t_linux_x86, t_linux_arm, t_macos, t_windows]
 
 config = [
     Case(
@@ -112,8 +114,6 @@ def main():
                     name += f" ({s})"
                     flags += f" --partition count:{s}"
 
-                if profile == "isolate":
-                    flags += " --features=isolate-by-default"
                 name += os_str
 
                 flags += " --no-fail-fast"

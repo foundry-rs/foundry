@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry-rs.github.io/schemas/symbolic-counterexample.v1.schema.json",
+  "title": "Foundry symbolic counterexample artifact",
+  "description": "Stable replayable counterexample artifact emitted for forge symbolic test results.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "schema",
+    "kind",
+    "test",
+    "replay",
+    "replay_semantics",
+    "bounds",
+    "solver",
+    "assumptions",
+    "call_trace",
+    "calls"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "schema": {
+      "type": "string",
+      "const": "foundry:symbolic.counterexample@v1"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["single_call", "sequence"]
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "test"],
+      "properties": {
+        "contract": { "type": "string" },
+        "test": { "type": "string" }
+      }
+    },
+    "replay": {
+      "$ref": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/replay"
+    },
+    "replay_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fail_on_revert"],
+      "properties": {
+        "fail_on_revert": {
+          "type": "boolean",
+          "description": "Whether invariant sequence replay treats target-call reverts as failures."
+        }
+      }
+    },
+    "bounds": {
+      "$ref": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/bounds"
+    },
+    "solver": {
+      "$ref": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/solver"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "$ref": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/assumption"
+      }
+    },
+    "call_trace": {
+      "$ref": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/call_trace"
+    },
+    "calls": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/call" }
+    }
+  },
+  "$defs": {
+    "call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "warp",
+        "roll",
+        "sender",
+        "target",
+        "calldata",
+        "value",
+        "contract_name",
+        "function_name",
+        "signature",
+        "args",
+        "raw_args"
+      ],
+      "properties": {
+        "warp": {
+          "type": ["string", "null"],
+          "pattern": "^0x(0|[1-9a-fA-F][0-9a-fA-F]*)$"
+        },
+        "roll": {
+          "type": ["string", "null"],
+          "pattern": "^0x(0|[1-9a-fA-F][0-9a-fA-F]*)$"
+        },
+        "sender": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{40}$"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{40}$"
+        },
+        "calldata": {
+          "type": "string",
+          "pattern": "^0x([0-9a-fA-F]{2})*$"
+        },
+        "value": {
+          "type": ["string", "null"],
+          "pattern": "^0x(0|[1-9a-fA-F][0-9a-fA-F]*)$"
+        },
+        "contract_name": {
+          "type": ["string", "null"]
+        },
+        "function_name": {
+          "type": ["string", "null"]
+        },
+        "signature": {
+          "type": ["string", "null"]
+        },
+        "args": {
+          "type": ["string", "null"]
+        },
+        "raw_args": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

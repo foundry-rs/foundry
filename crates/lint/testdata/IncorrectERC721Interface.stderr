@@ -4,7 +4,7 @@ note[interface-naming]: interface names should be prefixed with 'I'
 LL │ interface ERC721 {
    │           ━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#interface-naming
+   ╰ help: https://getfoundry.sh/forge/linting/interface-naming
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -12,7 +12,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC721 {}
    │           ━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -20,7 +20,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface ERC721 {
    │           ━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -28,7 +28,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC721Incorrect is IERC721 {
    │           ━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -36,7 +36,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC721Correct is IERC721 {
    │           ━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -44,7 +44,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC721NamedCorrect {
    │           ━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -52,7 +52,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface INotERC721 {
    │           ━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -60,7 +60,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function balanceOf(address owner) external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -68,7 +68,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function ownerOf(uint256 tokenId) external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -76,7 +76,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function balanceOf(address owner) external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -84,7 +84,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function ownerOf(uint256 tokenId) external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -92,7 +92,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -100,7 +100,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function safeTransferFrom(address from, address to, uint256 tokenId) external returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -108,7 +108,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function transferFrom(address from, address to, uint256 tokenId) external returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -116,7 +116,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function approve(address to, uint256 tokenId) external returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -124,7 +124,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function setApprovalForAll(address operator, bool approved) external returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -132,7 +132,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function getApproved(uint256 tokenId) external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -140,7 +140,7 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function isApprovedForAll(address owner, address operator) external view returns (address);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
@@ -148,5 +148,5 @@ warning[incorrect-erc721-interface]: incorrect ERC721 function interface
 LL │     function supportsInterface(bytes4 interfaceId) external view returns (uint256);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc721-interface
 

@@ -61,6 +61,8 @@ pub use script::{Wallets, WalletsInner};
 
 mod string;
 
+mod tempo;
+
 mod test;
 pub use test::expect::ExpectedCallTracker;
 

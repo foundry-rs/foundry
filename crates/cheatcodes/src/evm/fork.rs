@@ -228,6 +228,23 @@ impl Cheatcode for rpc_1Call {
     }
 }
 
+impl Cheatcode for rpcJson_0Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { method, params } = self;
+        let url =
+            ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
+        rpc_json_call(&url, method, params)
+    }
+}
+
+impl Cheatcode for rpcJson_1Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { urlOrAlias, method, params } = self;
+        let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
+        rpc_json_call(&url, method, params)
+    }
+}
+
 impl Cheatcode for eth_getLogsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { fromBlock, toBlock, target, topics } = self;
@@ -417,11 +434,7 @@ fn persist_caller<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
 fn rpc_call(url: &str, method: &str, params: &str) -> Result {
-    let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
-    let params_json: serde_json::Value = serde_json::from_str(params)?;
-    let result =
-        foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
-            .map_err(|err| fmt_err!("{method:?}: {err}"))?;
+    let result = rpc_result(url, method, params)?;
     let result_as_tokens = convert_to_bytes(
         &json_value_to_token(&result, None)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?,
@@ -432,6 +445,19 @@ fn rpc_call(url: &str, method: &str, params: &str) -> Result {
         _ => result_as_tokens.abi_encode(),
     };
     Ok(DynSolValue::Bytes(payload).abi_encode())
+}
+
+/// Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.
+fn rpc_json_call(url: &str, method: &str, params: &str) -> Result {
+    let result = rpc_result(url, method, params)?;
+    Ok(serde_json::to_string(&result)?.abi_encode())
+}
+
+fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value> {
+    let provider = ProviderBuilder::<AnyNetwork>::new(url).build()?;
+    let params_json: serde_json::Value = serde_json::from_str(params)?;
+    foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
+        .map_err(|err| fmt_err!("{method:?}: {err}"))
 }
 
 /// Convert fixed bytes and address values to bytes in order to prevent encoding issues.

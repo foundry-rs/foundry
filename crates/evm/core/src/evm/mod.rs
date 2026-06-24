@@ -11,14 +11,11 @@ use alloy_evm::{
 };
 use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{Ethereum, Network};
-use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
-use op_alloy_network::Optimism;
-use op_revm::OpHaltReason;
 use revm::{
     Database,
     context::{
@@ -38,11 +35,13 @@ use tempo_revm::TempoHaltReason;
 
 pub mod eth;
 pub mod monad;
+#[cfg(feature = "optimism")]
 pub mod op;
 pub mod tempo;
 
 pub use eth::*;
 pub use monad::*;
+#[cfg(feature = "optimism")]
 pub use op::*;
 pub use tempo::*;
 
@@ -83,13 +82,6 @@ pub struct MonadEvmNetwork;
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = MonadEvmFactory;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct OpEvmNetwork;
-impl FoundryEvmNetwork for OpEvmNetwork {
-    type Network = Optimism;
-    type EvmFactory = OpEvmFactory;
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
@@ -245,6 +237,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
         reservoir: inputs.reservoir(),
         is_static: false,
         return_memory_offset: 0..0,
+        charged_new_account_state_gas: false,
     })
 }
 
@@ -256,15 +249,6 @@ pub trait IntoInstructionResult {
 impl IntoInstructionResult for HaltReason {
     fn into_instruction_result(self) -> InstructionResult {
         self.into()
-    }
-}
-
-impl IntoInstructionResult for OpHaltReason {
-    fn into_instruction_result(self) -> InstructionResult {
-        match self {
-            Self::Base(eth) => eth.into(),
-            Self::FailedDeposit => InstructionResult::Stop,
-        }
     }
 }
 

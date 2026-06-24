@@ -2,13 +2,14 @@ use crate::{
     opts::{Chisel, ChiselSubcommand},
     prelude::{ChiselCommand, ChiselDispatcher, SolidityHelper},
 };
-use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork},
     opts::EvmOpts,
 };
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
@@ -17,11 +18,15 @@ use yansi::Paint;
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::machine::check_machine();
+    foundry_cli::opts::GlobalArgs::check_introspect::<Chisel>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
 
-    let args = Chisel::parse();
+    setup()?;
+
+    let args = foundry_cli::parse_or_exit::<Chisel>();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))
 }
@@ -54,16 +59,17 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     evm_opts.infer_network_from_fork().await;
     config.networks = evm_opts.networks;
 
-    if evm_opts.networks.is_optimism() {
-        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
+    if evm_opts.networks.is_tempo() {
+        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
     }
 
     if evm_opts.networks.is_monad() {
         return run_command_with_network::<MonadEvmNetwork>(args, config, evm_opts).await;
     }
 
-    if evm_opts.networks.is_tempo() {
-        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
+    #[cfg(feature = "optimism")]
+    if evm_opts.networks.is_optimism() {
+        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
     }
 
     run_command_with_network::<EthEvmNetwork>(args, config, evm_opts).await
@@ -106,7 +112,8 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
     // REPL loop.
     let mut interrupt = false;
     loop {
-        match rl.readline(&dispatcher.get_prompt()) {
+        let prompt = dispatcher.get_prompt();
+        match rl.readline(prompt.as_ref()) {
             Ok(line) => {
                 debug!("dispatching next line: {line}");
                 // Clear interrupt flag.
@@ -213,5 +220,39 @@ mod tests {
     #[test]
     fn verify_cli() {
         Chisel::command().debug_assert();
+    }
+
+    /// Every `command_id` exposed by `chisel --introspect` MUST be unique.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+        let cmd = Chisel::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let dups = duplicate_command_ids(&doc);
+        assert!(dups.is_empty(), "duplicate chisel command_ids: {dups:?}");
+    }
+
+    /// `chisel --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        use foundry_cli::introspect::{
+            CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, render_introspect_document,
+        };
+        let cmd = Chisel::command();
+        let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "chisel");
+    }
+
+    /// Capability self-consistency for every `chisel` command.
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, capability_violations};
+        let cmd = Chisel::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let v = capability_violations(&doc);
+        assert!(v.is_empty(), "chisel capability violations: {v:?}");
     }
 }

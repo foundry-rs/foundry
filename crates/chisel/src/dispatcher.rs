@@ -13,8 +13,9 @@ use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
 use foundry_config::{Config, RpcEndpointUrl};
 use foundry_evm::{
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
+    hardforks::TempoHardfork,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
@@ -49,7 +50,7 @@ pub const CHISEL_CHAR: &str = "⚒️";
 
 /// Chisel input dispatcher
 #[derive(Debug)]
-pub struct ChiselDispatcher<FEN: FoundryEvmNetwork = EthEvmNetwork> {
+pub struct ChiselDispatcher<FEN: FoundryEvmNetwork> {
     pub session: ChiselSession<FEN>,
     pub helper: SolidityHelper,
 }
@@ -160,6 +161,8 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
         let chain_id = session_config.evm_opts.get_remote_chain_id().await;
+        let is_tempo = session_config.evm_opts.networks.is_tempo()
+            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
 
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
@@ -167,6 +170,9 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
                 &session_config.foundry_config,
             )?)
             .with_chain_id(chain_id.map(|c| c.id()))
+            .with_tempo_hardfork(
+                is_tempo.then(|| session_config.foundry_config.evm_spec_id::<TempoHardfork>()),
+            )
             .build();
 
         let mut identifier =

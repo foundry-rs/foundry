@@ -38,6 +38,13 @@ pub fn is_quiet() -> bool {
     Shell::get().output_mode().is_quiet()
 }
 
+/// Returns whether stderr is a terminal (tty).
+///
+/// Used to gate progress/spinner output that only makes sense for interactive use.
+pub fn is_err_tty() -> bool {
+    Shell::get().is_err_tty()
+}
+
 /// Returns whether the output format is [`OutputFormat::Json`].
 pub fn is_json() -> bool {
     Shell::get().is_json()
@@ -150,6 +157,8 @@ enum ShellOut {
     },
     /// A write object that ignores all output.
     Empty(std::io::Empty),
+    /// Captures stdout and stderr into in-memory buffers. Intended for tests.
+    Captured { stdout: Vec<u8>, stderr: Vec<u8> },
 }
 
 /// Whether messages should use color output.
@@ -211,6 +220,37 @@ impl Shell {
             output_mode: OutputMode::Quiet,
             verbosity: 0,
             needs_clear: AtomicBool::new(false),
+        }
+    }
+
+    /// Creates a shell that captures stdout and stderr into in-memory buffers.
+    ///
+    /// Intended for tests that want to assert how a piece of code routes output
+    /// between stdout and stderr. Use [`Shell::captured_stdout`] and
+    /// [`Shell::captured_stderr`] to read the buffers back.
+    pub const fn captured() -> Self {
+        Self {
+            output: ShellOut::Captured { stdout: Vec::new(), stderr: Vec::new() },
+            output_format: OutputFormat::Text,
+            output_mode: OutputMode::Normal,
+            verbosity: 0,
+            needs_clear: AtomicBool::new(false),
+        }
+    }
+
+    /// Returns the captured stdout buffer, if this shell was created via [`Shell::captured`].
+    pub fn captured_stdout(&self) -> Option<&[u8]> {
+        match &self.output {
+            ShellOut::Captured { stdout, .. } => Some(stdout),
+            _ => None,
+        }
+    }
+
+    /// Returns the captured stderr buffer, if this shell was created via [`Shell::captured`].
+    pub fn captured_stderr(&self) -> Option<&[u8]> {
+        match &self.output {
+            ShellOut::Captured { stderr, .. } => Some(stderr),
+            _ => None,
         }
     }
 
@@ -283,6 +323,11 @@ impl Shell {
         self.verbosity = verbosity;
     }
 
+    /// Sets the output mode.
+    pub const fn set_output_mode(&mut self, output_mode: OutputMode) {
+        self.output_mode = output_mode;
+    }
+
     /// Gets the current color choice.
     ///
     /// If we are not using a color stream, this will always return `Never`, even if the color
@@ -290,7 +335,7 @@ impl Shell {
     pub const fn color_choice(&self) -> ColorChoice {
         match self.output {
             ShellOut::Stream { color_choice, .. } => color_choice,
-            ShellOut::Empty(_) => ColorChoice::Never,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => ColorChoice::Never,
         }
     }
 
@@ -298,7 +343,7 @@ impl Shell {
     pub const fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
-            ShellOut::Empty(_) => false,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
         }
     }
 
@@ -306,7 +351,7 @@ impl Shell {
     pub fn err_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stderr, .. } => supports_color(stderr.current_choice()),
-            ShellOut::Empty(_) => false,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
         }
     }
 
@@ -314,7 +359,7 @@ impl Shell {
     pub fn out_supports_color(&self) -> bool {
         match &self.output {
             ShellOut::Stream { stdout, .. } => supports_color(stdout.current_choice()),
-            ShellOut::Empty(_) => false,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
         }
     }
 
@@ -370,6 +415,10 @@ impl Shell {
     /// Write a styled fragment with the default color. Use the [`sh_print!`] macro instead.
     ///
     /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
+    //
+    // TODO: stdout is the canonical machine-readable result of a command and should NOT be
+    // suppressed by `--quiet` (see `docs/dev/output-channels.md`). Flip this once the major
+    // prose `sh_println!` call sites in forge/script have been migrated to `sh_status!`.
     pub fn print_out(&mut self, fragment: impl fmt::Display) -> Result<()> {
         match self.output_mode {
             OutputMode::Quiet => Ok(()),
@@ -450,6 +499,7 @@ impl ShellOut {
         match self {
             Self::Stream { stdout, .. } => stdout,
             Self::Empty(e) => e,
+            Self::Captured { stdout, .. } => stdout,
         }
     }
 
@@ -458,6 +508,7 @@ impl ShellOut {
         match self {
             Self::Stream { stderr, .. } => stderr,
             Self::Empty(e) => e,
+            Self::Captured { stderr, .. } => stderr,
         }
     }
 

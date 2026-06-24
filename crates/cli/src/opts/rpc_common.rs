@@ -13,6 +13,15 @@ use serde::Serialize;
 use std::borrow::Cow;
 
 /// Common RPC-related options shared across CLI commands.
+///
+/// This struct holds fields that both [`super::RpcOpts`] (cast) and
+/// [`super::EvmArgs`] (forge/script) need, eliminating duplication and
+/// making the two structs composable.
+///
+/// Note: `ETH_RPC_URL` is intentionally **not** bound here as a clap env
+/// fallback; otherwise it would be inherited by `EvmArgs` and silently
+/// fork all `forge test` runs. Cast resolves `ETH_RPC_URL` explicitly
+/// at the call site (see [`super::RpcOpts::url`]).
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct RpcCommonOpts {
     /// The RPC endpoint.

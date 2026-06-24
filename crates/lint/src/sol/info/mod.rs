@@ -3,6 +3,12 @@ use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 mod mixed_case;
 use mixed_case::{MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE};
 
+mod boolean_cst;
+use boolean_cst::BOOLEAN_CST;
+
+mod boolean_equal;
+use boolean_equal::BOOLEAN_EQUAL;
+
 mod pascal_case;
 use pascal_case::PASCAL_CASE_STRUCT;
 
@@ -21,13 +27,33 @@ use unsafe_cheatcodes::UNSAFE_CHEATCODE_USAGE;
 mod multi_contract_file;
 use multi_contract_file::MULTI_CONTRACT_FILE;
 
-mod block_timestamp;
-use block_timestamp::BLOCK_TIMESTAMP;
-
 mod interface_naming;
 use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
 
+mod too_many_digits;
+use too_many_digits::TOO_MANY_DIGITS;
+
+mod pragma_directive;
+use pragma_directive::PRAGMA_INCONSISTENT;
+
+mod inline_assembly;
+use inline_assembly::INLINE_ASSEMBLY;
+
+mod low_level_calls;
+use low_level_calls::LOW_LEVEL_CALLS;
+
+mod redundant_base_constructor_call;
+use redundant_base_constructor_call::REDUNDANT_BASE_CONSTRUCTOR_CALL;
+
+mod missing_inheritance;
+use missing_inheritance::MISSING_INHERITANCE;
+
+mod event_fields;
+use event_fields::EVENT_FIELDS;
+
 register_lints!(
+    (BooleanCst, early, (BOOLEAN_CST)),
+    (BooleanEqual, early, (BOOLEAN_EQUAL)),
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
     (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
     (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
@@ -37,5 +63,11 @@ register_lints!(
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
-    (BlockTimestamp, early, (BLOCK_TIMESTAMP)),
+    (TooManyDigits, early, (TOO_MANY_DIGITS)),
+    (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
+    (InlineAssembly, early, (INLINE_ASSEMBLY)),
+    (LowLevelCalls, early, (LOW_LEVEL_CALLS)),
+    (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
+    (MissingInheritance, project, (MISSING_INHERITANCE)),
+    (EventFields, early, (EVENT_FIELDS)),
 );

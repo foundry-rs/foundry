@@ -19,7 +19,7 @@ foundry-evm-hardforks.workspace = true
 alloy-chains.workspace = true
 alloy-eips.workspace = true
 alloy-evm.workspace = true
-alloy-op-hardforks.workspace = true
+alloy-op-hardforks = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = [
     "serde",
     "getrandom",
@@ -42,6 +42,11 @@ monad-revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 serde.workspace = true
+tempo-contracts.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["dep:alloy-op-hardforks", "foundry-evm-hardforks/optimism"]

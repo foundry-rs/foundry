@@ -142,7 +142,9 @@ impl StorageArgs {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_key = self.etherscan.key();
         let client = match config.get_etherscan_config_with_chain(Some(chain))? {
-            Some(etherscan_config) => etherscan_config.into_client()?,
+            Some(etherscan_config) => {
+                etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?
+            }
             None => {
                 let api_key = etherscan_api_key.ok_or_else(|| {
                     eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")

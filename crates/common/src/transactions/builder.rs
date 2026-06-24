@@ -9,11 +9,13 @@ use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
+#[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
+#[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionRequest;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_primitives::{
-    TempoSignature,
+    TempoSignature, TempoTxType,
     transaction::{Call, KeychainSignature, PrimitiveSignature, SignedKeyAuthorization},
 };
 
@@ -147,6 +149,21 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
         None
     }
 
+    /// Gets top-level Tempo calls for local fee-token inference.
+    fn tempo_calls(&self) -> Vec<(TxKind, &[u8])> {
+        Vec::new()
+    }
+
+    /// Returns true when [`Self::tempo_calls`] came from a Tempo AA `calls` list.
+    fn has_tempo_call_list(&self) -> bool {
+        false
+    }
+
+    /// Returns true when this request will be built as a Tempo AA transaction.
+    fn is_tempo_aa(&self) -> bool {
+        false
+    }
+
     /// Set the fee token for a Tempo transaction.
     fn set_fee_token(&mut self, _fee_token: Address) {}
 
@@ -243,6 +260,24 @@ pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Embeds a [`SignedKeyAuthorization`] in the transaction body, provisioning the access key
     /// on-chain as part of this transaction.
     fn set_key_authorization(&mut self, _key_authorization: SignedKeyAuthorization) {}
+
+    /// Embeds key authorization before gas estimation/signing if the access key is not yet
+    /// provisioned on-chain.
+    ///
+    /// This mirrors the mutation performed by [`Self::sign_with_access_key`], but makes the final
+    /// transaction body available before fee-payer sponsor digests are computed.
+    fn prepare_access_key_authorization<'a>(
+        &'a mut self,
+        _provider: &'a impl Provider<N>,
+        _wallet_address: Address,
+        _key_address: Address,
+        _key_authorization: Option<&'a SignedKeyAuthorization>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a
+    where
+        Self: Send,
+    {
+        async { Ok(()) }
+    }
 
     /// Converts a CREATE transaction into an AA-compatible call entry.
     ///
@@ -355,6 +390,7 @@ impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::Transact
     }
 }
 
+#[cfg(feature = "optimism")]
 impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.as_mut().gas = None;
@@ -384,6 +420,24 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
 
     fn fee_token(&self) -> Option<Address> {
         self.fee_token
+    }
+
+    fn tempo_calls(&self) -> Vec<(TxKind, &[u8])> {
+        self.calls
+            .iter()
+            .map(|call| (call.to, call.input.as_ref()))
+            .chain(self.inner.to.map(|to| {
+                (to, self.inner.input.input().map_or(&[] as &[u8], |input| input.as_ref()))
+            }))
+            .collect()
+    }
+
+    fn has_tempo_call_list(&self) -> bool {
+        !self.calls.is_empty()
+    }
+
+    fn is_tempo_aa(&self) -> bool {
+        NetworkTransactionBuilder::<TempoNetwork>::output_tx_type(self) == TempoTxType::AA
     }
 
     fn set_fee_token(&mut self, fee_token: Address) {
@@ -439,6 +493,35 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         self.key_authorization = Some(key_authorization);
     }
 
+    fn prepare_access_key_authorization<'a>(
+        &'a mut self,
+        provider: &'a impl Provider<TempoNetwork>,
+        wallet_address: Address,
+        key_address: Address,
+        key_authorization: Option<&'a SignedKeyAuthorization>,
+    ) -> impl Future<Output = Result<()>> + Send + 'a
+    where
+        Self: Send,
+    {
+        let auth = key_authorization.cloned();
+
+        async move {
+            if let Some(auth) = auth {
+                let is_provisioned = provider
+                    .get_keychain_key(wallet_address, key_address)
+                    .await
+                    .map(|info| info.keyId != Address::ZERO)
+                    .unwrap_or(false);
+
+                if !is_provisioned {
+                    self.set_key_authorization(auth);
+                }
+            }
+
+            Ok(())
+        }
+    }
+
     fn convert_create_to_call(&mut self) {
         if self.calls.is_empty() && self.inner.to.is_some_and(|to| to.is_create()) {
             let input = self.inner.input.input().cloned().unwrap_or_default();
@@ -473,7 +556,12 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
                 let is_provisioned =
                     provisioning_fut.await.map(|info| info.keyId != Address::ZERO).unwrap_or(false);
 
-                if !is_provisioned {
+                if !is_provisioned && self.key_authorization.is_none() {
+                    if self.fee_payer_signature.is_some() {
+                        eyre::bail!(
+                            "cannot add Tempo key authorization after fee payer signature was attached"
+                        );
+                    }
                     self.set_key_authorization(auth);
                 }
             }

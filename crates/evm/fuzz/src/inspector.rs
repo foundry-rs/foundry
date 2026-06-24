@@ -1,11 +1,26 @@
-use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
-use foundry_common::mapping_slots::step as mapping_step;
+use crate::invariant::RandomCallGenerator;
+use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
+use foundry_common::mapping_slots::{MappingSlots, step as mapping_step};
 use foundry_evm_core::constants::{CHEATCODE_ADDRESS, MONAD_CHEATCODE_ADDRESS};
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
     interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
 };
+
+/// A sub-call observed by the [`Fuzzer`] inspector.
+///
+/// `depth` is 1-indexed relative to the top-level call: depth 1 is a direct call
+/// from the top-level callee, depth 2 is a sub-call of that call, and so on. The
+/// top-level call itself is never recorded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObservedCall {
+    pub depth: u32,
+    pub caller: Address,
+    pub target: Address,
+    pub calldata: Bytes,
+    pub value: Option<U256>,
+}
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -14,8 +29,18 @@ pub struct Fuzzer {
     pub collect: bool,
     /// Given a strategy, it generates a random call.
     pub call_generator: Option<RandomCallGenerator>,
-    /// If `collect` is set, we store the collected values in this fuzz dictionary.
-    pub fuzz_state: EvmFuzzState,
+    /// If `collect` is set, we store collected values until the invariant worker drains them.
+    pub collected_values: Vec<B256>,
+    /// Maximum number of stack words staged before the invariant worker drains them.
+    pub max_collected_values: usize,
+    /// Mapping accesses observed during execution, used for storage slot sampling.
+    pub mapping_slots: Option<AddressMap<MappingSlots>>,
+    /// Whether sub-calls should be buffered for later corpus seeding.
+    record_calls: bool,
+    /// Sub-calls observed since the last drain.
+    observed_calls: Vec<ObservedCall>,
+    /// Current EVM call depth. 0 means no active call, 1 means top-level call.
+    call_depth: u32,
 }
 
 impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
@@ -24,7 +49,7 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interp);
-            if let Some(mapping_slots) = &mut self.fuzz_state.mapping_slots {
+            if let Some(mapping_slots) = &mut self.mapping_slots {
                 mapping_step(mapping_slots, interp);
             }
         }
@@ -34,6 +59,17 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         // We don't want to override the very first call made to the test contract.
         if self.call_generator.is_some() && ecx.tx().caller() != inputs.caller {
             self.override_call(ecx, inputs);
+        }
+
+        self.call_depth = self.call_depth.saturating_add(1);
+        if self.should_record_observed_call(inputs.scheme) {
+            self.observed_calls.push(ObservedCall {
+                depth: self.call_depth - 1,
+                caller: inputs.caller,
+                target: inputs.target_address,
+                calldata: inputs.input.bytes(ecx),
+                value: inputs.transfer_value().filter(|value| !value.is_zero()),
+            });
         }
 
         // We only collect `stack` and `memory` data before and after calls.
@@ -54,14 +90,76 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
         self.collect = true;
+
+        self.call_depth = self.call_depth.saturating_sub(1);
     }
 }
 
 impl Fuzzer {
+    /// Constructs a new `Fuzzer` inspector.
+    pub const fn new(
+        max_collected_values: usize,
+        mapping_slots: Option<AddressMap<MappingSlots>>,
+    ) -> Self {
+        Self {
+            collect: true,
+            call_generator: None,
+            collected_values: Vec::new(),
+            max_collected_values,
+            mapping_slots,
+            record_calls: false,
+            observed_calls: Vec::new(),
+            call_depth: 0,
+        }
+    }
+
+    /// Enables or disables sub-call buffering.
+    pub const fn with_call_recording(mut self, record_calls: bool) -> Self {
+        self.record_calls = record_calls;
+        self
+    }
+
+    /// Enables or disables sub-call buffering on an existing inspector.
+    pub const fn set_call_recording(&mut self, record_calls: bool) {
+        self.record_calls = record_calls;
+    }
+
+    /// Returns the buffered sub-calls observed since the last drain.
+    pub fn take_observed_calls(&mut self) -> Vec<ObservedCall> {
+        std::mem::take(&mut self.observed_calls)
+    }
+
+    #[cfg(test)]
+    fn record_observed_call(
+        &mut self,
+        caller: Address,
+        target: Address,
+        calldata: Bytes,
+        value: Option<U256>,
+        scheme: CallScheme,
+    ) {
+        if self.should_record_observed_call(scheme) {
+            self.observed_calls.push(ObservedCall {
+                depth: self.call_depth - 1,
+                caller,
+                target,
+                calldata,
+                value,
+            });
+        }
+    }
+
+    #[inline]
+    const fn should_record_observed_call(&self, scheme: CallScheme) -> bool {
+        self.record_calls && self.call_depth > 1 && matches!(scheme, CallScheme::Call)
+    }
+
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
     fn collect_data(&mut self, interpreter: &Interpreter) {
-        self.fuzz_state.collect_values(interpreter.stack.data().iter().copied().map(Into::into));
+        let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
+        self.collected_values
+            .extend(interpreter.stack.data().iter().take(remaining).copied().map(B256::from));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {
@@ -129,7 +227,7 @@ impl Fuzzer {
         }
 
         // Replace the call with a reentrant callback
-        call.input = CallInput::Bytes(tx.call_details.calldata.0.into());
+        call.input = CallInput::Bytes(tx.call_details.calldata);
         call.caller = tx.sender;
         call.target_address = tx.call_details.target;
         call.bytecode_address = tx.call_details.target;
@@ -146,5 +244,95 @@ impl Fuzzer {
 
         // Track that we're inside an overridden call to avoid recursive overrides
         call_generator.override_depth = 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fuzzer(record_calls: bool) -> Fuzzer {
+        Fuzzer::new(16, None).with_call_recording(record_calls)
+    }
+
+    #[test]
+    fn observed_calls_are_disabled_by_default() {
+        let mut fuzzer = Fuzzer::new(16, None);
+        fuzzer.call_depth = 2;
+
+        fuzzer.record_observed_call(
+            Address::from([0xaa; 20]),
+            Address::from([0x11; 20]),
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            Some(U256::from(1)),
+            CallScheme::Call,
+        );
+
+        assert!(fuzzer.take_observed_calls().is_empty());
+    }
+
+    #[test]
+    fn observed_calls_skip_top_level_call() {
+        let mut fuzzer = fuzzer(true);
+        fuzzer.call_depth = 1;
+
+        fuzzer.record_observed_call(
+            Address::from([0xaa; 20]),
+            Address::from([0x11; 20]),
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            None,
+            CallScheme::Call,
+        );
+
+        assert!(fuzzer.take_observed_calls().is_empty());
+    }
+
+    #[test]
+    fn observed_calls_record_subcall_depth_target_calldata_and_value() {
+        let mut fuzzer = fuzzer(true);
+        let caller = Address::from([0x11; 20]);
+        let target = Address::from([0x22; 20]);
+        let calldata = Bytes::from_static(&[0xca, 0xfe, 0xba, 0xbe]);
+        let value = Some(U256::from(7));
+        fuzzer.call_depth = 3;
+
+        fuzzer.record_observed_call(caller, target, calldata.clone(), value, CallScheme::Call);
+
+        assert_eq!(
+            fuzzer.take_observed_calls(),
+            vec![ObservedCall { depth: 2, caller, target, calldata, value }]
+        );
+    }
+
+    #[test]
+    fn observed_calls_skip_non_call_schemes() {
+        let mut fuzzer = fuzzer(true);
+        fuzzer.call_depth = 2;
+
+        fuzzer.record_observed_call(
+            Address::from([0x11; 20]),
+            Address::from([0x22; 20]),
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            None,
+            CallScheme::DelegateCall,
+        );
+
+        assert!(fuzzer.take_observed_calls().is_empty());
+    }
+
+    #[test]
+    fn take_observed_calls_drains_buffer() {
+        let mut fuzzer = fuzzer(true);
+        fuzzer.call_depth = 2;
+        fuzzer.record_observed_call(
+            Address::from([0xaa; 20]),
+            Address::from([0x33; 20]),
+            Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
+            None,
+            CallScheme::Call,
+        );
+
+        assert_eq!(fuzzer.take_observed_calls().len(), 1);
+        assert!(fuzzer.take_observed_calls().is_empty());
     }
 }

@@ -16,6 +16,8 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    ExitCode, diagnostic,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
     utils::{LoadConfig, TraceResult, parse_ether_value},
 };
@@ -33,10 +35,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, TempoEvmNetwork},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -44,7 +48,27 @@ use foundry_evm::{
 };
 use foundry_wallets::WalletOpts;
 use regex::Regex;
+use serde::Serialize;
 use std::{str::FromStr, sync::LazyLock};
+
+/// Stable payload emitted in the `cast call` envelope under `--machine`.
+#[derive(Clone, Debug, Serialize)]
+pub struct CallData {
+    /// Raw `0x`-prefixed hex return data from `eth_call`.
+    pub raw: String,
+}
+
+/// Emit a typed `network.rpc.error` envelope and exit `Network (6)`.
+fn rpc_failure(err: &eyre::Report) -> ! {
+    let cause_chain: Vec<String> = err.chain().map(ToString::to_string).collect();
+    let message = cause_chain.first().cloned().unwrap_or_else(|| err.to_string());
+    let envelope = JsonEnvelope::error(
+        JsonMessage::error(diagnostic::network::RPC_ERROR, message)
+            .with_details(serde_json::json!({ "cause_chain": cause_chain })),
+    );
+    let _ = print_json(&envelope);
+    std::process::exit(ExitCode::Network.to_i32());
+}
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -217,25 +241,79 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
+        // Reject flags whose stdout shape or interactivity conflicts with the envelope contract.
+        if foundry_cli::is_machine() {
+            // `--interactive` and the hardware / cloud signer flags can trigger TTY prompts,
+            // hardware confirmations, or SDK auth output (e.g. AWS SSO device-auth URLs printed
+            // directly to stdout), all of which would corrupt the envelope.
+            let unsupported = [
+                ("--trace", self.trace),
+                ("--debug", self.debug),
+                ("--decode-internal", self.decode_internal),
+                ("--curl", self.rpc.curl),
+                ("--interactive", self.wallet.raw.interactive),
+                ("--ledger", self.wallet.ledger),
+                ("--trezor", self.wallet.trezor),
+                ("--aws", self.wallet.aws),
+                ("--gcp", self.wallet.gcp),
+            ]
+            .into_iter()
+            .filter_map(|(name, on)| on.then_some(name))
+            .collect::<Vec<_>>();
+            if !unsupported.is_empty() {
+                foundry_cli::machine::bail_machine_usage_with_details(
+                    format!(
+                        "`cast call` under `--machine` does not yet support {}; \
+                         run without `--machine` or omit those flags.",
+                        unsupported.join(", ")
+                    ),
+                    serde_json::json!({ "unsupported_flags": unsupported }),
+                );
+            }
+            // Unlocked keystore: prompts for the password on TTY at signer construction.
+            let has_keystore =
+                self.wallet.keystore_path.is_some() || self.wallet.keystore_account_name.is_some();
+            let has_noninteractive_password = self.wallet.keystore_password.is_some()
+                || self.wallet.keystore_password_file.is_some();
+            if has_keystore && !has_noninteractive_password {
+                foundry_cli::machine::bail_machine_usage(
+                    "`cast call --machine` requires `--password`, `--password-file`, or the \
+                     `ETH_PASSWORD` env var when `--keystore` / `--account` is set; an unlocked \
+                     keystore would prompt on stdin and corrupt the envelope.",
+                );
+            }
+        }
+
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
             return self.run_curl().await;
         }
-        if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoEvmNetwork>().await
-        } else {
-            let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-            let mut evm_opts = figment.extract::<EvmOpts>()?;
-            evm_opts.infer_network_from_fork().await;
 
-            if evm_opts.networks.is_monad() {
-                self.run_with_network::<MonadEvmNetwork>().await
-            } else if evm_opts.networks.is_optimism() {
-                self.run_with_network::<OpEvmNetwork>().await
-            } else {
-                self.run_with_network::<EthEvmNetwork>().await
-            }
+        if self.tx.tempo.is_tempo() {
+            return self.run_with_network::<TempoEvmNetwork>().await;
         }
+
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        if let Some(chain) = self.chain {
+            evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+        }
+        evm_opts.infer_network_from_fork().await;
+
+        if evm_opts.networks.is_tempo() {
+            return self.run_with_network::<TempoEvmNetwork>().await;
+        }
+
+        if evm_opts.networks.is_monad() {
+            return self.run_with_network::<MonadEvmNetwork>().await;
+        }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_network::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_network::<EthEvmNetwork>().await
     }
 
     pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>
@@ -271,7 +349,15 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
+        // Provider construction (transport setup) is a network operation, so connection /
+        // DNS / TCP failures here are typed `network.rpc.error` under `--machine`.
+        let machine_mode = foundry_cli::is_machine();
+        let provider =
+            match ProviderBuilder::<FEN::Network>::from_config(&config).and_then(|b| b.build()) {
+                Ok(p) => p,
+                Err(err) if machine_mode => rpc_failure(&err),
+                Err(err) => return Err(err),
+            };
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -292,15 +378,25 @@ impl CallArgs {
             None
         };
 
-        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
-            .await?
-            .with_to(to)
-            .await?
-            .with_code_sig_and_args(code, sig, args)
-            .await?
-            .raw()
-            .build(sender)
-            .await?;
+        // `CastTxBuilder` performs the first RPC pings (chain_id, gas estimation, ENS
+        // resolution); transport/connectivity failures here are typed `network.rpc.error`.
+        let builder_result: Result<_> = async {
+            CastTxBuilder::new(&provider, tx, &config)
+                .await?
+                .with_to(to)
+                .await?
+                .with_code_sig_and_args(code, sig, args)
+                .await?
+                .raw()
+                .build(sender)
+                .await
+        }
+        .await;
+        let (tx, func) = match builder_result {
+            Ok(v) => v,
+            Err(err) if machine_mode => rpc_failure(&err),
+            Err(err) => return Err(err),
+        };
 
         if trace {
             if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
@@ -408,17 +504,28 @@ impl CallArgs {
                 decode_internal,
                 disable_labels,
                 None,
+                None,
             )
             .await?;
 
             return Ok(());
         }
 
-        let response = Cast::new(&provider)
-            .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
-            .await?;
+        // Bypass the ABI decoder under `--machine`; the envelope carries raw hex only.
+        // Only the eth_call itself maps to `network.rpc.error`; setup/local errors fall through.
+        let decode_func = (!machine_mode).then_some(func.as_ref()).flatten();
+        let response = match Cast::new(&provider)
+            .call(&tx, decode_func, block, state_overrides, block_overrides)
+            .await
+        {
+            Ok(r) => r,
+            Err(err) if machine_mode => rpc_failure(&err),
+            Err(err) => return Err(err),
+        };
 
-        if response == "0x"
+        // Skip the empty-code lookup under `--machine`: it exists only for the human warning.
+        if !machine_mode
+            && response == "0x"
             && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;
@@ -426,7 +533,12 @@ impl CallArgs {
                 sh_warn!("Contract code is empty")?;
             }
         }
-        sh_println!("{}", response)?;
+
+        if machine_mode {
+            print_json(&JsonEnvelope::success(CallData { raw: response }))?;
+        } else {
+            sh_println!("{}", response)?;
+        }
 
         Ok(())
     }
@@ -480,7 +592,7 @@ impl CallArgs {
             params,
             config.eth_rpc_headers.as_deref(),
             jwt.as_deref(),
-        );
+        )?;
 
         sh_println!("{}", curl_cmd)?;
         Ok(())

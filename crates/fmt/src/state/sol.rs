@@ -1024,6 +1024,9 @@ impl<'ast> State<'_, 'ast> {
 
             self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
+            if override_.is_some() {
+                self.end();
+            }
             self.end();
         }
         self.end();
@@ -1823,7 +1826,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.has_chain_with_indent())
+                    .without_ind(self.call_stack.has_indented_parent_chain())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -2423,6 +2426,12 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
     ) -> Decision {
+        // Dangling-else guard runs before the cache check so an inlined parent can't
+        // coerce this `if` into dropping braces and rebinding its `else`.
+        if Self::then_block_can_capture_trailing_else(then, els_opt.is_some()) {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If a decision is already cached from a parent, use it directly.
         if let Some(cached_decision) = self.single_line_stmt {
             return Decision { outcome: cached_decision, is_cached: true };
@@ -2457,6 +2466,13 @@ impl<'ast> State<'_, 'ast> {
         }
 
         // If the parent would fit, check all of its children.
+        if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &then.kind {
+            let child_decision =
+                self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
+            if !child_decision.outcome {
+                return child_decision;
+            }
+        }
         if let Some(stmt) = els_opt {
             if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &stmt.kind {
                 return self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
@@ -2517,6 +2533,23 @@ impl<'ast> State<'_, 'ast> {
             }
         }
         false
+    }
+
+    /// Returns true if eliding the braces of `then` would expose an inner `if` to a
+    /// trailing `else` or change the AST shape on round-trip.
+    fn then_block_can_capture_trailing_else(
+        then: &'ast ast::Stmt<'ast>,
+        has_outer_else: bool,
+    ) -> bool {
+        let ast::StmtKind::Block(block) = &then.kind else { return false };
+        if block.stmts.len() != 1 {
+            return false;
+        }
+        match &block.stmts[0].kind {
+            ast::StmtKind::If(_, _, inner_else) => has_outer_else || inner_else.is_some(),
+            ast::StmtKind::While(..) | ast::StmtKind::For { .. } => has_outer_else,
+            _ => false,
+        }
     }
 
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.

@@ -1,8 +1,13 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
-    runner::LIBRARY_DEPLOYER,
+    ContractRunner, TestFilter,
+    progress::TestsProgress,
+    result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
+    runner::{
+        ContractRunnerContext, InvariantCampaignScope, LIBRARY_DEPLOYER,
+        count_runnable_invariant_campaign_anchors, is_symbolic_entrypoint,
+    },
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -20,13 +25,14 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
-    executors::{EarlyExit, Executor, ExecutorBuilder},
+    executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
     fork::CreateFork,
     fuzz::strategies::LiteralsDictionary,
     inspectors::CheatsConfig,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_evm_networks::NetworkVariant;
 
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -34,7 +40,7 @@ use std::{
     borrow::Borrow,
     collections::BTreeMap,
     ops::{Deref, DerefMut},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc},
     time::Instant,
 };
@@ -89,12 +95,39 @@ impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
+    fn matches_test_function(
+        &self,
+        filter: &dyn TestFilter,
+        contract_id: &str,
+        func: &Function,
+    ) -> bool {
+        matches_test_function(
+            filter,
+            contract_id,
+            func,
+            symbolic_entrypoints_enabled(
+                self.config.symbolic.enabled,
+                self.tcfg.symbolic_artifact_replay.as_ref(),
+            ),
+        )
+    }
+
+    fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
+        matches_artifact(
+            filter,
+            id,
+            abi,
+            self.config.symbolic.enabled,
+            self.tcfg.symbolic_artifact_replay.as_ref(),
+        )
+    }
+
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a: 'b, 'b>(
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = (&'a ArtifactId, &'a TestContract)> + 'b {
-        self.contracts.iter().filter(|&(id, c)| matches_artifact(filter, id, &c.abi))
+        self.contracts.iter().filter(|&(id, c)| self.matches_artifact(filter, id, &c.abi))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -102,9 +135,12 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
-        self.matching_contracts(filter)
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| filter.matches_test_function(func))
+        self.matching_contracts(filter).flat_map(move |(id, c)| {
+            let identifier = id.identifier();
+            c.abi
+                .functions()
+                .filter(move |func| self.matches_test_function(filter, &identifier, func))
+        })
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -116,7 +152,13 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| func.is_any_test())
+            .filter(|func| {
+                func.is_any_test()
+                    || (symbolic_entrypoints_enabled(
+                        self.config.symbolic.enabled,
+                        self.tcfg.symbolic_artifact_replay.as_ref(),
+                    ) && is_symbolic_entrypoint(func))
+            })
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
@@ -125,10 +167,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .map(|(id, c)| {
                 let source = id.source.as_path().display().to_string();
                 let name = id.name.clone();
+                let identifier = id.identifier();
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| filter.matches_test_function(func))
+                    .filter(|func| self.matches_test_function(filter, &identifier, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -192,6 +235,22 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             self.contracts.len(),
             find_time,
         );
+        let num_invariant_campaign_anchors = contracts
+            .iter()
+            .map(|(id, contract)| {
+                count_runnable_invariant_campaign_anchors(
+                    &contract.abi,
+                    filter,
+                    InvariantCampaignScope {
+                        config: &self.tcfg.config,
+                        inline_config: &self.tcfg.inline_config,
+                        contract_name: &id.identifier(),
+                        all_override_networks: &self.tcfg.multi_network.all_override_networks,
+                        pass_network: self.tcfg.multi_network.pass_network.as_ref(),
+                    },
+                )
+            })
+            .sum();
 
         if show_progress {
             let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
@@ -207,8 +266,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                         contract,
                         &db,
                         filter,
-                        &tokio_handle,
-                        Some(&tests_progress),
+                        ContractRunnerContext {
+                            progress: Some(&tests_progress),
+                            tokio_handle: tokio_handle.clone(),
+                            num_invariant_campaign_anchors,
+                        },
                     );
 
                     tests_progress
@@ -228,7 +290,17 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
-                let result = self.run_test_suite(id, contract, &db, filter, &tokio_handle, None);
+                let result = self.run_test_suite(
+                    id,
+                    contract,
+                    &db,
+                    filter,
+                    ContractRunnerContext {
+                        progress: None,
+                        tokio_handle: tokio_handle.clone(),
+                        num_invariant_campaign_anchors,
+                    },
+                );
                 let _ = tx.send((id.identifier(), result));
             })
         }
@@ -242,8 +314,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         contract: &TestContract,
         db: &Backend<FEN>,
         filter: &dyn TestFilter,
-        tokio_handle: &tokio::runtime::Handle,
-        progress: Option<&TestsProgress>,
+        context: ContractRunnerContext<'_>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
         let span_name = if enabled!(tracing::Level::TRACE) {
@@ -263,21 +334,60 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             artifact_id,
             db.clone(),
         );
-        let runner = ContractRunner::new(
-            &identifier,
-            contract,
-            executor,
-            progress,
-            tokio_handle,
-            span,
-            self,
-        );
+        let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
         let r = runner.run_tests(filter);
 
         debug!(duration=?r.duration, "executed all tests in contract");
 
         r
     }
+}
+
+/// Tracks network assignment across a multi-network test run.
+///
+/// When inline config specifies different networks for different tests, the runner performs one
+/// pass per distinct network. This struct encodes which pass we're in so each `ContractRunner`
+/// can skip tests that belong to a different pass.
+///
+/// Default (empty `all_override_networks`, `None` pass) = single-pass mode, every test runs.
+#[derive(Clone, Debug, Default)]
+pub struct MultiNetworkConfig {
+    /// All networks explicitly referenced in inline config annotations across the whole suite.
+    /// Empty means single-pass mode (no per-test network overrides present).
+    pub all_override_networks: Vec<NetworkVariant>,
+    /// The network this pass is responsible for.
+    /// `None` = default pass: runs tests *without* an explicit network annotation (or annotated
+    /// with a network not in `all_override_networks`).
+    /// `Some(v)` = override pass: runs only tests annotated with exactly `v`.
+    pub pass_network: Option<NetworkVariant>,
+}
+
+/// CLI-only options that switch fuzz/invariant tests into corpus replay
+/// mode that emits AFL-`afl-showmap`-style coverage files.
+#[derive(Clone, Debug)]
+pub struct ShowmapConfig {
+    /// Output root directory for showmap files.
+    pub out_dir: PathBuf,
+    /// Approach name; used as a subdirectory under `out_dir`.
+    pub approach: String,
+    /// Trial identifier embedded in each emitted filename to keep reruns separate.
+    pub trial: String,
+    /// One file per corpus entry instead of one aggregated file per test.
+    pub per_input: bool,
+    /// Which bitmap(s) to dump.
+    pub domain: ShowmapDomain,
+    /// Optional override for the corpus directory to replay from.
+    /// When unset, the per-test corpus dir derived from config is used.
+    pub corpus_dir: Option<PathBuf>,
+}
+
+/// CLI-only options for replaying a durable symbolic counterexample artifact.
+#[derive(Clone, Debug)]
+pub struct SymbolicArtifactReplayConfig {
+    /// Artifact payload to replay.
+    pub artifact: SymbolicCounterexampleArtifact,
+    /// Path the artifact was loaded from, used in diagnostics.
+    pub path: PathBuf,
 }
 
 /// Configuration for the test runner.
@@ -311,6 +421,16 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub isolation: bool,
     /// Whether to exit early on test failure or if test run interrupted.
     pub early_exit: EarlyExit,
+
+    /// Multi-network pass configuration. Default = single-pass mode.
+    pub multi_network: MultiNetworkConfig,
+
+    /// When set, fuzz/invariant tests run in corpus replay mode and emit
+    /// AFL-`afl-showmap`-style files instead of running a campaign.
+    pub showmap: Option<ShowmapConfig>,
+
+    /// When set, run only the matching test and replay this artifact's concrete payload.
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -373,6 +493,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             Some(known_contracts),
             Some(artifact_id.clone()),
             None,
+            false,
         ));
         ExecutorBuilder::default()
             .inspectors(|stack| {
@@ -423,6 +544,12 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
+    /// Multi-network pass configuration.
+    pub multi_network: MultiNetworkConfig,
+    /// Showmap replay mode (CLI-only, off by default).
+    pub showmap: Option<ShowmapConfig>,
+    /// Symbolic artifact replay mode (CLI-only, off by default).
+    pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
 }
 
 impl MultiContractRunnerBuilder {
@@ -437,7 +564,23 @@ impl MultiContractRunnerBuilder {
             isolation: Default::default(),
             decode_internal: Default::default(),
             fail_fast: false,
+            multi_network: Default::default(),
+            showmap: None,
+            symbolic_artifact_replay: None,
         }
+    }
+
+    pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
+        self.showmap = showmap;
+        self
+    }
+
+    pub fn with_symbolic_artifact_replay(
+        mut self,
+        replay: Option<SymbolicArtifactReplayConfig>,
+    ) -> Self {
+        self.symbolic_artifact_replay = replay;
+        self
     }
 
     pub const fn sender(mut self, sender: Address) -> Self {
@@ -467,6 +610,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub fn with_multi_network(mut self, multi_network: MultiNetworkConfig) -> Self {
+        self.multi_network = multi_network;
         self
     }
 
@@ -520,7 +668,13 @@ impl MultiContractRunnerBuilder {
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                && abi.functions().any(|func| func.name.is_any_test())
+                && abi.functions().any(|func| {
+                    func.name.is_any_test()
+                        || symbolic_entrypoints_enabled(
+                            self.config.symbolic.enabled,
+                            self.symbolic_artifact_replay.as_ref(),
+                        ) && is_symbolic_entrypoint(func)
+                })
             {
                 linker.ensure_linked(contract, id)?;
 
@@ -594,6 +748,9 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
+                multi_network: self.multi_network,
+                showmap: self.showmap,
+                symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },
 
@@ -602,16 +759,72 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-pub fn matches_artifact(filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-    matches_contract(filter, &id.source, &id.name, abi.functions())
+pub fn matches_artifact(
+    filter: &dyn TestFilter,
+    id: &ArtifactId,
+    abi: &JsonAbi,
+    symbolic_enabled: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
+) -> bool {
+    matches_contract(
+        filter,
+        &id.source,
+        &id.name,
+        &id.identifier(),
+        abi.functions(),
+        symbolic_entrypoints_enabled(symbolic_enabled, symbolic_artifact_replay),
+    )
+}
+
+pub fn symbolic_entrypoints_enabled(
+    symbolic_enabled: bool,
+    symbolic_artifact_replay: Option<&SymbolicArtifactReplayConfig>,
+) -> bool {
+    symbolic_enabled
+        || symbolic_artifact_replay.is_some_and(|artifact| {
+            artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
+        })
 }
 
 pub(crate) fn matches_contract(
     filter: &dyn TestFilter,
     path: &Path,
     contract_name: &str,
+    contract_id: &str,
     functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
+    symbolic_enabled: bool,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
-        && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
+        && functions
+            .into_iter()
+            .any(|func| matches_test_function(filter, contract_id, func.borrow(), symbolic_enabled))
+}
+
+fn matches_test_function(
+    filter: &dyn TestFilter,
+    contract_id: &str,
+    func: &Function,
+    symbolic_enabled: bool,
+) -> bool {
+    if symbolic_enabled && is_symbolic_entrypoint(func) {
+        filter.matches_test(&func.signature())
+    } else {
+        filter.matches_test_function_in_contract(contract_id, func)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_common::EmptyTestFilter;
+
+    #[test]
+    fn matches_contract_includes_symbolic_entrypoints_when_enabled() {
+        let filter = EmptyTestFilter::default();
+        let path = Path::new("test/Symbolic.t.sol");
+        let func = Function::parse("checkFilteredCompile(uint256)").unwrap();
+
+        assert!(matches_contract(&filter, path, "Symbolic", "Symbolic", [func.clone()], true));
+        assert!(!matches_contract(&filter, path, "Symbolic", "Symbolic", [func], false));
+    }
 }

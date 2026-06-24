@@ -1,0 +1,192 @@
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return address(this).balance == 1 ether;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return address(this).balance != 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return 1 ether == address(this).balance;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return address(this).balance + 1 == 100 ether;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return token.balanceOf(address(this)) == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return token.balanceOf(msg.sender) != threshold;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return 0 == token.balanceOf(address(this));
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │ …     return threshold == token.balanceOf(address(this)) - 1;
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │ …     require(address(this).balance == 100 ether, "wrong balance");
+   │               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │ …     require(token.balanceOf(address(this)) == 0, "not empty");
+   │               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         if (address(this).balance == 0) {
+   │             ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return recipient.balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return a.balance == 0;
+   │                ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return payable(a).balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return msg.sender.balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return tx.origin.balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return block.coinbase.balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return account.owner.balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return holder.operator.balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return holders[i].balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return holderOf[i].balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return getRecipient().balance == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return (flag ? address(this).balance : 0) == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return consume(address(this).balance) == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+

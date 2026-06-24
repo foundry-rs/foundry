@@ -378,6 +378,8 @@ mod tests {
     /// MPP server sends challenge → client pays → server sends receipt.
     #[tokio::test]
     async fn test_ws_mpp_challenge_credential_receipt() {
+        // Serialize with other tests that mutate TEMPO_PRIVATE_KEY / TEMPO_HOME.
+        let _g = crate::tempo::test_env_mutex().lock().await;
         let challenge = test_challenge();
         let challenge_json = serde_json::to_value(&challenge).unwrap();
 
@@ -452,6 +454,8 @@ mod tests {
     /// MPP server sends challenge, client pays, server closes → rollback.
     #[tokio::test]
     async fn test_ws_mpp_rollback_on_post_pay_close() {
+        // Serialize with other tests that mutate TEMPO_PRIVATE_KEY / TEMPO_HOME.
+        let _g = crate::tempo::test_env_mutex().lock().await;
         let challenge = test_challenge();
         let challenge_json = serde_json::to_value(&challenge).unwrap();
 

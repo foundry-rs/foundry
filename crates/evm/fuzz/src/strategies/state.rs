@@ -1,8 +1,12 @@
 use crate::{
-    BasicTxDetails, invariant::FuzzRunIdentifiedContracts, strategies::literals::LiteralsDictionary,
+    BasicTxDetails, Fuzzer,
+    invariant::{
+        FuzzRunIdentifiedContracts, TargetedContract, TargetedContractEvent, TargetedContracts,
+    },
+    strategies::literals::LiteralsDictionary,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
-use alloy_json_abi::{Function, JsonAbi};
+use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
     map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
@@ -10,15 +14,13 @@ use alloy_primitives::{
 use foundry_common::{
     ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
 };
-use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
-use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
 use revm::{
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc, sync::Arc};
 
 /// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
 ///
@@ -26,19 +28,25 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 /// bytecode (as is the case with Solmate).
 const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
 
-/// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
-///
-/// Wrapped in a shareable container.
+/// Immutable fuzz dictionary seed used by parallel stateless fuzz workers.
 #[derive(Clone, Debug)]
 pub struct EvmFuzzState {
-    inner: Arc<RwLock<FuzzDictionary>>,
+    inner: Arc<FuzzDictionary>,
     /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
     pub deployed_libs: Vec<Address>,
-    /// Records mapping accesses. Used to identify storage slots belonging to mappings and sampling
-    /// the values in the [`FuzzDictionary`].
-    ///
-    /// Only needed when [`StorageLayout`] is available.
-    pub(crate) mapping_slots: Option<AddressMap<MappingSlots>>,
+}
+
+/// Worker-local mutable fuzz dictionary used by invariant campaigns.
+#[derive(Clone, Debug)]
+pub struct InvariantFuzzState {
+    inner: Rc<RefCell<FuzzDictionary>>,
+    /// Addresses of external libraries deployed in test setup, excluded from fuzz test inputs.
+    pub deployed_libs: Vec<Address>,
+}
+
+pub trait FuzzStateReader: Clone + 'static {
+    fn deployed_libs(&self) -> &[Address];
+    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R;
 }
 
 impl EvmFuzzState {
@@ -69,27 +77,74 @@ impl EvmFuzzState {
             dictionary.literal_values = literals.clone();
         }
 
-        Self {
-            inner: Arc::new(RwLock::new(dictionary)),
-            deployed_libs: deployed_libs.to_vec(),
-            mapping_slots: None,
+        Self { inner: Arc::new(dictionary), deployed_libs: deployed_libs.to_vec() }
+    }
+
+    pub fn into_invariant(self) -> InvariantFuzzState {
+        InvariantFuzzState {
+            inner: Rc::new(RefCell::new((*self.inner).clone())),
+            deployed_libs: self.deployed_libs,
         }
     }
 
-    pub fn with_mapping_slots(mut self, mapping_slots: AddressMap<MappingSlots>) -> Self {
-        self.mapping_slots = Some(mapping_slots);
-        self
+    pub fn fork(&self) -> Self {
+        Self { inner: Arc::clone(&self.inner), deployed_libs: self.deployed_libs.clone() }
     }
 
-    pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
-        let mut dict = self.inner.write();
+    pub fn collect_values(&mut self, values: impl IntoIterator<Item = B256>) {
+        let dict = Arc::make_mut(&mut self.inner);
         for value in values {
             dict.insert_value(value);
         }
     }
 
-    /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState] according to
-    /// the given [FuzzDictionaryConfig].
+    /// Logs stats about the current state.
+    pub fn log_stats(&self) {
+        self.inner.log_stats();
+    }
+
+    /// Test-only helper to seed the dictionary with literal values.
+    #[cfg(test)]
+    pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
+        Arc::make_mut(&mut self.inner).seed_literals(map);
+    }
+}
+
+impl FuzzStateReader for EvmFuzzState {
+    fn deployed_libs(&self) -> &[Address] {
+        &self.deployed_libs
+    }
+
+    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
+        f(&self.inner)
+    }
+}
+
+impl InvariantFuzzState {
+    pub fn snapshot(&self) -> EvmFuzzState {
+        EvmFuzzState {
+            inner: Arc::new(self.inner.borrow().clone()),
+            deployed_libs: self.deployed_libs.clone(),
+        }
+    }
+
+    pub fn collect_values(&self, values: impl IntoIterator<Item = B256>) {
+        let mut dict = self.inner.borrow_mut();
+        for value in values {
+            dict.insert_value(value);
+        }
+    }
+
+    pub fn collect_fuzzer_values(&self, fuzzer: &mut Fuzzer) {
+        let mut dict = self.inner.borrow_mut();
+        for value in fuzzer.collected_values.drain(..) {
+            dict.insert_value(value);
+        }
+    }
+
+    /// Collects state changes from a [StateChangeset] and logs into an [InvariantFuzzState]
+    /// according to the given [FuzzDictionaryConfig].
+    #[allow(clippy::too_many_arguments)]
     pub fn collect_values_from_call(
         &self,
         fuzzed_contracts: &FuzzRunIdentifiedContracts,
@@ -98,28 +153,29 @@ impl EvmFuzzState {
         logs: &[Log],
         state_changeset: &StateChangeset,
         run_depth: u32,
+        mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
-        let mut dict = self.inner.write();
-        {
-            let targets = fuzzed_contracts.targets.lock();
-            let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
-            dict.insert_logs_values(target_abi, logs, run_depth);
-            dict.insert_result_values(target_function, result, run_depth);
-            // Get storage layouts for contracts in the state changeset
-            let storage_layouts = targets.get_storage_layouts();
-            dict.insert_new_state_values(
-                state_changeset,
-                &storage_layouts,
-                self.mapping_slots.as_ref(),
-            );
+        let mut dict = self.inner.borrow_mut();
+        let targets = fuzzed_contracts.targets();
+        let (target_contract, target_function) = if logs.is_empty() && result.is_empty() {
+            (None, None)
+        } else {
+            targets.fuzzed_artifacts(tx)
+        };
+        if !logs.is_empty() {
+            dict.insert_logs_values(target_contract, logs, run_depth);
         }
+        if !result.is_empty() {
+            dict.insert_result_values(target_function, result, run_depth);
+        }
+        dict.insert_new_state_values(state_changeset, &targets, mapping_slots);
     }
 
     /// Collects typed trace-cmp operands from sancov-instrumented code.
     /// Values are inserted into both persistent state values (survive reverts) and typed
     /// sample buckets (for ABI-aware mutation).
     pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u8, B256)>) {
-        let mut dict = self.inner.write();
+        let mut dict = self.inner.borrow_mut();
         for (width, value) in values {
             dict.insert_persistent_value(value);
             dict.insert_typed_cmp_value(width, value);
@@ -131,22 +187,28 @@ impl EvmFuzzState {
     /// Should be called between fuzz/invariant runs to avoid accumulating data derived from fuzz
     /// inputs.
     pub fn revert(&self) {
-        self.inner.write().revert();
-    }
-
-    pub fn dictionary_read(&self) -> RwLockReadGuard<'_, RawRwLock, FuzzDictionary> {
-        self.inner.read()
+        self.inner.borrow_mut().revert();
     }
 
     /// Logs stats about the current state.
     pub fn log_stats(&self) {
-        self.inner.read().log_stats();
+        self.inner.borrow().log_stats();
+    }
+}
+
+impl FuzzStateReader for InvariantFuzzState {
+    fn deployed_libs(&self) -> &[Address] {
+        &self.deployed_libs
     }
 
-    /// Test-only helper to seed the dictionary with literal values.
-    #[cfg(test)]
-    pub(crate) fn seed_literals(&self, map: super::LiteralMaps) {
-        self.inner.write().seed_literals(map);
+    fn with_dictionary<R>(&self, f: impl FnOnce(&FuzzDictionary) -> R) -> R {
+        f(&self.inner.borrow())
+    }
+}
+
+impl From<EvmFuzzState> for InvariantFuzzState {
+    fn from(state: EvmFuzzState) -> Self {
+        state.into_invariant()
     }
 }
 
@@ -155,6 +217,7 @@ impl EvmFuzzState {
 /// Maximum number of persistent values from sancov trace-cmp.
 const MAX_PERSISTENT_VALUES: usize = 2048;
 
+#[derive(Clone)]
 pub struct FuzzDictionary {
     /// Collected state values.
     state_values: B256IndexSet,
@@ -285,22 +348,33 @@ impl FuzzDictionary {
     }
 
     /// Insert values from call log topics and data into fuzz dictionary.
-    fn insert_logs_values(&mut self, abi: Option<&JsonAbi>, logs: &[Log], run_depth: u32) {
+    fn insert_logs_values(
+        &mut self,
+        target_contract: Option<&TargetedContract>,
+        logs: &[Log],
+        run_depth: u32,
+    ) {
         let mut samples = Vec::new();
         // Decode logs with known events and collect samples from indexed fields and event body.
         for log in logs {
-            let mut log_decoded = false;
             // Try to decode log with events from contract abi.
-            if let Some(abi) = abi {
-                for event in abi.events() {
-                    if let Ok(decoded_event) = event.decode_log(log) {
-                        samples.extend(decoded_event.indexed);
-                        samples.extend(decoded_event.body);
-                        log_decoded = true;
-                        break;
-                    }
-                }
-            }
+            let log_decoded = if let Some(contract) = target_contract {
+                let matched_events = log
+                    .topics()
+                    .first()
+                    .and_then(|selector| {
+                        contract.event_lookup.by_topic(selector, log.topics().len() - 1)
+                    })
+                    .unwrap_or(&[]);
+                Self::decode_log_events(
+                    matched_events,
+                    contract.event_lookup.anonymous(),
+                    log,
+                    &mut samples,
+                )
+            } else {
+                false
+            };
 
             // If we weren't able to decode event then we insert raw data in fuzz dictionary.
             if !log_decoded {
@@ -322,12 +396,42 @@ impl FuzzDictionary {
         self.insert_sample_values(samples, run_depth);
     }
 
+    fn decode_log_events(
+        matched_events: &[TargetedContractEvent],
+        anonymous_events: &[TargetedContractEvent],
+        log: &Log,
+        samples: &mut Vec<DynSolValue>,
+    ) -> bool {
+        let mut matched = matched_events.iter().peekable();
+        let mut anonymous = anonymous_events.iter().peekable();
+        while matched.peek().is_some() || anonymous.peek().is_some() {
+            let event = match (matched.peek(), anonymous.peek()) {
+                (Some(matched_event), Some(anonymous_event)) => {
+                    if matched_event.order() < anonymous_event.order() {
+                        matched.next().unwrap()
+                    } else {
+                        anonymous.next().unwrap()
+                    }
+                }
+                (Some(_), None) => matched.next().unwrap(),
+                (None, Some(_)) => anonymous.next().unwrap(),
+                (None, None) => unreachable!(),
+            };
+            if let Ok(decoded_event) = event.event().decode_log(log) {
+                samples.extend(decoded_event.indexed);
+                samples.extend(decoded_event.body);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Insert values from call state changeset into fuzz dictionary.
     /// These values are removed at the end of current run.
     fn insert_new_state_values(
         &mut self,
         state_changeset: &StateChangeset,
-        storage_layouts: &HashMap<Address, Arc<StorageLayout>>,
+        targets: &TargetedContracts,
         mapping_slots: Option<&AddressMap<MappingSlots>>,
     ) {
         for (address, account) in state_changeset {
@@ -337,8 +441,12 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let slot_identifier =
-                    storage_layouts.get(address).map(|layout| SlotIdentifier::new(layout.clone()));
+                let slot_identifier = targets.get(address).and_then(|contract| {
+                    contract
+                        .storage_layout
+                        .as_ref()
+                        .map(|layout| SlotIdentifier::new(Arc::clone(layout)))
+                });
                 trace!(
                     "{address:?} has mapping_slots {}",
                     mapping_slots.is_some_and(|m| m.contains_key(address))
@@ -395,7 +503,7 @@ impl FuzzDictionary {
         mapping_slots: Option<&MappingSlots>,
     ) {
         let slot = B256::from(*slot);
-        let value = B256::from(*value);
+        let value_word = B256::from(*value);
 
         // Always insert the slot itself
         self.insert_value(slot);
@@ -404,15 +512,18 @@ impl FuzzDictionary {
         if let Some(slot_identifier) = slot_identifier
             // Identify slot type.
             && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots)
-            && slot_info.decode(value).is_some()
+            && slot_info.decode(value_word).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
             if !self.samples_seeded {
                 self.seed_samples();
             }
-            self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
+            self.sample_values
+                .entry(slot_info.slot_type.dyn_sol_type)
+                .or_default()
+                .insert(value_word);
         } else {
-            self.insert_value_u256(value.into());
+            self.insert_value_u256(*value);
         }
     }
 
@@ -586,5 +697,42 @@ impl FuzzDictionary {
     /// Test-only helper to seed the dictionary with literal values.
     pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
         self.literal_values.set(map);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_json_abi::{Event, JsonAbi};
+
+    #[test]
+    fn log_decoding_preserves_anonymous_event_priority() {
+        let mut abi = JsonAbi::new();
+        let anonymous_event =
+            Event::parse("event AEvent(bytes32 indexed topic, uint256 value) anonymous").unwrap();
+        let matched_event = Event::parse("event ZEvent(uint256 value)").unwrap();
+        let selector = matched_event.selector();
+        abi.events.entry(anonymous_event.name.clone()).or_default().push(anonymous_event);
+        abi.events.entry(matched_event.name.clone()).or_default().push(matched_event);
+        let contract = TargetedContract::new("Target".to_string(), abi);
+        let matched_events = contract.event_lookup.by_topic(&selector, 0).unwrap();
+        let word: B256 = U256::from(42).into();
+        let log = Log::new_unchecked(
+            Address::ZERO,
+            vec![selector],
+            Bytes::copy_from_slice(word.as_slice()),
+        );
+        let mut samples = Vec::new();
+
+        assert!(FuzzDictionary::decode_log_events(
+            matched_events,
+            contract.event_lookup.anonymous(),
+            &log,
+            &mut samples,
+        ));
+
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0], DynSolValue::FixedBytes(selector, 32));
+        assert_eq!(samples[1], DynSolValue::Uint(U256::from(42), 256));
     }
 }

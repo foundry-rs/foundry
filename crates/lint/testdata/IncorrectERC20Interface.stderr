@@ -4,7 +4,7 @@ note[interface-naming]: interface names should be prefixed with 'I'
 LL │ interface ERC20 {
    │           ━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#interface-naming
+   ╰ help: https://getfoundry.sh/forge/linting/interface-naming
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -12,7 +12,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC20 {}
    │           ━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -20,7 +20,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface ERC20 {
    │           ━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -28,7 +28,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC20Incorrect is IERC20 {
    │           ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -36,7 +36,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC20Correct is IERC20 {
    │           ━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -44,7 +44,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IERC20NamedCorrect {
    │           ━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -52,7 +52,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface INotERC20 {
    │           ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -60,7 +60,7 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function transfer(address to, uint256 value) external returns (uint256);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -68,7 +68,7 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function approve(address spender, uint256 value) external returns (uint256);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -76,7 +76,7 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function transfer(address to, uint256 value) external returns (uint256);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -84,7 +84,7 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function transferFrom(address from, address to, uint256 value) external returns (uint256);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -92,7 +92,7 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function approve(address spender, uint256 value) external returns (uint256);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -100,7 +100,7 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function allowance(address owner, address spender) external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -108,7 +108,7 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function balanceOf(address account) external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 
 warning[incorrect-erc20-interface]: incorrect ERC20 function interface
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
@@ -116,5 +116,5 @@ warning[incorrect-erc20-interface]: incorrect ERC20 function interface
 LL │     function totalSupply() external view returns (bool);
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc20-interface
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-erc20-interface
 

@@ -69,3 +69,21 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
+
+tempo-chainspec.workspace = true
+tempo-contracts.workspace = true
+tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
+
+[dev-dependencies]
+tempo-precompiles = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm-core/optimism",
+    "foundry-evm-fuzz/optimism",
+    "foundry-evm-traces/optimism",
+    "forge-script-sequence/optimism",
+]

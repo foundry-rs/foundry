@@ -63,8 +63,7 @@ contract MailTest is Test {
     }
 }
 
-/// @notice Tests for relayed mail using the TIP-1020 SignatureVerifier precompile (requires T3).
-/// forge-config: default.hardfork = "tempo:T3"
+/// @notice Tests for relayed mail using the TIP-1020 SignatureVerifier precompile (requires T3+).
 contract MailRelayTest is MailTest {
     // secp256k1 keys (used by vm.sign / vm.addr)
     uint256 internal constant ALICE_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;

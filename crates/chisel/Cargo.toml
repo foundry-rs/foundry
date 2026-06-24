@@ -19,7 +19,6 @@ path = "bin/main.rs"
 
 [dependencies]
 # forge
-forge-doc.workspace = true
 forge-fmt.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
@@ -45,12 +44,11 @@ clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
 eyre.workspace = true
 reqwest.workspace = true
-rustyline = "17"
+rustyline = "18"
 itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-solang-parser.workspace = true
 time = { version = "0.3", features = ["formatting"] }
 yansi.workspace = true
 tracing.workspace = true
@@ -62,11 +60,17 @@ tracing-subscriber.workspace = true
 # REPL tests only work on Unix.
 [target.'cfg(unix)'.dev-dependencies]
 foundry-test-utils.workspace = true
-rexpect = "0.6"
+# https://github.com/rust-cli/rexpect/pull/106
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 
 [features]
-default = ["jemalloc", "asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+    "foundry-cli/optimism",
+]

@@ -135,6 +135,17 @@ If you would like to test the binaries built from your change, see [foundryup](h
 
 If you would like to use a debugger with breakpoints to debug a patch you might be working on, keep in mind we currently strip debug info for faster builds, which is _not_ the default. Therefore, to use a debugger, you need to enable it on the workspace [`Cargo.toml`'s `dev` profile](https://github.com/foundry-rs/foundry/tree/HEAD/Cargo.toml#L15-L18).
 
+#### Output channels (stdout vs. stderr)
+
+Foundry CLIs follow a strict output-channel contract: **stdout is the command's
+machine-readable result; stderr is everything else** (warnings, errors,
+progress, status prose, prompts). When adding or modifying user-facing output,
+read [`docs/dev/output-channels.md`](docs/dev/output-channels.md) and use the
+`sh_*` macros from `foundry_common::io` (`sh_println!`, `sh_status!`,
+`sh_progress!`, `sh_warn!`, `sh_err!`). A workspace-wide clippy
+`disallowed-macros` lint (see [`clippy.toml`](clippy.toml)) forbids
+`std::print*` and `std::eprint*`; use the `sh_*` macros instead.
+
 #### Adding tests
 
 If the change being proposed alters code, it is either adding new functionality to Foundry, or fixing existing, broken functionality.

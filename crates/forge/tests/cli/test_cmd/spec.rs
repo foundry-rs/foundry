@@ -1,4 +1,6 @@
-use foundry_test_utils::rpc;
+use foundry_compilers::artifacts::EvmVersion;
+use foundry_evm::hardforks::{FoundryHardfork, TempoHardfork};
+use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 // Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
@@ -219,4 +221,119 @@ contract MonadEvmVersionTest is Test {
     );
 
     cmd.args(["test", "--network", "monad", "--mc", "MonadEvmVersionTest"]).assert_success();
+});
+
+forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+
+    prj.add_test(
+        "TempoEvmVersion.t.sol",
+        r#"
+pragma solidity >=0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+contract TempoEvmVersionTest is Test {
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function test_set_tempo_evm_version() public {
+        evm.setEvmVersion("T3");
+        assertEq(evm.getEvmVersion(), "t3");
+
+        evm.setEvmVersion("tempo:T2");
+        assertEq(evm.getEvmVersion(), "t2");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
+});
+
+forgetest_init!(test_network_tempo_defaults_to_latest_hardfork, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+
+    let expected =
+        foundry_evm::hardforks::latest_active_tempo_hardfork().to_string().to_lowercase();
+    prj.add_test(
+        "TempoDefaultEvmVersion.t.sol",
+        &format!(
+            r#"
+pragma solidity >=0.8.20;
+
+import {{Test}} from "forge-std/Test.sol";
+
+interface EvmVm {{
+    function getEvmVersion() external pure returns (string memory evm);
+}}
+
+contract TempoDefaultEvmVersionTest is Test {{
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function test_network_tempo_defaults_to_latest_hardfork() public {{
+        assertEq(evm.getEvmVersion(), "{expected}");
+    }}
+}}
+   "#
+        ),
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
+});
+
+// Validates T5 implicit-approval wiring: the cheatcodes, the AddressRegistry selector,
+// unchanged standard approve/transferFrom behavior, an implicit pull through StablecoinDEX,
+// and a non-implicit spender control case.
+forgetest_init!(test_tempo_implicit_approval_t5, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+        // The precompile registry snapshots `cfg.spec` at EVM construction, so pinning T5
+        // here is what activates the T5 precompiles and selectors. `vm.setEvmVersion` only
+        // flips the cheatcode-visible spec.
+        config.hardfork = Some(FoundryHardfork::Tempo(TempoHardfork::T5));
+    });
+
+    let fixture = include_str!("../../fixtures/TempoImplicitApproval.t.sol");
+    prj.add_test("TempoImplicitApproval.t.sol", fixture);
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoImplicitApprovalTest"]).assert_success();
+});
+
+// Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
+// configured evm_version must be preserved after createSelectFork / rollFork.
+forgetest_init!(test_fork_preserves_evm_version, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Cancun;
+    });
+
+    prj.add_test(
+        "ForkEvmVersion.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkEvmVersionTest is Test {
+    function test_evm_version_preserved_after_fork() public {
+        assertEq(vm.getEvmVersion(), "cancun", "before fork");
+        uint256 forkId = vm.createSelectFork("<rpc>", 21000000);
+        assertEq(vm.getEvmVersion(), "cancun", "after createSelectFork");
+        vm.rollFork(21000001);
+        assertEq(vm.getEvmVersion(), "cancun", "after rollFork");
+    }
+}
+   "#
+        .replace("<rpc>", &endpoint),
+    );
+
+    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success();
 });

@@ -1,13 +1,13 @@
-use alloy_consensus::{Receipt, TxReceipt};
 use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt, ReceiptResponse};
-use alloy_primitives::{Address, B256, BlockHash, TxHash, U64};
+use alloy_primitives::{Address, B256, BlockHash, TxHash};
 use alloy_rpc_types::{ConversionError, Log, TransactionReceipt};
 use alloy_serde::WithOtherFields;
 use derive_more::AsRef;
-use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use serde::{Deserialize, Serialize};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 
+#[cfg(feature = "optimism")]
+use super::optimism::build_deposit_receipt_envelope;
 use crate::FoundryReceiptEnvelope;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, AsRef)]
@@ -144,38 +144,8 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
                     TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
-                    0x7E => {
-                        // Construct the deposit receipt, extracting optional deposit fields
-                        // These fields may not be present in all receipts, so missing/invalid
-                        // values are None
-                        let deposit_nonce = other
-                            .get_deserialized::<U64>("depositNonce")
-                            .transpose()
-                            .ok()
-                            .flatten()
-                            .map(|v| v.to::<u64>());
-                        let deposit_receipt_version = other
-                            .get_deserialized::<U64>("depositReceiptVersion")
-                            .transpose()
-                            .ok()
-                            .flatten()
-                            .map(|v| v.to::<u64>());
-
-                        FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
-                            receipt: OpDepositReceipt {
-                                inner: Receipt {
-                                    status: alloy_consensus::Eip658Value::Eip658(
-                                        receipt_with_bloom.status(),
-                                    ),
-                                    cumulative_gas_used: receipt_with_bloom.cumulative_gas_used(),
-                                    logs: receipt_with_bloom.receipt.logs,
-                                },
-                                deposit_nonce,
-                                deposit_receipt_version,
-                            },
-                            logs_bloom: receipt_with_bloom.logs_bloom,
-                        })
-                    }
+                    #[cfg(feature = "optimism")]
+                    0x7E => build_deposit_receipt_envelope(receipt_with_bloom, &other),
                     _ => {
                         let tx_type = r#type;
                         return Err(ConversionError::Custom(format!(

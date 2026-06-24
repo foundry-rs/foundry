@@ -37,6 +37,7 @@ alloy-chains.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
 
 cfg-if = "1.0"
+chrono.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
 clap_complete_nushell.workspace = true
@@ -52,6 +53,7 @@ rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
 serde.workspace = true
+toml.workspace = true
 strsim = "0.11"
 strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
@@ -70,7 +72,13 @@ tempfile.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [features]
+default = ["optimism"]
 tracy = ["dep:tracing-tracy"]
 tracy-allocator = ["tracy"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+optimism = [
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+]

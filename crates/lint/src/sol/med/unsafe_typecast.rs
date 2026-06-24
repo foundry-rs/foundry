@@ -5,7 +5,11 @@ use crate::{
 };
 use solar::{
     ast::{LitKind, StrKind},
-    sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind},
+    sema::{
+        Gcx,
+        hir::{self, ElementaryType, ExprKind, TypeKind},
+        ty::TyKind,
+    },
 };
 
 declare_forge_lint!(
@@ -19,7 +23,8 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
     fn check_expr(
         &mut self,
         ctx: &LintContext,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
+        _hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {
         // Check for type cast expressions: Type(value)
@@ -27,7 +32,7 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
             && let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &call.kind
             && args.len() == 1
             && let Some(call_arg) = args.exprs().next()
-            && is_unsafe_typecast_hir(hir, call_arg, ty)
+            && is_unsafe_typecast_hir(gcx, call_arg, ty)
         {
             ctx.emit_with_suggestion(
                 &UNSAFE_TYPECAST,
@@ -42,13 +47,13 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
 }
 
 /// Determines if a typecast is potentially unsafe (could lose data or precision).
-fn is_unsafe_typecast_hir(
-    hir: &hir::Hir<'_>,
-    source_expr: &hir::Expr<'_>,
+fn is_unsafe_typecast_hir<'hir>(
+    gcx: Gcx<'hir>,
+    source_expr: &hir::Expr<'hir>,
     target_type: &hir::ElementaryType,
 ) -> bool {
     let mut source_types = Vec::<ElementaryType>::new();
-    infer_source_types(Some(&mut source_types), hir, source_expr);
+    infer_source_types(Some(&mut source_types), gcx, source_expr);
 
     if source_types.is_empty() {
         return false;
@@ -67,10 +72,10 @@ fn is_unsafe_typecast_hir(
 /// An `Option<ElementaryType>` containing the inferred type of the expression if it can be
 /// resolved to a single source (like variables, literals, or unary expressions).
 /// Returns `None` for expressions complex expressions (like binary operations).
-fn infer_source_types(
+fn infer_source_types<'hir>(
     mut output: Option<&mut Vec<ElementaryType>>,
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
+    gcx: Gcx<'hir>,
+    expr: &hir::Expr<'hir>,
 ) -> Option<ElementaryType> {
     let mut track = |ty: ElementaryType| -> Option<ElementaryType> {
         if let Some(output) = output.as_mut() {
@@ -88,47 +93,44 @@ fn infer_source_types(
                 && let Some(inner) = args.exprs().next()
             {
                 // Recurse to find the original (inner-most) source type.
-                return infer_source_types(output, hir, inner);
+                return infer_source_types(output, gcx, inner);
             }
-            None
+            expr_elementary_type(gcx, expr).and_then(track)
         }
 
-        // Identifiers (variables)
-        ExprKind::Ident(resolutions) => {
-            if let Some(Res::Item(ItemId::Variable(var_id))) = resolutions.first() {
-                let variable = hir.variable(*var_id);
-                if let TypeKind::Elementary(elem_type) = &variable.ty.kind {
-                    return track(*elem_type);
-                }
-            }
-            None
-        }
-
-        // Handle literal values
+        // Handle string literals explicitly; Solar records them as literal types rather than
+        // elementary `string`/`bytes`.
         ExprKind::Lit(hir::Lit { kind, .. }) => match kind {
             LitKind::Str(StrKind::Hex, ..) => track(ElementaryType::Bytes),
             LitKind::Str(..) => track(ElementaryType::String),
-            LitKind::Address(_) => track(ElementaryType::Address(false)),
-            LitKind::Bool(_) => track(ElementaryType::Bool),
-            // Unnecessary to check numbers as assigning literal values that cannot fit into a type
-            // throws a compiler error. Reference: <https://solang.readthedocs.io/en/latest/language/types.html>
-            _ => None,
+            _ => expr_elementary_type(gcx, expr).and_then(track),
         },
 
+        // Identifiers and other simple typed expressions.
+        ExprKind::Ident(_) => expr_elementary_type(gcx, expr).and_then(track),
+
         // Unary operations: Recurse to find the source type of the inner expression.
-        ExprKind::Unary(_, inner_expr) => infer_source_types(output, hir, inner_expr),
+        ExprKind::Unary(_, inner_expr) => infer_source_types(output, gcx, inner_expr),
 
         // Binary operations
         ExprKind::Binary(lhs, _, rhs) => {
             if let Some(mut output) = output {
                 // Recurse on both sides to find and collect all source types.
-                infer_source_types(Some(&mut output), hir, lhs);
-                infer_source_types(Some(&mut output), hir, rhs);
+                infer_source_types(Some(&mut output), gcx, lhs);
+                infer_source_types(Some(&mut output), gcx, rhs);
             }
             None
         }
 
-        // Complex expressions are not evaluated
+        _ => expr_elementary_type(gcx, expr).and_then(track),
+    }
+}
+
+fn expr_elementary_type<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> Option<ElementaryType> {
+    match gcx.type_of_expr(expr.peel_parens().id)?.peel_refs().kind {
+        TyKind::Elementary(ty) => Some(ty),
+        TyKind::StringLiteral(true, _) => Some(ElementaryType::String),
+        TyKind::StringLiteral(false, _) => Some(ElementaryType::Bytes),
         _ => None,
     }
 }

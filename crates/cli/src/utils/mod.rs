@@ -230,7 +230,7 @@ pub async fn fetch_abi_from_etherscan(
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
-        .into_client()?;
+        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
     let source = client.contract_source_code(address).await?;
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }

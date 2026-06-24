@@ -18,7 +18,7 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{Address, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -37,7 +37,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::{FoundryHardfork, MonadHardfork, OpHardfork},
+    hardfork::{FoundryHardfork, MonadHardfork},
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -60,7 +60,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_chainspec::{
+    hardfork::TempoHardfork,
+    spec::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
+};
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
@@ -70,6 +73,7 @@ use foundry_evm::{
     utils::get_blob_params,
 };
 use foundry_evm_networks::NetworkConfigs;
+use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -77,6 +81,8 @@ pub const NODE_PORT: u16 = 8545;
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
 pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
+/// The default number of slots in an epoch used for safe/finalized block tags.
+pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
@@ -124,9 +130,9 @@ pub struct NodeConfig {
     pub genesis_block_number: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<PrivateKeySigner>,
-    /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
+    /// Configured block time for the EVM chain. Use `None` for instant/auto mining.
     pub block_time: Option<Duration>,
-    /// Disable auto, interval mining mode uns use `MiningMode::None` instead
+    /// Disable auto and interval mining mode and use `MiningMode::None` instead.
     pub no_mining: bool,
     /// Enables auto and interval mining mode
     pub mixed_mining: bool,
@@ -207,6 +213,8 @@ pub struct NodeConfig {
     /// The path where persisted states are cached (used with `max_persisted_states`).
     /// This does not affect the fork RPC cache location.
     pub cache_path: Option<PathBuf>,
+    /// Accounts to fund with specific balances on startup (address -> balance in wei).
+    pub funded_accounts: HashMap<Address, U256>,
 }
 
 impl NodeConfig {
@@ -513,17 +521,35 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
             disable_pool_balance_checks: false,
-            slots_in_an_epoch: 32,
+            slots_in_an_epoch: DEFAULT_SLOTS_IN_AN_EPOCH,
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
             silent: false,
             cache_path: None,
+            funded_accounts: HashMap::default(),
         }
     }
 }
 
 impl NodeConfig {
+    /// Applies Tempo's safe default beneficiary for forked nodes while preserving
+    /// explicit coinbase selections.
+    pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
+        if self.networks.is_tempo()
+            && !self.fork_urls.is_empty()
+            && evm_env.block_env.beneficiary.is_zero()
+        {
+            // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
+            // Forked transactions with the default zero beneficiary can therefore
+            // fail fee collection before producing a receipt. Use the same neutral
+            // fee-recipient sentinel as Tempo's simulation path so validator token
+            // lookup falls back to the default PathUSD token unless the user has
+            // explicitly supplied a non-zero coinbase.
+            evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+        }
+    }
+
     /// Returns the memory limit of the node
     #[must_use]
     pub const fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
@@ -536,7 +562,7 @@ impl NodeConfig {
     /// In Tempo mode, uses the hardfork-specific base fee (10 gwei pre-T1, 20 gwei T1+).
     pub fn get_base_fee(&self) -> u64 {
         let default = if self.networks.is_tempo() {
-            TempoHardfork::from(self.get_hardfork()).base_fee()
+            tempo_default_base_fee(TempoHardfork::from(self.get_hardfork()))
         } else {
             INITIAL_BASE_FEE
         };
@@ -550,7 +576,7 @@ impl NodeConfig {
     /// In Tempo mode, defaults to the hardfork-specific base fee.
     pub fn get_gas_price(&self) -> u128 {
         let default = if self.networks.is_tempo() {
-            TempoHardfork::from(self.get_hardfork()).base_fee() as u128
+            tempo_default_base_fee(TempoHardfork::from(self.get_hardfork())) as u128
         } else {
             INITIAL_GAS_PRICE
         };
@@ -583,8 +609,17 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
+        if self.networks.is_tempo()
+            && let Some(hardfork) = TempoHardfork::from_chain_and_timestamp(
+                self.get_chain_id(),
+                self.get_genesis_timestamp(),
+            )
+        {
+            return hardfork.into();
+        }
+        #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
-            return OpHardfork::default().into();
+            return foundry_evm::hardforks::OpHardfork::default().into();
         }
         if self.networks.is_tempo() {
             return TempoHardfork::default().into();
@@ -643,7 +678,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        self.networks.with_chain_id(chain_id);
+        self.networks = self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -1095,6 +1130,7 @@ impl NodeConfig {
     }
 
     /// Enable Optimism network features.
+    #[cfg(feature = "optimism")]
     #[must_use]
     pub fn with_optimism(mut self) -> Self {
         self.networks = NetworkConfigs::with_optimism();
@@ -1120,6 +1156,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
+        self
+    }
+
+    /// Sets accounts to fund with custom balances on startup.
+    #[must_use]
+    pub fn with_funded_accounts(mut self, accounts: HashMap<Address, U256>) -> Self {
+        self.funded_accounts = accounts;
         self
     }
 
@@ -1165,6 +1208,8 @@ impl NodeConfig {
             },
         );
 
+        self.apply_tempo_fork_beneficiary_default(&mut evm_env);
+
         let base_fee_params: BaseFeeParams =
             self.networks.base_fee_params(self.get_genesis_timestamp());
 
@@ -1201,6 +1246,8 @@ impl NodeConfig {
             }
             evm_env.block_env.beneficiary = genesis.coinbase;
         }
+
+        self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let genesis = GenesisConfig {
             number: self.get_genesis_number(),
@@ -1247,6 +1294,15 @@ impl NodeConfig {
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .wrap_err("failed to create default create2 deployer")?;
+        }
+
+        if !self.funded_accounts.is_empty() {
+            for (address, balance) in &self.funded_accounts {
+                backend
+                    .set_balance(*address, *balance)
+                    .await
+                    .wrap_err_with(|| format!("failed to fund account {address}"))?;
+            }
         }
 
         Ok(backend)
@@ -1483,6 +1539,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
+            hardfork: self.hardfork,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -1531,6 +1588,10 @@ latest block number: {latest_block}"
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
     }
+}
+
+const fn tempo_default_base_fee(hardfork: TempoHardfork) -> u64 {
+    if hardfork.is_t1() { TEMPO_T1_BASE_FEE } else { TEMPO_T0_BASE_FEE }
 }
 
 /// If the fork choice is a block number, simply return it with an empty list of transactions.
@@ -1641,7 +1702,14 @@ pub struct PruneStateHistoryConfig {
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported
     pub const fn is_state_history_supported(&self) -> bool {
-        !self.enabled || self.max_memory_history.is_some()
+        if !self.enabled {
+            return true;
+        }
+
+        match self.max_memory_history {
+            Some(limit) => limit > 0,
+            None => false,
+        }
     }
 
     /// Returns true if this setting was enabled.
@@ -1650,7 +1718,11 @@ impl PruneStateHistoryConfig {
     }
 
     pub fn from_args(val: Option<Option<usize>>) -> Self {
-        val.map(|max_memory_history| Self { enabled: true, max_memory_history }).unwrap_or_default()
+        val.map(|max_memory_history| Self {
+            enabled: true,
+            max_memory_history: max_memory_history.filter(|limit| *limit > 0),
+        })
+        .unwrap_or_default()
     }
 }
 
@@ -1766,7 +1838,32 @@ mod tests {
         assert!(config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(None));
         assert!(!config.is_state_history_supported());
+        let config = PruneStateHistoryConfig::from_args(Some(Some(0)));
+        assert!(config.is_config_enabled());
+        assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn set_chain_id_updates_network_config() {
+        let mut config = NodeConfig::test();
+        config.set_chain_id(Some(10u64));
+
+        assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    fn get_hardfork_on_tempo_never_returns_non_tempo_variant() {
+        // Post-Shanghai timestamp on Ethereum mainnet.
+        let shanghai_ts = 1_681_338_455u64;
+
+        let config = NodeConfig::test_tempo()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(shanghai_ts));
+
+        assert!(config.networks.is_tempo());
+        assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
     }
 }

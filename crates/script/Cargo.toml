@@ -29,6 +29,7 @@ forge-script-sequence.workspace = true
 
 serde.workspace = true
 eyre.workspace = true
+toml.workspace = true
 serde_json.workspace = true
 dunce.workspace = true
 foundry-compilers.workspace = true
@@ -62,3 +63,17 @@ tempo-primitives.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+anvil.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-cli/optimism",
+    "forge-script-sequence/optimism",
+    "forge-verify/optimism",
+]

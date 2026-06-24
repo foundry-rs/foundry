@@ -86,10 +86,13 @@ impl CallStack {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    /// Returns true if any chained call in the stack has its own indentation.
+    /// Returns true if the direct parent chain has its own indentation.
     /// Used to determine if commasep should skip its own indentation (to avoid double indent).
-    pub(crate) fn has_chain_with_indent(&self) -> bool {
-        self.stack.iter().any(|call| call.is_chained() && call.has_indent)
+    pub(crate) const fn has_indented_parent_chain(&self) -> bool {
+        matches!(
+            self.stack.as_slice(),
+            [.., parent, last] if last.is_nested() && parent.is_chained() && parent.has_indent
+        )
     }
 }
 
@@ -703,16 +706,23 @@ impl<'sess> State<'sess, '_> {
             if i + 1 < lines.len() {
                 let next_line = &lines[i + 1];
 
-                // Check if next line is has the same prefix and is not empty
+                // Check if next line has the same prefix and is not empty.
                 if next_line.starts_with(prefix) && !next_line.trim().is_empty() {
+                    let next_content = next_line[prefix.len()..].trim_start();
+
+                    // Keep each NatSpec tag on its own doc-comment line. Merging a wrapped
+                    // `@dev`/`@param` line with the following tag changes the tag boundary.
+                    if next_content.starts_with('@') {
+                        result.push(current_line.clone());
+                        i += 1;
+                        continue;
+                    }
+
                     // Only merge if the current line doesn't fit within available width
                     if estimate_line_width(current_line, self.config.tab_width) > self.space_left()
                     {
                         // Merge the lines and let the wrapper handle breaking if needed
-                        let merged_line = format!(
-                            "{current_line} {next_content}",
-                            next_content = next_line[prefix.len()..].trim_start()
-                        );
+                        let merged_line = format!("{current_line} {next_content}");
                         result.push(merged_line);
 
                         // Skip both lines since they are merged

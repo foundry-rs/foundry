@@ -58,6 +58,7 @@ use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
 };
+#[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
@@ -75,9 +76,9 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
-            TraceResult,
+            CallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
+            GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+            NoopFrame, TraceResult,
         },
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
@@ -105,25 +106,71 @@ use foundry_evm::{
     },
     utils::{
         block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::NetworkConfigs;
+#[cfg(feature = "optimism")]
+use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, get_deposit_tx_parts,
+    FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use monad_revm::{MonadCfgEnv, MonadHardfork, instructions::monad_gas_params};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
-use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
+#[cfg(feature = "optimism")]
+use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+
+/// Side-channel container for OP-specific deposit info produced by
+/// [`Backend::build_call_env`] and consumed by the OP transact path.
+///
+/// When the `optimism` feature is enabled, this is an alias for
+/// `op_revm::DepositTransactionParts`. When disabled, it is a zero-sized
+/// stand-in so the eth/tempo dispatch chain still type-checks.
+#[cfg(feature = "optimism")]
+type OpCallDepositInfo = DepositTransactionParts;
+#[cfg(not(feature = "optimism"))]
+#[derive(Default, Clone, Debug)]
+struct OpCallDepositInfo;
+
+/// Marker trait that abstracts over the per-network inspector trait bounds
+/// required by the in-memory backend. The OP bound is only included when the
+/// `optimism` feature is enabled.
+#[cfg(feature = "optimism")]
+pub trait BackendInspector<DB: Database>:
+    Inspector<EthEvmContext<DB>>
+    + Inspector<OpEvmContext<DB>>
+    + Inspector<TempoContext<DB>>
+    + Inspector<MonadContext<DB>>
+{
+}
+#[cfg(feature = "optimism")]
+impl<DB: Database, T> BackendInspector<DB> for T where
+    T: Inspector<EthEvmContext<DB>>
+        + Inspector<OpEvmContext<DB>>
+        + Inspector<TempoContext<DB>>
+        + Inspector<MonadContext<DB>>
+{
+}
+#[cfg(not(feature = "optimism"))]
+pub trait BackendInspector<DB: Database>:
+    Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
+{
+}
+#[cfg(not(feature = "optimism"))]
+impl<DB: Database, T> BackendInspector<DB> for T where
+    T: Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
+{
+}
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{EVMError, ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -144,7 +191,8 @@ use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
-    storage::StorageCtx,
+    TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
+    storage::{StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
 };
@@ -159,6 +207,8 @@ pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod inspector;
+#[cfg(feature = "optimism")]
+pub mod optimism;
 pub mod state;
 pub mod storage;
 
@@ -173,6 +223,20 @@ impl DatabaseRef for dyn crate::eth::backend::db::Db {}
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: u128 = 53000;
+
+fn call_config_from_tracer_config(
+    tracer_config: GethDebugTracerConfig,
+) -> Result<CallConfig, serde_json::Error> {
+    let mut tracer_config = tracer_config.into_json();
+    if let Some(config) = tracer_config.as_object_mut()
+        && !config.contains_key("onlyTopCall")
+        && let Some(only_top_level_call) = config.remove("onlyTopLevelCall")
+    {
+        config.insert("onlyTopCall".to_string(), only_top_level_call);
+    }
+
+    GethDebugTracerConfig(tracer_config).into_call_config()
+}
 
 pub type State = foundry_evm::utils::StateChangeset;
 
@@ -421,6 +485,11 @@ impl<N: Network> Backend<N> {
         self.genesis.timestamp
     }
 
+    /// Returns the configured genesis block number.
+    pub const fn genesis_number(&self) -> u64 {
+        self.genesis.number
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)
@@ -492,8 +561,17 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
+    #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
+    }
+
+    /// Returns true if op-stack deposits are active.
+    ///
+    /// Always `false` when built without the `optimism` feature.
+    #[cfg(not(feature = "optimism"))]
+    pub const fn is_optimism(&self) -> bool {
+        false
     }
 
     /// Returns true if Tempo network mode is active
@@ -507,8 +585,23 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the active hardfork.
-    pub const fn hardfork(&self) -> FoundryHardfork {
+    pub fn hardfork(&self) -> FoundryHardfork {
+        if let Some(hardfork) =
+            self.fork.read().as_ref().and_then(|fork| fork.config.read().hardfork)
+        {
+            return hardfork;
+        }
         self.hardfork
+    }
+
+    /// Returns the active Tempo hardfork.
+    pub fn tempo_hardfork(&self) -> TempoHardfork {
+        TempoHardfork::from(self.hardfork())
+    }
+
+    /// Returns whether a Tempo hardfork is active on this backend.
+    pub fn is_tempo_hardfork_active(&self, hardfork: TempoHardfork) -> bool {
+        self.is_tempo() && self.tempo_hardfork() >= hardfork
     }
 
     /// Returns the precompiles for the current spec.
@@ -522,7 +615,8 @@ impl<N: Network> Backend<N> {
         }
 
         // Extend with configured network precompiles.
-        precompiles_map.extend(self.networks.precompiles());
+        precompiles_map
+            .extend(self.networks.precompiles(self.is_tempo().then(|| self.tempo_hardfork())));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
@@ -552,17 +646,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        let spec_id = self.spec_id();
-
-        if spec_id >= SpecId::OSAKA {
-            return BlobParams::osaka();
-        }
-
-        if spec_id >= SpecId::PRAGUE {
-            return BlobParams::prague();
-        }
-
-        BlobParams::cancun()
+        get_blob_params_by_spec_id(self.spec_id())
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -596,6 +680,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
+    #[cfg(feature = "optimism")]
     pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
@@ -640,7 +725,7 @@ impl<N: Network> Backend<N> {
             return None;
         }
 
-        let hardfork = MonadHardfork::from(self.hardfork);
+        let hardfork = MonadHardfork::from(self.hardfork());
         Some(MonadCfgEnv::from(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
         ))
@@ -795,33 +880,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns the block and its hash for the given id
     fn get_block_with_hash(&self, id: impl Into<BlockId>) -> Option<(Block, B256)> {
-        let hash = match id.into() {
-            BlockId::Hash(hash) => hash.block_hash,
-            BlockId::Number(number) => {
-                let storage = self.blockchain.storage.read();
-                let slots_in_an_epoch = self.slots_in_an_epoch;
-                match number {
-                    BlockNumber::Latest => storage.best_hash,
-                    BlockNumber::Earliest => storage.genesis_hash,
-                    BlockNumber::Pending => return None,
-                    BlockNumber::Number(num) => *storage.hashes.get(&num)?,
-                    BlockNumber::Safe => {
-                        if storage.best_number > (slots_in_an_epoch) {
-                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch)))?
-                        } else {
-                            storage.genesis_hash // treat the genesis block as safe "by definition"
-                        }
-                    }
-                    BlockNumber::Finalized => {
-                        if storage.best_number > (slots_in_an_epoch * 2) {
-                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch * 2)))?
-                        } else {
-                            storage.genesis_hash
-                        }
-                    }
-                }
-            }
-        };
+        let hash = self.blockchain.hash(id.into(), self.slots_in_an_epoch)?;
         let block = self.get_block_by_hash(hash)?;
         Some((block, hash))
     }
@@ -1147,7 +1206,7 @@ impl<N: Network> Backend<N> {
         self.networks.inject_precompiles(precompiles);
 
         if let Some(factory) = &self.precompile_factory {
-            precompiles.extend_precompiles(factory.precompiles());
+            factory.install(precompiles);
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1162,6 +1221,23 @@ impl<N: Network> Backend<N> {
         }
     }
 
+    fn inject_tempo_precompiles<DB, I>(&self, evm: &mut tempo_evm::evm::TempoEvm<DB, I>)
+    where
+        DB: Database,
+        I: Inspector<TempoContext<DB>>,
+    {
+        self.inject_precompiles(evm.precompiles_mut());
+        // Re-extend Tempo precompiles, preserving shared non-creditable slots.
+        let cfg = evm.ctx().cfg.clone();
+        let non_creditable_slots = evm.non_creditable_slots();
+        extend_tempo_precompiles(
+            evm.precompiles_mut(),
+            &cfg,
+            StorageActions::disabled(),
+            non_creditable_slots,
+        );
+    }
+
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
     /// to [`HaltReason`] so all call sites share a single halt-reason type.
     fn transact_with_inspector_ref<'db, I, DB>(
@@ -1169,73 +1245,53 @@ impl<N: Network> Backend<N> {
         db: &'db DB,
         evm_env: &EvmEnv,
         inspector: &mut I,
-        tx_env: OpTransaction<TxEnv>,
+        tx_env: TxEnv,
+        op_deposit: OpCallDepositInfo,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
+        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
-            let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
-                evm_env.block_env.clone(),
-            );
-            let mut evm = OpEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(db),
-                op_env,
-                inspector,
-            );
-            self.inject_precompiles(evm.precompiles_mut());
-            let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
-                EVMError::Database(db) => EVMError::Database(db),
-                EVMError::Header(h) => EVMError::Header(h),
-                EVMError::Custom(s) => EVMError::Custom(s),
-                EVMError::CustomAny(err) => EVMError::CustomAny(err),
-                EVMError::Transaction(t) => EVMError::Transaction(t),
-            })?;
-            Ok(ResultAndState {
-                result: result.result.map_haltreason(|h| match h {
-                    OpHaltReason::Base(eth) => eth,
-                    _ => HaltReason::PrecompileError,
-                }),
-                state: result.state,
-            })
-        } else if self.is_tempo() {
-            self.transact_tempo_with_inspector_ref(
-                db,
-                evm_env,
-                inspector,
-                TempoTxEnv::from(tx_env.base),
-            )
-        } else if self.is_monad() {
-            let hardfork = MonadHardfork::from(self.hardfork);
-            let monad_env = EvmEnv::new(
-                evm_env
-                    .cfg_env
-                    .clone()
-                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
-                evm_env.block_env.clone(),
-            );
-            let mut evm = MonadEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(db),
-                monad_env,
-                inspector,
-            );
-            self.inject_precompiles(evm.precompiles_mut());
-            Ok(evm.transact(tx_env.base)?)
-        } else {
-            let mut evm = EthEvmFactory::default().create_evm_with_inspector(
-                WrapDatabaseRef(db),
-                evm_env.clone(),
-                inspector,
-            );
-            self.inject_precompiles(evm.precompiles_mut());
-            Ok(evm.transact(tx_env.base)?)
+            let op_tx = OpTransaction { base: tx_env, deposit: op_deposit, ..Default::default() };
+            return self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx);
         }
+        // `op_deposit` only matters on the OP path; eth/tempo ignore it.
+        let _ = op_deposit;
+        if self.is_tempo() {
+            self.transact_tempo_with_inspector_ref(db, evm_env, inspector, TempoTxEnv::from(tx_env))
+        } else if self.is_monad() {
+            self.transact_monad_with_inspector_ref(db, evm_env, inspector, tx_env)
+        } else {
+            self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
+        }
+    }
+
+    /// Eth path of [`Backend::transact_with_inspector_ref`].
+    ///
+    /// Creates an Ethereum EVM, injects precompiles, and transacts with a
+    /// plain [`TxEnv`].
+    fn transact_eth_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let mut evm = EthEvmFactory::default().create_evm_with_inspector(
+            WrapDatabaseRef(db),
+            evm_env.clone(),
+            inspector,
+        );
+        self.inject_precompiles(evm.precompiles_mut());
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Builds the appropriate tx env from a [`FoundryTxEnvelope`], executes via the correct
@@ -1250,10 +1306,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<(ResultAndState<HaltReason>, TxEnv), BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
+        I: BackendInspector<WrapDatabaseRef<&'db DB>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         if tx.is_tempo() {
@@ -1261,14 +1314,25 @@ impl<N: Network> Backend<N> {
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
             let base = tx_env.inner.clone();
             let result = self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)?;
-            Ok((result, base))
-        } else {
-            let tx_env: OpTransaction<TxEnv> =
-                FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
-            let base = tx_env.base.clone();
-            let result = self.transact_with_inspector_ref(db, evm_env, inspector, tx_env)?;
-            Ok((result, base))
+            return Ok((result, base));
         }
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
+            let op_tx: OpTransaction<TxEnv> =
+                FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+            let base = op_tx.base.clone();
+            let result = self.transact_op_with_inspector_ref(db, evm_env, inspector, op_tx)?;
+            return Ok((result, base));
+        }
+        let tx_env: TxEnv =
+            FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+        let base = tx_env.clone();
+        let result = if self.is_monad() {
+            self.transact_monad_with_inspector_ref(db, evm_env, inspector, tx_env)?
+        } else {
+            self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)?
+        };
+        Ok((result, base))
     }
 
     /// Creates a Tempo EVM, injects precompiles, and transacts with a native [`TempoTxEnv`].
@@ -1284,7 +1348,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = TempoHardfork::from(self.hardfork);
+        let hardfork = self.tempo_hardfork();
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
@@ -1294,7 +1358,7 @@ impl<N: Network> Backend<N> {
             tempo_env,
             inspector,
         );
-        self.inject_precompiles(evm.precompiles_mut());
+        self.inject_tempo_precompiles(&mut evm);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
@@ -1303,6 +1367,33 @@ impl<N: Network> Backend<N> {
             }),
             state: result.state,
         })
+    }
+
+    /// Monad path of [`Backend::transact_with_inspector_ref`].
+    fn transact_monad_with_inspector_ref<'db, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &mut I,
+        tx_env: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let hardfork = MonadHardfork::from(self.hardfork());
+        let monad_env = EvmEnv::new(
+            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+            evm_env.block_env.clone(),
+        );
+        let mut evm = MonadEvmFactory::default().create_evm_with_inspector(
+            WrapDatabaseRef(db),
+            monad_env,
+            inspector,
+        );
+        self.inject_precompiles(evm.precompiles_mut());
+        Ok(evm.transact(tx_env)?)
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
@@ -1346,16 +1437,19 @@ impl<N: Network> Backend<N> {
             }};
         }
 
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
                 evm_env.block_env.clone(),
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            run!(evm)
-        } else if self.is_tempo() {
-            let hardfork = TempoHardfork::from(self.hardfork);
+            return run!(evm);
+        }
+
+        if self.is_tempo() {
+            let hardfork = self.tempo_hardfork();
             let tempo_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -1367,7 +1461,7 @@ impl<N: Network> Backend<N> {
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
             run!(evm)
         } else if self.is_monad() {
-            let hardfork = MonadHardfork::from(self.hardfork);
+            let hardfork = MonadHardfork::from(self.hardfork());
             let monad_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -1398,7 +1492,7 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-    ) -> (EvmEnv, OpTransaction<TxEnv>) {
+    ) -> (EvmEnv, TxEnv, OpCallDepositInfo) {
         let tx_type = request.minimal_tx_type() as u8;
 
         let WithOtherFields::<TransactionRequest> {
@@ -1451,7 +1545,7 @@ impl<N: Network> Backend<N> {
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
-        let mut base = TxEnv {
+        let mut tx_env = TxEnv {
             caller,
             gas_limit,
             gas_price,
@@ -1473,11 +1567,10 @@ impl<N: Network> Backend<N> {
             blob_hashes,
             ..Default::default()
         };
-        base.set_signed_authorization(authorization_list.unwrap_or_default());
-        let mut tx_env = OpTransaction { base, ..Default::default() };
+        tx_env.set_signed_authorization(authorization_list.unwrap_or_default());
 
         if let Some(nonce) = nonce {
-            tx_env.base.nonce = nonce;
+            tx_env.nonce = nonce;
         }
 
         if evm_env.block_env.basefee == 0 {
@@ -1487,13 +1580,22 @@ impl<N: Network> Backend<N> {
         }
 
         // Deposit transaction? (only valid when op-stack deposits are active)
-        if self.ensure_op_deposits_active().is_ok()
+        #[cfg(feature = "optimism")]
+        let op_deposit = if self.ensure_op_deposits_active().is_ok()
             && let Ok(deposit) = get_deposit_tx_parts(&other)
         {
-            tx_env.deposit = deposit;
-        }
+            deposit
+        } else {
+            OpCallDepositInfo::default()
+        };
+        #[cfg(not(feature = "optimism"))]
+        let op_deposit = {
+            // `other` carries OP-only deposit fields; consumed only when feature is enabled.
+            let _ = &other;
+            OpCallDepositInfo
+        };
 
-        (evm_env, tx_env)
+        (evm_env, tx_env, op_deposit)
     }
 
     pub fn call_with_state(
@@ -1527,13 +1629,13 @@ impl<N: Network> Backend<N> {
             (fee_token, nonce_key, valid_before, valid_after)
         });
 
-        let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
+        let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block_env);
 
         let ResultAndState { result, state } =
             if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
                 use tempo_primitives::transaction::Call;
 
-                let base = tx_env.base;
+                let base = tx_env;
                 let mut tempo_tx = TempoTxEnv::from(base.clone());
                 tempo_tx.fee_token = fee_token;
 
@@ -1543,19 +1645,29 @@ impl<N: Network> Backend<N> {
                     // manager needs a non-zero hash; the actual value doesn't matter
                     // because the state is discarded after estimation.
                     let estimation_hash = keccak256(base.data.as_ref());
+                    // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
+                    // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
+                    // Set both so the synthetic env works across hardforks.
+                    tempo_tx.unique_tx_identifier = Some(estimation_hash);
                     tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
                         nonce_key,
                         valid_before,
                         valid_after,
                         aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
                         tx_hash: estimation_hash,
-                        expiring_nonce_hash: Some(estimation_hash),
+                        expiring_nonce_idx: Some(0),
                         ..Default::default()
                     }));
                 }
                 self.transact_tempo_with_inspector_ref(state, &evm_env, &mut inspector, tempo_tx)?
             } else {
-                self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?
+                self.transact_with_inspector_ref(
+                    state,
+                    &evm_env,
+                    &mut inspector,
+                    tx_env,
+                    op_deposit,
+                )?
             };
 
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
@@ -1578,9 +1690,9 @@ impl<N: Network> Backend<N> {
         let mut inspector =
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
-        let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
+        let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state: _ } =
-            self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
+            self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env, op_deposit)?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
@@ -2113,7 +2225,7 @@ impl<N: Network> Backend<N> {
             let chain_id = self.evm_env.read().cfg_env.chain_id;
             let timestamp = self.genesis.timestamp;
             let test_accounts: Vec<Address> = self.genesis.accounts.clone();
-            let hardfork = TempoHardfork::from(self.hardfork);
+            let hardfork = self.tempo_hardfork();
             let mut db = self.db.write().await;
             crate::eth::backend::tempo::initialize_tempo_precompiles(
                 &mut **db,
@@ -2147,6 +2259,7 @@ impl<N: Network> Backend<N> {
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
                     node_config.fork_urls = vec![eth_rpc_url.clone()];
+                    node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
                     node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
                 };
@@ -2964,15 +3077,14 @@ where
                 return match tracer {
                     GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
                         GethDebugBuiltInTracerType::CallTracer => {
-                            let call_config = tracer_config
-                                .into_call_config()
+                            let call_config = call_config_from_tracer_config(tracer_config)
                                 .map_err(|e| RpcError::invalid_params(e.to_string()))?;
 
                             let mut inspector = self.build_inspector().with_tracing_config(
                                 TracingInspectorConfig::from_geth_call_config(&call_config),
                             );
 
-                            let (evm_env, tx_env) =
+                            let (evm_env, tx_env, op_deposit) =
                                 self.build_call_env(request, fee_details, block);
                             let ResultAndState { result, state: _ } = self
                                 .transact_with_inspector_ref(
@@ -2980,6 +3092,7 @@ where
                                     &evm_env,
                                     &mut inspector,
                                     tx_env,
+                                    op_deposit,
                                 )?;
 
                             inspector.print_logs();
@@ -3005,13 +3118,14 @@ where
                                 ),
                             );
 
-                            let (evm_env, tx_env) =
+                            let (evm_env, tx_env, op_deposit) =
                                 self.build_call_env(request, fee_details, block);
                             let result = self.transact_with_inspector_ref(
                                 &cache_db,
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
+                                op_deposit,
                             )?;
 
                             Ok(inspector
@@ -3033,22 +3147,22 @@ where
                     }
                     #[cfg(feature = "js-tracer")]
                     GethDebugTracerType::JsTracer(code) => {
-                        use alloy_evm::IntoTxEnv;
                         let config = tracer_config.into_json();
                         let mut inspector =
                             revm_inspectors::tracing::js::JsInspector::new(code, config)
                                 .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
-                        let (evm_env, tx_env) =
+                        let (evm_env, tx_env, op_deposit) =
                             self.build_call_env(request, fee_details, block.clone());
                         let result = self.transact_with_inspector_ref(
                             &cache_db,
                             &evm_env,
                             &mut inspector,
                             tx_env.clone(),
+                            op_deposit,
                         )?;
                         let res = inspector
-                            .json_result(result, &OpTx(tx_env).into_tx_env(), &block, &cache_db)
+                            .json_result(result, &tx_env, &block, &cache_db)
                             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         Ok(GethTrace::JS(res))
@@ -3061,9 +3175,14 @@ where
                 .build_inspector()
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
-            let (evm_env, tx_env) = self.build_call_env(request, fee_details, block);
-            let ResultAndState { result, state: _ } =
-                self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
+            let (evm_env, tx_env, op_deposit) = self.build_call_env(request, fee_details, block);
+            let ResultAndState { result, state: _ } = self.transact_with_inspector_ref(
+                &cache_db,
+                &evm_env,
+                &mut inspector,
+                tx_env,
+                op_deposit,
+            )?;
 
             let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
 
@@ -3247,11 +3366,7 @@ where
         f: F,
     ) -> Result<T, BlockchainError>
     where
-        for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + Inspector<OpEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + Inspector<MonadContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + 'a,
+        for<'a> I: BackendInspector<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>> + 'a,
         for<'a> F:
             FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
     {
@@ -3626,7 +3741,7 @@ where
                         return Ok(res);
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
-                        return match tracer_config.into_call_config() {
+                        return match call_config_from_tracer_config(tracer_config) {
                             Ok(call_config) => {
                                 let inspector = TracingInspector::new(
                                     TracingInspectorConfig::from_geth_call_config(&call_config),
@@ -3875,12 +3990,22 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage
-        self.blockchain.storage.write().load_blocks(state.blocks.clone());
-        self.blockchain.storage.write().load_transactions(state.transactions.clone());
+        // load the blocks and transactions into the storage atomically so concurrent readers
+        // never observe blocks without their transactions
+        {
+            let mut storage = self.blockchain.storage.write();
+            storage.load_blocks(state.blocks.clone());
+            storage.load_transactions(state.transactions.clone());
+        }
         // reset the block env
         if let Some(block) = state.block.clone() {
-            self.evm_env.write().block_env = block.clone();
+            {
+                let mut env = self.evm_env.write();
+                env.block_env = block.clone();
+                if self.is_tempo() && self.is_fork() && env.block_env.beneficiary.is_zero() {
+                    env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+                }
+            }
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
@@ -3961,6 +4086,27 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             .into());
         }
 
+        // Backfill the EVM-level block hash cache from the freshly loaded blocks so that the
+        // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already
+        // computed by `load_blocks` above. Only collect the last 256 blocks since that's all
+        // BLOCKHASH can access.
+        let block_hashes: Vec<_> = {
+            let storage = self.blockchain.storage.read();
+            let min_block = storage.best_number.saturating_sub(256);
+            storage
+                .hashes
+                .iter()
+                .filter(|(num, _)| **num >= min_block)
+                .map(|(&num, &hash)| (num, hash))
+                .collect()
+        };
+        {
+            let mut db = self.db.write().await;
+            for (block_num, hash) in block_hashes {
+                db.insert_block_hash(U256::from(block_num), hash);
+            }
+        }
+
         if let Some(historical_states) = state.historical_states {
             self.states.write().load_states(historical_states);
         }
@@ -4032,7 +4178,7 @@ impl Backend<FoundryNetwork> {
                     )?
                     .or_zero_fees();
 
-                    let (mut evm_env, tx_env) = self.build_call_env(
+                    let (mut evm_env, tx_env, op_deposit) = self.build_call_env(
                         WithOtherFields::new(request.clone()),
                         fee_details,
                         block_env.clone(),
@@ -4053,8 +4199,13 @@ impl Backend<FoundryNetwork> {
                         inspector = inspector.with_transfers();
                     }
                     trace!(target: "backend", env=?evm_env, spec=?evm_env.spec_id(),"simulate evm env");
-                    let ResultAndState { result, state } =
-                        self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
+                    let ResultAndState { result, state } = self.transact_with_inspector_ref(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        tx_env,
+                        op_deposit,
+                    )?;
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
                     inspector.print_logs();
@@ -4305,7 +4456,10 @@ fn get_pool_transactions_nonce(
 ) -> Option<u64> {
     if let Some(highest_nonce) = pool_transactions
         .iter()
-        .filter(|tx| *tx.pending_transaction.sender() == address)
+        .filter(|tx| {
+            *tx.pending_transaction.sender() == address
+                && !tx.pending_transaction.transaction.as_ref().has_nonzero_tempo_nonce_key()
+        })
         .map(|tx| tx.pending_transaction.nonce())
         .max()
     {
@@ -4412,8 +4566,10 @@ where
             return Err(InvalidTransactionError::TempoNativeValueTransfer);
         }
 
-        // Tempo AA: cap authorization list size
-        if let FoundryTxEnvelope::Tempo(aa_tx) = tx.as_ref() {
+        // Tempo AA T5: cap authorization list size
+        if self.is_tempo_hardfork_active(TempoHardfork::T5)
+            && let FoundryTxEnvelope::Tempo(aa_tx) = tx.as_ref()
+        {
             const MAX_TEMPO_AUTHORIZATIONS: usize = 16;
             let auth_count = aa_tx.tx().tempo_authorization_list.len();
             if auth_count > MAX_TEMPO_AUTHORIZATIONS {
@@ -4426,7 +4582,10 @@ where
         }
 
         // Nonce validation — skip for deposits (L1→L2) and Tempo txs (2D nonce system)
+        #[cfg(feature = "optimism")]
         let is_deposit_tx = pending.transaction.as_ref().is_deposit();
+        #[cfg(not(feature = "optimism"))]
+        let is_deposit_tx = false;
         let is_tempo_tx = pending.transaction.as_ref().is_tempo();
         let nonce = tx.nonce();
         if nonce < account.nonce && !is_deposit_tx && !is_tempo_tx {
@@ -4469,7 +4628,11 @@ where
 
         // EIP-3860 initcode size validation, respects --code-size-limit / --disable-code-size-limit
         if evm_env.cfg_env.spec >= SpecId::SHANGHAI && tx.kind() == TxKind::Create {
-            let max_initcode_size = self.max_initcode_size(evm_env);
+            let max_initcode_size = evm_env
+                .cfg_env
+                .limit_contract_code_size
+                .map(|limit| limit.saturating_mul(2))
+                .unwrap_or_else(|| self.max_initcode_size(evm_env));
             if tx.input().len() > max_initcode_size {
                 return Err(InvalidTransactionError::MaxInitCodeSizeExceeded);
             }
@@ -4499,7 +4662,7 @@ where
             {
                 debug!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
-                    detail: String::from("tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+                    detail: String::from("tx.gas_limit > resolved tx gas limit cap"),
                 }));
             }
 
@@ -4542,6 +4705,7 @@ where
                 );
             let value = tx.value();
             match tx.as_ref() {
+                #[cfg(feature = "optimism")]
                 FoundryTxEnvelope::Deposit(deposit_tx) => {
                     // Deposit transactions
                     // https://specs.optimism.io/protocol/deposits.html#execution
@@ -4605,6 +4769,7 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
+    #[cfg(feature = "optimism")]
     if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
         let dep_tx = deposit_tx;
 

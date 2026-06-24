@@ -120,6 +120,13 @@ pub struct CloneArgs {
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
+    /// Do not create a commit after cloning.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge clone` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
     #[command(flatten)]
     pub install: DependencyInstallOpts,
 }
@@ -135,6 +142,7 @@ impl CloneArgs {
             keep_directory_structure,
             source,
             sourcify_url,
+            no_commit: _,
         } = self;
 
         // step 0. get the chain and api key from the config
@@ -152,14 +160,14 @@ impl CloneArgs {
                     .ok_or_else(|| {
                         eyre::eyre!("No Etherscan API key configured for chain {chain}")
                     })?
-                    .into_client()?;
-                sh_println!("Downloading the source code of {address} from Etherscan...")?;
+                    .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
+                sh_status!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Etherscan", None)
             }
             SourceExplorer::Sourcify => {
                 let client = SourcifyClient::with_url(chain, sourcify_url.as_deref());
-                sh_println!("Downloading the source code of {address} from Sourcify...")?;
+                sh_status!("Downloading the source code of {address} from Sourcify...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Sourcify", Some(client))
             }
@@ -176,7 +184,7 @@ impl CloneArgs {
             .await?;
 
         // step 4. collect the compilation metadata
-        sh_println!("Collecting the creation information of {address} from {explorer_name}...")?;
+        sh_status!("Collecting the creation information of {address} from {explorer_name}...")?;
 
         match source {
             SourceExplorer::Etherscan => {
@@ -188,7 +196,7 @@ impl CloneArgs {
                     sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
-                let client = etherscan_config.into_client()?;
+                let client = etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
             SourceExplorer::Sourcify => {

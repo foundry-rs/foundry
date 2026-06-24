@@ -33,13 +33,14 @@ use foundry_common::{
 };
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryBlock as _, FoundryTransaction as _,
         evm::{
-            EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, SpecFor,
-            TempoEvmNetwork, TxEnvFor,
+            EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
         },
     },
     executors::EvmError,
@@ -176,6 +177,7 @@ impl VerifyBytecodeArgs {
             NetworkVariant::Ethereum => {
                 self.run_with_network_and_config::<EthEvmNetwork>(config).await
             }
+            #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
                 self.run_with_network_and_config::<OpEvmNetwork>(config).await
             }
@@ -226,7 +228,7 @@ impl VerifyBytecodeArgs {
         }
 
         if !shell::is_json() {
-            sh_println!(
+            sh_status!(
                 "Verifying bytecode for contract {} at address {}",
                 self.contract.name,
                 self.address
@@ -462,7 +464,7 @@ impl VerifyBytecodeArgs {
 
         trace!(ignore = ?self.ignore);
         // Check if `--ignore` is set to `creation`.
-        if !self.ignore.is_some_and(|b| b.is_creation()) {
+        if self.ignore.is_none_or(|b| !b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
             let match_type = crate::utils::match_bytecodes(
                 local_bytecode_vec.as_slice(),
@@ -496,7 +498,7 @@ impl VerifyBytecodeArgs {
             }
         }
 
-        if !self.ignore.is_some_and(|b| b.is_runtime()) {
+        if self.ignore.is_none_or(|b| !b.is_runtime()) {
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
@@ -647,7 +649,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn can_parse_network() {
+    fn can_parse_tempo_network() {
+        let args = VerifyBytecodeArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--network",
+            "tempo",
+        ]);
+
+        assert_eq!(args.network, Some(NetworkVariant::Tempo));
+    }
+
+    #[test]
+    fn can_parse_monad_network() {
         let args = VerifyBytecodeArgs::parse_from([
             "foundry-cli",
             "0x0000000000000000000000000000000000000000",
@@ -660,7 +675,17 @@ mod tests {
     }
 
     #[test]
-    fn configured_network_uses_config_network() {
+    fn configured_network_uses_tempo_config_network() {
+        let config = Config { networks: NetworkVariant::Tempo.into(), ..Default::default() };
+
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(None, &config),
+            Some(NetworkVariant::Tempo)
+        );
+    }
+
+    #[test]
+    fn configured_network_uses_monad_config_network() {
         let config = Config { networks: NetworkVariant::Monad.into(), ..Default::default() };
 
         assert_eq!(
