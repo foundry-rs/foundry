@@ -255,6 +255,10 @@ impl TestOutcome {
             failures,
             test_word
         )?;
+        sh_println!(
+            "Tip: Run {} to inspect one failing test in the debugger",
+            "`forge test --debug --match-test <TEST_NAME>`".cyan()
+        )?;
 
         // Print seed for fuzz/invariant test failures to enable reproduction.
         if let Some(seed) = self.fuzz_seed
