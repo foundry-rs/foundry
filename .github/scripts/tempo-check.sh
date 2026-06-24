@@ -353,7 +353,8 @@ if [[ "$HARDFORK_UPPER" == "T6" ]]; then
     exit 1
   fi
   mapfile -t RP_BLOCKED_FIELDS < <(cast abi-decode 'f()(uint256,uint8,bytes)' "$RP_BLOCKED_DATA")
-  RP_BLOCKED_AMOUNT="${RP_BLOCKED_FIELDS[0]}"
+  # `cast abi-decode` pretty-prints large integers as "77000 [7.7e4]"; compare the raw numeric token.
+  RP_BLOCKED_AMOUNT="${RP_BLOCKED_FIELDS[0]%% *}"
   RP_RECEIPT_VERSION="${RP_BLOCKED_FIELDS[1]}"
   RP_RECEIPT="${RP_BLOCKED_FIELDS[2]}"
   [[ "$RP_BLOCKED_AMOUNT" == "$RP_AMOUNT" ]] || { echo "ERROR: blocked amount mismatch: $RP_BLOCKED_AMOUNT"; exit 1; }

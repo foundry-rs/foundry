@@ -93,6 +93,11 @@ pub struct CheckSequenceOutcome {
     pub failure_site: Option<CheckSequenceFailureSite>,
 }
 
+pub struct ShrunkSequence {
+    pub calls: Vec<BasicTxDetails>,
+    pub result: Option<CheckSequenceOutcome>,
+}
+
 /// Result of a strict handler-bug replay: anchor asserts, no earlier call asserts, and the
 /// recomputed edge fingerprint identifies which path the assertion took.
 #[derive(Debug)]
@@ -251,9 +256,10 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     calls: &[BasicTxDetails],
     expect_assertion_failure: bool,
     executor: &Executor<FEN>,
+    rd: Option<&RevertDecoder>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
-) -> eyre::Result<Vec<BasicTxDetails>> {
+) -> eyre::Result<ShrunkSequence> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
     let target_address = invariant_contract.address;
@@ -262,10 +268,12 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     // break the invariant -- consider emitting a warning.
     let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
     if !success {
-        return Ok(vec![]);
+        return Ok(ShrunkSequence { calls: vec![], result: None });
     }
 
     let accumulate_warp_roll = config.has_delay();
+    let mut last_result = None;
+    let mut last_result_matches_shrinker = true;
     let shrinker = run_shrink_loop(
         config,
         calls.len(),
@@ -275,7 +283,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         // do not roll back the removal.
         ShrinkErrorPolicy::KeepRemoved,
         |shrinker| {
-            let outcome = check_sequence(
+            let result = match check_sequence(
                 executor.clone(),
                 calls,
                 shrinker.current().collect(),
@@ -286,15 +294,52 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
                     fail_on_revert: config.fail_on_revert,
                     expect_assertion_failure,
                     call_after_invariant: invariant_contract.call_after_invariant,
-                    rd: None,
+                    rd,
                 },
-            )?;
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    last_result_matches_shrinker = false;
+                    return Err(err);
+                }
+            };
             // Bug still present iff the invariant predicate did not pass.
-            Ok(!outcome.success)
+            let bug_still_present = !result.success;
+            if bug_still_present {
+                last_result = Some(result);
+                last_result_matches_shrinker = true;
+            }
+            Ok(bug_still_present)
         },
     );
 
-    Ok(build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll))
+    let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
+    let result = if last_result_matches_shrinker {
+        last_result
+    } else {
+        match check_sequence(
+            executor.clone(),
+            &shrunk,
+            (0..shrunk.len()).collect(),
+            target_address,
+            calldata,
+            CheckSequenceOptions {
+                accumulate_warp_roll: false,
+                fail_on_revert: config.fail_on_revert,
+                expect_assertion_failure,
+                call_after_invariant: invariant_contract.call_after_invariant,
+                rd,
+            },
+        ) {
+            Ok(result) => Some(result),
+            Err(err) => {
+                trace!(target: "forge::test", %err, "failed to recompute shrunk replay metrics");
+                None
+            }
+        }
+    };
+
+    Ok(ShrunkSequence { calls: shrunk, result })
 }
 
 /// Replays `sequence` (indices into `calls`) against `executor`. When
@@ -801,8 +846,10 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CallSequenceShrinker, build_shrunk_sequence};
+    use super::{CallSequenceShrinker, ShrinkErrorPolicy, build_shrunk_sequence, run_shrink_loop};
+    use crate::executors::EarlyExit;
     use alloy_primitives::{Address, Bytes, U256};
+    use foundry_config::InvariantConfig;
     use foundry_evm_fuzz::{BasicTxDetails, CallDetails};
     use proptest::bits::BitSetLike;
 
@@ -845,5 +892,18 @@ mod tests {
         assert_eq!(shrunk.len(), 1);
         assert_eq!(shrunk[0].warp, Some(U256::from(3)));
         assert_eq!(shrunk[0].roll, Some(U256::from(5)));
+    }
+
+    #[test]
+    fn shrink_loop_keep_removed_treats_candidate_error_as_still_failing() {
+        let config = InvariantConfig { shrink_run_limit: 1, ..Default::default() };
+        let early_exit = EarlyExit::new(false);
+
+        let shrinker =
+            run_shrink_loop(&config, 2, None, &early_exit, ShrinkErrorPolicy::KeepRemoved, |_| {
+                Err(eyre::eyre!("candidate replay failed"))
+            });
+
+        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![1]);
     }
 }
