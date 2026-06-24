@@ -317,6 +317,27 @@ mod tests {
     }
 
     #[test]
+    fn runnable_campaign_anchor_count_splits_boolean_suite_when_corpus_weight_provenance_differs() {
+        let abi = JsonAbi::parse([
+            "function invariantOne() external",
+            "function invariantTwo() external",
+        ])
+        .unwrap();
+        let mut inline_config = InlineConfig::new();
+        inline_config
+            .insert(&NatSpec {
+                contract: CONTRACT_NAME.to_string(),
+                function: Some("invariantTwo".to_string()),
+                line: "1:1".to_string(),
+                docs: "forge-config: default.invariant.corpus_random_sequence_weight = 10"
+                    .to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(count_anchors(&abi, &inline_config), 2);
+    }
+
+    #[test]
     fn runnable_campaign_anchor_count_respects_network_pass() {
         let abi = JsonAbi::parse(["function invariantTempoOnly() external"]).unwrap();
         let mut inline_config = InlineConfig::new();
@@ -1549,6 +1570,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     ));
                     return self.result;
                 }
+                // Single-call artifacts are concrete replay inputs: sender, value, warp, and roll
+                // are intentionally taken from the artifact. Validation only checks that the call
+                // still targets this test function.
                 if let Err(err) = validate_single_call_symbolic_replay(func, call, self.address) {
                     self.result.single_fail(Some(err));
                     return self.result;
@@ -2113,6 +2137,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &txes,
                     None,
                     assertion_failure,
+                    Some(replay_ctx.revert_decoder),
                     None, // check mode
                     &invariant_contract,
                     invariant_contract.anchor(),
@@ -2127,21 +2152,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &self.tcfg.early_exit,
                     None, // single-invariant replay path; no [i/N] counter
                 ) {
-                    Ok(replayed_call_sequence) if !replayed_call_sequence.is_empty() => {
-                        call_sequence = replayed_call_sequence;
-                        let (_txes, replay) = replay_persisted_call_sequence(
-                            &replay_ctx,
-                            self.clone_executor(),
-                            &mut call_sequence,
-                            assertion_failure,
-                        );
-                        if let Ok((
+                    Ok(replay) if !replay.counterexample_sequence.is_empty() => {
+                        call_sequence = replay.counterexample_sequence;
+                        if let Some((
                             _success,
                             updated_replayed_entirely,
                             updated_replay_reason,
                             updated_calls_count,
                             updated_reverts,
-                        )) = replay
+                        )) = replay.check_result
                         {
                             replayed_entirely = updated_replayed_entirely;
                             replay_reason = updated_replay_reason;
@@ -2224,6 +2243,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &invariant_result.optimization_best_sequence,
                     None,
                     false,
+                    None,
                     Some(best_value),
                     &invariant_contract,
                     invariant_contract.anchor(),
@@ -2238,10 +2258,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &self.tcfg.early_exit,
                     None, // optimization mode is single-invariant; no [i/N] counter
                 ) {
-                    Ok(best_sequence) if !best_sequence.is_empty() => {
+                    Ok(replay) if !replay.counterexample_sequence.is_empty() => {
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
-                            best_sequence,
+                            replay.counterexample_sequence,
                         ));
                     }
                     Err(err) => {
@@ -2290,6 +2310,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             calls,
                             Some(case_data.inner_sequence.clone()),
                             case_data.assertion_failure,
+                            None,
                             None, // check mode
                             &invariant_contract,
                             invariant_contract.anchor(),
@@ -2304,7 +2325,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &self.tcfg.early_exit,
                             Some((1, total_broken)),
                         ) {
-                            Ok(call_sequence) if !call_sequence.is_empty() => {
+                            Ok(replay) if !replay.counterexample_sequence.is_empty() => {
+                                let call_sequence = replay.counterexample_sequence;
                                 record_invariant_failure(
                                     failure_dir.as_path(),
                                     primary_failure_file.as_path(),
@@ -2409,6 +2431,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             calls,
                             Some(case_data.inner_sequence.clone()),
                             case_data.assertion_failure,
+                            None,
                             None, // check mode
                             &invariant_contract,
                             invariant,
@@ -2423,7 +2446,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &self.tcfg.early_exit,
                             Some((position, total_broken)),
                         ) {
-                            Ok(call_sequence) if !call_sequence.is_empty() => {
+                            Ok(replay) if !replay.counterexample_sequence.is_empty() => {
+                                let call_sequence = replay.counterexample_sequence;
                                 record_invariant_failure(
                                     failure_dir.as_path(),
                                     persisted_failure.as_path(),
@@ -2847,21 +2871,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn build_fuzz_state(&self, invariant: bool) -> EvmFuzzState {
         let config =
             if invariant { self.config.invariant.dictionary } else { self.config.fuzz.dictionary };
+        let literals =
+            if invariant { &self.cr.mcr.invariant_literals } else { &self.cr.mcr.fuzz_literals };
         if let Some(db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(
-                &self.setup.deployed_libs,
-                db,
-                config,
-                Some(&self.cr.mcr.fuzz_literals),
-            )
+            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         } else {
             let db = self.executor.backend().mem_db();
-            EvmFuzzState::new(
-                &self.setup.deployed_libs,
-                db,
-                config,
-                Some(&self.cr.mcr.fuzz_literals),
-            )
+            EvmFuzzState::new(&self.setup.deployed_libs, db, config, Some(literals))
         }
     }
 }
