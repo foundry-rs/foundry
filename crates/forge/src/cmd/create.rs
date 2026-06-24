@@ -89,6 +89,13 @@ pub struct CreateArgs {
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
+    /// The Etherscan license type code to include with the verification request.
+    ///
+    /// See Etherscan's supported `licenseType` values. This is only used for Etherscan-style
+    /// verifiers when `--verify` is enabled.
+    #[arg(long, requires = "verify", value_name = "CODE", help_heading = "Verifier options")]
+    license_type: Option<String>,
+
     /// Timeout to use for broadcasting transactions.
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
@@ -356,7 +363,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier.clone(),
             via_ir: self.build.via_ir,
-            license_type: None,
+            license_type: self.license_type.clone(),
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -697,7 +704,7 @@ impl CreateArgs {
             root: None,
             verifier: self.verifier,
             via_ir: self.build.via_ir,
-            license_type: None,
+            license_type: self.license_type,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -920,9 +927,12 @@ mod tests {
             "10",
             "--delay",
             "30",
+            "--license-type",
+            "13",
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
     }
     #[test]
     fn can_parse_chain_id() {
