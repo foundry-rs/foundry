@@ -255,6 +255,10 @@ impl TestOutcome {
             failures,
             test_word
         )?;
+        sh_println!(
+            "Tip: Run {} to inspect one failing test in the debugger",
+            "`forge test --debug --match-test <TEST_NAME>`".cyan()
+        )?;
 
         // Print seed for fuzz/invariant test failures to enable reproduction.
         if let Some(seed) = self.fuzz_seed
@@ -835,6 +839,9 @@ pub struct SymbolicResult {
     /// Durable counterexample artifact, when one was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<SymbolicArtifactRef>,
+    /// Deterministic concrete minimization details, when a replayed counterexample was minimized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimization: Option<SymbolicCounterexampleMinimization>,
 }
 
 impl SymbolicResult {
@@ -910,12 +917,19 @@ impl SymbolicResult {
             replay,
             counterexample,
             artifact: None,
+            minimization: None,
         }
     }
 
     /// Attaches a durable replay artifact reference to this symbolic result.
     pub fn with_artifact(mut self, artifact: SymbolicArtifactRef) -> Self {
         self.artifact = Some(artifact);
+        self
+    }
+
+    /// Attaches deterministic minimization metadata to this symbolic result.
+    pub fn with_minimization(mut self, minimization: SymbolicCounterexampleMinimization) -> Self {
+        self.minimization = Some(minimization);
         self
     }
 }
@@ -933,6 +947,45 @@ impl SymbolicArtifactRef {
     /// Creates a reference to a symbolic counterexample artifact.
     pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
         Self { schema: SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA.to_string(), path: path.into() }
+    }
+}
+
+/// Before/after artifact references and counters for concrete symbolic counterexample minimization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolicCounterexampleMinimization {
+    /// Original confirmed replay artifact before minimization.
+    pub original: SymbolicArtifactRef,
+    /// Minimized confirmed replay artifact after minimization.
+    pub minimized: SymbolicArtifactRef,
+    /// Number of concrete replay candidates tried.
+    pub attempts: usize,
+    /// Number of replay candidates accepted.
+    pub accepted: usize,
+    /// ABI calldata byte length before minimization.
+    pub original_calldata_bytes: usize,
+    /// ABI calldata byte length after minimization.
+    pub minimized_calldata_bytes: usize,
+}
+
+impl SymbolicCounterexampleMinimization {
+    /// Creates concrete minimization metadata.
+    pub const fn new(
+        original: SymbolicArtifactRef,
+        minimized: SymbolicArtifactRef,
+        attempts: usize,
+        accepted: usize,
+        original_calldata_bytes: usize,
+        minimized_calldata_bytes: usize,
+    ) -> Self {
+        Self {
+            original,
+            minimized,
+            attempts,
+            accepted,
+            original_calldata_bytes,
+            minimized_calldata_bytes,
+        }
     }
 }
 
@@ -2121,6 +2174,10 @@ impl TestResult {
         self.counterexample = counterexample;
         if let Some(artifact) = symbolic.artifact.clone() {
             self.add_counterexample_artifact(artifact);
+        }
+        if let Some(minimization) = symbolic.minimization.clone() {
+            self.add_counterexample_artifact(minimization.original);
+            self.add_counterexample_artifact(minimization.minimized);
         }
         self.symbolic = Some(symbolic);
         self.duration = Duration::default();

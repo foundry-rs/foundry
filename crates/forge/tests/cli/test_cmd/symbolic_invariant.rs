@@ -121,6 +121,7 @@ Encountered 1 failing test in test/SymbolicRevertBranchInvariant.t.sol:SymbolicR
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -200,13 +201,17 @@ contract SymbolicOverlayCodeInvariant is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/SymbolicOverlayCodeInvariant.t.sol:SymbolicOverlayCodeInvariant
-[FAIL: symbolic invariant counterexample]
-...
- invariant_counterAlwaysReturnsZero() ([METRICS])
+[FAIL: assertion failed: 42 != 0]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] addr=[test/SymbolicOverlayCodeInvariant.t.sol:OverlayTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=etchCounter() [ARGS]
+ invariant_counterAlwaysReturnsZero() (runs: 1, calls: 1, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
