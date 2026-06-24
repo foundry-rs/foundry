@@ -48,7 +48,7 @@ impl Default for FuzzConfig {
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
-            corpus: FuzzCorpusConfig::default(),
+            corpus: FuzzCorpusConfig { payable_value_weight: 0, ..Default::default() },
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
@@ -139,9 +139,22 @@ pub struct FuzzCorpusConfig {
     /// Whether to capture comparison operands from sancov-instrumented crates
     /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
     pub sancov_trace_cmp: bool,
+    /// Percent chance of generating fresh transaction input instead of continuing from corpus
+    /// input during coverage-guided campaigns.
+    #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    pub corpus_random_sequence_weight: u32,
+    /// Percent chance that generated payable calls carry non-zero `msg.value`.
+    #[serde(deserialize_with = "crate::deserialize_stringified_percent")]
+    pub payable_value_weight: u32,
+    /// Weights for coverage-guided corpus mutation strategies.
+    #[serde(flatten)]
+    pub mutation_weights: FuzzCorpusMutationWeights,
 }
 
 impl FuzzCorpusConfig {
+    pub const DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 10;
+    pub const ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 50;
+
     pub fn with_test(&mut self, contract: &str, test: &str) {
         if let Some(corpus_dir) = &self.corpus_dir {
             self.corpus_dir = Some(canonicalized(corpus_dir.join(contract).join(test)));
@@ -215,6 +228,58 @@ impl Default for FuzzCorpusConfig {
             evm_edge_coverage_include_call_depth: false,
             sancov_edges: false,
             sancov_trace_cmp: false,
+            corpus_random_sequence_weight: Self::DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT,
+            payable_value_weight: 15,
+            mutation_weights: FuzzCorpusMutationWeights::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FuzzCorpusMutationWeights {
+    /// Weight for splicing two corpus sequences.
+    pub mutation_weight_splice: u32,
+    /// Weight for repeating part of a corpus sequence.
+    pub mutation_weight_repeat: u32,
+    /// Weight for interleaving two corpus sequences.
+    pub mutation_weight_interleave: u32,
+    /// Weight for replacing a corpus sequence prefix with generated calls.
+    pub mutation_weight_prefix: u32,
+    /// Weight for replacing a corpus sequence suffix with generated calls.
+    pub mutation_weight_suffix: u32,
+    /// Weight for ABI-aware argument mutation.
+    pub mutation_weight_abi: u32,
+    /// Weight for comparison-operand guided argument mutation.
+    pub mutation_weight_cmp: u32,
+}
+
+impl FuzzCorpusMutationWeights {
+    pub const fn total(&self) -> u64 {
+        self.mutation_weight_splice as u64
+            + self.mutation_weight_repeat as u64
+            + self.mutation_weight_interleave as u64
+            + self.mutation_weight_prefix as u64
+            + self.mutation_weight_suffix as u64
+            + self.mutation_weight_abi as u64
+            + self.mutation_weight_cmp as u64
+    }
+
+    /// Returns defaults if every configured weight is zero.
+    pub fn effective(self) -> Self {
+        if self.total() == 0 { Self::default() } else { self }
+    }
+}
+
+impl Default for FuzzCorpusMutationWeights {
+    fn default() -> Self {
+        Self {
+            mutation_weight_splice: 1,
+            mutation_weight_repeat: 1,
+            mutation_weight_interleave: 1,
+            mutation_weight_prefix: 1,
+            mutation_weight_suffix: 1,
+            mutation_weight_abi: 1,
+            mutation_weight_cmp: 1,
         }
     }
 }
