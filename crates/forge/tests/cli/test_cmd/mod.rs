@@ -3562,7 +3562,7 @@ Traces:
     ├─ [..] MLOAD
     ├─ [..] MLOAD
     ├─ [..] Counter::number() [staticcall]
-    │   ├─ [..] SLOAD
+    │   ├─ [..] SLOAD 0x0 → (0x1)
     │   ├─ [..] MLOAD
     │   ├─ [..] MLOAD
     │   └─ ← [Return] 1

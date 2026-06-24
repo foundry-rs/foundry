@@ -2445,6 +2445,7 @@ impl Provider for TestArgs {
 
 fn parse_opcode(s: &str) -> Result<OpCode, String> {
     OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
+}
 
 const fn apply_mutation_compiler_overrides(config: &mut Config) {
     if let Some(optimizer_runs) = config.mutation.optimizer_runs {
