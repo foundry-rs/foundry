@@ -1,3 +1,4 @@
+use alloy_primitives::{hex, keccak256};
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use serde_json::Value;
@@ -56,6 +57,119 @@ contract SymbolicIgnored {
 No tests found
 "#]],
     );
+});
+
+forgetest_init!(symbolic_single_call_artifact_replay_honors_env_fields, |prj, cmd| {
+    prj.add_test(
+        "SymbolicSingleCallArtifactEnv.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicSingleCallArtifactEnv is Test {
+    address constant BOB = address(0xB0B);
+
+    function setUp() public {
+        vm.warp(1000);
+        vm.roll(2000);
+        vm.deal(BOB, 2 ether);
+    }
+
+    function checkEnv() public payable {
+        if (
+            msg.sender == BOB
+                && msg.value == 2 ether
+                && block.timestamp == 1007
+                && block.number == 2011
+        ) {
+            revert("artifact env replayed");
+        }
+    }
+}
+"#,
+    );
+
+    let artifact_path = prj.root().join("single-call-env-artifact.json");
+    let selector = keccak256(b"checkEnv()");
+    let artifact = serde_json::json!({
+        "schema_version": 1,
+        "schema": "foundry:symbolic.counterexample@v1",
+        "kind": "single_call",
+        "test": {
+            "contract": "test/SymbolicSingleCallArtifactEnv.t.sol:SymbolicSingleCallArtifactEnv",
+            "test": "checkEnv()"
+        },
+        "replay": {
+            "required": true,
+            "status": "confirmed",
+            "reason": null
+        },
+        "replay_semantics": {
+            "fail_on_revert": false
+        },
+        "bounds": {
+            "timeout_seconds": null,
+            "loop_bound": null,
+            "max_depth": 0,
+            "max_paths": 0,
+            "invariant_depth": 0,
+            "exploration_order": "bfs",
+            "max_solver_queries": 0,
+            "default_dynamic_length": 0,
+            "max_dynamic_length": 0,
+            "array_lengths": [],
+            "dynamic_lengths": {},
+            "default_array_lengths": [],
+            "default_bytes_lengths": [],
+            "max_calldata_bytes": 0,
+            "symbolic_call_targets": false,
+            "storage_layout": "solidity"
+        },
+        "solver": {
+            "name": "manual",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 0,
+                "solver_queries": 0,
+                "smt_queries": 0,
+                "sat_queries": 0,
+                "model_queries": 0,
+                "sat_cache_hits": 0,
+                "model_cache_hits": 0,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 0
+            }
+        },
+        "assumptions": [],
+        "call_trace": {
+            "available": false,
+            "source": null,
+            "format": null
+        },
+        "calls": [{
+            "warp": "0x7",
+            "roll": "0xb",
+            "sender": "0x0000000000000000000000000000000000000b0b",
+            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
+            "calldata": format!("0x{}", hex::encode(&selector[..4])),
+            "value": format!("{:#x}", 3_000_000_000_000_000_000u128),
+            "contract_name": "SymbolicSingleCallArtifactEnv",
+            "function_name": "checkEnv",
+            "signature": "checkEnv()",
+            "args": "",
+            "raw_args": ""
+        }]
+    });
+    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
+
+    let stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", artifact_path.to_str().unwrap()])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("artifact env replayed"), "{stdout}");
 });
 
 forgetest_init!(symbolic_passes_scalar_test, |prj, cmd| {
