@@ -28,9 +28,10 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-debugger.workspace = true
 foundry-evm.workspace = true
-foundry-wallets.workspace = true
-forge-fmt.workspace = true
+foundry-evm-networks.workspace = true
 foundry-primitives.workspace = true
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
+forge-fmt.workspace = true
 
 alloy-chains.workspace = true
 alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
@@ -46,19 +47,26 @@ alloy-provider = { workspace = true, features = [
     "ipc",
     "trace-api",
     "txpool-api",
+    "debug-api",
 ] }
 alloy-rlp.workspace = true
+alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-rpc-types-beacon.workspace = true
-alloy-serde.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
 alloy-eips.workspace = true
+tempo-alloy.workspace = true
+tempo-contracts.workspace = true
+tempo-primitives.workspace = true
+alloy-evm.workspace = true
 
-op-alloy-flz.workspace = true
+op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
+op-alloy-flz = { workspace = true, optional = true }
+op-alloy-network = { workspace = true, optional = true }
 
 chrono.workspace = true
 eyre.workspace = true
@@ -82,24 +90,48 @@ regex = { workspace = true, default-features = false }
 rpassword = "7"
 semver.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "signal"] }
+tokio = { workspace = true, features = ["macros", "process", "signal", "time"] }
 tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
+url.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
+alloy-serde.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
+tempo-chainspec.workspace = true
+path-slash.workspace = true
+tower.workspace = true
 
 [features]
-default = ["jemalloc"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
-isolate-by-default = ["foundry-config/isolate-by-default"]
+optimism = [
+    "dep:op-alloy-flz",
+    "dep:op-alloy-consensus",
+    "dep:op-alloy-network",
+    "foundry-common/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-evm/optimism",
+    "foundry-cli/optimism",
+]

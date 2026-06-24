@@ -388,6 +388,107 @@ contract BContractTest is DSTest {
     ]]);
 });
 
+// `[profile.default.coverage] skip_files` should exclude matching sources from
+// the coverage report just like `--no-match-coverage`, but using glob patterns
+// from `foundry.toml`.
+forgetest!(skip_files_via_config, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "BContract.sol",
+        r#"
+contract BContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "BContractTest.sol",
+        r#"
+import "./test.sol";
+import {BContract} from "./BContract.sol";
+
+contract BContractTest is DSTest {
+    BContract a;
+
+    function setUp() public {
+        a = new BContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+}
+    "#,
+    );
+
+    prj.update_config(|config| {
+        config.coverage.skip_files =
+            vec!["src/AContract.sol".into(), "src/AContractTest.sol".into()];
+    });
+
+    // Assert AContract.sol is excluded via the config glob; BContract.sol still
+    // appears in the report.
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭-------------------+---------------+---------------+---------------+---------------╮
+| File              | % Lines       | % Statements  | % Branches    | % Funcs       |
++===================================================================================+
+| src/BContract.sol | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+|-------------------+---------------+---------------+---------------+---------------|
+| Total             | 100.00% (4/4) | 100.00% (2/2) | 100.00% (0/0) | 100.00% (2/2) |
+╰-------------------+---------------+---------------+---------------+---------------╯
+
+"#]]);
+});
+
 forgetest!(assert, |prj, cmd| {
     prj.insert_ds_test();
     prj.add_source(
@@ -2202,6 +2303,90 @@ contract CounterTest is DSTest {
 ╰-----------------+---------------+---------------+---------------+---------------╯
 ...
 "#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11548>
+// Test BRDA hit values follow LCOV spec: "-" when line never executed, "0" when line hit but
+// branch not taken. This ensures `genhtml` consistency.
+forgetest!(brda_lcov_consistency, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setPositive(uint256 newNumber) public {
+        if (newNumber > 0) {
+            number = newNumber;
+        } else {
+            number = 1;
+        }
+    }
+
+    function neverCalled(uint256 x) public {
+        if (x > 100) {
+            number = x;
+        } else {
+            number = 100;
+        }
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_only_positive_branch() public {
+        Counter counter = new Counter();
+        counter.setPositive(42);
+        counter.setPositive(100);
+    }
+}
+    "#,
+    );
+
+    // Verify BRDA values:
+    // - BRDA:8,0,0,2 - if branch taken 2 times
+    // - BRDA:8,0,1,0 - else branch NOT taken but line was hit (outputs "0", not "-")
+    // - BRDA:16,1,0,- - if branch NOT taken AND line never executed (outputs "-")
+    // - BRDA:16,1,1,- - else branch NOT taken AND line never executed (outputs "-")
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,2
+FN:7,Counter.setPositive
+FNDA:2,Counter.setPositive
+DA:8,2
+BRDA:8,0,0,2
+BRDA:8,0,1,0
+DA:9,2
+DA:11,0
+DA:15,0
+FN:15,Counter.neverCalled
+FNDA:0,Counter.neverCalled
+DA:16,0
+BRDA:16,1,0,-
+BRDA:16,1,1,-
+DA:17,0
+DA:19,0
+FNF:2
+FNH:1
+LF:8
+LH:3
+BRF:4
+BRH:1
+end_of_record
+
+"#]],
+    );
 });
 
 // Test that coverage files are written even when tests fail.

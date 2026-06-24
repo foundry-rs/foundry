@@ -23,7 +23,7 @@ pub struct IpcEndpoint<Handler> {
 
 impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
     /// Creates a new endpoint with the given handler
-    pub fn new(handler: Handler, path: String) -> Self {
+    pub const fn new(handler: Handler, path: String) -> Self {
         Self { handler, path }
     }
 

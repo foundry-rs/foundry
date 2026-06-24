@@ -18,9 +18,6 @@ use std::{
     time::Duration,
 };
 
-/// The user agent to use when querying the etherscan API.
-pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
-
 /// A [Provider] that provides Etherscan API key from the environment if it's not empty.
 ///
 /// This prevents `ETHERSCAN_API_KEY=""` if it's set but empty
@@ -138,11 +135,11 @@ impl ResolvedEtherscanConfigs {
         self,
         chain: Chain,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        for (_, config) in self.configs.into_iter() {
+        for (_, config) in self.configs {
             match config {
                 Ok(c) if c.chain == Some(chain) => return Some(Ok(c)),
                 Err(e) => return Some(Err(e)),
-                _ => continue,
+                _ => {}
             }
         }
         None
@@ -298,6 +295,20 @@ impl ResolvedEtherscanConfig {
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
+        self.into_client_with_no_proxy(false)
+    }
+
+    /// Same as [`Self::into_client`] but optionally disables automatic proxy detection.
+    ///
+    /// When `no_proxy` is `true`, calls [`foundry_block_explorers::ClientBuilder::no_proxy`],
+    /// which prevents system proxy lookups that can crash in sandboxed environments (e.g.,
+    /// Cursor IDE, macOS App Sandbox).
+    /// See: <https://github.com/foundry-rs/foundry/issues/12733>
+    pub fn into_client_with_no_proxy(
+        self,
+        no_proxy: bool,
+    ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
+    {
         let Self { api_url, browser_url, key: api_key, chain } = self;
 
         let chain = chain.unwrap_or_default();
@@ -310,19 +321,26 @@ impl ResolvedEtherscanConfig {
             }
         }
 
-        let api_url = into_url(&api_url)?;
-        let client = reqwest::Client::builder()
-            .user_agent(ETHERSCAN_USER_AGENT)
-            .tls_built_in_root_certs(api_url.scheme() == "https")
-            .build()?;
+        // Disable automatic proxy detection. In sandboxed environments (e.g., Cursor IDE,
+        // macOS App Sandbox), reqwest's system proxy lookup via SCDynamicStore can crash
+        // when the API returns NULL. See: https://github.com/foundry-rs/foundry/issues/12733
         let mut client_builder = foundry_block_explorers::Client::builder()
-            .with_client(client)
             .with_api_key(api_key)
             .with_cache(cache, Duration::from_secs(24 * 60 * 60));
-        if let Some(browser_url) = browser_url {
+        if no_proxy {
+            client_builder = client_builder.no_proxy();
+        }
+        if let Some(ref browser_url) = browser_url {
             client_builder = client_builder.with_url(browser_url)?;
         }
-        client_builder.chain(chain)?.build()
+
+        // Use the provided URL (either custom from foundry.toml or chain's default from resolve())
+        client_builder = client_builder.with_api_url(&api_url)?;
+        // Fallback: Use api_url as browser URL if browser_url is not set
+        if browser_url.is_none() {
+            client_builder = client_builder.with_url(&api_url)?;
+        }
+        client_builder.build()
     }
 }
 
@@ -343,22 +361,6 @@ pub enum EtherscanApiKey {
 }
 
 impl EtherscanApiKey {
-    /// Returns the key variant
-    pub fn as_key(&self) -> Option<&str> {
-        match self {
-            Self::Key(url) => Some(url),
-            Self::Env(_) => None,
-        }
-    }
-
-    /// Returns the env variant
-    pub fn as_env(&self) -> Option<&str> {
-        match self {
-            Self::Env(val) => Some(val),
-            Self::Key(_) => None,
-        }
-    }
-
     /// Returns the key this type holds
     ///
     /// # Error
@@ -400,13 +402,6 @@ impl fmt::Display for EtherscanApiKey {
             Self::Env(var) => var.fmt(f),
         }
     }
-}
-
-/// This is a hack to work around `IntoUrl`'s sealed private functions, which can't be called
-/// normally.
-#[inline]
-fn into_url(url: impl reqwest::IntoUrl) -> std::result::Result<reqwest::Url, reqwest::Error> {
-    url.into_url()
 }
 
 #[cfg(test)]
@@ -478,10 +473,8 @@ mod tests {
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.key, "ABCDEFG");
         let client = config.into_client().unwrap();
-        assert_eq!(
-            client.etherscan_api_url().as_str(),
-            "https://api.etherscan.io/v2/api?chainid=1"
-        );
+        // Custom URL should be used even when chain has a default URL
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/api");
 
         unsafe {
             std::env::remove_var(env);
@@ -517,5 +510,51 @@ mod tests {
 
         let resolved = config.resolve(Some("base-sepolia")).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
+    }
+
+    #[test]
+    fn can_create_client_with_custom_url_for_chain_without_default_url() {
+        // Chains without default Etherscan URLs (e.g., Dev, AnvilHardhat networks)
+        // should work if a custom URL is provided in foundry.toml.
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "dev".to_string(),
+            EtherscanConfig {
+                chain: Some(Chain::dev()),
+                url: Some("https://custom.api.url/verify/etherscan".to_string()),
+                key: EtherscanApiKey::Key("test_key".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("dev").unwrap().unwrap();
+        let result = config.into_client();
+        assert!(
+            result.is_ok(),
+            "Should succeed with custom URL even for chains without default Etherscan URLs"
+        );
+    }
+
+    #[test]
+    fn fails_without_custom_url_for_chain_without_default_url() {
+        // Chains without default Etherscan URLs (e.g., Dev, AnvilHardhat networks)
+        // should fail if no custom URL is provided in foundry.toml.
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "dev".to_string(),
+            EtherscanConfig {
+                chain: Some(Chain::dev()),
+                url: None,
+                key: EtherscanApiKey::Key("test_key".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved();
+        let config = resolved.remove("dev").unwrap();
+
+        assert!(
+            config.is_err(),
+            "Should fail: chains without default Etherscan URLs require custom URL"
+        );
     }
 }

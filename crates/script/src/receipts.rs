@@ -1,9 +1,12 @@
 use alloy_chains::{Chain, NamedChain};
-use alloy_network::AnyTransactionReceipt;
+use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{TxHash, U256, utils::format_units};
-use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
+use alloy_provider::{
+    PendingTransactionBuilder, PendingTransactionError, Provider, RootProvider, WatchTxError,
+};
 use eyre::{Result, eyre};
-use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
+use forge_script_sequence::ScriptSequence;
+use foundry_common::{retry, retry::RetryError, shell};
 use std::time::Duration;
 
 /// Marker error type for pending receipts
@@ -16,29 +19,25 @@ pub struct PendingReceiptError {
 }
 
 /// Convenience enum for internal signalling of transaction status
-pub enum TxStatus {
+pub enum TxStatus<R: ReceiptResponse> {
     Dropped,
-    Success(AnyTransactionReceipt),
-    Revert(AnyTransactionReceipt),
+    Success(R),
+    Revert(R),
 }
 
-impl From<AnyTransactionReceipt> for TxStatus {
-    fn from(receipt: AnyTransactionReceipt) -> Self {
-        if !receipt.inner.inner.inner.receipt.status.coerce_status() {
-            Self::Revert(receipt)
-        } else {
-            Self::Success(receipt)
-        }
+impl<R: ReceiptResponse> From<R> for TxStatus<R> {
+    fn from(receipt: R) -> Self {
+        if receipt.status() { Self::Success(receipt) } else { Self::Revert(receipt) }
     }
 }
 
 /// Checks the status of a txhash by first polling for a receipt, then for
 /// mempool inclusion. Returns the tx hash, and a status
-pub async fn check_tx_status(
-    provider: &RetryProvider,
+pub async fn check_tx_status<N: Network>(
+    provider: &RootProvider<N>,
     hash: TxHash,
     timeout: u64,
-) -> (TxHash, Result<TxStatus, eyre::Report>) {
+) -> (TxHash, Result<TxStatus<N::ReceiptResponse>, eyre::Report>) {
     let result = retry::Retry::new_no_delay(3)
         .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)
@@ -48,9 +47,9 @@ pub async fn check_tx_status(
             {
                 Ok(receipt) => {
                     // Check if the receipt is pending (missing block information)
-                    let is_pending = receipt.block_number.is_none()
-                        || receipt.block_hash.is_none()
-                        || receipt.transaction_index.is_none();
+                    let is_pending = receipt.block_number().is_none()
+                        || receipt.block_hash().is_none()
+                        || receipt.transaction_index().is_none();
 
                     if !is_pending {
                         return Ok(receipt.into());
@@ -58,20 +57,23 @@ pub async fn check_tx_status(
 
                     // Receipt is pending, try to sleep and retry a few times
                     match provider.get_transaction_by_hash(hash).await {
-                        Ok(_) => {
+                        Ok(Some(_)) => {
                             // Sleep for a short time to allow the transaction to be mined
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             // Transaction is still known to the node, retry
                             Err(RetryError::Retry(PendingReceiptError { tx_hash: hash }.into()))
                         }
-                        Err(_) => {
+                        Ok(None) => {
                             // Transaction is not known to the node, mark it as dropped
                             Ok(TxStatus::Dropped)
                         }
+                        Err(err) => Err(RetryError::Retry(eyre!(
+                            "failed to check if transaction {hash} is still known to the node: {err}"
+                        ))),
                     }
                 }
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
-                    Ok(_) => match e {
+                    Ok(Some(_)) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
                             Err(RetryError::Continue(eyre!(
                                 "tx is still known to the node, waiting for receipt"
@@ -79,7 +81,10 @@ pub async fn check_tx_status(
                         }
                         _ => Err(RetryError::Retry(e.into())),
                     },
-                    Err(_) => Ok(TxStatus::Dropped),
+                    Ok(None) => Ok(TxStatus::Dropped),
+                    Err(err) => Err(RetryError::Retry(eyre!(
+                        "failed to check if transaction {hash} is still known to the node after receipt error: {err}; receipt error: {e}"
+                    ))),
                 },
             }
         })
@@ -89,37 +94,70 @@ pub async fn check_tx_status(
 }
 
 /// Prints parts of the receipt to stdout
-pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
-    let gas_used = receipt.gas_used;
-    let gas_price = receipt.effective_gas_price;
-    let block_number = receipt.block_number.unwrap_or_default();
-    let success = receipt.inner.inner.inner.receipt.status.coerce_status();
+pub fn format_receipt<N: Network>(
+    chain: Chain,
+    receipt: &N::ReceiptResponse,
+    sequence: Option<&ScriptSequence<N>>,
+) -> String {
+    let gas_used = receipt.gas_used();
+    let gas_price = receipt.effective_gas_price();
+    let block_number = receipt.block_number().unwrap_or_default();
+    let success = receipt.status();
+
+    let (contract_name, function) = sequence
+        .and_then(|seq| {
+            seq.transactions
+                .iter()
+                .find(|tx| tx.hash == Some(receipt.transaction_hash()))
+                .map(|tx| (tx.contract_name.clone(), tx.function.clone()))
+        })
+        .unwrap_or((None, None));
 
     if shell::is_json() {
-        let _ = sh_println!(
-            "{}",
-            serde_json::json!({
-                "chain": chain,
-                "status": if success {
-                    "success"
-                } else {
-                    "failed"
-                },
-                "tx_hash": receipt.transaction_hash,
-                "contract_address": receipt.contract_address.map(|addr| addr.to_string()),
-                "block_number": block_number,
-                "gas_used": gas_used,
-                "gas_price": gas_price,
-            })
-        );
+        let mut json = serde_json::json!({
+            "chain": chain,
+            "status": if success {
+                "success"
+            } else {
+                "failed"
+            },
+            "tx_hash": receipt.transaction_hash(),
+            "contract_address": receipt.contract_address().map(|addr| addr.to_string()),
+            "block_number": block_number,
+            "gas_used": gas_used,
+            "gas_price": gas_price,
+        });
+
+        if let Some(name) = &contract_name
+            && !name.is_empty()
+        {
+            json["contract_name"] = serde_json::Value::String(name.clone());
+        }
+        if let Some(func) = &function
+            && !func.is_empty()
+        {
+            json["function"] = serde_json::Value::String(func.clone());
+        }
+
+        let _ = sh_println!("{}", json);
 
         String::new()
     } else {
+        let contract_info = match &contract_name {
+            Some(name) if !name.is_empty() => format!("\nContract: {name}"),
+            _ => String::new(),
+        };
+
+        let function_info = match &function {
+            Some(func) if !func.is_empty() => format!("\nFunction: {func}"),
+            _ => String::new(),
+        };
+
         format!(
-            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
+            "\n##### {chain}\n{status} Hash: {tx_hash:?}{contract_info}{function_info}{contract_address}\nBlock: {block_number}\n{gas}\n\n",
             status = if success { "✅  [Success]" } else { "❌  [Failed]" },
-            tx_hash = receipt.transaction_hash,
-            contract_address = if let Some(addr) = &receipt.contract_address {
+            tx_hash = receipt.transaction_hash(),
+            contract_address = if let Some(addr) = receipt.contract_address() {
                 format!("\nContract Address: {}", addr.to_checksum(None))
             } else {
                 String::new()
@@ -143,5 +181,280 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
                 )
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::{Ethereum, TransactionBuilder};
+    use alloy_primitives::B256;
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
+    use std::collections::VecDeque;
+
+    fn mock_receipt(tx_hash: B256, success: bool) -> TransactionReceipt {
+        serde_json::from_value(serde_json::json!({
+            "type": "0x02", "status": if success { "0x1" } else { "0x0" },
+            "cumulativeGasUsed": "0x5208", "logs": [], "transactionHash": tx_hash,
+            "logsBloom": format!("0x{}", "0".repeat(512)),
+            "transactionIndex": "0x0", "blockHash": B256::ZERO, "blockNumber": "0x3039",
+            "gasUsed": "0x5208", "effectiveGasPrice": "0x4a817c800",
+            "from": "0x0000000000000000000000000000000000000000",
+            "to": "0x0000000000000000000000000000000000000000", "contractAddress": null
+        }))
+        .unwrap()
+    }
+
+    fn mock_sequence(
+        tx_hash: B256,
+        contract: Option<&str>,
+        func: Option<&str>,
+    ) -> ScriptSequence<Ethereum> {
+        let tx = serde_json::from_value(serde_json::json!({
+            "hash": tx_hash, "transactionType": "CALL",
+            "contractName": contract, "contractAddress": null, "function": func,
+            "arguments": null, "additionalContracts": [], "isFixedGasLimit": false,
+            "transaction": {
+                "type": "0x02", "chainId": "0x1", "nonce": "0x0", "gas": "0x5208",
+                "maxFeePerGas": "0x4a817c800", "maxPriorityFeePerGas": "0x3b9aca00",
+                "to": "0x0000000000000000000000000000000000000000",
+                "value": "0x0", "input": "0x", "accessList": []
+            },
+        }))
+        .unwrap();
+        ScriptSequence { transactions: VecDeque::from([tx]), chain: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn format_receipt_displays_contract_and_function() {
+        let hash = B256::repeat_byte(0x42);
+        let seq = mock_sequence(hash, Some("MyContract"), Some("init(address)"));
+        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, true), Some(&seq));
+
+        assert!(out.contains("Contract: MyContract"));
+        assert!(out.contains("Function: init(address)"));
+        assert!(out.contains("✅  [Success]"));
+    }
+
+    #[test]
+    fn format_receipt_without_sequence_omits_metadata() {
+        let hash = B256::repeat_byte(0x42);
+        let out = format_receipt::<Ethereum>(Chain::mainnet(), &mock_receipt(hash, true), None);
+
+        assert!(!out.contains("Contract:"));
+        assert!(!out.contains("Function:"));
+    }
+
+    #[test]
+    fn format_receipt_skips_empty_contract_name() {
+        let hash = B256::repeat_byte(0x42);
+        let seq = mock_sequence(hash, Some(""), Some("transfer(address)"));
+        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, true), Some(&seq));
+
+        assert!(!out.contains("Contract:"));
+        assert!(out.contains("Function: transfer(address)"));
+    }
+
+    #[test]
+    fn format_receipt_handles_missing_tx_in_sequence() {
+        let seq = mock_sequence(B256::repeat_byte(0x99), Some("Other"), Some("other()"));
+        let out = format_receipt(
+            Chain::mainnet(),
+            &mock_receipt(B256::repeat_byte(0x42), true),
+            Some(&seq),
+        );
+
+        assert!(!out.contains("Contract:"));
+        assert!(!out.contains("Function:"));
+    }
+
+    #[test]
+    fn format_receipt_shows_contract_on_failure() {
+        let hash = B256::repeat_byte(0x42);
+        let seq = mock_sequence(hash, Some("FailContract"), Some("fail()"));
+        let out = format_receipt(Chain::mainnet(), &mock_receipt(hash, false), Some(&seq));
+
+        assert!(out.contains("❌  [Failed]"));
+        assert!(out.contains("Contract: FailContract"));
+    }
+
+    #[tokio::test]
+    async fn check_tx_status_marks_null_transaction_lookup_as_dropped() {
+        let hash = B256::repeat_byte(0x42);
+        let asserter = Asserter::new();
+        let provider: RootProvider<Ethereum> =
+            ProviderBuilder::default().connect_mocked_client(asserter.clone());
+        let not_found: Option<serde_json::Value> = None;
+
+        for _ in 0..50_000 {
+            asserter.push_success(&not_found);
+        }
+
+        let null_responder = tokio::spawn({
+            let asserter = asserter.clone();
+            async move {
+                let not_found: Option<serde_json::Value> = None;
+                loop {
+                    for _ in 0..1_000 {
+                        asserter.push_success(&not_found);
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
+        });
+
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), check_tx_status(&provider, hash, 0)).await;
+        null_responder.abort();
+
+        let (returned_hash, status) = result.expect(
+            "check_tx_status should not keep waiting when eth_getTransactionByHash returns null",
+        );
+
+        assert_eq!(returned_hash, hash);
+        assert!(matches!(status.unwrap(), TxStatus::Dropped));
+    }
+
+    #[tokio::test]
+    async fn check_tx_status_does_not_mark_lookup_errors_as_dropped() {
+        let hash = B256::repeat_byte(0x42);
+        let asserter = Asserter::new();
+        let provider: RootProvider<Ethereum> =
+            ProviderBuilder::default().connect_mocked_client(asserter.clone());
+        let not_found: Option<serde_json::Value> = None;
+
+        // Initial receipt lookup while registering the pending transaction.
+        asserter.push_success(&not_found);
+        for _ in 0..50 {
+            asserter.push_failure_msg("lookup unavailable");
+        }
+
+        let (_, status) = check_tx_status(&provider, hash, 0).await;
+        let err = match status {
+            Ok(_) => panic!("transaction lookup errors should not be marked as dropped"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("failed to check if transaction"));
+        assert!(err.contains("lookup unavailable"));
+    }
+
+    /// Upper bound for the anvil-based `check_tx_status` tests, so a hang fails fast
+    /// instead of stalling the suite.
+    const CHECK_TX_TIMEOUT: Duration = Duration::from_secs(15);
+
+    /// A tx hash the node doesn't know about (rejected at submission or dropped from
+    /// the mempool) must resolve to `TxStatus::Dropped` rather than polling forever.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_tx_status_unknown_tx_is_dropped() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let provider = ProviderBuilder::new()
+            .connect_http(handle.http_endpoint().parse().unwrap())
+            .root()
+            .clone();
+
+        // Random hash the node has never seen.
+        let unknown_hash = B256::repeat_byte(0xab);
+
+        // Inner `timeout=1` bounds the pending-tx watcher; the outer `tokio::time::timeout`
+        // guarantees the test fails fast if the watcher ever hangs again.
+        let (returned_hash, status) = tokio::time::timeout(
+            CHECK_TX_TIMEOUT,
+            check_tx_status::<Ethereum>(&provider, unknown_hash, 1),
+        )
+        .await
+        .expect("check_tx_status hung on an unknown tx hash");
+
+        assert_eq!(returned_hash, unknown_hash);
+        let status = status.expect("unknown tx should resolve to Ok(TxStatus::Dropped)");
+        assert!(
+            matches!(status, TxStatus::Dropped),
+            "expected TxStatus::Dropped for an unknown tx",
+        );
+    }
+
+    /// A tx that is initially in the mempool (so `eth_getTransactionByHash` returns
+    /// `Some`) and is later dropped from it must:
+    ///   1. keep retrying while the node still knows the tx (the `Ok(Some(_))` branch), and
+    ///   2. resolve to `TxStatus::Dropped` once the node forgets it (the `Ok(None)` branch).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_tx_status_known_then_dropped_resolves_to_dropped() {
+        // `no_mining` keeps the tx pending so `get_receipt` always times out and the
+        // watcher exercises the `WatchTxError::Timeout` + `get_transaction_by_hash`
+        // branch on every retry.
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_no_mining(true)).await;
+        let signer_provider =
+            ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+
+        let mut wallets = handle.dev_wallets();
+        let from = wallets.next().unwrap().address();
+        let to = wallets.next().unwrap().address();
+        let tx =
+            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+
+        let pending = signer_provider.send_transaction(tx).await.unwrap();
+        let tx_hash = *pending.tx_hash();
+
+        // Run `check_tx_status` concurrently; while it loops on `Ok(Some(_))`, drop the
+        // tx from the mempool so the next iteration sees `Ok(None)` and exits.
+        let provider = signer_provider.root().clone();
+        let watcher = tokio::spawn(async move {
+            tokio::time::timeout(
+                CHECK_TX_TIMEOUT,
+                check_tx_status::<Ethereum>(&provider, tx_hash, 1),
+            )
+            .await
+        });
+
+        // Give the watcher at least one Continue iteration before evicting the tx.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        api.anvil_drop_transaction(tx_hash).await.unwrap();
+
+        let (returned_hash, status) = watcher
+            .await
+            .unwrap()
+            .expect("check_tx_status hung after the tx was dropped from the mempool");
+        assert_eq!(returned_hash, tx_hash);
+        let status = status.expect("dropped tx should resolve to Ok(TxStatus::Dropped)");
+        assert!(
+            matches!(status, TxStatus::Dropped),
+            "expected TxStatus::Dropped after the tx was evicted from the mempool",
+        );
+    }
+
+    /// A real, mined transaction must resolve to `TxStatus::Success` and not be
+    /// misclassified as dropped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_tx_status_mined_tx_is_success() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let signer_provider =
+            ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+
+        let mut wallets = handle.dev_wallets();
+        let from = wallets.next().unwrap().address();
+        let to = wallets.next().unwrap().address();
+        let tx =
+            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+
+        // Send and mine the tx so a receipt is immediately available.
+        let pending = signer_provider.send_transaction(tx).await.unwrap();
+        let tx_hash = *pending.tx_hash();
+        let _ = pending.get_receipt().await.unwrap();
+
+        let provider = signer_provider.root().clone();
+        let (returned_hash, status) = tokio::time::timeout(
+            CHECK_TX_TIMEOUT,
+            check_tx_status::<Ethereum>(&provider, tx_hash, 5),
+        )
+        .await
+        .expect("check_tx_status hung on a mined tx");
+
+        assert_eq!(returned_hash, tx_hash);
+        let status = status.expect("mined tx should resolve to Ok(TxStatus::Success)");
+        assert!(
+            matches!(status, TxStatus::Success(_)),
+            "expected TxStatus::Success for a mined ETH transfer",
+        );
     }
 }

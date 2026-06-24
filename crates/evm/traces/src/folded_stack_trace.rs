@@ -5,27 +5,33 @@ use revm_inspectors::tracing::{
 };
 
 /// Builds a folded stack trace from a call trace arena.
-pub fn build(arena: &CallTraceArena) -> Vec<String> {
-    let mut fst = EvmFoldedStackTraceBuilder::default();
+pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
+    let mut fst = EvmFoldedStackTraceBuilder::new(isolate);
     fst.process_call_node(arena.nodes(), 0);
     fst.build()
 }
 
 /// Wrapper for building a folded stack trace using EVM call trace node.
-#[derive(Default)]
 pub struct EvmFoldedStackTraceBuilder {
+    /// Trace produced in isolate mode, meaning refund needs to be reversed at the depth=1
+    /// frame for consistent gas values.
+    isolate: bool,
     /// Raw folded stack trace builder.
     fst: FoldedStackTraceBuilder,
 }
 
 impl EvmFoldedStackTraceBuilder {
+    pub fn new(isolate: bool) -> Self {
+        Self { isolate, fst: FoldedStackTraceBuilder::default() }
+    }
+
     /// Returns the folded stack trace.
     pub fn build(self) -> Vec<String> {
         self.fst.build()
     }
 
-    /// Creates an entry for a EVM CALL in the folded stack trace. This method recursively processes
-    /// all the children nodes of the call node and at the end it exits.
+    /// Creates an entry for an EVM CALL in the folded stack trace. This method recursively
+    /// processes all the children nodes of the call node and at the end it exits.
     pub fn process_call_node(&mut self, nodes: &[CallTraceNode], idx: usize) {
         let node = &nodes[idx];
 
@@ -57,7 +63,13 @@ impl EvmFoldedStackTraceBuilder {
             }
         };
 
-        self.fst.enter(func_name, node.trace.gas_used as i64);
+        let mut gas_used = node.trace.gas_used;
+        let max_refund_adjust_depth = if self.isolate { 1 } else { 0 };
+        if node.trace.depth <= max_refund_adjust_depth {
+            gas_used += node.trace.gas_refund_counter;
+        }
+
+        self.fst.enter(func_name, gas_used);
 
         // Track internal function step exits to do in this call context.
         let mut step_exits = vec![];
@@ -99,8 +111,8 @@ impl EvmFoldedStackTraceBuilder {
         if let Some(decoded_step) = &step.decoded {
             match decoded_step.as_ref() {
                 DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) => {
-                    let gas_used = steps[*step_end_idx].gas_used.saturating_sub(step.gas_used);
-                    self.fst.enter(decoded_internal_call.func_name.clone(), gas_used as i64);
+                    let gas_used = step.gas_remaining - steps[*step_end_idx].gas_remaining;
+                    self.fst.enter(decoded_internal_call.func_name.clone(), gas_used);
                     step_exits.push(*step_end_idx);
                 }
                 DecodedTraceStep::Line(_) => {}
@@ -158,13 +170,13 @@ pub struct FoldedStackTraceBuilder {
 struct TraceEntry {
     /// Names of all functions in the call stack of this trace.
     names: Vec<String>,
-    /// Gas consumed by this function, allowed to be negative due to refunds.
-    gas: i64,
+    /// Gas consumed by this function, not including refunds.
+    gas: u64,
 }
 
 impl FoldedStackTraceBuilder {
     /// Enter execution of a function call that consumes `gas`.
-    pub fn enter(&mut self, label: String, gas: i64) {
+    pub fn enter(&mut self, label: String, gas: u64) {
         let mut names = self.traces.last().map(|entry| entry.names.clone()).unwrap_or_default();
 
         while self.exits > 0 {
@@ -177,7 +189,7 @@ impl FoldedStackTraceBuilder {
     }
 
     /// Exit execution of a function call.
-    pub fn exit(&mut self) {
+    pub const fn exit(&mut self) {
         self.exits += 1;
     }
 
@@ -189,7 +201,7 @@ impl FoldedStackTraceBuilder {
 
     /// Internal method to build the folded stack trace without subtracting gas consumed by
     /// the children function calls.
-    fn build_without_subtraction(&mut self) -> Vec<String> {
+    pub fn build_without_subtraction(&mut self) -> Vec<String> {
         let mut lines = Vec::new();
         for TraceEntry { names, gas } in &self.traces {
             lines.push(format!("{} {}", names.join(";"), gas));
@@ -216,7 +228,34 @@ impl FoldedStackTraceBuilder {
     }
 }
 
+#[cfg(test)]
 mod tests {
+    use alloy_primitives::{Bytes, U256};
+    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+    use revm_inspectors::tracing::{
+        CallTraceArena,
+        types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep, TraceMemberOrder},
+    };
+
+    fn trace_step(gas_remaining: u64) -> CallTraceStep {
+        CallTraceStep {
+            pc: 0,
+            op: OpCode::STOP,
+            stack: Some(Vec::<U256>::new().into_boxed_slice()),
+            push_stack: None,
+            memory: None,
+            returndata: Bytes::new(),
+            gas_remaining,
+            gas_refund_counter: 0,
+            gas_used: 0,
+            gas_cost: 0,
+            storage_change: None,
+            status: Some(InstructionResult::Stop),
+            immediate_bytes: None,
+            decoded: None,
+        }
+    }
+
     #[test]
     fn test_fst_1() {
         let mut trace = super::FoldedStackTraceBuilder::default();
@@ -307,6 +346,29 @@ mod tests {
                 "top;child_b;child_c 500",
                 "top2 1700",
             ]
+        );
+    }
+
+    #[test]
+    fn folded_stack_trace_keeps_precise_internal_function_names() {
+        let mut arena = CallTraceArena::default();
+        let root = &mut arena.nodes_mut()[0];
+        root.trace.gas_used = 100;
+        root.trace.gas_limit = 100;
+        root.trace.steps = vec![trace_step(100), trace_step(70)];
+        root.trace.steps[0].decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+            DecodedInternalCall {
+                func_name: "DebugVarsTest::foo(uint256)".to_string(),
+                args: Some(vec!["42".to_string()]),
+                return_data: Some(vec!["43".to_string()]),
+            },
+            1,
+        )));
+        root.ordering = vec![TraceMemberOrder::Step(0), TraceMemberOrder::Step(1)];
+
+        assert_eq!(
+            super::build(&arena, false),
+            vec!["fallback 70", "fallback;DebugVarsTest::foo(uint256) 30",]
         );
     }
 }

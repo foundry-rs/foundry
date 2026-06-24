@@ -6,7 +6,8 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, map::HashMap};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -15,10 +16,17 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    ExitCode, diagnostic,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{self, TraceResult, parse_ether_value},
+    utils::{LoadConfig, TraceResult, parse_ether_value},
 };
-use foundry_common::shell;
+use foundry_common::{
+    FoundryTransactionBuilder,
+    abi::{encode_function_args, get_func},
+    provider::{ProviderBuilder, curl_transport::generate_curl_command},
+    sh_println, shell,
+};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     Chain, Config,
@@ -27,16 +35,40 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
+    core::{
+        FoundryBlock, FoundryTransaction,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
 use foundry_wallets::WalletOpts;
-use itertools::Either;
 use regex::Regex;
-use revm::context::TransactionType;
+use serde::Serialize;
 use std::{str::FromStr, sync::LazyLock};
+
+/// Stable payload emitted in the `cast call` envelope under `--machine`.
+#[derive(Clone, Debug, Serialize)]
+pub struct CallData {
+    /// Raw `0x`-prefixed hex return data from `eth_call`.
+    pub raw: String,
+}
+
+/// Emit a typed `network.rpc.error` envelope and exit `Network (6)`.
+fn rpc_failure(err: &eyre::Report) -> ! {
+    let cause_chain: Vec<String> = err.chain().map(ToString::to_string).collect();
+    let message = cause_chain.first().cloned().unwrap_or_else(|| err.to_string());
+    let envelope = JsonEnvelope::error(
+        JsonMessage::error(diagnostic::network::RPC_ERROR, message)
+            .with_details(serde_json::json!({ "cause_chain": cause_chain })),
+    );
+    let _ = print_json(&envelope);
+    std::process::exit(ExitCode::Network.to_i32());
+}
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -209,6 +241,81 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
+        // Reject flags whose stdout shape or interactivity conflicts with the envelope contract.
+        if foundry_cli::is_machine() {
+            // `--interactive` and the hardware / cloud signer flags can trigger TTY prompts,
+            // hardware confirmations, or SDK auth output (e.g. AWS SSO device-auth URLs printed
+            // directly to stdout), all of which would corrupt the envelope.
+            let unsupported = [
+                ("--trace", self.trace),
+                ("--debug", self.debug),
+                ("--decode-internal", self.decode_internal),
+                ("--curl", self.rpc.curl),
+                ("--interactive", self.wallet.raw.interactive),
+                ("--ledger", self.wallet.ledger),
+                ("--trezor", self.wallet.trezor),
+                ("--aws", self.wallet.aws),
+                ("--gcp", self.wallet.gcp),
+            ]
+            .into_iter()
+            .filter_map(|(name, on)| on.then_some(name))
+            .collect::<Vec<_>>();
+            if !unsupported.is_empty() {
+                foundry_cli::machine::bail_machine_usage_with_details(
+                    format!(
+                        "`cast call` under `--machine` does not yet support {}; \
+                         run without `--machine` or omit those flags.",
+                        unsupported.join(", ")
+                    ),
+                    serde_json::json!({ "unsupported_flags": unsupported }),
+                );
+            }
+            // Unlocked keystore: prompts for the password on TTY at signer construction.
+            let has_keystore =
+                self.wallet.keystore_path.is_some() || self.wallet.keystore_account_name.is_some();
+            let has_noninteractive_password = self.wallet.keystore_password.is_some()
+                || self.wallet.keystore_password_file.is_some();
+            if has_keystore && !has_noninteractive_password {
+                foundry_cli::machine::bail_machine_usage(
+                    "`cast call --machine` requires `--password`, `--password-file`, or the \
+                     `ETH_PASSWORD` env var when `--keystore` / `--account` is set; an unlocked \
+                     keystore would prompt on stdin and corrupt the envelope.",
+                );
+            }
+        }
+
+        // Handle --curl mode early, before any provider interaction
+        if self.rpc.curl {
+            return self.run_curl().await;
+        }
+
+        if self.tx.tempo.is_tempo() {
+            return self.run_with_network::<TempoEvmNetwork>().await;
+        }
+
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        if let Some(chain) = self.chain {
+            evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+        }
+        evm_opts.infer_network_from_fork().await;
+
+        if evm_opts.networks.is_tempo() {
+            return self.run_with_network::<TempoEvmNetwork>().await;
+        }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_network::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_network::<EthEvmNetwork>().await
+    }
+
+    pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>
+    where
+        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
+    {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
@@ -238,7 +345,15 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = utils::get_provider(&config)?;
+        // Provider construction (transport setup) is a network operation, so connection /
+        // DNS / TCP failures here are typed `network.rpc.error` under `--machine`.
+        let machine_mode = foundry_cli::is_machine();
+        let provider =
+            match ProviderBuilder::<FEN::Network>::from_config(&config).and_then(|b| b.build()) {
+                Ok(p) => p,
+                Err(err) if machine_mode => rpc_failure(&err),
+                Err(err) => return Err(err),
+            };
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -259,14 +374,25 @@ impl CallArgs {
             None
         };
 
-        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
-            .await?
-            .with_to(to)
-            .await?
-            .with_code_sig_and_args(code, sig, args)
-            .await?
-            .build_raw(sender)
-            .await?;
+        // `CastTxBuilder` performs the first RPC pings (chain_id, gas estimation, ENS
+        // resolution); transport/connectivity failures here are typed `network.rpc.error`.
+        let builder_result: Result<_> = async {
+            CastTxBuilder::new(&provider, tx, &config)
+                .await?
+                .with_to(to)
+                .await?
+                .with_code_sig_and_args(code, sig, args)
+                .await?
+                .raw()
+                .build(sender)
+                .await
+        }
+        .await;
+        let (tx, func) = match builder_result {
+            Ok(v) => v,
+            Err(err) if machine_mode => rpc_failure(&err),
+            Err(err) => return Err(err),
+        };
 
         if trace {
             if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {
@@ -275,21 +401,21 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let (mut env, fork, chain, networks) =
-                TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
+            let (mut evm_env, tx_env, fork, chain, networks) =
+                TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
-            env.evm_env.cfg_env.disable_block_gas_limit = true;
-            env.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-            env.evm_env.block_env.gas_limit = u64::MAX;
+            evm_env.cfg_env.disable_block_gas_limit = true;
+            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+            evm_env.block_env.set_gas_limit(u64::MAX);
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    env.evm_env.block_env.number = number.to();
+                    evm_env.block_env.set_number(number.to());
                 }
                 if let Some(time) = block_overrides.time {
-                    env.evm_env.block_env.timestamp = U256::from(time);
+                    evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
 
@@ -301,8 +427,8 @@ impl CallArgs {
                     InternalTraceMode::None
                 })
                 .with_state_changes(shell::verbosity() > 4);
-            let mut executor = TracingExecutor::new(
-                env,
+            let mut executor = TracingExecutor::<FEN>::new(
+                (evm_env, tx_env),
                 fork,
                 evm_version,
                 trace_mode,
@@ -311,52 +437,44 @@ impl CallArgs {
                 state_overrides,
             )?;
 
-            let value = tx.value.unwrap_or_default();
-            let input = tx.inner.input.into_input().unwrap_or_default();
-            let tx_kind = tx.inner.to.expect("set by builder");
-            let env_tx = &mut executor.env_mut().tx;
+            let value = tx.value().unwrap_or_default();
+            let input = tx.input().cloned().unwrap_or_default();
+            let tx_kind = tx.kind().expect("set by builder");
+            let env_tx = executor.tx_env_mut();
 
             // Set transaction options with --trace
-            if let Some(gas_limit) = tx.inner.gas {
-                env_tx.gas_limit = gas_limit;
+            if let Some(gas_limit) = tx.gas_limit() {
+                env_tx.set_gas_limit(gas_limit);
             }
 
-            if let Some(gas_price) = tx.inner.gas_price {
-                env_tx.gas_price = gas_price;
+            if let Some(gas_price) = tx.gas_price() {
+                env_tx.set_gas_price(gas_price);
             }
 
-            if let Some(max_fee_per_gas) = tx.inner.max_fee_per_gas {
-                env_tx.gas_price = max_fee_per_gas;
+            if let Some(max_fee_per_gas) = tx.max_fee_per_gas() {
+                env_tx.set_gas_price(max_fee_per_gas);
             }
 
-            if let Some(max_priority_fee_per_gas) = tx.inner.max_priority_fee_per_gas {
-                env_tx.gas_priority_fee = Some(max_priority_fee_per_gas);
+            if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
+                env_tx.set_gas_priority_fee(Some(max_priority_fee_per_gas));
             }
 
-            if let Some(max_fee_per_blob_gas) = tx.inner.max_fee_per_blob_gas {
-                env_tx.max_fee_per_blob_gas = max_fee_per_blob_gas;
+            if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
+                env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
             }
 
-            if let Some(nonce) = tx.inner.nonce {
-                env_tx.nonce = nonce;
+            if let Some(nonce) = tx.nonce() {
+                env_tx.set_nonce(nonce);
             }
 
-            if let Some(tx_type) = tx.inner.transaction_type {
-                env_tx.tx_type = tx_type;
+            env_tx.set_tx_type(tx.output_tx_type().into());
+
+            if let Some(access_list) = tx.access_list().cloned() {
+                env_tx.set_access_list(access_list);
             }
 
-            if let Some(access_list) = tx.inner.access_list {
-                env_tx.access_list = access_list;
-
-                if env_tx.tx_type == TransactionType::Legacy as u8 {
-                    env_tx.tx_type = TransactionType::Eip2930 as u8;
-                }
-            }
-
-            if let Some(auth) = tx.inner.authorization_list {
-                env_tx.authorization_list = auth.into_iter().map(Either::Left).collect();
-
-                env_tx.tx_type = TransactionType::Eip7702 as u8;
+            if let Some(auth) = tx.authorization_list().cloned() {
+                env_tx.set_signed_authorization(auth);
             }
 
             let trace = match tx_kind {
@@ -382,26 +500,97 @@ impl CallArgs {
                 decode_internal,
                 disable_labels,
                 None,
+                None,
             )
             .await?;
 
             return Ok(());
         }
 
-        let response = Cast::new(&provider)
-            .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
-            .await?;
+        // Bypass the ABI decoder under `--machine`; the envelope carries raw hex only.
+        // Only the eth_call itself maps to `network.rpc.error`; setup/local errors fall through.
+        let decode_func = (!machine_mode).then_some(func.as_ref()).flatten();
+        let response = match Cast::new(&provider)
+            .call(&tx, decode_func, block, state_overrides, block_overrides)
+            .await
+        {
+            Ok(r) => r,
+            Err(err) if machine_mode => rpc_failure(&err),
+            Err(err) => return Err(err),
+        };
 
-        if response == "0x"
-            && let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to())
+        // Skip the empty-code lookup under `--machine`: it exists only for the human warning.
+        if !machine_mode
+            && response == "0x"
+            && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;
             if code.is_empty() {
                 sh_warn!("Contract code is empty")?;
             }
         }
-        sh_println!("{}", response)?;
 
+        if machine_mode {
+            print_json(&JsonEnvelope::success(CallData { raw: response }))?;
+        } else {
+            sh_println!("{}", response)?;
+        }
+
+        Ok(())
+    }
+
+    /// Handle --curl mode by generating curl command without any RPC interaction.
+    async fn run_curl(self) -> Result<()> {
+        let config = self.rpc.load_config()?;
+        let url = config.get_rpc_url_or_localhost_http()?;
+        let jwt = config.get_rpc_jwt_secret()?;
+
+        // Get call data - either from --data or from sig + args
+        let data = if let Some(data) = &self.data {
+            hex::decode(data)?
+        } else if let Some(sig) = &self.sig {
+            // If sig is already hex data, use it directly
+            if let Ok(data) = hex::decode(sig) {
+                data
+            } else {
+                // Parse function signature and encode args
+                let func = get_func(sig)?;
+                encode_function_args(&func, &self.args)?
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Resolve the destination address (must be a raw address for curl mode)
+        let to = self.to.as_ref().map(|n| match n {
+            NameOrAddress::Address(addr) => Ok(*addr),
+            NameOrAddress::Name(name) => {
+                eyre::bail!("ENS names are not supported with --curl. Please use a raw address instead of '{}'", name)
+            }
+        }).transpose()?;
+
+        // Build eth_call params
+        let call_object = serde_json::json!({
+            "to": to,
+            "data": format!("0x{}", hex::encode(&data)),
+        });
+
+        let block_param = self
+            .block
+            .map(|b| serde_json::to_value(b).unwrap_or(serde_json::json!("latest")))
+            .unwrap_or(serde_json::json!("latest"));
+
+        let params = serde_json::json!([call_object, block_param]);
+
+        let curl_cmd = generate_curl_command(
+            url.as_ref(),
+            "eth_call",
+            params,
+            config.eth_rpc_headers.as_deref(),
+            jwt.as_deref(),
+        )?;
+
+        sh_println!("{}", curl_cmd)?;
         Ok(())
     }
 
@@ -460,13 +649,12 @@ impl CallArgs {
 
         // Parse and apply state overrides
         for (addr, entries) in parse_state_overrides(&self.state_overrides)? {
-            state_overrides_builder = state_overrides_builder.with_state(addr, entries.into_iter());
+            state_overrides_builder = state_overrides_builder.with_state(addr, entries);
         }
 
         // Parse and apply state diff overrides
         for (addr, entries) in parse_state_overrides(&self.state_diff_overrides)? {
-            state_overrides_builder =
-                state_overrides_builder.with_state_diff(addr, entries.into_iter())
+            state_overrides_builder = state_overrides_builder.with_state_diff(addr, entries)
         }
 
         Ok(Some(state_overrides_builder.build()))
@@ -524,7 +712,7 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U64, address, b256, fixed_bytes, hex};
+    use alloy_primitives::{U64, address, b256, fixed_bytes};
 
     #[test]
     fn test_get_state_overrides() {

@@ -1,0 +1,512 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json",
+  "title": "Foundry symbolic test result",
+  "description": "Stable machine-readable result object emitted at test_results[*].symbolic for forge test --symbolic --json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "incomplete",
+    "bounds",
+    "solver",
+    "assumptions",
+    "call_trace",
+    "replay",
+    "counterexample"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail_counterexample", "incomplete"]
+    },
+    "incomplete": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/incomplete" }
+      ]
+    },
+    "bounds": {
+      "$ref": "#/$defs/bounds"
+    },
+    "solver": {
+      "$ref": "#/$defs/solver"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/assumption" }
+    },
+    "call_trace": {
+      "$ref": "#/$defs/call_trace"
+    },
+    "replay": {
+      "$ref": "#/$defs/replay"
+    },
+    "counterexample": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/counterexample" }
+      ]
+    },
+    "artifact": {
+      "$ref": "#/$defs/artifact_ref"
+    },
+    "minimization": {
+      "$ref": "#/$defs/minimization"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {
+          "status": { "const": "pass" }
+        }
+      },
+      "then": {
+        "properties": {
+          "incomplete": { "type": "null" },
+          "counterexample": { "type": "null" },
+          "replay": {
+            "properties": {
+              "required": { "const": false },
+              "status": { "const": "not_required" },
+              "reason": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {
+          "status": { "const": "fail_counterexample" }
+        }
+      },
+      "then": {
+        "properties": {
+          "incomplete": { "type": "null" },
+          "counterexample": { "$ref": "#/$defs/counterexample" },
+          "replay": {
+            "properties": {
+              "required": { "const": true },
+              "status": { "const": "confirmed" },
+              "reason": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {
+          "status": { "const": "incomplete" }
+        }
+      },
+      "then": {
+        "properties": {
+          "incomplete": { "$ref": "#/$defs/incomplete" },
+          "replay": {
+            "properties": {
+              "status": {
+                "enum": ["not_required", "mismatch", "error", "skipped"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["replay"],
+        "properties": {
+          "replay": {
+            "required": ["required"],
+            "properties": {
+              "required": { "const": false }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "replay": {
+            "properties": {
+              "status": { "const": "not_required" },
+              "reason": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["replay"],
+        "properties": {
+          "replay": {
+            "required": ["required"],
+            "properties": {
+              "required": { "const": true }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "replay": {
+            "properties": {
+              "status": {
+                "enum": ["confirmed", "mismatch", "error", "skipped"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["replay"],
+        "properties": {
+          "replay": {
+            "required": ["status"],
+            "properties": {
+              "status": { "const": "confirmed" }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "replay": {
+            "properties": {
+              "required": { "const": true },
+              "reason": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["call_trace"],
+        "properties": {
+          "call_trace": {
+            "required": ["available"],
+            "properties": {
+              "available": { "const": false }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "call_trace": {
+            "properties": {
+              "source": { "type": "null" },
+              "format": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["call_trace"],
+        "properties": {
+          "call_trace": {
+            "required": ["available"],
+            "properties": {
+              "available": { "const": true }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "call_trace": {
+            "properties": {
+              "source": { "type": "string" },
+              "format": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "incomplete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reason"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["stuck", "revert_all", "timeout", "error"]
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeout_seconds",
+        "loop_bound",
+        "max_depth",
+        "max_paths",
+        "invariant_depth",
+        "exploration_order",
+        "max_solver_queries",
+        "default_dynamic_length",
+        "max_dynamic_length",
+        "array_lengths",
+        "dynamic_lengths",
+        "default_array_lengths",
+        "default_bytes_lengths",
+        "max_calldata_bytes",
+        "symbolic_call_targets",
+        "storage_layout"
+      ],
+      "properties": {
+        "timeout_seconds": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "loop_bound": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_paths": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "invariant_depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exploration_order": {
+          "type": "string",
+          "enum": ["bfs", "dfs"]
+        },
+        "max_solver_queries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "default_dynamic_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_dynamic_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "array_lengths": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "dynamic_lengths": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "default_array_lengths": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "default_bytes_lengths": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "max_calldata_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "symbolic_call_targets": {
+          "type": "boolean"
+        },
+        "storage_layout": {
+          "type": "string",
+          "enum": ["solidity", "generic", "zero_init"]
+        }
+      }
+    },
+    "solver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "command", "portfolio", "stats"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "command": {
+          "type": ["string", "null"]
+        },
+        "portfolio": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "stats": {
+          "$ref": "#/$defs/solver_stats"
+        }
+      }
+    },
+    "solver_stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paths",
+        "solver_queries",
+        "smt_queries",
+        "sat_queries",
+        "model_queries",
+        "sat_cache_hits",
+        "model_cache_hits",
+        "heuristic_witnesses",
+        "solver_time_ms"
+      ],
+      "properties": {
+        "paths": { "type": "integer", "minimum": 0 },
+        "solver_queries": { "type": "integer", "minimum": 0 },
+        "smt_queries": { "type": "integer", "minimum": 0 },
+        "sat_queries": { "type": "integer", "minimum": 0 },
+        "model_queries": { "type": "integer", "minimum": 0 },
+        "sat_cache_hits": { "type": "integer", "minimum": 0 },
+        "model_cache_hits": { "type": "integer", "minimum": 0 },
+        "heuristic_witnesses": { "type": "integer", "minimum": 0 },
+        "solver_time_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "assumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "description"],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "call_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "source", "format"],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": ["string", "null"]
+        },
+        "format": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status", "reason"],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["not_required", "confirmed", "mismatch", "error", "skipped"]
+        },
+        "reason": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "counterexample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calldata", "args", "raw_args", "value"],
+      "properties": {
+        "calldata": {
+          "type": "string",
+          "pattern": "^0x([0-9a-fA-F]{2})*$"
+        },
+        "args": {
+          "type": ["string", "null"]
+        },
+        "raw_args": {
+          "type": ["string", "null"]
+        },
+        "value": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "path"],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "foundry:symbolic.counterexample@v1"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "minimization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original",
+        "minimized",
+        "attempts",
+        "accepted",
+        "original_calldata_bytes",
+        "minimized_calldata_bytes"
+      ],
+      "properties": {
+        "original": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "minimized": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "original_calldata_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimized_calldata_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

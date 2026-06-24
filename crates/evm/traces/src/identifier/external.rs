@@ -2,7 +2,7 @@ use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
 use alloy_primitives::{
     Address,
-    map::{Entry, HashMap},
+    map::{Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
@@ -39,6 +39,7 @@ impl ExternalIdentifier {
             return Ok(None);
         }
 
+        let no_proxy = config.eth_rpc_no_proxy;
         let config = match config.get_etherscan_config_with_chain(chain) {
             Ok(Some(config)) => {
                 chain = config.chain;
@@ -61,7 +62,14 @@ impl ExternalIdentifier {
         }
         if let Some(config) = config {
             debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            fetchers.push(Arc::new(EtherscanFetcher::new(config.into_client()?)));
+            match config.into_client_with_no_proxy(no_proxy) {
+                Ok(client) => {
+                    fetchers.push(Arc::new(EtherscanFetcher::new(client)));
+                }
+                Err(err) => {
+                    warn!(target: "evm::traces::external", ?err, "failed to create etherscan client");
+                }
+            }
         }
         if fetchers.is_empty() {
             debug!(target: "evm::traces::external", "no fetchers enabled");
@@ -151,7 +159,7 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
-        let mut to_fetch = Vec::new();
+        let mut to_fetch = HashSet::new();
 
         // Check cache first.
         for &node in nodes {
@@ -163,7 +171,7 @@ impl TraceIdentifier for ExternalIdentifier {
                     // Do nothing. We know that this contract was not verified.
                 }
             } else {
-                to_fetch.push(address);
+                to_fetch.insert(address);
             }
         }
 
@@ -172,6 +180,7 @@ impl TraceIdentifier for ExternalIdentifier {
         }
         trace!(target: "evm::traces::external", "fetching {} addresses", to_fetch.len());
 
+        let to_fetch = to_fetch.into_iter().collect::<Vec<_>>();
         let fetchers =
             self.fetchers.iter().map(|fetcher| ExternalFetcher::new(fetcher.clone(), &to_fetch));
         let fetched_identities = foundry_common::block_on(
@@ -183,12 +192,20 @@ impl TraceIdentifier for ExternalIdentifier {
                         .map(|metadata| self.identify_from_metadata(address, metadata));
                     match self.contracts.entry(address) {
                         Entry::Occupied(mut occupied_entry) => {
-                            // Override if:
-                            // - new is from Etherscan and old is not
-                            // - new is Some and old is None, meaning verified only in one source
-                            if !matches!(occupied_entry.get().0, FetcherKind::Etherscan)
-                                || value.1.is_none()
-                            {
+                            let old = occupied_entry.get();
+                            // Only override when the new result is strictly better:
+                            // - new has metadata and old doesn't, OR
+                            // - both have metadata but new is from Etherscan and old is not.
+                            // Never downgrade a successful lookup to None.
+                            let should_replace = match (&old.1, &value.1) {
+                                (None, Some(_)) => true,
+                                (Some(_), None) => false,
+                                _ => {
+                                    matches!(value.0, FetcherKind::Etherscan)
+                                        && !matches!(old.0, FetcherKind::Etherscan)
+                                }
+                            };
+                            if should_replace {
                                 occupied_entry.insert(value);
                             }
                         }
@@ -210,6 +227,10 @@ impl TraceIdentifier for ExternalIdentifier {
 type FetchFuture =
     Pin<Box<dyn Future<Output = (Address, Result<Option<Metadata>, EtherscanError>)>>>;
 
+/// Maximum number of times a single address is retried through a transient Cloudflare
+/// block before we give up on it. Bounded so a persistent block can't loop forever.
+const MAX_CLOUDFLARE_RETRIES: u32 = 5;
+
 /// A rate limit aware fetcher.
 ///
 /// Fetches information about multiple addresses concurrently, while respecting rate limits.
@@ -226,6 +247,8 @@ struct ExternalFetcher {
     queue: Vec<Address>,
     /// The in progress requests
     in_progress: FuturesUnordered<FetchFuture>,
+    /// Per-address retry counter for transient Cloudflare blocks.
+    attempts: HashMap<Address, u32>,
 }
 
 impl ExternalFetcher {
@@ -237,6 +260,7 @@ impl ExternalFetcher {
             fetcher,
             queue: to_fetch.to_vec(),
             in_progress: FuturesUnordered::new(),
+            attempts: HashMap::default(),
         }
     }
 
@@ -302,13 +326,29 @@ impl Stream for ExternalFetcher {
                             return Poll::Ready(None);
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
-                            warn!(target: "evm::traces::external", "blocked by cloudflare");
-                            // mark key as invalid
-                            pin.fetcher.invalid_api_key().store(true, Ordering::Relaxed);
-                            return Poll::Ready(None);
+                            // A Cloudflare block is transient rate limiting (often triggered
+                            // by request bursts), not a permanent failure like an invalid key.
+                            // Back off and retry the address a bounded number of times instead
+                            // of aborting the whole stream, which would abandon every still-
+                            // queued address and leave traces only partially decoded (#9880).
+                            let attempts = {
+                                let entry = pin.attempts.entry(addr).or_default();
+                                *entry += 1;
+                                *entry
+                            };
+                            if attempts <= MAX_CLOUDFLARE_RETRIES {
+                                warn!(target: "evm::traces::external", attempts, "blocked by cloudflare, backing off");
+                                pin.backoff = Some(tokio::time::interval(pin.timeout));
+                                pin.queue.push(addr);
+                            } else {
+                                warn!(target: "evm::traces::external", "blocked by cloudflare, giving up on address");
+                                return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
+                            }
                         }
                         Err(err) => {
                             warn!(target: "evm::traces::external", ?err, "could not get info");
+                            // Cache the failure so we don't re-fetch on subsequent arenas.
+                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
                         }
                     }
                 }
@@ -342,7 +382,7 @@ struct EtherscanFetcher {
 }
 
 impl EtherscanFetcher {
-    fn new(client: foundry_block_explorers::Client) -> Self {
+    const fn new(client: foundry_block_explorers::Client) -> Self {
         Self { client, invalid_api_key: AtomicBool::new(false) }
     }
 }
@@ -406,10 +446,13 @@ impl ExternalFetcherT for SourcifyFetcher {
 
     async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError> {
         let url = format!("{url}/{address}?fields=abi,compilation", url = self.url);
-        let response = self.client.get(url).send().await?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| EtherscanError::Unknown(e.to_string()))?;
         let code = response.status();
-        let response: SourcifyResponse = response.json().await?;
-        trace!(target: "evm::traces::external", "Sourcify response for {address}: {response:#?}");
         match code.as_u16() {
             // Not verified.
             404 => return Err(EtherscanError::ContractCodeNotVerified(address)),
@@ -417,6 +460,9 @@ impl ExternalFetcherT for SourcifyFetcher {
             429 => return Err(EtherscanError::RateLimitExceeded),
             _ => {}
         }
+        let response: SourcifyResponse =
+            response.json().await.map_err(|e| EtherscanError::Unknown(e.to_string()))?;
+        trace!(target: "evm::traces::external", "Sourcify response for {address}: {response:#?}");
         match response {
             SourcifyResponse::Success(metadata) => Ok(Some(metadata.into())),
             SourcifyResponse::Error(error) => Err(EtherscanError::Unknown(format!("{error:#?}"))),
@@ -483,5 +529,56 @@ impl From<SourcifyMetadata> for Metadata {
             implementation: None,
             swarm_source: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::HashSet as StdHashSet, sync::Mutex};
+
+    /// Fetcher that returns a transient Cloudflare block the first time it sees an address, then
+    /// succeeds. Mirrors Etherscan/Cloudflare throttling a burst of concurrent requests.
+    struct FlakyCloudflareFetcher {
+        seen: Mutex<StdHashSet<Address>>,
+        invalid: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl ExternalFetcherT for FlakyCloudflareFetcher {
+        fn kind(&self) -> FetcherKind {
+            FetcherKind::Etherscan
+        }
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(1)
+        }
+        fn concurrency(&self) -> usize {
+            1
+        }
+        fn invalid_api_key(&self) -> &AtomicBool {
+            &self.invalid
+        }
+        async fn fetch(&self, address: Address) -> Result<Option<Metadata>, EtherscanError> {
+            let first_time = self.seen.lock().unwrap().insert(address);
+            if first_time { Err(EtherscanError::BlockedByCloudflare) } else { Ok(None) }
+        }
+    }
+
+    /// Regression test for #9880: a transient Cloudflare block on one address must not abandon the
+    /// rest of the queue. Before the fix the fetcher returned `Poll::Ready(None)` on the first
+    /// block, ending the stream and leaving later addresses unidentified (partial trace decoding).
+    #[tokio::test]
+    async fn cloudflare_block_retries_instead_of_abandoning_queue() {
+        let addrs: Vec<Address> = (1u8..=4).map(Address::with_last_byte).collect();
+        let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(FlakyCloudflareFetcher {
+            seen: Mutex::new(StdHashSet::new()),
+            invalid: AtomicBool::new(false),
+        });
+
+        let collected: Vec<_> = ExternalFetcher::new(fetcher, &addrs).collect().await;
+
+        let got: StdHashSet<Address> = collected.into_iter().map(|(addr, _)| addr).collect();
+        let want: StdHashSet<Address> = addrs.into_iter().collect();
+        assert_eq!(got, want, "every address must be yielded despite a transient cloudflare block");
     }
 }

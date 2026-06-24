@@ -1,7 +1,7 @@
 use super::PascalCaseStruct;
 use crate::{
     linter::{EarlyLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, naming::check_pascal_case},
 };
 use solar::ast::ItemStruct;
 
@@ -27,15 +27,4 @@ impl<'ast> EarlyLintPass<'ast> for PascalCaseStruct {
             );
         }
     }
-}
-
-/// If the string `s` is not PascalCase, returns a `Some(String)` with the
-/// suggested conversion. Otherwise, returns `None`.
-pub fn check_pascal_case(s: &str) -> Option<String> {
-    if s.len() <= 1 {
-        return None;
-    }
-
-    let expected = heck::AsPascalCase(s).to_string();
-    if s == expected.as_str() { None } else { Some(expected) }
 }

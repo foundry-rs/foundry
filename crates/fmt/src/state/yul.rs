@@ -253,7 +253,9 @@ impl<'ast> State<'_, 'ast> {
                 |s, stmt| {
                     s.print_yul_stmt(stmt);
                     s.print_comments(stmt.span.hi(), CommentConfig::default());
-                    if i != n_args {
+                    if i == n_args {
+                        s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
+                    } else {
                         let next_span = block[i + 1].span;
                         s.print_trailing_comment(stmt.span.hi(), Some(next_span.lo()));
                         if !s.is_bol_or_only_ind() && !s.inline_config.is_disabled(stmt.span) {
@@ -270,8 +272,6 @@ impl<'ast> State<'_, 'ast> {
                             }
                         }
                         i += 1;
-                    } else {
-                        s.print_trailing_comment(stmt.span.hi(), Some(span.hi()));
                     }
                 },
                 |b| b.span,

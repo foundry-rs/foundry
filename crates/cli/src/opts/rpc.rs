@@ -1,5 +1,4 @@
-use crate::opts::ChainValueParser;
-use alloy_chains::ChainKind;
+use crate::opts::{ChainValueParser, RpcCommonOpts};
 use clap::Parser;
 use eyre::Result;
 use foundry_config::{
@@ -19,16 +18,9 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net/fast";
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Rpc options")]
 pub struct RpcOpts {
-    /// The RPC endpoint, default value is http://localhost:8545.
-    #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
-    pub url: Option<String>,
-
-    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
-    ///
-    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
-    /// client to accept invalid certificates.
-    #[arg(short = 'k', long = "insecure", default_value = "false")]
-    pub accept_invalid_certs: bool,
+    /// Common RPC options (URL, timeout, rate limiting, etc.).
+    #[command(flatten)]
+    pub common: RpcCommonOpts,
 
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
@@ -40,7 +32,7 @@ pub struct RpcOpts {
 
     /// JWT Secret for the RPC endpoint.
     ///
-    /// The JWT secret will be used to create a JWT for a RPC. For example, the following can be
+    /// The JWT secret will be used to create a JWT for an RPC. For example, the following can be
     /// used to simulate a CL `engine_forkchoiceUpdated` call:
     ///
     /// cast rpc --jwt-secret <JWT_SECRET> engine_forkchoiceUpdatedV2
@@ -50,17 +42,13 @@ pub struct RpcOpts {
     #[arg(long, env = "ETH_RPC_JWT_SECRET")]
     pub jwt_secret: Option<String>,
 
-    /// Timeout for the RPC request in seconds.
-    ///
-    /// The specified timeout will be used to override the default timeout for RPC requests.
-    ///
-    /// Default value: 45
-    #[arg(long, env = "ETH_RPC_TIMEOUT")]
-    pub rpc_timeout: Option<u64>,
-
     /// Specify custom headers for RPC requests.
     #[arg(long, alias = "headers", env = "ETH_RPC_HEADERS", value_delimiter(','))]
     pub rpc_headers: Option<Vec<String>>,
+
+    /// Print the equivalent curl command instead of making the RPC request.
+    #[arg(long)]
+    pub curl: bool,
 }
 
 impl_figment_convert_cast!(RpcOpts);
@@ -78,13 +66,23 @@ impl figment::Provider for RpcOpts {
 impl RpcOpts {
     /// Returns the RPC endpoint.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let url = match (self.flashbots, self.url.as_deref(), config) {
-            (true, ..) => Some(Cow::Borrowed(FLASHBOTS_URL)),
-            (false, Some(url), _) => Some(Cow::Borrowed(url)),
-            (false, None, Some(config)) => config.get_rpc_url().transpose()?,
-            (false, None, None) => None,
-        };
-        Ok(url)
+        self.url_with_env(config, std::env::var("ETH_RPC_URL").ok())
+    }
+
+    fn url_with_env<'a>(
+        &'a self,
+        config: Option<&'a Config>,
+        env_url: Option<String>,
+    ) -> Result<Option<Cow<'a, str>>> {
+        if self.flashbots {
+            Ok(Some(Cow::Borrowed(FLASHBOTS_URL)))
+        } else if let Some(url) = self.common.rpc_url.as_deref() {
+            Ok(Some(Cow::Borrowed(url)))
+        } else if let Some(url) = env_url {
+            Ok(Some(Cow::Owned(url)))
+        } else {
+            self.common.url(config)
+        }
     }
 
     /// Returns the JWT secret.
@@ -98,21 +96,20 @@ impl RpcOpts {
     }
 
     pub fn dict(&self) -> Dict {
-        let mut dict = Dict::new();
+        let mut dict = self.common.dict();
+        // `self.url(None)` already accounts for `flashbots` and the `ETH_RPC_URL` env var,
+        // so a single insert here covers both.
         if let Ok(Some(url)) = self.url(None) {
             dict.insert("eth_rpc_url".into(), url.into_owned().into());
         }
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());
         }
-        if let Some(rpc_timeout) = self.rpc_timeout {
-            dict.insert("eth_rpc_timeout".into(), rpc_timeout.into());
-        }
         if let Some(headers) = &self.rpc_headers {
             dict.insert("eth_rpc_headers".into(), headers.clone().into());
         }
-        if self.accept_invalid_certs {
-            dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
+        if self.curl {
+            dict.insert("eth_rpc_curl".into(), true.into());
         }
         dict
     }
@@ -174,11 +171,7 @@ impl EtherscanOpts {
         }
 
         if let Some(chain) = self.chain {
-            if let ChainKind::Id(id) = chain.kind() {
-                dict.insert("chain_id".into(), (*id).into());
-            } else {
-                dict.insert("chain_id".into(), chain.to_string().into());
-            }
+            dict.insert("chain_id".into(), chain.id().into());
         }
         dict
     }
@@ -220,6 +213,7 @@ impl figment::Provider for EthereumOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn parse_etherscan_opts() {
@@ -230,5 +224,55 @@ mod tests {
         let args: EtherscanOpts =
             EtherscanOpts::parse_from(["foundry-cli", "--etherscan-api-key", ""]);
         assert!(!args.has_key());
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/14314>
+    #[test]
+    fn named_chain_dict_inserts_numeric_id() {
+        // Chain 9745 is recognized as NamedChain::Plasma by alloy-chains.
+        // Previously, dict() would insert chain_id as the string "plasma",
+        // causing deserialization failure when EvmOpts expects u64.
+        let args = EtherscanOpts::parse_from(["foundry-cli", "--chain", "9745"]);
+        let dict = args.dict();
+        let chain_id = dict.get("chain_id").expect("chain_id should be present");
+        let id: u64 = chain_id.deserialize().expect("chain_id should deserialize as u64");
+        assert_eq!(id, 9745);
+    }
+
+    #[test]
+    fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        let command = RpcOpts::command();
+        let rpc_url =
+            command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");
+
+        assert!(rpc_url.get_env().is_none());
+    }
+
+    #[test]
+    fn rpc_url_resolves_eth_rpc_url_env() {
+        let args = RpcOpts::default();
+        let url = args
+            .url_with_env(None, Some("http://127.0.0.1:8545".to_string()))
+            .expect("url")
+            .expect("url");
+
+        assert_eq!(url.as_ref(), "http://127.0.0.1:8545");
+    }
+
+    #[test]
+    fn explicit_rpc_url_takes_precedence_over_eth_rpc_url_env() {
+        let args = RpcOpts {
+            common: RpcCommonOpts {
+                rpc_url: Some("http://127.0.0.1:8546".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let url = args
+            .url_with_env(None, Some("http://127.0.0.1:8545".to_string()))
+            .expect("url")
+            .expect("url");
+
+        assert_eq!(url.as_ref(), "http://127.0.0.1:8546");
     }
 }

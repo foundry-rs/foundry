@@ -1,23 +1,23 @@
-use foundry_compilers::{
-    Project, ProjectCompileOutput, Vyper, project_util::copy_dir, utils::RuntimeOrHandle,
-};
+use foundry_compilers::{Project, ProjectCompileOutput, Vyper, utils::RuntimeOrHandle};
 use foundry_config::Config;
 use std::{
     env,
     fs::{self, File},
-    io::{IsTerminal, Read, Seek, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::LazyLock,
 };
 
+/// Directories to skip when copying project directories.
+/// These are build artifacts and runtime-generated files that should not be copied to temp
+/// workspaces.
+const SKIP_DIRS: &[&str] = &["out", "cache", "broadcast"];
+
 pub use crate::{ext::*, prj::*};
 
 /// The commit of forge-std to use.
 pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
-
-/// Stores whether `stdout` is a tty / terminal.
-pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
 
 /// Global default template path. Contains the global template project from which all other
 /// temp projects are initialized. See [`initialize()`] for more info.
@@ -30,7 +30,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
     LazyLock::new(|| env::temp_dir().join("foundry-forge-test-template.lock"));
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.30";
+pub const SOLC_VERSION: &str = "0.8.35";
 
 /// Another Solc version used when compiling tests.
 ///
@@ -101,8 +101,8 @@ pub fn initialize(target: &Path) {
             // Remove the existing template, if any.
             let _ = fs::remove_dir_all(tpath);
 
-            // Copy the template to the global template path.
-            pretty_err(tpath, copy_dir(prj.root(), tpath));
+            // Copy the template to the global template path, excluding build artifacts.
+            pretty_err(tpath, copy_dir_filtered(prj.root(), tpath));
 
             // Update lockfile to mark that template is initialized.
             write.set_len(0).unwrap();
@@ -117,7 +117,7 @@ pub fn initialize(target: &Path) {
 
     test_debug!("- copying template dir from {}", tpath.display());
     pretty_err(target, fs::create_dir_all(target));
-    pretty_err(target, copy_dir(tpath, target));
+    pretty_err(target, copy_dir_filtered(tpath, target));
 }
 
 /// Compile the project with a lock for the cache.
@@ -146,9 +146,7 @@ pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
     out = project.compile().unwrap();
     test_debug!("compiled {}", lock_file_path.display());
 
-    if out.has_compiler_errors() {
-        panic!("Compiled with errors:\n{out}");
-    }
+    assert!(!out.has_compiler_errors(), "Compiled with errors:\n{out}");
 
     if let Some(write) = &mut write {
         write.write_all(crate::fd_lock::LOCK_TOKEN).unwrap();
@@ -176,7 +174,7 @@ pub fn get_vyper() -> Vyper {
         let path = VYPER.as_path();
         let mut file = File::create(path).unwrap();
         if let Err(e) = file.try_lock() {
-            if let fs::TryLockError::WouldBlock = e {
+            if matches!(e, fs::TryLockError::WouldBlock) {
                 file.lock().unwrap();
                 assert!(path.exists());
                 return Vyper::new(path).unwrap();
@@ -224,4 +222,38 @@ pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T
 pub fn read_string(path: impl AsRef<Path>) -> String {
     let path = path.as_ref();
     pretty_err(path, std::fs::read_to_string(path))
+}
+
+/// Copies the directory at `src` to `dst`, skipping build artifact directories.
+///
+/// This is similar to `foundry_compilers::project_util::copy_dir`, but skips directories
+/// like `out/`, `cache/`, and `broadcast/` which are build artifacts that should not be
+/// copied to temporary test workspaces.
+pub fn copy_dir_filtered(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    copy_dir_filtered_inner(src, dst, true)
+}
+
+fn copy_dir_filtered_inner(src: &Path, dst: &Path, is_root: bool) -> std::io::Result<()> {
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if ty.is_dir() {
+            // Skip build artifact directories at the root level
+            if is_root
+                && let Some(name) = entry.file_name().to_str()
+                && SKIP_DIRS.contains(&name)
+            {
+                continue;
+            }
+            fs::create_dir_all(&dst_path)?;
+            copy_dir_filtered_inner(&src_path, &dst_path, false)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }

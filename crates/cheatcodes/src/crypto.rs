@@ -11,6 +11,8 @@ use alloy_signer_local::{
     },
 };
 use alloy_sol_types::SolValue;
+use foundry_common::wallet::{derive_private_key, derive_private_key_with_language};
+use foundry_evm_core::evm::FoundryEvmNetwork;
 use k256::{
     FieldBytes, Scalar,
     ecdsa::{SigningKey, hazmat},
@@ -21,32 +23,38 @@ use p256::ecdsa::{
     Signature as P256Signature, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
 };
 
+use ed25519_consensus::{
+    Signature as Ed25519Signature, SigningKey as Ed25519SigningKey,
+    VerificationKey as Ed25519VerificationKey,
+};
+use tempo_primitives::transaction::{KeychainSignature, PrimitiveSignature, TempoSignature};
+
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
 impl Cheatcode for createWallet_0Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { walletLabel } = self;
         create_wallet(&U256::from_be_bytes(keccak256(walletLabel).0), Some(walletLabel), state)
     }
 }
 
 impl Cheatcode for createWallet_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         create_wallet(privateKey, None, state)
     }
 }
 
 impl Cheatcode for createWallet_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, walletLabel } = self;
         create_wallet(privateKey, Some(walletLabel), state)
     }
 }
 
 impl Cheatcode for sign_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
         Ok(encode_full_sig(sig))
@@ -54,7 +62,7 @@ impl Cheatcode for sign_0Call {
 }
 
 impl Cheatcode for signWithNonceUnsafeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let pk: U256 = self.privateKey;
         let digest: B256 = self.digest;
         let nonce: U256 = self.nonce;
@@ -63,8 +71,22 @@ impl Cheatcode for signWithNonceUnsafeCall {
     }
 }
 
+impl Cheatcode for signKeychainCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { privateKey, account, digest } = self;
+        sign_keychain(privateKey, account, digest)
+    }
+}
+
+impl Cheatcode for signKeychainAdminCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { privateKey, account, digest } = self;
+        sign_keychain(privateKey, account, digest)
+    }
+}
+
 impl Cheatcode for signCompact_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
         Ok(encode_compact_sig(sig))
@@ -72,35 +94,35 @@ impl Cheatcode for signCompact_0Call {
 }
 
 impl Cheatcode for deriveKey_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, index } = self;
         derive_key::<English>(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index)
     }
 }
 
 impl Cheatcode for deriveKey_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, index } = self;
         derive_key::<English>(mnemonic, derivationPath, *index)
     }
 }
 
 impl Cheatcode for deriveKey_2Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, index, language } = self;
         derive_key_str(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index, language)
     }
 }
 
 impl Cheatcode for deriveKey_3Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, index, language } = self;
         derive_key_str(mnemonic, derivationPath, *index, language)
     }
 }
 
 impl Cheatcode for rememberKeyCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
         let address = inject_wallet(state, wallet);
@@ -109,7 +131,7 @@ impl Cheatcode for rememberKeyCall {
 }
 
 impl Cheatcode for rememberKeys_0Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
@@ -123,7 +145,7 @@ impl Cheatcode for rememberKeys_0Call {
 }
 
 impl Cheatcode for rememberKeys_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, language, count } = self;
         let wallets = derive_wallets_str(mnemonic, derivationPath, language, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
@@ -136,14 +158,17 @@ impl Cheatcode for rememberKeys_1Call {
     }
 }
 
-fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Address {
+fn inject_wallet<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    wallet: LocalSigner<SigningKey>,
+) -> Address {
     let address = wallet.address();
     state.wallets().add_local_signer(wallet);
     address
 }
 
 impl Cheatcode for sign_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign(privateKey, digest)?;
         Ok(encode_full_sig(sig))
@@ -151,7 +176,7 @@ impl Cheatcode for sign_1Call {
 }
 
 impl Cheatcode for signCompact_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign(privateKey, digest)?;
         Ok(encode_compact_sig(sig))
@@ -159,7 +184,7 @@ impl Cheatcode for signCompact_1Call {
 }
 
 impl Cheatcode for sign_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
         Ok(encode_full_sig(sig))
@@ -167,7 +192,7 @@ impl Cheatcode for sign_2Call {
 }
 
 impl Cheatcode for signCompact_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
         Ok(encode_compact_sig(sig))
@@ -175,7 +200,7 @@ impl Cheatcode for signCompact_2Call {
 }
 
 impl Cheatcode for sign_3Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
         Ok(encode_full_sig(sig))
@@ -183,7 +208,7 @@ impl Cheatcode for sign_3Call {
 }
 
 impl Cheatcode for signCompact_3Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
         Ok(encode_compact_sig(sig))
@@ -191,14 +216,14 @@ impl Cheatcode for signCompact_3Call {
 }
 
 impl Cheatcode for signP256Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
         sign_p256(privateKey, digest)
     }
 }
 
 impl Cheatcode for publicKeyP256Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         let pub_key =
             parse_private_key_p256(privateKey)?.verifying_key().as_affine().to_encoded_point(false);
@@ -209,11 +234,43 @@ impl Cheatcode for publicKeyP256Call {
     }
 }
 
+impl Cheatcode for createEd25519KeyCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { salt } = self;
+        create_ed25519_key(salt)
+    }
+}
+
+impl Cheatcode for publicKeyEd25519Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { privateKey } = self;
+        public_key_ed25519(privateKey)
+    }
+}
+
+impl Cheatcode for signEd25519Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { namespace, message, privateKey } = self;
+        sign_ed25519(namespace, message, privateKey)
+    }
+}
+
+impl Cheatcode for verifyEd25519Call {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { signature, namespace, message, publicKey } = self;
+        verify_ed25519(signature, namespace, message, publicKey)
+    }
+}
+
 /// Using a given private key, return its public ETH address, its public key affine x and y
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
-fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {
+fn create_wallet<FEN: FoundryEvmNetwork>(
+    private_key: &U256,
+    label: Option<&str>,
+    state: &mut Cheatcodes<FEN>,
+) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = alloy_signer::utils::secret_key_to_address(&key);
 
@@ -251,6 +308,16 @@ fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature
     let sig = wallet.sign_hash_sync(digest)?;
     debug_assert_eq!(sig.recover_address_from_prehash(digest)?, wallet.address());
     Ok(sig)
+}
+
+fn sign_keychain(private_key: &U256, account: &Address, digest: &B256) -> Result {
+    let signing_hash = KeychainSignature::signing_hash(*digest, *account);
+    let inner = sign(private_key, &signing_hash)?;
+    let signature = TempoSignature::Keychain(KeychainSignature::new(
+        *account,
+        PrimitiveSignature::Secp256k1(inner),
+    ));
+    Ok(signature.to_bytes().abi_encode())
 }
 
 /// Signs `digest` on secp256k1 using a user-supplied ephemeral nonce `k` (no RFC6979).
@@ -333,8 +400,8 @@ fn sign_with_nonce(
     Ok(alloy_primitives::Signature::new(r_u256, s_u256, y_parity))
 }
 
-fn sign_with_wallet(
-    state: &mut Cheatcodes,
+fn sign_with_wallet<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
@@ -399,41 +466,60 @@ fn parse_private_key_p256(private_key: &U256) -> Result<P256SigningKey> {
     Ok(P256SigningKey::from_bytes((&private_key.to_be_bytes()).into())?)
 }
 
+fn parse_signing_key_ed25519(private_key: &B256) -> Result<Ed25519SigningKey> {
+    Ed25519SigningKey::try_from(private_key.as_slice())
+        .map_err(|e| fmt_err!("invalid Ed25519 private key: {e}"))
+}
+
+fn create_ed25519_key(salt: &B256) -> Result {
+    let signing_key = parse_signing_key_ed25519(salt)?;
+    let public_key = B256::from_slice(signing_key.verification_key().as_ref());
+    Ok((public_key, *salt).abi_encode())
+}
+
+fn public_key_ed25519(private_key: &B256) -> Result {
+    let signing_key = parse_signing_key_ed25519(private_key)?;
+    Ok(B256::from_slice(signing_key.verification_key().as_ref()).abi_encode())
+}
+
+fn sign_ed25519(namespace: &[u8], message: &[u8], private_key: &B256) -> Result {
+    let signing_key = parse_signing_key_ed25519(private_key)?;
+    let combined = [namespace, message].concat();
+    let signature: [u8; 64] = signing_key.sign(&combined).into();
+    Ok(signature.to_vec().abi_encode())
+}
+
+fn verify_ed25519(signature: &[u8], namespace: &[u8], message: &[u8], public_key: &B256) -> Result {
+    if signature.len() != 64 {
+        return Ok(false.abi_encode());
+    }
+
+    let Ok(verification_key) = Ed25519VerificationKey::try_from(public_key.as_slice()) else {
+        return Ok(false.abi_encode());
+    };
+
+    let Ok(sig_bytes): Result<[u8; 64], _> = signature.try_into() else {
+        return Ok(false.abi_encode());
+    };
+
+    let combined = [namespace, message].concat();
+    let valid = verification_key.verify(&Ed25519Signature::from(sig_bytes), &combined).is_ok();
+    Ok(valid.abi_encode())
+}
+
 pub(super) fn parse_wallet(private_key: &U256) -> Result<PrivateKeySigner> {
     parse_private_key(private_key).map(PrivateKeySigner::from)
 }
 
 fn derive_key_str(mnemonic: &str, path: &str, index: u32, language: &str) -> Result {
-    match language {
-        "chinese_simplified" => derive_key::<ChineseSimplified>(mnemonic, path, index),
-        "chinese_traditional" => derive_key::<ChineseTraditional>(mnemonic, path, index),
-        "czech" => derive_key::<Czech>(mnemonic, path, index),
-        "english" => derive_key::<English>(mnemonic, path, index),
-        "french" => derive_key::<French>(mnemonic, path, index),
-        "italian" => derive_key::<Italian>(mnemonic, path, index),
-        "japanese" => derive_key::<Japanese>(mnemonic, path, index),
-        "korean" => derive_key::<Korean>(mnemonic, path, index),
-        "portuguese" => derive_key::<Portuguese>(mnemonic, path, index),
-        "spanish" => derive_key::<Spanish>(mnemonic, path, index),
-        _ => Err(fmt_err!("unsupported mnemonic language: {language:?}")),
-    }
+    let private_key = derive_private_key_with_language(mnemonic, path, index, language)
+        .map_err(|e| fmt_err!("{e}"))?;
+    Ok(private_key.abi_encode())
 }
 
 fn derive_key<W: Wordlist>(mnemonic: &str, path: &str, index: u32) -> Result {
-    fn derive_key_path(path: &str, index: u32) -> String {
-        let mut out = path.to_string();
-        if !out.ends_with('/') {
-            out.push('/');
-        }
-        out.push_str(&index.to_string());
-        out
-    }
-
-    let wallet = MnemonicBuilder::<W>::default()
-        .phrase(mnemonic)
-        .derivation_path(derive_key_path(path, index))?
-        .build()?;
-    let private_key = U256::from_be_bytes(wallet.credential().to_bytes().into());
+    let private_key =
+        derive_private_key::<W>(mnemonic, path, index).map_err(|e| fmt_err!("{e}"))?;
     Ok(private_key.abi_encode())
 }
 
@@ -485,8 +571,17 @@ fn derive_wallets<W: Wordlist>(
 mod tests {
     use super::*;
     use alloy_primitives::{FixedBytes, hex::FromHex};
+    use alloy_sol_types::SolCall;
     use k256::elliptic_curve::Curve;
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    use tempo_chainspec::hardfork::TempoHardfork;
+    use tempo_contracts::precompiles::{IAccountKeychain, ISignatureVerifier};
+    use tempo_precompiles::{
+        Precompile,
+        account_keychain::{AccountKeychain, KeyRestrictions, SignatureType},
+        signature_verifier::SignatureVerifier,
+        storage::{StorageCtx, hashmap::HashMapStorageProvider},
+    };
 
     #[test]
     fn test_sign_p256() {
@@ -595,5 +690,259 @@ mod tests {
         let err = sign_with_nonce(&pk_u256, &digest, &n_u256).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("invalid nonce scalar"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn test_sign_keychain_encodes_v2_signature_for_account() {
+        let private_key = U256::from(0xB0Bu64);
+        let account = Address::repeat_byte(0x11);
+        let digest = B256::from([0x22; 32]);
+
+        let result = sign_keychain(&private_key, &account, &digest).unwrap();
+        let signature = Vec::<u8>::abi_decode(&result).unwrap();
+
+        assert_eq!(signature.len(), 86);
+        assert_eq!(signature[0], 0x04);
+        assert_eq!(Address::from_slice(&signature[1..21]), account);
+
+        let parsed = TempoSignature::from_bytes(&signature).unwrap();
+        assert!(parsed.is_v2_keychain());
+
+        let keychain = parsed.as_keychain().unwrap();
+        let expected_key = parse_wallet(&private_key).unwrap().address();
+        assert_eq!(keychain.user_address, account);
+        assert_eq!(keychain.key_id(&digest).unwrap(), expected_key);
+    }
+
+    #[test]
+    fn test_sign_keychain_matches_t6_signature_verifier_state() {
+        let root_pk = U256::from(0xA11CEu64);
+        let access_pk = U256::from(0xB0Bu64);
+        let admin_pk = U256::from(0xC0FFEEu64);
+        let revoked_pk = U256::from(0xBADu64);
+        let expired_pk = U256::from(0xE441u64);
+        let unknown_pk = U256::from(0xFACEu64);
+
+        let root = parse_wallet(&root_pk).unwrap().address();
+        let access_key = parse_wallet(&access_pk).unwrap().address();
+        let admin_key = parse_wallet(&admin_pk).unwrap().address();
+        let revoked_key = parse_wallet(&revoked_pk).unwrap().address();
+        let expired_key = parse_wallet(&expired_pk).unwrap().address();
+
+        let hash = B256::from([0x44; 32]);
+        let admin_hash = B256::from([0x66; 32]);
+
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T6);
+        storage.set_timestamp(U256::from(1_000u64));
+        StorageCtx::enter(&mut storage, || {
+            let mut keychain = AccountKeychain::new();
+            keychain.initialize()?;
+            keychain.set_tx_origin(root)?;
+
+            authorize_t6_access_key(&mut keychain, root, access_key, u64::MAX)?;
+            authorize_t6_access_key(&mut keychain, root, revoked_key, u64::MAX)?;
+            authorize_t6_access_key(&mut keychain, root, expired_key, 1_005)?;
+            keychain.authorize_admin_key(root, admin_key, SignatureType::Secp256k1, None)?;
+            keychain.revoke_key(root, IAccountKeychain::revokeKeyCall { keyId: revoked_key })?;
+
+            assert!(verify_keychain(root, hash, keychain_signature(&access_pk, root, hash)));
+            assert!(!verify_keychain(root, hash, keychain_signature(&revoked_pk, root, hash)));
+            assert!(!verify_keychain(root, hash, keychain_signature(&unknown_pk, root, hash)));
+            assert!(!verify_keychain(
+                Address::repeat_byte(0x99),
+                hash,
+                keychain_signature(&access_pk, root, hash)
+            ));
+            assert!(verify_keychain_admin(
+                root,
+                admin_hash,
+                keychain_signature(&admin_pk, root, admin_hash)
+            ));
+            assert!(verify_keychain_admin(
+                root,
+                admin_hash,
+                keychain_signature(&root_pk, root, admin_hash)
+            ));
+            assert!(!verify_keychain_admin(
+                root,
+                admin_hash,
+                keychain_signature(&access_pk, root, admin_hash)
+            ));
+            assert!(!verify_keychain_admin(
+                Address::repeat_byte(0x88),
+                admin_hash,
+                keychain_signature(&admin_pk, root, admin_hash)
+            ));
+            assert_keychain_signature_reverts(root, hash, vec![0x04]);
+
+            Ok::<_, eyre::Report>(())
+        })
+        .unwrap();
+
+        storage.set_timestamp(U256::from(1_006u64));
+        StorageCtx::enter(&mut storage, || {
+            assert!(!verify_keychain(root, hash, keychain_signature(&expired_pk, root, hash)));
+            Ok::<_, eyre::Report>(())
+        })
+        .unwrap();
+    }
+
+    fn authorize_t6_access_key(
+        keychain: &mut AccountKeychain,
+        account: Address,
+        key_id: Address,
+        expiry: u64,
+    ) -> eyre::Result<()> {
+        keychain.authorize_key(
+            account,
+            key_id,
+            SignatureType::Secp256k1,
+            KeyRestrictions {
+                expiry,
+                enforceLimits: false,
+                limits: vec![],
+                allowAnyCalls: true,
+                allowedCalls: vec![],
+            },
+            None,
+        )?;
+        Ok(())
+    }
+
+    fn keychain_signature(private_key: &U256, account: Address, hash: B256) -> Vec<u8> {
+        Vec::<u8>::abi_decode(&sign_keychain(private_key, &account, &hash).unwrap()).unwrap()
+    }
+
+    fn verify_keychain(account: Address, hash: B256, signature: Vec<u8>) -> bool {
+        let calldata =
+            ISignatureVerifier::verifyKeychainCall { account, hash, signature: signature.into() }
+                .abi_encode();
+
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
+        assert!(!output.is_revert(), "verifyKeychain reverted: {:?}", output.bytes);
+        ISignatureVerifier::verifyKeychainCall::abi_decode_returns(&output.bytes).unwrap()
+    }
+
+    fn verify_keychain_admin(account: Address, hash: B256, signature: Vec<u8>) -> bool {
+        let calldata = ISignatureVerifier::verifyKeychainAdminCall {
+            account,
+            hash,
+            signature: signature.into(),
+        }
+        .abi_encode();
+
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
+        assert!(!output.is_revert(), "verifyKeychainAdmin reverted: {:?}", output.bytes);
+        ISignatureVerifier::verifyKeychainAdminCall::abi_decode_returns(&output.bytes).unwrap()
+    }
+
+    fn assert_keychain_signature_reverts(account: Address, hash: B256, signature: Vec<u8>) {
+        let calldata =
+            ISignatureVerifier::verifyKeychainCall { account, hash, signature: signature.into() }
+                .abi_encode();
+
+        let output = SignatureVerifier::new().call(&calldata, Address::ZERO).unwrap();
+        assert!(output.is_revert(), "malformed keychain signature should revert");
+    }
+
+    #[test]
+    fn test_create_ed25519_key_determinism() {
+        let salt = B256::from([1u8; 32]);
+        let result1 = create_ed25519_key(&salt).unwrap();
+        let result2 = create_ed25519_key(&salt).unwrap();
+        assert_eq!(result1, result2, "same salt should produce same keys");
+    }
+
+    #[test]
+    fn test_create_ed25519_key_different_salts() {
+        let salt1 = B256::from([1u8; 32]);
+        let salt2 = B256::from([2u8; 32]);
+        let result1 = create_ed25519_key(&salt1).unwrap();
+        let result2 = create_ed25519_key(&salt2).unwrap();
+        assert_ne!(result1, result2, "different salts should produce different keys");
+    }
+
+    #[test]
+    fn test_public_key_ed25519_consistency() {
+        let salt = B256::from([42u8; 32]);
+        let create_result = create_ed25519_key(&salt).unwrap();
+        let (expected_public, private): (B256, B256) =
+            <(B256, B256)>::abi_decode(&create_result).unwrap();
+
+        let derived_public_result = public_key_ed25519(&private).unwrap();
+        let derived_public = B256::abi_decode(&derived_public_result).unwrap();
+
+        assert_eq!(expected_public, derived_public, "derived public key should match");
+    }
+
+    #[test]
+    fn test_sign_and_verify_ed25519_valid() {
+        let salt = B256::from([123u8; 32]);
+        let create_result = create_ed25519_key(&salt).unwrap();
+        let (public_key, private_key): (B256, B256) =
+            <(B256, B256)>::abi_decode(&create_result).unwrap();
+
+        let namespace = b"test.namespace";
+        let message = b"hello world";
+        let sig_result = sign_ed25519(namespace, message, &private_key).unwrap();
+        let sig_bytes: Vec<u8> = Vec::abi_decode(&sig_result).unwrap();
+
+        let verify_result = verify_ed25519(&sig_bytes, namespace, message, &public_key).unwrap();
+        let valid = bool::abi_decode(&verify_result).unwrap();
+
+        assert!(valid, "signature should be valid");
+    }
+
+    #[test]
+    fn test_verify_ed25519_invalid_signature() {
+        let salt = B256::from([123u8; 32]);
+        let create_result = create_ed25519_key(&salt).unwrap();
+        let (public_key, _): (B256, B256) = <(B256, B256)>::abi_decode(&create_result).unwrap();
+
+        let invalid_sig = [0u8; 64];
+        let namespace = b"test.namespace";
+        let message = b"hello world";
+
+        let verify_result = verify_ed25519(&invalid_sig, namespace, message, &public_key).unwrap();
+        let valid = bool::abi_decode(&verify_result).unwrap();
+
+        assert!(!valid, "invalid signature should not verify");
+    }
+
+    #[test]
+    fn test_verify_ed25519_namespace_separation() {
+        let salt = B256::from([123u8; 32]);
+        let create_result = create_ed25519_key(&salt).unwrap();
+        let (public_key, private_key): (B256, B256) =
+            <(B256, B256)>::abi_decode(&create_result).unwrap();
+
+        let namespace_a = b"namespace.a";
+        let message = b"message";
+        let sig_result = sign_ed25519(namespace_a, message, &private_key).unwrap();
+        let sig_bytes: Vec<u8> = Vec::abi_decode(&sig_result).unwrap();
+
+        let namespace_b = b"namespace.b";
+        let verify_result = verify_ed25519(&sig_bytes, namespace_b, message, &public_key).unwrap();
+        let valid = bool::abi_decode(&verify_result).unwrap();
+        assert!(!valid, "signature with namespace A should not verify with namespace B");
+
+        let verify_result = verify_ed25519(&sig_bytes, namespace_a, message, &public_key).unwrap();
+        let valid = bool::abi_decode(&verify_result).unwrap();
+        assert!(valid, "signature should verify with correct namespace");
+    }
+
+    #[test]
+    fn test_verify_ed25519_invalid_signature_length() {
+        let salt = B256::from([123u8; 32]);
+        let create_result = create_ed25519_key(&salt).unwrap();
+        let (public_key, _): (B256, B256) = <(B256, B256)>::abi_decode(&create_result).unwrap();
+
+        let invalid_sig = [0u8; 32];
+        let namespace = b"test";
+        let message = b"message";
+
+        let verify_result = verify_ed25519(&invalid_sig, namespace, message, &public_key).unwrap();
+        let valid = bool::abi_decode(&verify_result).unwrap();
+        assert!(!valid, "signature with wrong length should not verify");
     }
 }

@@ -1,7 +1,11 @@
 //! Contains various tests related to `forge script`.
 
-use crate::constants::TEMPLATE_CONTRACT;
+use crate::{
+    constants::TEMPLATE_CONTRACT,
+    utils::{assert_debug_dump_identifies_contract, generate_large_runtime_contract},
+};
 use alloy_hardforks::EthereumHardfork;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
@@ -41,6 +45,83 @@ contract ContractScript is Script {
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvvv"]).assert_success();
     }
 );
+
+forgetest_async!(script_debug_dump_identifies_contracts_loaded_from_fork, |prj, cmd| {
+    prj.add_source(
+        "ScriptForkDebugTarget.sol",
+        r#"
+contract ScriptForkDebugTarget {
+    uint256 public value;
+
+    function set(uint256 newValue) public {
+        value = newValue;
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    let create_output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "./src/ScriptForkDebugTarget.sol:ScriptForkDebugTarget",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk,
+            "--broadcast",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let create_output: Value = serde_json::from_slice(&create_output).unwrap();
+    let deployed = create_output["deployedTo"].as_str().unwrap().to_owned();
+
+    prj.add_script(
+        "DebugRemote.s.sol",
+        &format!(
+            r#"
+interface IScriptForkDebugTarget {{
+    function set(uint256 newValue) external;
+    function value() external view returns (uint256);
+}}
+
+contract DebugRemote {{
+    IScriptForkDebugTarget private target = IScriptForkDebugTarget({deployed});
+
+    function setUp() public {{
+        target.set(7);
+        require(target.value() == 7, "setup value");
+    }}
+
+    function run() public {{
+        target.set(19);
+        require(target.value() == 19, "value");
+    }}
+}}
+"#
+        ),
+    );
+
+    let dump_path = prj.root().join("script_dump.json");
+    cmd.forge_fuse().args([
+        "script",
+        "script/DebugRemote.s.sol:DebugRemote",
+        "--fork-url",
+        rpc.as_str(),
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+    assert_debug_dump_identifies_contract(&dump_path, &deployed, "ScriptForkDebugTarget");
+});
 
 // Tests that the `run` command works correctly
 forgetest!(can_execute_script_command2, |prj, cmd| {
@@ -135,6 +216,39 @@ contract FailingScript is Script {
 }
 "#;
 
+static OUT_OF_GAS_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract OutOfGasScript is Script {
+    function run() external {
+        uint256 i;
+        while (true) {
+            unchecked {
+                ++i;
+            }
+        }
+    }
+}
+"#;
+
+static MULTI_DEPLOY_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract A { function ping() external pure returns (uint256) { return 1; } }
+contract B { address public a; constructor(address _a) { a = _a; } }
+contract C { bytes32 public tag; constructor(bytes32 _t) { tag = _t; } }
+
+contract MultiDeploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        A a = new A();
+        new B(address(a));
+        new C(bytes32(uint256(0x1234)));
+        vm.stopBroadcast();
+    }
+}
+"#;
+
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -162,6 +276,35 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: failed
+
+"#]]);
+});
+
+// Tests that script failures surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    // Use a small block gas limit so the infinite loop exhausts gas in milliseconds rather than
+    // >25s at the default ~1B limit, which often exceeds the nextest slow-timeout window on CI.
+    cmd.arg("script").arg(script).args(["--block-gas-limit", "1000000"]);
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
+
+"#]]);
+});
+
+// Tests that --json script failures also surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script_with_json, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    // See `assert_exit_code_error_on_out_of_gas_script`
+    cmd.arg("script").arg(script).arg("--json").args(["--block-gas-limit", "1000000"]);
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
 
 "#]]);
 });
@@ -244,7 +387,9 @@ Simulated On-chain Traces:
 
 Chain 1
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -348,7 +493,9 @@ Simulated On-chain Traces:
 
 Chain 1
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1049,9 +1196,8 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let run_log = re.replace_all(&run_log, "");
 
     // Clean up carriage return OS differences
-    let re = Regex::new(r"\r\n").unwrap();
-    let fixtures_log = re.replace_all(&fixtures_log, "\n");
-    let run_log = re.replace_all(&run_log, "\n");
+    let fixtures_log = fixtures_log.replace("\r\n", "\n");
+    let run_log = run_log.replace("\r\n", "\n");
 
     similar_asserts::assert_eq!(fixtures_log, run_log);
 });
@@ -1089,21 +1235,17 @@ struct Transaction {
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
-
-"#]]);
+"#]],
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj.add_script(
@@ -1174,7 +1316,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1217,21 +1361,17 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 // test we output arguments <https://github.com/foundry-rs/foundry/issues/3053>
 forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
-
-"#]]);
+"#]],
+    );
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let script = prj.add_script(
@@ -1300,7 +1440,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1387,21 +1529,17 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
 });
 
 forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
-
-"#]]);
+"#]],
+    );
 
     let script = prj.add_script(
         "ScriptTxOrigin.s.sol",
@@ -1473,21 +1611,17 @@ If you wish to simulate on-chain transactions pass a RPC URL.
 });
 
 forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
-
-"#]]);
+"#]],
+    );
 
     let script = prj.add_script(
         "ScriptTxOrigin.s.sol",
@@ -1702,21 +1836,17 @@ Error: Multiple functions with the same name `run` found in the ABI
 });
 
 forgetest_async!(can_decode_custom_errors, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args(["init", "--force"]).arg(prj.root()).assert_success().stdout_eq(str![""]).stderr_eq(
+        str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
 Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+...
     Installed forge-std[..]
     Initialized forge project
 
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
-
-"#]]);
+"#]],
+    );
 
     let script = prj.add_script(
         "CustomErrorScript.s.sol",
@@ -1854,7 +1984,9 @@ success: bool true
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -1945,8 +2077,8 @@ contract SimpleScript is Script {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"status":"Return","steps":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
-{"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH"}
+{"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"SimpleScript","return_data":"true","call_data":{"signature":"run()","args":[]}}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940999,"gas_refund_counter":0,"status":"Return","steps":[],"decoded":{"label":"VM","return_data":null,"call_data":{"signature":"startBroadcast()","args":[]}}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940650,"gas_refund_counter":0,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
+{"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH","estimated_max_fee_per_gas":"{...}","estimated_base_fee_per_gas":"{...}","estimated_max_priority_fee_per_gas":"{...}"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
@@ -1998,7 +2130,9 @@ success: bool true
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2213,7 +2347,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2419,7 +2555,8 @@ contract ContractScript is Script {
         .find(|file| file.ends_with("run-latest.json"))
         .expect("No broadcast artifacts");
 
-    let sequence: ScriptSequence = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let sequence: ScriptSequence<Ethereum> =
+        foundry_common::fs::read_json_file(&run_latest).unwrap();
 
     assert_eq!(sequence.transactions.len(), 2);
     assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
@@ -2541,7 +2678,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2566,7 +2705,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                0
 to                   
-type                 0
+type                 EIP-1559
 value                0
 
 ### Transaction 2 ###
@@ -2581,7 +2720,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
-type                 0
+type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
 data (decoded): run(uint256,uint256)(
@@ -2816,7 +2955,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -2938,7 +3079,9 @@ Script ran successfully.
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -3061,7 +3204,7 @@ contract FactoryScript is Script {
     .assert_success();
 
     let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
-    let script_sequence: ScriptSequence = serde_json::from_reader(
+    let script_sequence: ScriptSequence<Ethereum> = serde_json::from_reader(
         fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
     )
     .expect("no script sequence");
@@ -3144,7 +3287,7 @@ contract CounterScript is Script {
 Compiler run successful!
 Traces:
   [..] → new CounterScript@[..]
-    └─ ← [Return] 2200 bytes of code
+    └─ ← [Return] 2162 bytes of code
 
   [..] CounterScript::setUp()
     └─ ← [Stop]
@@ -3199,7 +3342,7 @@ contract CounterScript is Script {
 error: the following required arguments were not provided:
   --broadcast
 
-Usage: [..] script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...
+Usage: [..] script --broadcast --verify --rpc-url <URL> <PATH> [ARGS]...
 
 For more information, try '--help'.
 
@@ -3277,7 +3420,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -3298,7 +3443,159 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 "#]]);
 });
 
-forgetest_async!(can_deploy_with_broadcast_in_setup, |prj, cmd| {
+// Regression: Salted `new Foo{salt: ...}(args)` in scripts must NOT be rewritten to
+// `vm.deployCode(...)` by the dynamic test linking preprocessor.
+//
+// NOTE: `dynamic_test_linking` config option is not yet taken into account by `forge script`.
+// The config is set explicitly here so the test fails if there is a regression.
+forgetest_async!(can_broadcast_salted_create2_in_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "Salted.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+contract SaltedScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Token{salt: bytes32(uint256(0xDEADBEEF))}("SaltedTok");
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        "script/Salted.s.sol:SaltedScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let json: Value = serde_json::from_str(&content).unwrap();
+    let tx = &json["transactions"][0];
+
+    assert_eq!(
+        tx["transactionType"], "CREATE2",
+        "salted broadcast must be recorded as CREATE2, got: {tx}"
+    );
+    assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["arguments"][0], "SaltedTok");
+});
+
+// Regression: same as above but the script contract lives under `src/` (not the configured
+// script directory). The preprocessor must still detect it as a script via inheritance
+// (`is Script`) and leave salted new-expressions untouched.
+forgetest_async!(can_broadcast_salted_create2_in_src_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_source(
+        "SaltedSrc.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "./Token.sol";
+contract SaltedSrcScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Token{salt: bytes32(uint256(0xDEADBEEF))}("SaltedSrc");
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        "src/SaltedSrc.s.sol:SaltedSrcScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let json: Value = serde_json::from_str(&content).unwrap();
+    let tx = &json["transactions"][0];
+
+    assert_eq!(
+        tx["transactionType"], "CREATE2",
+        "salted broadcast must be recorded as CREATE2, got: {tx}"
+    );
+    assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["arguments"][0], "SaltedSrc");
+});
+
+// Regression: `type(Foo).creationCode` in scripts must not be rewritten to `vm.getCode(...)`.
+// The injected cheatcode is `view`, so using it in a `pure` script helper breaks compilation.
+forgetest_init!(can_build_script_creation_code_in_pure_function, |prj, cmd| {
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "CreationCode.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+
+contract CreationCodeScript is Script {
+    function run() public {
+        vm.broadcast();
+        (bool ok,) = address(0).call(_getCreationCode());
+        ok;
+    }
+
+    function _getCreationCode() internal pure returns (bytes memory) {
+        return type(Token).creationCode;
+    }
+}
+        "#,
+    );
+
+    cmd.args(["build"]).assert_success();
+});
+
+forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
         "Deploy.s.sol",
@@ -3339,7 +3636,7 @@ contract DeployScript is Script {
 Compiler run successful!
 Traces:
   [9882] DeployScript::run()
-    ├─ [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
+    ├─ [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -3352,7 +3649,7 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
+  [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     └─ ← [Stop]
 
 
@@ -3360,7 +3657,9 @@ Simulated On-chain Traces:
 
 Chain 31337
 
-[ESTIMATED_GAS_PRICE]
+[ESTIMATED_MAX_FEE_PER_GAS]
+[ESTIMATED_BASE_FEE_PER_GAS]
+[ESTIMATED_PRIORITY_FEE_PER_GAS]
 
 [ESTIMATED_TOTAL_GAS_USED]
 
@@ -3421,4 +3720,295 @@ forgetest_async!(can_execute_script_with_createx_and_via_ir, |prj, cmd| {
             "--broadcast",
         ])
         .assert_success();
+});
+
+forgetest_async!(script_can_run_with_live_logs_flag, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Foo.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract Foo is Script {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function run() pure public {
+        console.log("Run %d", uint256(1));
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["script", "script/Foo.s.sol", "--live-logs"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Run 1
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
+
+forgetest_async!(script_can_run_with_live_logs_config, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|config| {
+        config.live_logs = true;
+    });
+
+    prj.add_script(
+        "Foo.s.sol",
+        r#"
+import {Script, console} from "forge-std/Script.sol";
+
+contract Foo is Script {
+    function setUp() pure public {
+        console.log("Setup");
+    }
+
+    function run() pure public {
+        console.log("Run %d", uint256(1));
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse().args(["script", "script/Foo.s.sol"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Setup
+Run 1
+Script ran successfully.
+[GAS]
+
+"#]]);
+});
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/13576
+// On Arbitrum, `block.number` is remapped to the L1 block number. Previously,
+// fork block pinning used the remapped L1 block number, causing the fork to
+// fetch state from an ancient block where contracts did not exist.
+forgetest_init!(
+    #[ignore]
+    flaky_can_call_arbitrum_contract_in_script,
+    |prj, cmd| {
+        let script = prj.add_source(
+            "ArbScript",
+            r#"
+import "forge-std/Script.sol";
+
+interface IERC20 {
+    function name() external view returns (string memory);
+}
+
+contract ArbScript is Script {
+    function run() external view {
+        // USDC on Arbitrum — a contract with zero ETH balance.
+        // Before the fix, the fork pinned to the L1 block number, fetching state from
+        // an ancient block (Sept 2022) where USDC did not exist, causing
+        // "call to non-contract address".
+        IERC20 usdc = IERC20(0xaf88d065e77c8cC2239327C5EDb3A432268e5831);
+        string memory n = usdc.name();
+        require(bytes(n).length > 0, "name should not be empty");
+    }
+}
+    "#,
+        );
+
+        let rpc = foundry_test_utils::rpc::next_rpc_endpoint(alloy_chains::NamedChain::Arbitrum);
+
+        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]).assert_success();
+    }
+);
+
+forgetest_async!(script_batch_rejects_non_tempo_network, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let script = prj.add_source(
+        "BatchOnly",
+        r#"
+import "forge-std/Script.sol";
+contract BatchOnly is Script {
+    function run() external {
+        vm.startBroadcast();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .arg(script)
+        .args([
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--broadcast",
+            "--batch",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --batch mode is only supported on Tempo networks
+
+"#]]);
+});
+
+/// Asserts that the dry-run sequence under `root` rewrote every CREATE to a unique CREATE2
+/// call targeting the Arachnid factory.
+fn assert_create2_rewrite_dry_run(root: &std::path::Path) {
+    let run_latest = foundry_common::fs::json_files(&root.join("broadcast"))
+        .find(|file| file.ends_with("dry-run/run-latest.json"))
+        .expect("no dry-run broadcast artifact found");
+
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let txs = json["transactions"].as_array().unwrap();
+    assert_eq!(txs.len(), 3, "three CREATE attempts in script");
+
+    let factory = foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_string().to_lowercase();
+    for tx in txs {
+        assert_eq!(tx["transactionType"], "CREATE2", "plain CREATE was rewritten");
+        assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+    }
+
+    let addrs: std::collections::HashSet<_> =
+        txs.iter().map(|t| t["contractAddress"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(addrs.len(), 3, "rewritten CREATE2 addresses should be unique");
+}
+
+// Dry-run against a local anvil to verify CREATE→CREATE2 rewriting.
+forgetest_async!(script_batch_rewrites_creates_to_create2, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+
+    // Tempo mode pre-deploys the Arachnid CREATE2 factory and PATH_USD fee token.
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script").arg(script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+
+    assert_create2_rewrite_dry_run(prj.root());
+});
+
+// Same dry-run assertions against the live Moderato testnet.
+forgetest_async!(
+    #[ignore]
+    script_batch_rewrites_creates_to_create2_moderato,
+    |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
+        let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+
+        cmd.arg("script").arg(script).args([
+            "--tc",
+            "MultiDeploy",
+            "--rpc-url",
+            "https://rpc.moderato.tempo.xyz",
+            "--batch",
+            "--network",
+            "tempo",
+        ]);
+        cmd.assert_success();
+
+        assert_create2_rewrite_dry_run(prj.root());
+    }
+);
+
+// Tests that `forge script` works in Tempo mode without CreateCollision.
+// Tempo genesis pre-deploys the Arachnid CREATE2 factory at the same address as the default
+// CREATE2 deployer, so `deploy_create2_deployer` must be skipped to avoid a collision.
+forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
+    prj.wipe();
+
+    // Initialize a Tempo project (installs forge-std, tempo-std, generates Mail template).
+    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
+
+    // Run the generated Mail.s.sol script with a salt argument.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg("script/Mail.s.sol")
+        .arg("temposalt")
+        .arg("--tempo")
+        .arg("--root")
+        .arg(prj.root())
+        .assert_success();
+});
+
+// Helper: write a script that deploys `LargeRuntime` with runtime > default limit via
+// `vm.startBroadcast`.
+fn write_large_runtime_deploy_script(prj: &foundry_test_utils::TestProject, runtime_bytes: usize) {
+    prj.add_source("LargeRuntime.sol", generate_large_runtime_contract(runtime_bytes).as_str());
+    prj.add_source(
+        "DeployLarge.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import "./LargeRuntime.sol";
+
+contract DeployLarge is Script {
+    function run() external {
+        vm.startBroadcast();
+        new LargeRuntime();
+    }
+}
+"#,
+    );
+}
+
+// Tests that `forge script` reports a contract-size violation against the default runtime limit
+// when neither the CLI nor foundry.toml override `code_size_limit`.
+forgetest_async!(script_check_contract_sizes_warns_at_default_limit, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 30_000);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.set_current_dir(prj.root());
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+
+"#]]);
+});
+
+// Tests that `forge script` honors `code_size_limit` configured via foundry.toml
+// (the bug fix: previously only the CLI flag was honored).
+forgetest_async!(script_check_contract_sizes_honors_config_limit, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 30_000);
+    prj.update_config(|config| {
+        config.code_size_limit = Some(64_000);
+    });
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.set_current_dir(prj.root());
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
 });

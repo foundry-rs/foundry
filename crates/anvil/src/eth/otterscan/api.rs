@@ -3,7 +3,7 @@ use crate::eth::{
     error::{BlockchainError, Result},
     macros::node_info,
 };
-use alloy_consensus::Transaction as TransactionTrait;
+use alloy_consensus::{BlockHeader, Transaction as TransactionTrait};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse,
     ReceiptResponse, TransactionResponse,
@@ -19,10 +19,11 @@ use alloy_rpc_types::{
         parity::{Action, CreateAction, CreateOutput, TraceOutput},
     },
 };
+use foundry_primitives::FoundryNetwork;
 use futures::future::join_all;
 use itertools::Itertools;
 
-impl EthApi {
+impl EthApi<FoundryNetwork> {
     /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
     /// Ref: <https://github.com/otterscan/otterscan/blob/071d8c55202badf01804f6f8d53ef9311d4a9e47/src/useProvider.ts#L71>
     ///
@@ -154,9 +155,12 @@ impl EthApi {
 
         let best = self.backend.best_number();
         // we go from given block (defaulting to best) down to first block
-        // considering only post-fork
+        // considering only post-fork (or post-genesis in non-fork mode)
         let from = if block_number == 0 { best } else { block_number - 1 };
-        let to = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+        let to = self
+            .get_fork()
+            .map(|f| f.block_number() + 1)
+            .unwrap_or_else(|| self.backend.genesis_number() + 1);
 
         let first_page = from >= best;
         let mut last_page = false;
@@ -197,8 +201,11 @@ impl EthApi {
         node_info!("ots_searchTransactionsAfter");
 
         let best = self.backend.best_number();
-        // we go from the first post-fork block, up to the tip
-        let first_block = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+        // we go from the first post-fork (or post-genesis) block, up to the tip
+        let first_block = self
+            .get_fork()
+            .map(|f| f.block_number() + 1)
+            .unwrap_or_else(|| self.backend.genesis_number() + 1);
         let from = if block_number == 0 { first_block } else { block_number + 1 };
         let to = best;
 
@@ -247,7 +254,10 @@ impl EthApi {
     ) -> Result<Option<B256>> {
         node_info!("ots_getTransactionBySenderAndNonce");
 
-        let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
+        let from = self
+            .get_fork()
+            .map(|f| f.block_number() + 1)
+            .unwrap_or_else(|| self.backend.genesis_number() + 1);
         let to = self.backend.best_number();
 
         for n in (from..=to).rev() {
@@ -375,10 +385,11 @@ impl EthApi {
 
         let receipt_futs = block.transactions.hashes().map(|hash| self.transaction_receipt(hash));
 
-        let receipts = join_all(receipt_futs.map(|r| async {
+        // Reuse timestamp from the block we already have
+        let timestamp = block.header.timestamp();
+
+        let receipts = join_all(receipt_futs.map(|r| async move {
             if let Ok(Some(r)) = r.await {
-                let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
                 let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {
@@ -418,8 +429,14 @@ impl EthApi {
 
         let receipts = join_all(receipt_futs.map(|r| async {
             if let Ok(Some(r)) = r.await {
-                let block = self.block_by_number(r.block_number().unwrap().into()).await?;
-                let timestamp = block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp;
+                // Try to get timestamp from receipt's other fields first (set by mined receipts),
+                // fallback to block lookup for fork receipts that may not have it
+                let timestamp = if let Some(ts) = r.block_timestamp() {
+                    ts
+                } else {
+                    let block = self.block_by_number(r.block_number().unwrap().into()).await?;
+                    block.ok_or(BlockchainError::BlockNotFound)?.header.timestamp()
+                };
                 let receipt = r.as_ref().inner.clone().map_inner(OtsReceipt::from);
                 Ok(OtsTransactionReceipt { receipt, timestamp: Some(timestamp) })
             } else {

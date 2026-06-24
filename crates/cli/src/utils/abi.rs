@@ -2,35 +2,39 @@ use alloy_chains::Chain;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, hex};
-use alloy_provider::{Provider, network::AnyNetwork};
+use alloy_provider::{Network, Provider};
 use eyre::{OptionExt, Result};
 use foundry_common::abi::{
     encode_function_args, encode_function_args_raw, get_func, get_func_etherscan,
 };
 use futures::future::join_all;
 
-async fn resolve_name_args<P: Provider<AnyNetwork>>(args: &[String], provider: &P) -> Vec<String> {
+async fn resolve_name_args<N: Network, P: Provider<N>>(
+    args: &[String],
+    provider: &P,
+) -> Vec<String> {
     join_all(args.iter().map(|arg| async {
         if arg.contains('.') {
-            let addr = NameOrAddress::Name(arg.to_string()).resolve(provider).await;
+            let addr = NameOrAddress::Name(arg.clone()).resolve(provider).await;
             match addr {
                 Ok(addr) => addr.to_string(),
-                Err(_) => arg.to_string(),
+                Err(_) => arg.clone(),
             }
         } else {
-            arg.to_string()
+            arg.clone()
         }
     }))
     .await
 }
 
-pub async fn parse_function_args<P: Provider<AnyNetwork>>(
+pub async fn parse_function_args<N: Network, P: Provider<N>>(
     sig: &str,
     args: Vec<String>,
     to: Option<Address>,
     chain: Chain,
     provider: &P,
     etherscan_api_key: Option<&str>,
+    etherscan_api_url: Option<&str>,
 ) -> Result<(Vec<u8>, Option<Function>)> {
     if sig.trim().is_empty() {
         eyre::bail!("Function signature or calldata must be provided.")
@@ -38,8 +42,12 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
 
     let args = resolve_name_args(&args, provider).await;
 
+    // Try to decode as hex calldata first, otherwise treat as function signature
     if let Ok(data) = hex::decode(sig) {
         return Ok((data, None));
+    } else if sig.starts_with("0x") || sig.starts_with("0X") {
+        let e = hex::decode(sig).unwrap_err();
+        eyre::bail!("Invalid hex calldata '{}': {e}", sig);
     }
 
     let func = if sig.contains('(') {
@@ -53,7 +61,7 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
             "Function signature does not contain parentheses. If you wish to fetch function data from Etherscan, please provide an API key.",
         )?;
         let to = to.ok_or_eyre("A 'to' address must be provided to fetch function data.")?;
-        get_func_etherscan(sig, to, &args, chain, etherscan_api_key).await?
+        get_func_etherscan(sig, to, &args, chain, etherscan_api_key, etherscan_api_url).await?
     };
 
     if to.is_none() {

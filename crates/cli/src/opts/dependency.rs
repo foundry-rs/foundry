@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn parses_dependencies() {
-        [
+        for (input, expected_path, expected_tag, expected_alias) in [
             ("gakonst/lootloose", "https://github.com/gakonst/lootloose", None, None),
             ("github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None, None),
             (
@@ -239,15 +239,13 @@ mod tests {
                 Some("v1"),
                 Some("loot"),
             ),
-        ]
-        .iter()
-        .for_each(|(input, expected_path, expected_tag, expected_alias)| {
+        ] {
             let dep = Dependency::from_str(input).unwrap();
             assert_eq!(dep.url, Some(expected_path.to_string()));
             assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
             assert_eq!(dep.name, "lootloose");
             assert_eq!(dep.alias, expected_alias.map(ToString::to_string));
-        });
+        }
     }
 
     #[test]
@@ -267,28 +265,26 @@ mod tests {
 
     #[test]
     fn parses_contract_info() {
-        [
+        for (input, expected_path, expected_name) in [
             (
                 "src/contracts/Contracts.sol:Contract",
                 Some("src/contracts/Contracts.sol"),
                 "Contract",
             ),
             ("Contract", None, "Contract"),
-        ]
-        .iter()
-        .for_each(|(input, expected_path, expected_name)| {
+        ] {
             let contract = ContractInfo::from_str(input).unwrap();
             assert_eq!(contract.path, expected_path.map(ToString::to_string));
             assert_eq!(contract.name, expected_name.to_string());
-        });
+        }
     }
 
     #[test]
     fn contract_info_should_reject_without_name() {
-        ["src/contracts/", "src/contracts/Contracts.sol"].iter().for_each(|input| {
+        for input in ["src/contracts/", "src/contracts/Contracts.sol"] {
             let contract = ContractInfo::from_str(input);
-            assert!(contract.is_err())
-        });
+            assert!(contract.is_err());
+        }
     }
 
     #[test]

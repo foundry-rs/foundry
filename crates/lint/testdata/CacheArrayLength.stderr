@@ -1,0 +1,8 @@
+note[cache-array-length]: array length read in loop condition should be cached outside the loop
+   ╭▸ ROOT/testdata/CacheArrayLength.sol:LL:CC
+   │
+LL │         for (uint256 i = 0; i < items.length; ++i) {
+   │                                 ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cache-array-length
+

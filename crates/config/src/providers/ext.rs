@@ -56,7 +56,7 @@ pub(crate) struct TomlFileProvider {
 }
 
 impl TomlFileProvider {
-    pub(crate) fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
+    pub(crate) const fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
         Self { env_var, env_val: OnceCell::new(), default, cache: OnceCell::new() }
     }
 
@@ -253,6 +253,9 @@ impl Provider for TomlFileProvider {
 
 /// A Provider that ensures all keys are snake case if they're not standalone sections, See
 /// `Config::STANDALONE_SECTIONS`
+///
+/// For the `[profile]` section, profile names (like `ci-venom`) are preserved as-is,
+/// but the config keys within each profile are still converted to snake_case.
 pub(crate) struct ForcedSnakeCaseData<P>(pub(crate) P);
 
 impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
@@ -267,6 +270,22 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
                 // don't force snake case for keys in standalone sections
                 continue;
             }
+
+            if profile.as_str().as_str() == Config::PROFILE_SECTION {
+                // For the `[profile]` section, we need to preserve profile names (the keys)
+                // but snake_case the config keys within each profile's dict.
+                let dict2 = std::mem::take(dict);
+                *dict = dict2
+                    .into_iter()
+                    .map(|(profile_name, v)| {
+                        // Keep the profile name exactly as-is (e.g., "ci-venom" stays "ci-venom")
+                        let v = snake_case_value_keys(v);
+                        (profile_name, v)
+                    })
+                    .collect();
+                continue;
+            }
+
             let dict2 = std::mem::take(dict);
             *dict = dict2.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect();
         }
@@ -275,6 +294,24 @@ impl<P: Provider> Provider for ForcedSnakeCaseData<P> {
 
     fn profile(&self) -> Option<Profile> {
         self.0.profile()
+    }
+}
+
+/// Recursively converts all keys in a Value (if it's a Dict) to snake_case.
+fn snake_case_value_keys(value: Value) -> Value {
+    match value {
+        Value::Dict(tag, dict) => {
+            let new_dict = dict
+                .into_iter()
+                .map(|(k, v)| (k.to_snake_case(), snake_case_value_keys(v)))
+                .collect();
+            Value::Dict(tag, new_dict)
+        }
+        Value::Array(tag, arr) => {
+            let new_arr = arr.into_iter().map(snake_case_value_keys).collect();
+            Value::Array(tag, new_arr)
+        }
+        other => other,
     }
 }
 
@@ -695,13 +732,32 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut data = self.provider.data()?;
+        let invariant_corpus_random_sequence_weight_configured = self.profile == "invariant"
+            && data
+                .get(&self.profile)
+                .is_some_and(|inner| inner.contains_key("corpus_random_sequence_weight"));
+        let mark_invariant_corpus_random_sequence_weight_configured =
+            |inner: &mut Dict| -> Result<(), Error> {
+                if invariant_corpus_random_sequence_weight_configured {
+                    inner.insert(
+                        "corpus_random_sequence_weight_configured".to_string(),
+                        Value::serialize(true)?,
+                    );
+                }
+                Ok(())
+            };
+
         if let Some(fallback) = data.remove(&self.fallback) {
             let mut inner = data.remove(&self.profile).unwrap_or_default();
             for (k, v) in fallback {
                 inner.entry(k).or_insert(v);
             }
+            mark_invariant_corpus_random_sequence_weight_configured(&mut inner)?;
             Ok(self.profile.collect(inner))
         } else {
+            if let Some(inner) = data.get_mut(&self.profile) {
+                mark_invariant_corpus_random_sequence_weight_configured(inner)?;
+            }
             Ok(data)
         }
     }

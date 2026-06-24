@@ -25,5 +25,9 @@ walkdir.workspace = true
 
 revm-inspectors.workspace = true
 
-alloy-primitives.workspace = true
 alloy-network.workspace = true
+alloy-primitives.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-common/optimism"]

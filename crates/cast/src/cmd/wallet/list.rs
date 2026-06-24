@@ -1,10 +1,11 @@
 use clap::Parser;
 use eyre::Result;
-use std::env;
-
-use foundry_common::{fs, sh_err, sh_println};
+use foundry_cli::json::print_json_success;
+use foundry_common::{fs, sh_err, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
+use serde::Serialize;
+use std::env;
 
 /// CLI arguments for `cast wallet list`.
 #[derive(Clone, Debug, Parser)]
@@ -53,18 +54,20 @@ pub struct ListArgs {
 
 impl ListArgs {
     pub async fn run(self) -> Result<()> {
+        let format_json = shell::is_json();
+        let mut accounts: Vec<WalletAccount> = Vec::new();
+
         // list local accounts as files in keystore dir, no need to unlock / provide password
         if self.dir.is_some()
             || self.all
             || (!self.ledger && !self.trezor && !self.aws && !self.gcp)
         {
-            match self.list_local_senders() {
-                Ok(()) => {}
-                Err(e) => {
-                    if !self.all {
-                        sh_err!("{}", e)?;
-                    }
+            match self.list_local_senders(format_json) {
+                Ok(local) => accounts.extend(local),
+                Err(e) if !self.all => {
+                    sh_err!("{}", e)?;
                 }
+                _ => {}
             }
         }
 
@@ -78,29 +81,34 @@ impl ListArgs {
             .turnkey(self.turnkey || self.all)
             .interactives(0)
             .interactive(false)
+            .browser(Default::default())
             .build()
             .expect("build multi wallet");
 
-        // macro to print senders for a list of signers
+        // macro to collect or print senders for a list of signers
         macro_rules! list_senders {
             ($signers:expr, $label:literal) => {
                 match $signers.await {
                     Ok(signers) => {
                         for signer in signers.unwrap_or_default().iter() {
-                            signer
-                                .available_senders(self.max_senders.unwrap())
-                                .await?
-                                .iter()
-                                .for_each(|sender| {
+                            for sender in
+                                signer.available_senders(self.max_senders.unwrap()).await?
+                            {
+                                if format_json {
+                                    accounts.push(WalletAccount {
+                                        address: sender.to_string(),
+                                        source: $label,
+                                    });
+                                } else {
                                     let _ = sh_println!("{} ({})", sender, $label);
-                                })
+                                }
+                            }
                         }
                     }
-                    Err(e) => {
-                        if !self.all {
-                            sh_err!("{}", e)?;
-                        }
+                    Err(e) if !self.all => {
+                        sh_err!("{}", e)?;
                     }
+                    _ => {}
                 }
             };
         }
@@ -110,10 +118,14 @@ impl ListArgs {
         list_senders!(list_opts.aws_signers(), "AWS");
         list_senders!(list_opts.gcp_signers(), "GCP");
 
+        if format_json {
+            print_json_success(accounts)?;
+        }
+
         Ok(())
     }
 
-    fn list_local_senders(&self) -> Result<()> {
+    fn list_local_senders(&self, format_json: bool) -> Result<Vec<WalletAccount>> {
         let keystore_path = self.dir.as_deref().unwrap_or_default();
         let keystore_dir = if keystore_path.is_empty() {
             // Create the keystore default directory if it doesn't exist
@@ -124,6 +136,8 @@ impl ListArgs {
             dunce::canonicalize(keystore_path)?
         };
 
+        let mut accounts = Vec::new();
+
         // List all files within the keystore directory.
         for entry in std::fs::read_dir(keystore_dir)? {
             let path = entry?.path();
@@ -131,12 +145,28 @@ impl ListArgs {
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
             {
-                sh_println!("{name} (Local)")?;
+                // Extract address from keystore filename format: UTC--{timestamp}--{address}
+                if let Some(address) = name.split("--").last() {
+                    if format_json {
+                        accounts.push(WalletAccount {
+                            address: format!("0x{address}"),
+                            source: "Local",
+                        });
+                    } else {
+                        sh_println!("0x{} (Local)", address)?;
+                    }
+                }
             }
         }
 
-        Ok(())
+        Ok(accounts)
     }
+}
+
+#[derive(Serialize)]
+struct WalletAccount {
+    address: String,
+    source: &'static str,
 }
 
 fn gcp_env_vars_set() -> bool {
