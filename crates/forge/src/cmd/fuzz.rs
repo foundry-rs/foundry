@@ -134,6 +134,14 @@ impl FuzzReplayArgs {
         });
         self.test.run().await
     }
+
+    const fn is_junit(&self) -> bool {
+        self.test.junit
+    }
+
+    const fn is_watch(&self) -> bool {
+        self.test.is_watch()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
