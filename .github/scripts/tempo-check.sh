@@ -8,9 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Hardfork version, defaults to T5.
 HARDFORK="${TEMPO_HARDFORK:-T5}"
+HARDFORK_UPPER=$(echo "$HARDFORK" | tr '[:lower:]' '[:upper:]')
 
 # Fee token address, defaults to native fee token
 FEE_TOKEN="${TEMPO_FEE_TOKEN:-0x20c0000000000000000000000000000000000000}"
+
+# T6 receive-policy precompile.
+RECEIVE_POLICY_GUARD="0xB10C000000000000000000000000000000000000"
 
 # Build fee token args if not using native token (array for safe expansion)
 FEE_TOKEN_ARG=()
@@ -273,6 +277,129 @@ if cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
   exit 1
 fi
 echo "OK: duplicate authorize correctly rejected"
+
+if [[ "$HARDFORK_UPPER" == "T6" ]]; then
+  echo -e "\n=== CAST KEYCHAIN: T6 AUTHORIZE ADMIN ==="
+  kc_admin_json="$(cast wallet new --json)"
+  KC_ADMIN_ADDR="$(wallet_json_field "$kc_admin_json" address)"
+  cast keychain auth "$KC_ADMIN_ADDR" --admin \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  echo -e "\n=== CAST KEYCHAIN: T6 IS-ADMIN ==="
+  KC_ADMIN_JSON=$(cast keychain is-admin "$ADDR" "$KC_ADMIN_ADDR" --rpc-url "$ETH_RPC_URL" --json)
+  echo "$KC_ADMIN_JSON" | jq
+  echo "$KC_ADMIN_JSON" | jq -e '.is_admin == true'
+
+  echo -e "\n=== CAST KEYCHAIN: T6 ADMIN REJECTS LIMITS ==="
+  kc_admin_reject_json="$(cast wallet new --json)"
+  KC_ADMIN_REJECT_ADDR="$(wallet_json_field "$kc_admin_reject_json" address)"
+  if cast keychain auth "$KC_ADMIN_REJECT_ADDR" --admin --enforce-limits \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} 2>&1; then
+    echo "ERROR: admin authorize with spending limits should have been rejected"
+    exit 1
+  fi
+  echo "OK: admin authorize with spending limits correctly rejected"
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 SET REJECT-ALL POLICY ==="
+  rp_receiver_json="$(cast wallet new --json)"
+  RP_RECEIVER_ADDR="$(wallet_json_field "$rp_receiver_json" address)"
+  RP_RECEIVER_PK="$(wallet_json_field "$rp_receiver_json" private_key)"
+  rp_recovery_json="$(cast wallet new --json)"
+  RP_RECOVERY_ADDR="$(wallet_json_field "$rp_recovery_json" address)"
+  RP_RECOVERY_PK="$(wallet_json_field "$rp_recovery_json" private_key)"
+  rp_claim_json="$(cast wallet new --json)"
+  RP_CLAIM_ADDR="$(wallet_json_field "$rp_claim_json" address)"
+  printf "Receive-policy receiver: %s\nrecovery: %s\nclaim target: %s\n" \
+    "$RP_RECEIVER_ADDR" "$RP_RECOVERY_ADDR" "$RP_CLAIM_ADDR"
+
+  fund_and_wait "$RP_RECEIVER_ADDR"
+  fund_and_wait "$RP_RECOVERY_ADDR"
+
+  cast receive-policy set 0 1 \
+    --recovery-authority "$RP_RECOVERY_ADDR" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$RP_RECEIVER_PK" \
+    ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  RP_POLICY_JSON=$(cast --json receive-policy get "$RP_RECEIVER_ADDR" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_POLICY_JSON" | jq
+  echo "$RP_POLICY_JSON" | jq -e '
+    .success == true and
+    .data.has_receive_policy == true and
+    .data.sender_policy_id == 0 and
+    .data.token_filter_id == 1 and
+    .data.recovery_mode == "authority"
+  '
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 VALIDATE HELD TRANSFER ==="
+  RP_VALIDATE_JSON=$(cast --json receive-policy validate "$FEE_TOKEN" "$ADDR" "$RP_RECEIVER_ADDR" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_VALIDATE_JSON" | jq
+  echo "$RP_VALIDATE_JSON" | jq -e '
+    .success == true and
+    .data.authorized == false and
+    .data.blocked_reason == "receive_policy" and
+    .data.delivery_state == "held"
+  '
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 BLOCKED TRANSFER RECEIPT ==="
+  RP_AMOUNT=77000
+  RP_TRANSFER_JSON=$(cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" "$RP_RECEIVER_ADDR" "$RP_AMOUNT" --rpc-url "$ETH_RPC_URL" --private-key "$PK" --json)
+  echo "$RP_TRANSFER_JSON" | jq
+  RECEIVE_POLICY_GUARD_LOWER=$(echo "$RECEIVE_POLICY_GUARD" | tr '[:upper:]' '[:lower:]')
+  RP_BLOCKED_DATA=$(echo "$RP_TRANSFER_JSON" | jq -r --arg guard "$RECEIVE_POLICY_GUARD_LOWER" '
+    [.logs[]? | select((.address | ascii_downcase) == $guard) | .data][0] // empty
+  ')
+  if [[ -z "$RP_BLOCKED_DATA" ]]; then
+    echo "ERROR: TransferBlocked log not found in transfer receipt"
+    exit 1
+  fi
+  mapfile -t RP_BLOCKED_FIELDS < <(cast abi-decode 'f()(uint256,uint8,bytes)' "$RP_BLOCKED_DATA")
+  RP_BLOCKED_AMOUNT="${RP_BLOCKED_FIELDS[0]}"
+  RP_RECEIPT_VERSION="${RP_BLOCKED_FIELDS[1]}"
+  RP_RECEIPT="${RP_BLOCKED_FIELDS[2]}"
+  [[ "$RP_BLOCKED_AMOUNT" == "$RP_AMOUNT" ]] || { echo "ERROR: blocked amount mismatch: $RP_BLOCKED_AMOUNT"; exit 1; }
+  [[ "$RP_RECEIPT_VERSION" == "1" ]] || { echo "ERROR: expected receipt version 1, got $RP_RECEIPT_VERSION"; exit 1; }
+
+  RP_RECEIPT_JSON=$(cast --json receive-policy receipt decode "$RP_RECEIPT")
+  echo "$RP_RECEIPT_JSON" | jq
+  echo "$RP_RECEIPT_JSON" | jq -e \
+    --arg receipt "$RP_RECEIPT" \
+    --arg token "$FEE_TOKEN" \
+    --arg recovery "$RP_RECOVERY_ADDR" \
+    --arg originator "$ADDR" \
+    --arg recipient "$RP_RECEIVER_ADDR" '
+      .success == true and
+      (.data.receipt | ascii_downcase) == ($receipt | ascii_downcase) and
+      (.data.token | ascii_downcase) == ($token | ascii_downcase) and
+      (.data.recovery_authority | ascii_downcase) == ($recovery | ascii_downcase) and
+      (.data.originator | ascii_downcase) == ($originator | ascii_downcase) and
+      (.data.recipient | ascii_downcase) == ($recipient | ascii_downcase) and
+      .data.blocked_reason == "receive_policy" and
+      .data.kind == "transfer"
+    '
+
+  RP_BALANCE_JSON=$(cast --json receive-policy receipt balance "$RP_RECEIPT" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_BALANCE_JSON" | jq
+  echo "$RP_BALANCE_JSON" | jq -e --arg amount "$RP_AMOUNT" '
+    .success == true and
+    .data.held_balance == $amount and
+    .data.delivery_state == "held"
+  '
+
+  echo -e "\n=== CAST RECEIVE-POLICY: T6 CLAIM BLOCKED RECEIPT ==="
+  cast receive-policy claim "$RP_CLAIM_ADDR" "$RP_RECEIPT" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$RP_RECOVERY_PK" \
+    ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  RP_CLAIMED_BALANCE_JSON=$(cast --json receive-policy receipt balance "$RP_RECEIPT" --rpc-url "$ETH_RPC_URL")
+  echo "$RP_CLAIMED_BALANCE_JSON" | jq
+  echo "$RP_CLAIMED_BALANCE_JSON" | jq -e '
+    .success == true and
+    .data.held_balance == "0" and
+    .data.delivery_state == "not_held"
+  '
+else
+  echo -e "\n=== SKIPPING T6 receive-policy/admin-key tests (HARDFORK=$HARDFORK) ==="
+fi
 
 # --- T3-only scope / call-restriction tests ---
 if [[ "$HARDFORK" == "T3" ]]; then
