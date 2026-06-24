@@ -33,8 +33,9 @@ use foundry_evm::{
         CallResult, EvmError, Executor, ITest, RawCallResult, ShowmapOpts,
         fuzz::FuzzedExecutor,
         invariant::{
-            CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
-            check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
+            CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
+            HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, check_sequence,
+            execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
         replay_corpus_to_showmap,
@@ -241,6 +242,7 @@ fn select_invariant_campaigns<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::B256;
     use foundry_common::EmptyTestFilter;
     use foundry_config::NatSpec;
 
@@ -272,6 +274,40 @@ mod tests {
             .and_then(|value| value.strip_suffix(".json"))
             .expect("file name should include sanitized value prefix and json suffix");
         assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn symbolic_sequence_failure_identity_includes_failure_site() {
+        let expected = SymbolicSequenceFailure {
+            replayed_entirely: false,
+            reason: Some("same reason".to_string()),
+            site: Some(CheckSequenceFailureSite::SequenceCall {
+                target: Address::with_last_byte(1),
+                selector: Selector::from([0, 0, 0, 1]),
+                fingerprint: B256::from([1; 32]),
+            }),
+        };
+        let different_site = SymbolicSequenceFailure {
+            replayed_entirely: false,
+            reason: Some("same reason".to_string()),
+            site: Some(CheckSequenceFailureSite::SequenceCall {
+                target: Address::with_last_byte(2),
+                selector: Selector::from([0, 0, 0, 1]),
+                fingerprint: B256::from([1; 32]),
+            }),
+        };
+        let different_path = SymbolicSequenceFailure {
+            replayed_entirely: false,
+            reason: Some("same reason".to_string()),
+            site: Some(CheckSequenceFailureSite::SequenceCall {
+                target: Address::with_last_byte(1),
+                selector: Selector::from([0, 0, 0, 1]),
+                fingerprint: B256::from([2; 32]),
+            }),
+        };
+
+        assert!(!different_site.preserves(&expected));
+        assert!(!different_path.preserves(&expected));
     }
 
     fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
@@ -1013,6 +1049,15 @@ struct ReplayedInvariantSequence {
 struct SymbolicSequenceFailure {
     replayed_entirely: bool,
     reason: Option<String>,
+    site: Option<CheckSequenceFailureSite>,
+}
+
+impl SymbolicSequenceFailure {
+    fn preserves(&self, expected: &Self) -> bool {
+        self.replayed_entirely == expected.replayed_entirely
+            && self.reason == expected.reason
+            && self.site == expected.site
+    }
 }
 
 impl<'a, FEN: FoundryEvmNetwork> Deref for FunctionRunner<'a, FEN> {
@@ -1443,10 +1488,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             target_invariant,
             assertion_failure,
         )
-        .is_some_and(|actual| {
-            actual.replayed_entirely == expected.replayed_entirely
-                && actual.reason == expected.reason
-        })
+        .is_some_and(|actual| actual.preserves(expected))
     }
 
     fn symbolic_sequence_failure(
@@ -1459,7 +1501,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     ) -> Option<SymbolicSequenceFailure> {
         let txes =
             calls.iter().map(SymbolicCounterexampleCall::to_basic_tx_details).collect::<Vec<_>>();
-        let (success, replayed_entirely, reason, _, _) = check_sequence(
+        let outcome = check_sequence(
             self.clone_executor(),
             &txes,
             (0..txes.len()).collect(),
@@ -1475,7 +1517,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         )
         .ok()?;
 
-        (!success).then_some(SymbolicSequenceFailure { replayed_entirely, reason })
+        (!outcome.success).then_some(SymbolicSequenceFailure {
+            replayed_entirely: outcome.replayed_entirely,
+            reason: outcome.reason,
+            site: outcome.failure_site,
+        })
     }
 
     /// Configures this runner with the inline configuration for the contract.
@@ -2041,16 +2087,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         rd: Some(self.revert_decoder()),
                     },
                 ) {
-                    Ok((success, replayed_entirely, reason, calls_count, reverts)) => {
-                        if success {
-                            self.result.invariant_replay_success(calls_count, reverts);
+                    Ok(outcome) => {
+                        if outcome.success {
+                            self.result
+                                .invariant_replay_success(outcome.calls_count, outcome.reverts);
                         } else {
                             self.result.invariant_replay_fail(
-                                replayed_entirely,
+                                outcome.replayed_entirely,
                                 &invariant.signature(),
-                                reason.or_else(|| artifact.replay.reason.clone()),
-                                calls_count,
-                                reverts,
+                                outcome.reason.or_else(|| artifact.replay.reason.clone()),
+                                outcome.calls_count,
+                                outcome.reverts,
                                 calls,
                             );
                         }
@@ -2413,15 +2460,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &mut call_sequence,
                 assertion_failure,
             );
-            if let Ok((
-                success,
-                mut replayed_entirely,
-                mut replay_reason,
-                mut calls_count,
-                mut reverts,
-            )) = replay
-                && !success
+            if let Ok(replay) = replay
+                && !replay.success
             {
+                let mut replayed_entirely = replay.replayed_entirely;
+                let mut replay_reason = replay.reason;
+                let mut calls_count = replay.calls_count;
+                let mut reverts = replay.reverts;
                 let warn =
                     "Replayed invariant failure from persisted file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign."
                         .to_string();
@@ -2462,18 +2507,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &mut call_sequence,
                             assertion_failure,
                         );
-                        if let Ok((
-                            _success,
-                            updated_replayed_entirely,
-                            updated_replay_reason,
-                            updated_calls_count,
-                            updated_reverts,
-                        )) = replay
-                        {
-                            replayed_entirely = updated_replayed_entirely;
-                            replay_reason = updated_replay_reason;
-                            calls_count = updated_calls_count;
-                            reverts = updated_reverts;
+                        if let Ok(updated_replay) = replay {
+                            replayed_entirely = updated_replay.replayed_entirely;
+                            replay_reason = updated_replay.reason;
+                            calls_count = updated_replay.calls_count;
+                            reverts = updated_replay.reverts;
                         }
                         // Persist error in invariant failure dir.
                         record_invariant_failure(
@@ -3208,9 +3246,7 @@ struct InvariantPersistedFailure {
     assertion_failure: bool,
 }
 
-/// Mirrors `check_sequence`'s return:
-/// `(success, replayed_entirely, optional_reason, calls, reverts)`.
-type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>, usize, usize)>;
+type CheckSequenceResult = eyre::Result<CheckSequenceOutcome>;
 
 /// Borrowed context shared by primary-invariant and handler-side replay helpers.
 struct ReplayContext<'a> {
