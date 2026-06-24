@@ -119,6 +119,14 @@ solc = "0.8.5"
 Warning: Found unknown config section in foundry.toml: [default]
 This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
 Please use [profile.default] instead or run `forge config --fix`.
+note[could-be-constant]: state variable could be declared constant
+  [FILE]:6:17
+  │
+6 │     uint public value = 42;
+  │                 ━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
 
 "#]]);
     // `forge clear` should not warn
@@ -4159,6 +4167,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "experimental": false,
     "libraries": {}
   }
 }

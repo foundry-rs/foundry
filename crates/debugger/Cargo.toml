@@ -21,7 +21,9 @@ foundry-tui.workspace = true
 revm-inspectors.workspace = true
 
 alloy-primitives.workspace = true
+alloy-dyn-abi.workspace = true
 
+clap = { version = "4", features = ["derive"] }
 crossterm.workspace = true
 eyre.workspace = true
 ratatui = { workspace = true, features = ["crossterm"] }

@@ -10,7 +10,45 @@ impl SymbolicExecutor {
     /// a fresh executor when a caller needs independent solver query accounting.
     pub fn new(config: SymbolicConfig) -> Self {
         let solver = SmtLibSubprocessSolver::from_config(&config);
-        Self { config, solver: Box::new(solver) }
+        Self { config, solver: Box::new(solver), deferred_incomplete: None }
+    }
+
+    /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
+    pub(super) fn defer_incomplete(&mut self, reason: &'static str) {
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::Unsupported(reason));
+    }
+
+    /// Defers a solver-unknown result while continuing with decidable sibling paths.
+    pub(super) fn defer_solver_unknown(&mut self) {
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
+    }
+
+    /// Checks branch feasibility, recording solver-unknown as an incomplete proof path.
+    pub(super) fn branch_is_sat_or_defer(
+        &mut self,
+        constraints: &[BoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        match self.solver.is_sat_branch(constraints) {
+            Ok(feasible) => Ok(feasible),
+            Err(SymbolicError::SolverUnknown) => {
+                self.defer_solver_unknown();
+                Ok(false)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Returns and clears any deferred incomplete reason.
+    fn take_deferred_incomplete(&mut self) -> Option<(SymbolicStopReason, String)> {
+        match self.deferred_incomplete.take()? {
+            DeferredIncomplete::Unsupported(reason) => Some((
+                SymbolicStopReason::Stuck,
+                format!("unsupported symbolic execution feature: {reason}"),
+            )),
+            DeferredIncomplete::SolverUnknown => {
+                Some((SymbolicStopReason::Timeout, "solver returned unknown".to_string()))
+            }
+        }
     }
 
     /// Returns staged solver portfolio diagnostics collected by this executor.
@@ -51,6 +89,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
+        self.deferred_incomplete = None;
         if let Err(err) = self.solver.check_available() {
             return SymbolicRunResult::Incomplete {
                 kind: err.stop_reason(),
@@ -82,6 +121,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> SymbolicInvariantRunResult {
+        self.deferred_incomplete = None;
         if let Err(err) = self.solver.check_available() {
             return SymbolicInvariantRunResult::Incomplete {
                 kind: err.stop_reason(),
@@ -127,7 +167,7 @@ impl SymbolicExecutor {
             );
             root.apply_executor_env(input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
-            root.world.clear_transient_storage();
+            root.world.clear_transaction_scoped_state();
             worklist.push_back(root);
         }
         let mut completed_paths = 0usize;
@@ -253,6 +293,14 @@ impl SymbolicExecutor {
             });
         }
 
+        if let Some((kind, reason)) = self.take_deferred_incomplete() {
+            return Ok(SymbolicRunResult::Incomplete {
+                kind,
+                reason,
+                stats: self.stats_with_paths(completed_paths),
+            });
+        }
+
         debug!(completed_paths, "symbolic execution safe");
         Ok(SymbolicRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
@@ -368,7 +416,7 @@ impl SymbolicExecutor {
                                             );
                                         }
                                         let mut reverted_state = sequence.state.clone();
-                                        reverted_state.world.clear_transient_storage();
+                                        reverted_state.world.clear_transaction_scoped_state();
                                         for invariant_outcome in self.execute_invariant_check(
                                             input.executor,
                                             reverted_state,
@@ -453,6 +501,14 @@ impl SymbolicExecutor {
             return Ok(SymbolicInvariantRunResult::Incomplete {
                 kind: SymbolicStopReason::Timeout,
                 reason: Self::hard_arith_heuristic_incomplete_reason(),
+                stats: self.stats_with_paths(completed_paths),
+            });
+        }
+
+        if let Some((kind, reason)) = self.take_deferred_incomplete() {
+            return Ok(SymbolicInvariantRunResult::Incomplete {
+                kind,
+                reason,
                 stats: self.stats_with_paths(completed_paths),
             });
         }

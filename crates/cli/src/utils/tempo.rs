@@ -20,6 +20,9 @@
 use crate::opts::TempoOpts;
 use alloy_primitives::{Address, U256};
 use eyre::{Result, eyre};
+use foundry_common::tempo::{
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -39,9 +42,33 @@ pub struct ResolvedLane {
     pub nonce_key: U256,
 }
 
-/// Parses a fee token address.
-pub fn parse_fee_token_address(address_or_id: &str) -> eyre::Result<Address> {
-    Address::from_str(address_or_id).or_else(|_| Ok(token_id_to_address(address_or_id.parse()?)))
+/// Parses a fee token address, numeric TIP-20 token id, or known Tempo fee-token symbol.
+pub fn parse_fee_token_address(symbol_or_address: &str) -> eyre::Result<Address> {
+    parse_fee_token_symbol(symbol_or_address).map_or_else(
+        || {
+            if let Ok(address) = Address::from_str(symbol_or_address) {
+                return Ok(address);
+            }
+
+            symbol_or_address.parse::<u64>().map(token_id_to_address).map_err(|e| {
+                eyre!(
+                    "invalid fee token '{symbol_or_address}': expected address, numeric TIP-20 token \
+                     id, or one of PathUSD, AlphaUSD, BetaUSD, ThetaUSD: {e}"
+                )
+            })
+        },
+        Ok,
+    )
+}
+
+fn parse_fee_token_symbol(symbol: &str) -> Option<Address> {
+    match symbol.trim().to_ascii_lowercase().as_str() {
+        "pathusd" | "path_usd" | "path-usd" | "usd" | "default" => Some(PATH_USD_ADDRESS),
+        "alphausd" | "alpha_usd" | "alpha-usd" => Some(ALPHA_USD_ADDRESS),
+        "betausd" | "beta_usd" | "beta-usd" => Some(BETA_USD_ADDRESS),
+        "thetausd" | "theta_usd" | "theta-usd" => Some(THETA_USD_ADDRESS),
+        _ => None,
+    }
 }
 
 fn token_id_to_address(token_id: u64) -> Address {

@@ -10,8 +10,11 @@ use alloy_primitives::{
     Address, Bytes, U256,
     map::{AddressHashMap, AddressSet},
 };
-use alloy_provider::Provider;
-use alloy_rpc_types::BlockTransactions;
+use alloy_provider::{Provider, ext::DebugApi};
+use alloy_rpc_types::{
+    BlockTransactions,
+    trace::geth::{GethDebugTracingOptions, PreStateConfig},
+};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -79,6 +82,14 @@ pub struct RunArgs {
     /// Disables the labels in the traces.
     #[arg(long, default_value_t = false)]
     disable_labels: bool,
+
+    /// Use debug_traceTransaction to fetch the prestate instead of replaying the block.
+    ///
+    /// This is significantly faster than replaying all previous transactions in the block, but
+    /// requires the node to expose the `debug_` namespace (most public RPCs don't). If the call
+    /// or response can't be used, cast silently falls back to replaying the block.
+    #[arg(long, default_value_t = false)]
+    prestate_tracer: bool,
 
     /// Label addresses in the trace.
     ///
@@ -249,8 +260,40 @@ impl RunArgs {
 
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
-        // Set the state to the moment right before the transaction
-        if !self.quick {
+        // Set the state to the moment right before the transaction.
+        //
+        // When `--prestate-tracer` is set, opportunistically try to fetch the prestate directly
+        // via `debug_traceTransaction` (much faster than replaying the block). This requires the
+        // `debug_` namespace, which most nodes don't expose, so it is opt-in and silently falls
+        // back to replaying previous transactions in the block if the call or parsing fails.
+        let mut prestate_applied = false;
+        if !self.quick && self.prestate_tracer {
+            trace!(?tx_hash, "attempting to fetch prestate via debug_traceTransaction");
+            match provider
+                .debug_trace_transaction(
+                    tx_hash,
+                    GethDebugTracingOptions::prestate_tracer(PreStateConfig::default()),
+                )
+                .await
+            {
+                Ok(trace) => match trace.try_into_pre_state_frame() {
+                    Ok(pre_state_frame) => {
+                        executor.apply_prestate_trace(pre_state_frame.into_pre_state())?;
+                        prestate_applied = true;
+                        trace!("prestate trace applied successfully, skipping block replay");
+                    }
+                    Err(err) => {
+                        trace!(%err, "failed to parse prestate trace response");
+                    }
+                },
+                Err(err) => {
+                    trace!(?err, "debug_traceTransaction failed, falling back to block replay");
+                }
+            }
+        }
+
+        // Fall back to replaying previous transactions if prestate trace wasn't applied.
+        if !self.quick && !prestate_applied {
             sh_status!("Executing previous transactions from the block.")?;
 
             if let Some(block) = block {

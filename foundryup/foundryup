@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
+
+# `use` and `err` always exit, so code following them is reachable but flagged.
+# shellcheck disable=SC2317
+
 set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.8.5"
+FOUNDRYUP_INSTALLER_VERSION="1.8.6"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -449,7 +453,7 @@ update() {
 
 list() {
   if [ -d "$FOUNDRY_VERSIONS_DIR" ]; then
-    for VERSION in $FOUNDRY_VERSIONS_DIR/*; do
+    for VERSION in "$FOUNDRY_VERSIONS_DIR"/*; do
       say "${VERSION##*/}"
       for bin in "${BINS[@]}"; do
         bin_path="$VERSION/$bin"
@@ -651,7 +655,7 @@ EOF
 check_bins_in_use() {
   if check_cmd pgrep; then
     for bin in "${BINS[@]}"; do
-      if pgrep -x "$bin" >/dev/null; then
+      if pgrep -x -u "$(id -u)" "$bin" >/dev/null; then
         err "Error: '$bin' is currently running. Please stop the process and try again."
       fi
     done
@@ -672,11 +676,15 @@ ensure() {
 resolve_version_and_tag() {
   FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
   if [[ "$FOUNDRYUP_VERSION" == "latest" || "$FOUNDRYUP_VERSION" == "stable" ]]; then
-    # Resolve to the latest release (non-prerelease) via the GitHub API.
+    # Resolve to the latest release (non-prerelease) via the `releases/latest`
+    # web redirect, falling back to the GitHub API if it cannot be resolved.
     say "fetching latest release tag from ${FOUNDRYUP_REPO}..."
-    FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases/latest" | awk '
-      /"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }
-    ') || err "failed to fetch release tags from GitHub API"
+    FOUNDRYUP_TAG=$(resolve_latest_tag_via_redirect "$FOUNDRYUP_REPO")
+    if [ -z "$FOUNDRYUP_TAG" ]; then
+      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases/latest" | awk '
+        /"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }
+      ') || err "failed to fetch release tags from GitHub API"
+    fi
     if [ -z "$FOUNDRYUP_TAG" ]; then
       err "could not find a latest release tag for ${FOUNDRYUP_REPO}"
     fi
@@ -714,6 +722,36 @@ resolve_version_and_tag() {
   else
     FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
   fi
+}
+
+# Resolves the latest release tag for repo $1 by following the `releases/latest`
+# redirect and reading the tag from the final URL. Prints the tag (e.g.
+# `v1.7.1`) to stdout, or nothing if it could not be resolved.
+resolve_latest_tag_via_redirect() {
+  local _repo="$1"
+  local _url="https://github.com/${_repo}/releases/latest"
+  local _final=""
+  if check_cmd curl; then
+    _final=$(curl -fsSIL \
+      --retry "$FOUNDRYUP_MAX_RETRIES" \
+      --retry-delay "$FOUNDRYUP_RETRY_DELAY" \
+      --retry-max-time "$FOUNDRYUP_RETRY_MAX_TIME" \
+      --retry-all-errors \
+      -o /dev/null -w '%{url_effective}' "$_url" 2>/dev/null) || return 0
+  else
+    _final=$(wget -q -O /dev/null --max-redirect=10 --server-response "$_url" 2>&1 \
+      | awk 'tolower($1) == "location:" { loc = $2 } END { print loc }' \
+      | tr -d '\r') || return 0
+  fi
+  # Extract the tag from the `.../releases/tag/<tag>` URL and validate it;
+  # anything unexpected returns nothing so the caller falls back to the API.
+  local _tag="${_final##*/releases/tag/}"
+  [ "$_tag" != "$_final" ] || return 0
+  case "$_tag" in
+    *[!A-Za-z0-9._-]*) return 0 ;;
+    v[0-9]*) printf '%s\n' "$_tag" ;;
+    *) return 0 ;;
+  esac
 }
 
 # Silently fetches $1 to stdout.
@@ -776,4 +814,7 @@ Contribute : https://github.com/foundry-rs/foundry/blob/HEAD/CONTRIBUTING.md
 }
 
 
-main "$@"
+# Skip execution when sourced by tests.
+if [ "${FOUNDRYUP_TEST:-0}" != "1" ]; then
+  main "$@"
+fi

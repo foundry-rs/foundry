@@ -67,12 +67,15 @@ impl SymbolicExecutor {
                 let n = state.stack.pop()?;
                 match (a, b, n) {
                     (SymWord::Concrete(a), SymWord::Concrete(b), SymWord::Concrete(n)) => {
-                        state.stack.push(SymWord::Concrete(addmod_exact(a, b, n)))?;
+                        state.stack.push(SymWord::Concrete(addmod_word(a, b, n)))?;
                     }
-                    _ => {
-                        return Err(SymbolicError::Unsupported(
-                            "symbolic ADDMOD unbounded intermediate not modeled",
-                        ));
+                    (a, b, n) => {
+                        state.stack.push(
+                            match Expr::addmod(a.into_expr(), b.into_expr(), n.into_expr()) {
+                                Expr::Const(value) => SymWord::Concrete(value),
+                                expr => SymWord::Expr(expr),
+                            },
+                        )?;
                     }
                 }
                 Ok(StepOutcome::Continue)
@@ -83,12 +86,15 @@ impl SymbolicExecutor {
                 let n = state.stack.pop()?;
                 match (a, b, n) {
                     (SymWord::Concrete(a), SymWord::Concrete(b), SymWord::Concrete(n)) => {
-                        state.stack.push(SymWord::Concrete(mulmod_exact(a, b, n)))?;
+                        state.stack.push(SymWord::Concrete(mulmod_word(a, b, n)))?;
                     }
-                    _ => {
-                        return Err(SymbolicError::Unsupported(
-                            "symbolic MULMOD unbounded intermediate not modeled",
-                        ));
+                    (a, b, n) => {
+                        state.stack.push(
+                            match Expr::mulmod(a.into_expr(), b.into_expr(), n.into_expr()) {
+                                Expr::Const(value) => SymWord::Concrete(value),
+                                expr => SymWord::Expr(expr),
+                            },
+                        )?;
                     }
                 }
                 Ok(StepOutcome::Continue)
@@ -509,8 +515,9 @@ impl SymbolicExecutor {
                         false_state.pc = fallthrough;
 
                         let true_feasible = self.take_loop_jump(&mut true_state, fallthrough, dest)
-                            && self.solver.is_sat(&true_state.constraints)?;
-                        let false_feasible = self.solver.is_sat(&false_state.constraints)?;
+                            && self.branch_is_sat_or_defer(&true_state.constraints)?;
+                        let false_feasible =
+                            self.branch_is_sat_or_defer(&false_state.constraints)?;
                         trace!(true_feasible, false_feasible, "JUMPI symbolic branch");
                         if true_feasible {
                             worklist.push_back(true_state);
@@ -595,11 +602,19 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Revert);
                 }
                 let spec_id: SpecId = executor.spec_id().into();
-                if spec_id >= SpecId::CANCUN {
-                    return Err(SymbolicError::Unsupported("SELFDESTRUCT/EIP-6780 not modeled"));
+                let (beneficiary_word, beneficiary) = state.pop_address_word_or_symbolic_slot()?;
+                if spec_id < SpecId::CANCUN
+                    || state.world.was_created_in_current_transaction(state.address)
+                {
+                    state.world.selfdestruct_legacy(executor, state.address, beneficiary)?;
+                } else {
+                    if state.constrained_word(&beneficiary_word).is_none() {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic SELFDESTRUCT beneficiary",
+                        ));
+                    }
+                    state.world.selfdestruct_cancun_existing(executor, state.address, beneficiary);
                 }
-                let beneficiary = state.pop_address_or_symbolic_slot()?;
-                state.world.selfdestruct(executor, state.address, beneficiary)?;
                 state.return_data = SymReturnData::default();
                 Ok(StepOutcome::Halt)
             }
@@ -800,16 +815,4 @@ impl SymbolicExecutor {
             StepOutcome::Revert
         }
     }
-}
-
-fn addmod_exact(a: U256, b: U256, n: U256) -> U256 {
-    if n.is_zero() { U256::ZERO } else { u512_mod_to_u256(U512::from(a) + U512::from(b), n) }
-}
-
-fn mulmod_exact(a: U256, b: U256, n: U256) -> U256 {
-    if n.is_zero() { U256::ZERO } else { u512_mod_to_u256(U512::from(a) * U512::from(b), n) }
-}
-
-fn u512_mod_to_u256(value: U512, modulus: U256) -> U256 {
-    U256::from_limbs_slice((value % U512::from(modulus)).as_limbs())
 }

@@ -110,6 +110,11 @@ pub(crate) trait SymbolicSolver {
     /// [`SymbolicError::Solver`], as appropriate.
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError>;
 
+    /// Returns branch satisfiability, allowing branch-only hard-arithmetic shortcuts.
+    fn is_sat_branch(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
+        self.is_sat(constraints)
+    }
+
     /// Returns a concrete model for all symbolic variables constrained by the path.
     ///
     /// The executor uses the returned variable assignments to materialize ABI
@@ -266,85 +271,12 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 
     /// Returns whether `is_sat` holds.
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
-        self.sat_queries += 1;
-        if constraints.iter().any(bool_contains_gasleft) {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
-        let smt_constraints = normalize_constraints_for_solver(constraints);
-        let cache_key = constraint_cache_key(&smt_constraints);
-        if let Some(result) = self.sat_cache.get(&cache_key) {
-            self.sat_cache_hits += 1;
-            trace!(result, "is_sat: normalized cache hit");
-            return Ok(*result);
-        }
-        if self.has_cached_unsat_subset(&cache_key) {
-            self.sat_cache_hits += 1;
-            trace!("is_sat: normalized unsat subset cache hit");
-            self.cache_sat_result(cache_key, false);
-            return Ok(false);
-        }
+        self.is_sat_inner(constraints, false)
+    }
 
-        self.reserve_query()?;
-        self.record_query();
-        let _span = trace_span!(
-            "solver_query",
-            query_id = self.queries,
-            constraint_count = constraints.len(),
-            kind = "is_sat"
-        )
-        .entered();
-        trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
-        if constraints_are_directly_unsat(&smt_constraints) {
-            trace!("is_sat: direct contradiction");
-            self.cache_sat_result(cache_key, false);
-            return Ok(false);
-        }
-        if product_monotonic_unsat_normalized(&smt_constraints) {
-            trace!("is_sat: monotonic product contradiction");
-            self.cache_sat_result(cache_key, false);
-            return Ok(false);
-        }
-        if constraints_prefer_hard_arith_fallback_first(&smt_constraints)
-            && validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some()
-        {
-            self.heuristic_witnesses += 1;
-            trace!("is_sat: validated hard arithmetic fallback model before solver");
-            self.cache_sat_result(cache_key, true);
-            return Ok(true);
-        }
-        let output = match self.query_normalized(&smt_constraints, false, constraints) {
-            Ok(output) => output,
-            Err(SymbolicError::SolverUnknown) => {
-                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
-                    self.heuristic_witnesses += 1;
-                    trace!("is_sat: validated hard arithmetic fallback model after solver unknown");
-                    self.cache_sat_result(cache_key, true);
-                    return Ok(true);
-                }
-                return Err(SymbolicError::SolverUnknown);
-            }
-            Err(err) => return Err(err),
-        };
-        match output.lines().next().unwrap_or_default().trim() {
-            "sat" => {
-                self.cache_sat_result(cache_key, true);
-                Ok(true)
-            }
-            "unsat" => {
-                self.cache_sat_result(cache_key, false);
-                Ok(false)
-            }
-            "unknown" => {
-                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
-                    self.heuristic_witnesses += 1;
-                    self.cache_sat_result(cache_key, true);
-                    Ok(true)
-                } else {
-                    Err(SymbolicError::SolverUnknown)
-                }
-            }
-            other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
-        }
+    /// Returns whether a branch is feasible.
+    fn is_sat_branch(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
+        self.is_sat_inner(constraints, true)
     }
 
     /// Implements the `model` solver helper.
@@ -448,6 +380,96 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 }
 
 impl SmtLibSubprocessSolver {
+    /// Implements the `is_sat` solver helper.
+    fn is_sat_inner(
+        &mut self,
+        constraints: &[BoolExpr],
+        defer_hard_arith_without_witness: bool,
+    ) -> Result<bool, SymbolicError> {
+        self.sat_queries += 1;
+        if constraints.iter().any(bool_contains_gasleft) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
+        let smt_constraints = normalize_constraints_for_solver(constraints);
+        let cache_key = constraint_cache_key(&smt_constraints);
+        if let Some(result) = self.sat_cache.get(&cache_key) {
+            self.sat_cache_hits += 1;
+            trace!(result, "is_sat: normalized cache hit");
+            return Ok(*result);
+        }
+        if self.has_cached_unsat_subset(&cache_key) {
+            self.sat_cache_hits += 1;
+            trace!("is_sat: normalized unsat subset cache hit");
+            self.cache_sat_result(cache_key, false);
+            return Ok(false);
+        }
+
+        self.reserve_query()?;
+        self.record_query();
+        let _span = trace_span!(
+            "solver_query",
+            query_id = self.queries,
+            constraint_count = constraints.len(),
+            kind = "is_sat"
+        )
+        .entered();
+        trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
+        if constraints_are_directly_unsat(&smt_constraints) {
+            trace!("is_sat: direct contradiction");
+            self.cache_sat_result(cache_key, false);
+            return Ok(false);
+        }
+        if product_monotonic_unsat_normalized(&smt_constraints) {
+            trace!("is_sat: monotonic product contradiction");
+            self.cache_sat_result(cache_key, false);
+            return Ok(false);
+        }
+        if constraints_prefer_hard_arith_fallback_first(&smt_constraints) {
+            if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
+                self.heuristic_witnesses += 1;
+                trace!("is_sat: validated hard arithmetic fallback model before solver");
+                self.cache_sat_result(cache_key, true);
+                return Ok(true);
+            }
+            if defer_hard_arith_without_witness {
+                trace!("is_sat: deferring hard arithmetic branch without local witness");
+                return Err(SymbolicError::SolverUnknown);
+            }
+        }
+        let output = match self.query_normalized(&smt_constraints, false, constraints) {
+            Ok(output) => output,
+            Err(SymbolicError::SolverUnknown) => {
+                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
+                    self.heuristic_witnesses += 1;
+                    trace!("is_sat: validated hard arithmetic fallback model after solver unknown");
+                    self.cache_sat_result(cache_key, true);
+                    return Ok(true);
+                }
+                return Err(SymbolicError::SolverUnknown);
+            }
+            Err(err) => return Err(err),
+        };
+        match output.lines().next().unwrap_or_default().trim() {
+            "sat" => {
+                self.cache_sat_result(cache_key, true);
+                Ok(true)
+            }
+            "unsat" => {
+                self.cache_sat_result(cache_key, false);
+                Ok(false)
+            }
+            "unknown" => {
+                if validated_hard_arith_fallback_model(&smt_constraints, constraints).is_some() {
+                    self.heuristic_witnesses += 1;
+                    self.cache_sat_result(cache_key, true);
+                    Ok(true)
+                } else {
+                    Err(SymbolicError::SolverUnknown)
+                }
+            }
+            other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
+        }
+    }
     /// Returns the resolved commands or the stored config error.
     pub(crate) fn commands(&self) -> Result<&[SolverCommand], SymbolicError> {
         self.commands
@@ -672,6 +694,26 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::op(op, right, left)
             } else {
                 Expr::op(op, left, right)
+            }
+        }
+        Expr::AddMod { left, right, modulus } => {
+            let left = cache_key_expr(*left);
+            let right = cache_key_expr(*right);
+            let modulus = cache_key_expr(*modulus);
+            if right < left {
+                Expr::addmod(right, left, modulus)
+            } else {
+                Expr::addmod(left, right, modulus)
+            }
+        }
+        Expr::MulMod { left, right, modulus } => {
+            let left = cache_key_expr(*left);
+            let right = cache_key_expr(*right);
+            let modulus = cache_key_expr(*modulus);
+            if right < left {
+                Expr::mulmod(right, left, modulus)
+            } else {
+                Expr::mulmod(left, right, modulus)
             }
         }
         Expr::Ite(cond, left, right) => Expr::Ite(

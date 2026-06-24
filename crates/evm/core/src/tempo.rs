@@ -5,7 +5,7 @@
 //!
 //! It includes the shared genesis initialization function used by both anvil and forge.
 
-use alloy_primitives::{Address, Bytes, U256, address};
+use alloy_primitives::{Address, Bytes, U256};
 use revm::state::Bytecode;
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::{
@@ -21,14 +21,18 @@ use tempo_precompiles::{
     validator_config,
 };
 
+pub use foundry_common::tempo::{
+    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
+};
 pub use foundry_evm_networks::{
     TEMPO_PRECOMPILE_ADDRESSES, active_tempo_precompile_addresses, is_tempo_precompile_active_at,
 };
 pub use tempo_contracts::precompiles::{
-    ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, IFeeManager, ISignatureVerifier, IStablecoinDEX,
-    ITIP20ChannelReserve, PATH_USD_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS,
-    SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, IAccountKeychain, IAddressRegistry,
+    IFeeManager, IReceivePolicyGuard, ISignatureVerifier, IStablecoinDEX, ITIP20ChannelReserve,
+    ITIP403Registry, RECEIVE_POLICY_GUARD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
+    STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS,
+    TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
 };
 pub use tempo_precompiles::{
     address_registry::{AddressRegistry, IMPLICIT_APPROVAL_LIST, is_implicitly_approved},
@@ -137,7 +141,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
 
     // Create AlphaUSD token: 0x20C0000000000000000000000000000000000001
     let _alpha_usd_token_address = create_and_mint_token(
-        address!("20C0000000000000000000000000000000000001"),
+        ALPHA_USD_ADDRESS,
         "AlphaUSD",
         "AlphaUSD",
         "USD",
@@ -149,7 +153,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
 
     // Create BetaUSD token: 0x20C0000000000000000000000000000000000002
     let _beta_usd_token_address = create_and_mint_token(
-        address!("20C0000000000000000000000000000000000002"),
+        BETA_USD_ADDRESS,
         "BetaUSD",
         "BetaUSD",
         "USD",
@@ -161,7 +165,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
 
     // Create ThetaUSD token: 0x20C0000000000000000000000000000000000003
     let _theta_usd_token_address = create_and_mint_token(
-        address!("20C0000000000000000000000000000000000003"),
+        THETA_USD_ADDRESS,
         "ThetaUSD",
         "ThetaUSD",
         "USD",

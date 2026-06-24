@@ -88,7 +88,7 @@ tokio-tungstenite.workspace = true
 futures.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile.workspace = true
 
 [build-dependencies]
@@ -96,9 +96,9 @@ chrono.workspace = true
 vergen = { workspace = true, features = ["build", "emit_and_set"] }
 
 [dev-dependencies]
-foundry-evm-hardforks.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
+foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
 
 [features]

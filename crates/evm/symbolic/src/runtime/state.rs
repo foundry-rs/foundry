@@ -206,6 +206,15 @@ impl PathState {
             Expr::Const(value) => u256_to_usize(*value),
             Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
             Expr::Not(_) => None,
+            Expr::AddMod { modulus, .. } | Expr::MulMod { modulus, .. } => {
+                match expr_const_value(modulus) {
+                    Some(modulus) if modulus.is_zero() => Some(0),
+                    Some(modulus) => u256_to_usize(modulus - U256::from(1)),
+                    None => {
+                        self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1))
+                    }
+                }
+            }
             Expr::Ite(_, left, right) => {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
             }
@@ -465,10 +474,13 @@ impl PathState {
         self.world.extcode_bytes_word(executor, word, offset, size)
     }
 
-    /// Implements the `pop_address_or_symbolic_slot` symbolic state helper.
-    pub(crate) fn pop_address_or_symbolic_slot(&mut self) -> Result<Address, SymbolicError> {
+    /// Implements the `pop_address_word_or_symbolic_slot` symbolic state helper.
+    pub(crate) fn pop_address_word_or_symbolic_slot(
+        &mut self,
+    ) -> Result<(SymWord, Address), SymbolicError> {
         let word = self.stack.pop()?;
-        Ok(self.address_or_symbolic_slot(word))
+        let address = self.address_or_symbolic_slot(word.clone());
+        Ok((word, address))
     }
 
     /// Returns the `address_or_symbolic_slot` symbolic state helper result.
@@ -988,6 +1000,7 @@ impl StorageWrite {
 pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
+    pub(crate) current_transaction_created_accounts: BTreeSet<Address>,
     pub(crate) balances: BTreeMap<Address, SymWord>,
     pub(crate) code_cache: BTreeMap<Address, SymCode>,
     pub(crate) nonces: BTreeMap<Address, u64>,
@@ -1005,6 +1018,9 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
         Self {
             storage: world.storage.clone(),
             transient_storage: world.transient_storage.clone(),
+            current_transaction_created_accounts: world
+                .current_transaction_created_accounts
+                .clone(),
             balances: world.balances.clone(),
             code_cache: world.code_cache.clone(),
             nonces: world.nonces.clone(),
@@ -1022,6 +1038,7 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
 pub(crate) struct SymbolicWorld {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
+    pub(crate) current_transaction_created_accounts: BTreeSet<Address>,
     pub(crate) balances: BTreeMap<Address, SymWord>,
     pub(crate) code_cache: BTreeMap<Address, SymCode>,
     pub(crate) nonces: BTreeMap<Address, u64>,
@@ -1070,9 +1087,20 @@ impl SymbolicWorld {
         self.transient_storage.push(StorageWrite::new(address, key, value));
     }
 
-    /// Clears transaction-scoped transient storage at a top-level call boundary.
-    pub(crate) fn clear_transient_storage(&mut self) {
+    /// Clears transaction-scoped state at a top-level call boundary.
+    pub(crate) fn clear_transaction_scoped_state(&mut self) {
         self.transient_storage.clear();
+        self.current_transaction_created_accounts.clear();
+    }
+
+    /// Applies the `mark_current_transaction_created` symbolic state helper.
+    pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
+        self.current_transaction_created_accounts.insert(address);
+    }
+
+    /// Returns whether `address` was created in the current top-level symbolic transaction.
+    pub(crate) fn was_created_in_current_transaction(&self, address: Address) -> bool {
+        self.current_transaction_created_accounts.contains(&address)
     }
 
     /// Applies the `enable_arbitrary_storage` symbolic state helper.
@@ -1124,6 +1152,7 @@ impl SymbolicWorld {
         };
         self.storage = snapshot.storage;
         self.transient_storage = snapshot.transient_storage;
+        self.current_transaction_created_accounts = snapshot.current_transaction_created_accounts;
         self.balances = snapshot.balances;
         self.code_cache = snapshot.code_cache;
         self.nonces = snapshot.nonces;
@@ -1322,8 +1351,8 @@ impl SymbolicWorld {
         self.destroyed_accounts.remove(&address);
     }
 
-    /// Implements the `selfdestruct` symbolic state helper.
-    pub(crate) fn selfdestruct<FEN: FoundryEvmNetwork>(
+    /// Implements legacy `SELFDESTRUCT` semantics.
+    pub(crate) fn selfdestruct_legacy<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         address: Address,
@@ -1348,13 +1377,32 @@ impl SymbolicWorld {
         Ok(())
     }
 
+    /// Implements Cancun+ `SELFDESTRUCT` semantics for accounts not created in the current tx.
+    pub(crate) fn selfdestruct_cancun_existing<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        address: Address,
+        beneficiary: Address,
+    ) {
+        let balance = self.balance_word_for_address(executor, address);
+        if beneficiary != address && !matches!(balance, SymWord::Concrete(value) if value.is_zero())
+        {
+            let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
+            // Symbolic balances are treated as possibly non-zero, matching transfer's
+            // account-existence approximation.
+            self.set_balance_word(beneficiary, sym_add(beneficiary_balance, balance));
+            self.balances.insert(address, SymWord::zero());
+        }
+    }
+
     /// Implements the `account_exists` symbolic state helper.
     pub(crate) fn account_exists<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
         address: Address,
     ) -> Result<bool, SymbolicError> {
-        if is_known_cheatcode(address) || is_supported_precompile(address) {
+        let spec_id: SpecId = executor.spec_id().into();
+        if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
             return Ok(true);
         }
         if self.destroyed_accounts.contains(&address) {
@@ -1406,7 +1454,8 @@ impl SymbolicWorld {
         if is_known_cheatcode(address) {
             return Ok(SymCode::concrete(vec![0]));
         }
-        if is_supported_precompile(address) {
+        let spec_id: SpecId = executor.spec_id().into();
+        if is_supported_precompile(address, spec_id) {
             return Ok(SymCode::default());
         }
         if self.destroyed_accounts.contains(&address) {
@@ -1555,8 +1604,9 @@ impl SymbolicWorld {
         }
 
         let mut targets = Vec::new();
+        let spec_id: SpecId = executor.spec_id().into();
         for address in addresses {
-            if is_known_cheatcode(address) || is_supported_precompile(address) {
+            if is_known_cheatcode(address) || is_supported_precompile(address, spec_id) {
                 continue;
             }
             if !self.extcode(executor, address)?.is_empty() {
@@ -1617,6 +1667,11 @@ fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
         Expr::Op(_, left, right) => {
             collect_eval_vars(left, vars);
             collect_eval_vars(right, vars);
+        }
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
+            collect_eval_vars(modulus, vars);
         }
         Expr::Ite(condition, left, right) => {
             collect_eval_bool_vars(condition, vars);

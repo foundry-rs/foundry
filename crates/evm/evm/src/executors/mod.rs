@@ -35,6 +35,7 @@ use foundry_evm_core::{
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
+use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     bytecode::Bytecode,
@@ -325,6 +326,36 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
     ) -> BackendResult<()> {
         self.backend_mut().insert_account_storage(address, slot, value)?;
+        Ok(())
+    }
+
+    /// Apply prestate trace data to the executor's backend.
+    ///
+    /// This is used to set up the EVM state based on the prestate trace from
+    /// `debug_traceTransaction`, which provides all accounts and storage slots
+    /// that will be accessed during transaction execution.
+    pub fn apply_prestate_trace(
+        &mut self,
+        prestate: std::collections::BTreeMap<Address, alloy_rpc_types::trace::geth::AccountState>,
+    ) -> eyre::Result<()> {
+        let backend = self.backend_mut();
+        for (address, account_state) in prestate {
+            let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
+            let info = revm::state::AccountInfo {
+                nonce: account_state.nonce.unwrap_or_default(),
+                balance: account_state.balance.unwrap_or_default(),
+                code_hash: keccak256(code.original_byte_slice()),
+                code: Some(code),
+                account_id: Default::default(),
+            };
+            backend.insert_account_info(address, info);
+
+            for (slot, value) in account_state.storage {
+                let slot = U256::from_be_bytes(slot.0);
+                let value = U256::from_be_bytes(value.0);
+                backend.insert_account_storage(address, slot, value)?;
+            }
+        }
         Ok(())
     }
 
@@ -999,6 +1030,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub edge_coverage: Option<EdgeCoverage>,
     /// EVM comparison operands collected during the call.
     pub evm_cmp_values: Option<Vec<CmpOperands>>,
+    /// Observed sub-calls collected during the call.
+    pub observed_calls: Vec<ObservedCall>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,
@@ -1038,6 +1071,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             line_coverage: None,
             edge_coverage: None,
             evm_cmp_values: None,
+            observed_calls: Vec::new(),
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
@@ -1258,7 +1292,7 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
 fn convert_executed_result<FEN: FoundryEvmNetwork>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
-    inspector: InspectorStack<FEN>,
+    mut inspector: InspectorStack<FEN>,
     ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
@@ -1283,6 +1317,12 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         Some(Output::Call(data)) => data.clone(),
         _ => Bytes::new(),
     };
+    let observed_calls = inspector
+        .inner
+        .fuzzer
+        .as_mut()
+        .map(|fuzzer| fuzzer.take_observed_calls())
+        .unwrap_or_default();
 
     let InspectorData {
         mut logs,
@@ -1321,6 +1361,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         line_coverage,
         edge_coverage,
         evm_cmp_values,
+        observed_calls,
         sancov_coverage: None,
         sancov_cmp_values: None,
         transactions,

@@ -1,5 +1,5 @@
-use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Selector, map::HashMap};
+use alloy_json_abi::{Event, Function, JsonAbi};
+use alloy_primitives::{Address, B256, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -77,24 +77,21 @@ impl FuzzRunIdentifiedContracts {
             if code.is_empty() {
                 continue;
             }
-            let Some((artifact, contract)) =
+            let Some((artifact, contract_data)) =
                 project_contracts.find_by_deployed_code(code.original_byte_slice())
             else {
                 continue;
             };
             let Some(functions) =
-                artifact_filters.get_targeted_functions(artifact, &contract.abi)?
+                artifact_filters.get_targeted_functions(artifact, &contract_data.abi)?
             else {
                 continue;
             };
             created_contracts.push(*address);
-            let contract = TargetedContract {
-                identifier: artifact.name.clone(),
-                abi: contract.abi.clone(),
-                targeted_functions: functions,
-                excluded_functions: Vec::new(),
-                storage_layout: contract.storage_layout.as_ref().map(Arc::clone),
-            };
+            let mut contract =
+                TargetedContract::new(artifact.name.clone(), contract_data.abi.clone());
+            contract.targeted_functions = functions;
+            contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
             targets.insert(*address, contract);
         }
         Ok(())
@@ -124,15 +121,22 @@ impl TargetedContracts {
         Self::default()
     }
 
-    /// Returns fuzzed contract abi and fuzzed function from address and provided calldata.
+    /// Returns fuzzed contract and fuzzed function from address and provided calldata.
     ///
     /// Used to decode return values and logs in order to add values into fuzz dictionary.
-    pub fn fuzzed_artifacts(&self, tx: &BasicTxDetails) -> (Option<&JsonAbi>, Option<&Function>) {
+    pub fn fuzzed_artifacts(
+        &self,
+        tx: &BasicTxDetails,
+    ) -> (Option<&TargetedContract>, Option<&Function>) {
         match self.inner.get(&tx.call_details.target) {
-            Some(c) => (
-                Some(&c.abi),
-                c.abi.functions().find(|f| f.selector() == tx.call_details.calldata[..4]),
-            ),
+            Some(c) => {
+                let function = tx
+                    .call_details
+                    .calldata
+                    .get(..4)
+                    .and_then(|selector| c.abi.functions().find(|f| f.selector() == selector));
+                (Some(c), function)
+            }
             None => (None, None),
         }
     }
@@ -149,7 +153,11 @@ impl TargetedContracts {
     /// Returns whether the given transaction can be replayed or not with known contracts.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
         match self.inner.get(&tx.call_details.target) {
-            Some(c) => c.abi.functions().any(|f| f.selector() == tx.call_details.calldata[..4]),
+            Some(c) => {
+                tx.call_details.calldata.get(..4).is_some_and(|selector| {
+                    c.abi_fuzzed_functions().any(|f| f.selector() == selector)
+                })
+            }
             None => false,
         }
     }
@@ -157,23 +165,30 @@ impl TargetedContracts {
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
-        self.inner.get(&tx.call_details.target).and_then(|contract| {
+        tx.call_details
+            .calldata
+            .get(..4)
+            .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+            .map(Selector::from)
+            .and_then(|selector| {
+                self.fuzzed_metric_key_for_selector(tx.call_details.target, selector)
+            })
+    }
+
+    /// Identifies fuzzed contract and function from target and selector and returns unique metric
+    /// key composed from contract identifier and function name.
+    pub fn fuzzed_metric_key_for_selector(
+        &self,
+        target: Address,
+        selector: Selector,
+    ) -> Option<String> {
+        self.inner.get(&target).and_then(|contract| {
             contract
                 .abi
                 .functions()
-                .find(|f| f.selector() == tx.call_details.calldata[..4])
-                .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
+                .find(|f| f.selector() == selector)
+                .map(|function| format!("{}.{}", contract.identifier.as_str(), function.name))
         })
-    }
-
-    /// Returns a map of contract addresses to their storage layouts.
-    pub fn get_storage_layouts(&self) -> HashMap<Address, Arc<StorageLayout>> {
-        self.inner
-            .iter()
-            .filter_map(|(addr, c)| {
-                c.storage_layout.as_ref().map(|layout| (*addr, Arc::clone(layout)))
-            })
-            .collect()
     }
 }
 
@@ -204,17 +219,21 @@ pub struct TargetedContract {
     pub excluded_functions: Vec<Function>,
     /// The contract's storage layout, if available.
     pub storage_layout: Option<Arc<StorageLayout>>,
+    /// Contract events indexed by topic0 and indexed-topic count for log dictionary decoding.
+    pub event_lookup: Arc<TargetedContractEvents>,
 }
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
-    pub const fn new(identifier: String, abi: JsonAbi) -> Self {
+    pub fn new(identifier: String, abi: JsonAbi) -> Self {
+        let event_lookup = Arc::new(TargetedContractEvents::new(&abi));
         Self {
             identifier,
             abi,
             targeted_functions: Vec::new(),
             excluded_functions: Vec::new(),
             storage_layout: None,
+            event_lookup,
         }
     }
 
@@ -266,6 +285,62 @@ impl TargetedContract {
             }
         }
         Ok(())
+    }
+}
+
+/// Events for a targeted contract, pre-indexed for log dictionary decoding.
+#[derive(Clone, Debug, Default)]
+pub struct TargetedContractEvents {
+    by_topic: HashMap<(B256, usize), Vec<TargetedContractEvent>>,
+    anonymous: Vec<TargetedContractEvent>,
+}
+
+impl TargetedContractEvents {
+    fn new(abi: &JsonAbi) -> Self {
+        let mut events = Self::default();
+        for (order, event) in abi.events().enumerate() {
+            let event = TargetedContractEvent { order, event: event.clone() };
+            if event.event.anonymous {
+                events.anonymous.push(event);
+            } else {
+                let indexed_count = event.event.inputs.iter().filter(|input| input.indexed).count();
+                events
+                    .by_topic
+                    .entry((event.event.selector(), indexed_count))
+                    .or_default()
+                    .push(event);
+            }
+        }
+        events
+    }
+
+    pub fn by_topic(
+        &self,
+        selector: &B256,
+        indexed_count: usize,
+    ) -> Option<&[TargetedContractEvent]> {
+        self.by_topic.get(&(*selector, indexed_count)).map(Vec::as_slice)
+    }
+
+    pub fn anonymous(&self) -> &[TargetedContractEvent] {
+        &self.anonymous
+    }
+}
+
+/// Event with its flattened ABI order for preserving log decode priority.
+#[derive(Clone, Debug)]
+pub struct TargetedContractEvent {
+    event: Event,
+    order: usize,
+}
+
+impl TargetedContractEvent {
+    pub const fn order(&self) -> usize {
+        self.order
+    }
+
+    pub const fn event(&self) -> &Event {
+        &self.event
     }
 }
 
@@ -434,5 +509,40 @@ impl fmt::Display for InvariantSettings {
             self.excluded_senders.len(),
             self.fail_on_revert,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CallDetails;
+    use alloy_primitives::Bytes;
+
+    fn targeted_contracts_with_function(target: Address, function: Function) -> TargetedContracts {
+        let mut abi = JsonAbi::new();
+        abi.functions.entry(function.name.clone()).or_default().push(function);
+        let mut targets = TargetedContracts::new();
+        targets.inner.insert(target, TargetedContract::new("Target".to_string(), abi));
+        targets
+    }
+
+    fn tx(target: Address, calldata: impl Into<Bytes>) -> BasicTxDetails {
+        BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails { target, calldata: calldata.into(), value: None },
+        }
+    }
+
+    #[test]
+    fn targeted_contracts_short_calldata_is_not_replayable_or_decodable() {
+        let target = Address::from([0x42; 20]);
+        let targets = targeted_contracts_with_function(target, Function::parse("foo()").unwrap());
+        let tx = tx(target, vec![0xde, 0xad, 0xbe]);
+
+        assert!(!targets.can_replay(&tx));
+        assert!(targets.fuzzed_artifacts(&tx).1.is_none());
+        assert!(targets.fuzzed_metric_key(&tx).is_none());
     }
 }

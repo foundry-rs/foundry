@@ -162,6 +162,7 @@ async fn accepts_spend_after_funding_when_pool_checks_disabled() {
         .with_from(spender)
         .with_to(funder)
         .with_value(spend_value)
+        .with_gas_limit(21_000)
         .with_gas_price(gas_price_spend);
     let tx2 = WithOtherFields::new(tx2);
 

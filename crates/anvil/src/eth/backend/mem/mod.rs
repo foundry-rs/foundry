@@ -75,9 +75,9 @@ use alloy_rpc_types::{
     trace::{
         filter::TraceFilter,
         geth::{
-            FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
-            GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
-            TraceResult,
+            CallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig,
+            GethDebugTracerType, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
+            NoopFrame, TraceResult,
         },
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
@@ -159,7 +159,7 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
-    context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
@@ -183,8 +183,8 @@ use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
-    extend_tempo_precompiles,
-    storage::StorageCtx,
+    TIP_FEE_MANAGER_ADDRESS, extend_tempo_precompiles,
+    storage::{StorageActions, StorageCtx},
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
 };
@@ -215,6 +215,20 @@ impl DatabaseRef for dyn crate::eth::backend::db::Db {}
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
 // Gas per transaction creating a contract.
 pub const MIN_CREATE_GAS: u128 = 53000;
+
+fn call_config_from_tracer_config(
+    tracer_config: GethDebugTracerConfig,
+) -> Result<CallConfig, serde_json::Error> {
+    let mut tracer_config = tracer_config.into_json();
+    if let Some(config) = tracer_config.as_object_mut()
+        && !config.contains_key("onlyTopCall")
+        && let Some(only_top_level_call) = config.remove("onlyTopLevelCall")
+    {
+        config.insert("onlyTopCall".to_string(), only_top_level_call);
+    }
+
+    GethDebugTracerConfig(tracer_config).into_call_config()
+}
 
 pub type State = foundry_evm::utils::StateChangeset;
 
@@ -1156,7 +1170,7 @@ impl<N: Network> Backend<N> {
         self.networks.inject_precompiles(precompiles);
 
         if let Some(factory) = &self.precompile_factory {
-            precompiles.extend_precompiles(factory.precompiles());
+            factory.install(precompiles);
         }
 
         let cheats = Arc::new(self.cheats.clone());
@@ -1171,13 +1185,21 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    fn inject_tempo_precompiles(
-        &self,
-        precompiles: &mut PrecompilesMap,
-        cfg_env: &CfgEnv<TempoHardfork>,
-    ) {
-        self.inject_precompiles(precompiles);
-        extend_tempo_precompiles(precompiles, cfg_env);
+    fn inject_tempo_precompiles<DB, I>(&self, evm: &mut tempo_evm::evm::TempoEvm<DB, I>)
+    where
+        DB: Database,
+        I: Inspector<TempoContext<DB>>,
+    {
+        self.inject_precompiles(evm.precompiles_mut());
+        // Re-extend Tempo precompiles, preserving shared non-creditable slots.
+        let cfg = evm.ctx().cfg.clone();
+        let non_creditable_slots = evm.non_creditable_slots();
+        extend_tempo_precompiles(
+            evm.precompiles_mut(),
+            &cfg,
+            StorageActions::disabled(),
+            non_creditable_slots,
+        );
     }
 
     /// Creates a concrete EVM, injects precompiles, transacts, and returns the result mapped
@@ -1294,8 +1316,7 @@ impl<N: Network> Backend<N> {
             tempo_env,
             inspector,
         );
-        let cfg = evm.cfg.clone();
-        self.inject_tempo_precompiles(evm.precompiles_mut(), &cfg);
+        self.inject_tempo_precompiles(&mut evm);
         let result = evm.transact(tx_env)?;
         Ok(ResultAndState {
             result: result.result.map_haltreason(|h| match h {
@@ -2157,6 +2178,7 @@ impl<N: Network> Backend<N> {
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
                     node_config.fork_urls = vec![eth_rpc_url.clone()];
+                    node_config.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
                     node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
                 };
@@ -2974,8 +2996,7 @@ where
                 return match tracer {
                     GethDebugTracerType::BuiltInTracer(tracer) => match tracer {
                         GethDebugBuiltInTracerType::CallTracer => {
-                            let call_config = tracer_config
-                                .into_call_config()
+                            let call_config = call_config_from_tracer_config(tracer_config)
                                 .map_err(|e| RpcError::invalid_params(e.to_string()))?;
 
                             let mut inspector = self.build_inspector().with_tracing_config(
@@ -3639,7 +3660,7 @@ where
                         return Ok(res);
                     }
                     GethDebugBuiltInTracerType::CallTracer => {
-                        return match tracer_config.into_call_config() {
+                        return match call_config_from_tracer_config(tracer_config) {
                             Ok(call_config) => {
                                 let inspector = TracingInspector::new(
                                     TracingInspectorConfig::from_geth_call_config(&call_config),
@@ -3897,7 +3918,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
         // reset the block env
         if let Some(block) = state.block.clone() {
-            self.evm_env.write().block_env = block.clone();
+            {
+                let mut env = self.evm_env.write();
+                env.block_env = block.clone();
+                if self.is_tempo() && self.is_fork() && env.block_env.beneficiary.is_zero() {
+                    env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+                }
+            }
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
@@ -3976,6 +4003,27 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 "Loading state not supported with the current configuration",
             )
             .into());
+        }
+
+        // Backfill the EVM-level block hash cache from the freshly loaded blocks so that the
+        // BLOCKHASH opcode stays consistent after loading state. Reuses the hashes already
+        // computed by `load_blocks` above. Only collect the last 256 blocks since that's all
+        // BLOCKHASH can access.
+        let block_hashes: Vec<_> = {
+            let storage = self.blockchain.storage.read();
+            let min_block = storage.best_number.saturating_sub(256);
+            storage
+                .hashes
+                .iter()
+                .filter(|(num, _)| **num >= min_block)
+                .map(|(&num, &hash)| (num, hash))
+                .collect()
+        };
+        {
+            let mut db = self.db.write().await;
+            for (block_num, hash) in block_hashes {
+                db.insert_block_hash(U256::from(block_num), hash);
+            }
         }
 
         if let Some(historical_states) = state.historical_states {

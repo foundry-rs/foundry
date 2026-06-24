@@ -223,7 +223,7 @@ contract BacktraceTest is DSTest {
         simpleRevert = new SimpleRevert();
         helper = new HelperContract();
     }
-    
+
     function testSimpleRevert() public {
         // Added some comments
         // to change line numbers
@@ -551,7 +551,6 @@ Backtrace:
 
 // Test that backtraces only appear at verbosity 5 (-vvvvv).
 // Runs the same failing test at every verbosity level to assert correct output.
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest!(test_backtrace_verbosity_levels, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();

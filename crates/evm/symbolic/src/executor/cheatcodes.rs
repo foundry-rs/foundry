@@ -93,6 +93,227 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
+    #[expect(clippy::too_many_arguments)]
+    /// Implements the `deploy_code_cheatcode_if_needed` symbolic executor helper.
+    pub(super) fn deploy_code_cheatcode_if_needed<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        completed_paths: &mut usize,
+        selector: [u8; 4],
+        in_offset: usize,
+        out_offset: SymWord,
+        out_size: &BoundedCopySize,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let args_offset = in_offset + 4;
+        let (artifact, constructor_args) = if selector == selector!("deployCode(string)") {
+            let artifact =
+                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deployCode")?;
+            (artifact, Vec::new())
+        } else if selector == selector!("deployCode(string,bytes)") {
+            let artifact =
+                read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.deployCode")?;
+            let args = read_abi_dynamic_bytes_arg(
+                &state.memory,
+                args_offset,
+                1,
+                "symbolic vm.deployCode args",
+            )?;
+            (artifact, args)
+        } else {
+            return Ok(None);
+        };
+
+        self.deploy_code_cheatcode_call(
+            executor,
+            state,
+            worklist,
+            completed_paths,
+            artifact,
+            constructor_args,
+            out_offset,
+            out_size,
+        )
+        .map(Some)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    /// Applies the `deploy_code_cheatcode_call` symbolic executor helper.
+    pub(super) fn deploy_code_cheatcode_call<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        completed_paths: &mut usize,
+        artifact: String,
+        constructor_args: Vec<u8>,
+        out_offset: SymWord,
+        out_size: &BoundedCopySize,
+    ) -> Result<StepOutcome, SymbolicError> {
+        if state.is_static {
+            state.return_data = SymReturnData::default();
+            return Ok(StepOutcome::Revert);
+        }
+
+        let mut initcode = artifact_code(&artifact, false)?;
+        initcode.extend_from_slice(&constructor_args);
+        let initcode = SymCode::concrete(initcode);
+
+        let nonce = state.world.nonce(executor, state.address)?;
+        let created = state.address.create(nonce);
+        let created_word = SymWord::Concrete(address_word(created));
+
+        let mut failure_world = state.world.clone();
+        failure_world.increment_nonce(executor, state.address)?;
+        if failure_world.has_code_or_nonce(executor, created)? {
+            state.world = failure_world;
+            complete_cheatcode_call(
+                state,
+                out_offset,
+                out_size,
+                SymReturnData::from_words(vec![SymWord::zero()]),
+            )?;
+            return Ok(StepOutcome::Continue);
+        }
+
+        let mut frame = CallFrame::new(
+            created,
+            created,
+            created,
+            state.address,
+            SymWord::zero(),
+            false,
+            SymCalldata::new(Vec::new()),
+        );
+        frame.address_word = created_word.clone();
+        frame.caller_word = state.address_word.clone();
+        let mut child = state.child(frame);
+        let pending_expected_creates = std::mem::take(&mut child.expected_creates);
+        child.world = failure_world.clone();
+        child.world.mark_current_transaction_created(created);
+        child.world.set_nonce(created, 1);
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
+
+        let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
+        let Some((first, rest)) = outcomes.split_first() else {
+            return Ok(StepOutcome::AssumeRejected);
+        };
+
+        let mut parents = VecDeque::with_capacity(outcomes.len());
+        for outcome in std::iter::once(first).chain(rest.iter()) {
+            let mut parent = state.clone();
+            parent.constraints = outcome.state.constraints.clone();
+            parent.next_symbol = outcome.state.next_symbol;
+
+            if let Some(assumption) = parent.assume_no_revert_next_call.take()
+                && matches!(outcome.status, TopLevelCallStatus::Revert)
+                && self.assume_no_revert_rejects(
+                    &mut parent,
+                    &assumption,
+                    created,
+                    &outcome.return_data,
+                )?
+            {
+                continue;
+            }
+
+            if let Some(mut expected) = parent.expected_revert.clone() {
+                match outcome.status {
+                    TopLevelCallStatus::Success => {
+                        *state = parent;
+                        return Ok(StepOutcome::Failure);
+                    }
+                    TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
+                        if !self.expected_revert_matches(
+                            &mut parent,
+                            &expected,
+                            created,
+                            &outcome.return_data,
+                        )? {
+                            *state = parent;
+                            return Ok(StepOutcome::Failure);
+                        }
+                        if expected.consume_one() {
+                            parent.expected_revert = None;
+                        } else {
+                            parent.expected_revert = Some(expected);
+                        }
+                        parent.access_record = outcome.state.access_record.clone();
+                        parent.expected_calls = outcome.state.expected_calls.clone();
+                        parent.expected_creates = pending_expected_creates.clone();
+                        parent.call_mocks = outcome.state.call_mocks.clone();
+                        parent.function_mocks = outcome.state.function_mocks.clone();
+                        parent.world = failure_world.clone();
+                        complete_cheatcode_call(
+                            &mut parent,
+                            out_offset.clone(),
+                            out_size,
+                            SymReturnData::from_words(vec![SymWord::zero()]),
+                        )?;
+                        parents.push_back(parent);
+                        continue;
+                    }
+                }
+            }
+
+            match outcome.status {
+                TopLevelCallStatus::Success => {
+                    parent.world = outcome.state.world.clone();
+                    parent.block = outcome.state.block.clone();
+                    parent.recorded_logs = outcome.state.recorded_logs.clone();
+                    parent.access_record = outcome.state.access_record.clone();
+                    parent.expected_emit = outcome.state.expected_emit.clone();
+                    parent.expected_calls = outcome.state.expected_calls.clone();
+                    parent.expected_creates = pending_expected_creates.clone();
+                    parent.call_mocks = outcome.state.call_mocks.clone();
+                    parent.function_mocks = outcome.state.function_mocks.clone();
+                    self.observe_expected_create(
+                        &mut parent,
+                        state.address,
+                        CreateKind::Create,
+                        &outcome.return_data,
+                    )?;
+                    if !parent.world.destroyed_accounts.contains(&created) {
+                        parent.world.install_code(created, outcome.return_data.to_code()?);
+                        parent.world.set_nonce(created, 1);
+                    }
+                    complete_cheatcode_call(
+                        &mut parent,
+                        out_offset.clone(),
+                        out_size,
+                        SymReturnData::from_words(vec![created_word.clone()]),
+                    )?;
+                }
+                TopLevelCallStatus::Revert => {
+                    parent.world = failure_world.clone();
+                    parent.return_data = outcome.return_data.clone();
+                    let return_data = parent.return_data.clone();
+                    parent.memory.copy_call_output_offset(
+                        out_offset.clone(),
+                        out_size,
+                        &return_data,
+                    )?;
+                    parent.stack.push(SymWord::zero())?;
+                }
+                TopLevelCallStatus::Failure => {
+                    *state = parent;
+                    return Ok(StepOutcome::Failure);
+                }
+            }
+
+            parents.push_back(parent);
+        }
+
+        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
+            return Ok(StepOutcome::AssumeRejected);
+        };
+        *state = first;
+        spill_batch(parents, worklist, self.config.exploration_order);
+        Ok(StepOutcome::Continue)
+    }
+
     /// Applies the `observe_expected_create` symbolic executor helper.
     pub(super) fn observe_expected_create(
         &mut self,

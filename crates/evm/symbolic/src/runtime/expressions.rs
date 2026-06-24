@@ -309,6 +309,29 @@ pub(crate) fn sym_sub(left: SymWord, right: SymWord) -> SymWord {
     }
 }
 
+/// Computes the exact EVM `ADDMOD` semantics without truncating the intermediate sum.
+pub(crate) fn addmod_word(left: U256, right: U256, modulus: U256) -> U256 {
+    if modulus.is_zero() {
+        return U256::ZERO;
+    }
+    u256_from_u512((U512::from(left) + U512::from(right)) % U512::from(modulus))
+}
+
+/// Computes the exact EVM `MULMOD` semantics without truncating the intermediate product.
+pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
+    if modulus.is_zero() {
+        return U256::ZERO;
+    }
+    u256_from_u512((U512::from(left) * U512::from(right)) % U512::from(modulus))
+}
+
+/// Converts a known 256-bit-range `U512` result back into `U256`.
+fn u256_from_u512(value: U512) -> U256 {
+    let limbs = value.as_limbs();
+    debug_assert!(limbs[4..].iter().all(|limb| *limb == 0));
+    U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]])
+}
+
 /// Returns the `expr_contains_keccak` symbolic expression helper result.
 pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
     match expr {
@@ -316,6 +339,11 @@ pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Hash { .. } => false,
         Expr::Not(value) => expr_contains_keccak(value),
         Expr::Op(_, left, right) => expr_contains_keccak(left) || expr_contains_keccak(right),
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            expr_contains_keccak(left)
+                || expr_contains_keccak(right)
+                || expr_contains_keccak(modulus)
+        }
         Expr::Ite(cond, left, right) => {
             bool_contains_keccak(cond) || expr_contains_keccak(left) || expr_contains_keccak(right)
         }
@@ -334,6 +362,11 @@ pub(crate) fn expr_contains_gasleft(expr: &Expr) -> bool {
         Expr::Hash { bytes, .. } => bytes.iter().any(expr_contains_gasleft),
         Expr::Not(value) => expr_contains_gasleft(value),
         Expr::Op(_, left, right) => expr_contains_gasleft(left) || expr_contains_gasleft(right),
+        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
+            expr_contains_gasleft(left)
+                || expr_contains_gasleft(right)
+                || expr_contains_gasleft(modulus)
+        }
         Expr::Ite(cond, left, right) => {
             bool_contains_gasleft(cond)
                 || expr_contains_gasleft(left)
@@ -434,6 +467,7 @@ pub(crate) fn expr_nonzero_forces_const(
         {
             expr_nonzero_forces_const(value, target, context)
         }
+        Expr::AddMod { .. } | Expr::MulMod { .. } => None,
         Expr::Op(_, _, _) => None,
     }
 }
@@ -468,6 +502,16 @@ pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
         Expr::Op(op, left, right) => {
             Some(eval_expr_op(*op, expr_const_value(left)?, expr_const_value(right)?))
         }
+        Expr::AddMod { left, right, modulus } => Some(addmod_word(
+            expr_const_value(left)?,
+            expr_const_value(right)?,
+            expr_const_value(modulus)?,
+        )),
+        Expr::MulMod { left, right, modulus } => Some(mulmod_word(
+            expr_const_value(left)?,
+            expr_const_value(right)?,
+            expr_const_value(modulus)?,
+        )),
         Expr::Ite(cond, then_expr, else_expr) => {
             if bool_const_value(cond)? {
                 expr_const_value(then_expr)
@@ -720,6 +764,16 @@ pub(crate) fn eval_expr(
             let right = eval_expr(right, model)?;
             eval_expr_op(*op, left, right)
         }
+        Expr::AddMod { left, right, modulus } => addmod_word(
+            eval_expr(left, model)?,
+            eval_expr(right, model)?,
+            eval_expr(modulus, model)?,
+        ),
+        Expr::MulMod { left, right, modulus } => mulmod_word(
+            eval_expr(left, model)?,
+            eval_expr(right, model)?,
+            eval_expr(modulus, model)?,
+        ),
         Expr::Ite(cond, then_expr, else_expr) => {
             if eval_bool_expr(cond, model)? {
                 eval_expr(then_expr, model)?
@@ -937,6 +991,8 @@ pub(crate) enum Expr {
     Hash { name: String, algorithm: &'static str, bytes: Vec<Self> },
     Not(Box<Self>),
     Op(ExprOp, Box<Self>, Box<Self>),
+    AddMod { left: Box<Self>, right: Box<Self>, modulus: Box<Self> },
+    MulMod { left: Box<Self>, right: Box<Self>, modulus: Box<Self> },
     Ite(Box<BoolExpr>, Box<Self>, Box<Self>),
 }
 
@@ -1008,6 +1064,32 @@ impl Expr {
         }
     }
 
+    /// Builds an exact EVM `ADDMOD` expression.
+    pub(crate) fn addmod(left: Self, right: Self, modulus: Self) -> Self {
+        if matches!(modulus, Self::Const(value) if value.is_zero() || value == U256::from(1)) {
+            return Self::Const(U256::ZERO);
+        }
+        if let (Self::Const(left), Self::Const(right), Self::Const(modulus)) =
+            (&left, &right, &modulus)
+        {
+            return Self::Const(addmod_word(*left, *right, *modulus));
+        }
+        Self::AddMod { left: Box::new(left), right: Box::new(right), modulus: Box::new(modulus) }
+    }
+
+    /// Builds an exact EVM `MULMOD` expression.
+    pub(crate) fn mulmod(left: Self, right: Self, modulus: Self) -> Self {
+        if matches!(modulus, Self::Const(value) if value.is_zero() || value == U256::from(1)) {
+            return Self::Const(U256::ZERO);
+        }
+        if let (Self::Const(left), Self::Const(right), Self::Const(modulus)) =
+            (&left, &right, &modulus)
+        {
+            return Self::Const(mulmod_word(*left, *right, *modulus));
+        }
+        Self::MulMod { left: Box::new(left), right: Box::new(right), modulus: Box::new(modulus) }
+    }
+
     fn and_const(expr: Self, mask: U256) -> Self {
         if mask.is_zero() {
             return Self::Const(U256::ZERO);
@@ -1050,6 +1132,11 @@ impl Expr {
                 left.collect_vars(vars);
                 right.collect_vars(vars);
             }
+            Self::AddMod { left, right, modulus } | Self::MulMod { left, right, modulus } => {
+                left.collect_vars(vars);
+                right.collect_vars(vars);
+                modulus.collect_vars(vars);
+            }
             Self::Ite(cond, left, right) => {
                 cond.collect_vars(vars);
                 left.collect_vars(vars);
@@ -1067,11 +1154,32 @@ impl Expr {
             Self::Keccak { name, .. } | Self::Hash { name, .. } => name.clone(),
             Self::Not(value) => format!("(bvnot {})", value.smt()),
             Self::Op(op, left, right) => format!("({} {} {})", op.smt(), left.smt(), right.smt()),
+            Self::AddMod { left, right, modulus } => {
+                smt_wide_modular_arithmetic("bvadd", left, right, modulus)
+            }
+            Self::MulMod { left, right, modulus } => {
+                smt_wide_modular_arithmetic("bvmul", left, right, modulus)
+            }
             Self::Ite(cond, left, right) => {
                 format!("(ite {} {} {})", cond.smt(), left.smt(), right.smt())
             }
         }
     }
+}
+
+/// Encodes EVM `ADDMOD`/`MULMOD` by widening operands before modular reduction.
+fn smt_wide_modular_arithmetic(
+    op: &'static str,
+    left: &Expr,
+    right: &Expr,
+    modulus: &Expr,
+) -> String {
+    let left = left.smt();
+    let right = right.smt();
+    let modulus = modulus.smt();
+    format!(
+        "(ite (= {modulus} (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvurem ({op} ((_ zero_extend 256) {left}) ((_ zero_extend 256) {right})) ((_ zero_extend 256) {modulus}))))"
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1129,6 +1237,18 @@ impl BoolExpr {
         }
         match (&left, &right) {
             (Expr::Const(left), Expr::Const(right)) => Self::Const(left == right),
+            (left, Expr::Const(right)) => {
+                if let Some(left) = expr_known_word(left) {
+                    return Self::Const(left == *right);
+                }
+                Self::Eq(left.clone(), Expr::Const(*right))
+            }
+            (Expr::Const(left), right) => {
+                if let Some(right) = expr_known_word(right) {
+                    return Self::Const(*left == right);
+                }
+                Self::Eq(Expr::Const(*left), right.clone())
+            }
             (
                 Expr::Keccak { len: left_len, bytes: left_bytes, .. },
                 Expr::Keccak { len: right_len, bytes: right_bytes, .. },

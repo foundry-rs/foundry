@@ -19,6 +19,7 @@ use mpp::{
         },
         tempo::signing::{
             TempoSigningMode, sign_and_encode_async, sign_and_encode_fee_payer_envelope_async,
+            sign_and_encode_fee_payer_request_async,
         },
     },
     error::MppError,
@@ -30,7 +31,7 @@ use mpp::{
                 PRECOMPILE_MAX_CUMULATIVE_AMOUNT, compute_precompile_channel_id,
                 sign_precompile_voucher,
             },
-            session::TempoSessionExt,
+            session::{ChannelDescriptor, TempoSessionExt},
         },
     },
     tempo::{Call, SessionCredentialPayload, compute_channel_id, sign_voucher},
@@ -41,8 +42,12 @@ use std::{
 };
 use tempo_alloy::contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
-/// Shared per-origin in-memory channel state: (channels, key_provisioned).
-type SharedChannelState = (Arc<Mutex<HashMap<String, ChannelEntry>>>, Arc<Mutex<bool>>);
+/// Shared per-origin in-memory channel state: (channels, precompile descriptors, key_provisioned).
+type SharedChannelState = (
+    Arc<Mutex<HashMap<String, ChannelEntry>>>,
+    Arc<Mutex<HashMap<String, ChannelDescriptor>>>,
+    Arc<Mutex<bool>>,
+);
 
 /// Process-wide channel state registry, keyed by origin URL.
 ///
@@ -110,6 +115,7 @@ pub struct SessionProvider {
     authorized_signer: Option<Address>,
     default_deposit: Option<u128>,
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
+    precompile_descriptors: Arc<Mutex<HashMap<String, ChannelDescriptor>>>,
     key_provisioned: Arc<Mutex<bool>>,
     persisted: Arc<Mutex<HashMap<String, Channel>>>,
     /// Tracks uncommitted open/top-up state for deferred persistence.
@@ -147,7 +153,7 @@ impl SessionProvider {
             GLOBAL_PERSISTED.get_or_init(|| Arc::new(Mutex::new(persist::load_channels()))).clone();
 
         // Per-origin in-memory channel map + key provisioning state.
-        let (channels, key_provisioned) = {
+        let (channels, precompile_descriptors, key_provisioned) = {
             let global = GLOBAL_CHANNELS.get_or_init(|| Mutex::new(HashMap::new()));
             let mut map = global.lock().unwrap();
             map.entry(origin.clone())
@@ -161,7 +167,11 @@ impl SessionProvider {
                             channels.insert(key.clone(), entry);
                         }
                     }
-                    (Arc::new(Mutex::new(channels)), Arc::new(Mutex::new(true)))
+                    (
+                        Arc::new(Mutex::new(channels)),
+                        Arc::new(Mutex::new(HashMap::new())),
+                        Arc::new(Mutex::new(true)),
+                    )
                 })
                 .clone()
         };
@@ -172,6 +182,7 @@ impl SessionProvider {
             authorized_signer: None,
             default_deposit: None,
             channels,
+            precompile_descriptors,
             key_provisioned,
             persisted,
             pending: Arc::new(Mutex::new(None)),
@@ -251,6 +262,7 @@ impl SessionProvider {
             .collect();
         for (key, channel_id) in &keys_to_remove {
             channels.remove(key);
+            self.precompile_descriptors.lock().unwrap().remove(key);
             persisted.remove(key);
             persist::delete_channel_from_db(channel_id);
         }
@@ -301,6 +313,7 @@ impl SessionProvider {
             match action {
                 PendingAction::Open { key } => {
                     self.channels.lock().unwrap().remove(&key);
+                    self.precompile_descriptors.lock().unwrap().remove(&key);
                     self.persisted.lock().unwrap().remove(&key);
                 }
                 PendingAction::TopUp { key, old_deposit } => {
@@ -338,6 +351,21 @@ impl SessionProvider {
         let signer = authorized_signer.unwrap_or(*payer);
         format!("{origin_hash}:{chain_id}:{payer}:{signer}:{payee}:{currency}:{escrow}:{operator}")
             .to_lowercase()
+    }
+
+    /// Compute the TIP-1034 expiring nonce hash for fee-sponsored opens.
+    ///
+    /// The submitted transaction uses a fee-payer marker signature that the
+    /// sponsor replaces, and TIP-1034 derives channel identity from that same
+    /// marked transaction preimage.
+    fn compute_fee_payer_expiring_nonce_hash(
+        unsigned_tx: &tempo_primitives::transaction::TempoTransaction,
+        sender: Address,
+    ) -> B256 {
+        let mut tx = unsigned_tx.clone();
+        tx.fee_payer_signature =
+            Some(alloy_primitives::Signature::new(U256::ZERO, U256::ZERO, false));
+        compute_expiring_nonce_hash(&tx, sender)
     }
 
     fn resolve_deposit(&self, suggested: Option<&str>) -> Result<u128, MppError> {
@@ -492,6 +520,7 @@ impl SessionProvider {
                 payload_type: "transaction".to_string(),
                 channel_id: channel_id.to_string(),
                 transaction: signed_tx_hex,
+                descriptor: None,
                 authorized_signer: Some(format!("{authorized_signer}")),
                 cumulative_amount: options.initial_amount.to_string(),
                 signature: voucher_sig_hex,
@@ -550,9 +579,17 @@ impl SessionProvider {
                 fee_token: options.currency,
                 nonce: 0,
                 nonce_key: EXPIRING_NONCE_KEY,
-                gas_limit: SESSION_OPEN_GAS_LIMIT,
+                gas_limit: if options.fee_payer {
+                    SESSION_OPEN_FEE_PAYER_GAS_LIMIT
+                } else {
+                    SESSION_OPEN_GAS_LIMIT
+                },
                 max_fee_per_gas: MAX_FEE_PER_GAS,
-                max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
+                max_priority_fee_per_gas: if options.fee_payer {
+                    MAX_PRIORITY_FEE_PER_GAS_FEE_PAYER
+                } else {
+                    MAX_PRIORITY_FEE_PER_GAS
+                },
                 fee_payer: options.fee_payer,
                 valid_before,
                 key_authorization: (!*self.key_provisioned.lock().unwrap())
@@ -562,7 +599,20 @@ impl SessionProvider {
         );
 
         // Must derive before signing: expiringNonceHash binds signing-payload bytes.
-        let expiring_nonce_hash = compute_expiring_nonce_hash(&tx, payer);
+        let expiring_nonce_hash = if options.fee_payer {
+            Self::compute_fee_payer_expiring_nonce_hash(&tx, payer)
+        } else {
+            compute_expiring_nonce_hash(&tx, payer)
+        };
+        let descriptor = ChannelDescriptor {
+            payer: payer.to_string(),
+            payee: options.payee.to_string(),
+            operator: operator.to_string(),
+            token: options.currency.to_string(),
+            salt: salt.to_string(),
+            authorized_signer: authorized_signer.to_string(),
+            expiring_nonce_hash: expiring_nonce_hash.to_string(),
+        };
         let channel_id = compute_precompile_channel_id(
             payer,
             options.payee,
@@ -574,7 +624,11 @@ impl SessionProvider {
             options.chain_id,
         );
 
-        let signed_tx = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx = if options.fee_payer {
+            sign_and_encode_fee_payer_request_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
 
         let voucher = sign_precompile_voucher(
             &self.signer,
@@ -599,6 +653,7 @@ impl SessionProvider {
                 payload_type: "transaction".to_string(),
                 channel_id: channel_id.to_string(),
                 transaction: alloy_primitives::hex::encode_prefixed(&signed_tx),
+                descriptor: Some(descriptor),
                 authorized_signer: Some(format!("{authorized_signer}")),
                 cumulative_amount: options.initial_amount.to_string(),
                 signature: alloy_primitives::hex::encode_prefixed(&voucher),
@@ -695,6 +750,7 @@ impl SessionProvider {
             payload_type: "transaction".to_string(),
             channel_id: entry.channel_id.to_string(),
             transaction: alloy_primitives::hex::encode_prefixed(&signed_tx),
+            descriptor: None,
             additional_deposit: additional_deposit.to_string(),
         })
     }
@@ -878,6 +934,18 @@ impl SessionProvider {
                                 "precompile voucher cumulative_amount must fit uint96".to_string(),
                             ));
                         }
+                        let descriptor = self
+                            .precompile_descriptors
+                            .lock()
+                            .unwrap()
+                            .get(&key)
+                            .cloned()
+                            .ok_or_else(|| {
+                                MppError::InvalidConfig(
+                                    "missing TIP-1034 descriptor for cached precompile channel"
+                                        .to_string(),
+                                )
+                            })?;
                         let sig = sign_precompile_voucher(
                             &self.signer,
                             entry.channel_id,
@@ -887,6 +955,7 @@ impl SessionProvider {
                         .await?;
                         SessionCredentialPayload::Voucher {
                             channel_id: entry.channel_id.to_string(),
+                            descriptor: Some(descriptor),
                             cumulative_amount: new_cumulative.to_string(),
                             signature: alloy_primitives::hex::encode_prefixed(&sig),
                         }
@@ -951,6 +1020,9 @@ impl SessionProvider {
 
         // Update in-memory state but defer disk persistence until server confirms.
         self.channels.lock().unwrap().insert(key.clone(), entry.clone());
+        if let SessionCredentialPayload::Open { descriptor: Some(descriptor), .. } = &payload {
+            self.precompile_descriptors.lock().unwrap().insert(key.clone(), descriptor.clone());
+        }
         let authorized_signer = self.authorized_signer.unwrap_or(payer);
         self.persisted.lock().unwrap().insert(
             key.clone(),
