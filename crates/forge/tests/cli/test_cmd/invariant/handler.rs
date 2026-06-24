@@ -130,16 +130,16 @@ Compiler run successful!
 Ran 1 test for test/MultiPathTest.t.sol:MultiPathTest
 Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 2, shrunk: 1)
-		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
- invariant_ok() (runs: 1, calls: 200, reverts: 102)
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[..]
+ invariant_ok() (runs: 1, calls: 200, reverts: [..])
 
 ╭------------------+-------------+-------+---------+----------╮
 | Contract         | Selector    | Calls | Reverts | Discards |
 +=============================================================+
-| MultiPathHandler | maybeAssert | 102   | 102     | 0        |
+| MultiPathHandler | maybeAssert | [..]  | [..]    | 0        |
 |------------------+-------------+-------+---------+----------|
-| MultiPathHandler | noop        | 98    | 0       | 0        |
+| MultiPathHandler | noop        | [..]  | 0       | 0        |
 ╰------------------+-------------+-------+---------+----------╯
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
@@ -150,9 +150,9 @@ Failing tests:
 Encountered 1 failing test in test/MultiPathTest.t.sol:MultiPathTest
 Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 2, shrunk: 1)
-		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
- invariant_ok() (runs: 1, calls: 200, reverts: 102)
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[..]
+ invariant_ok() (runs: 1, calls: 200, reverts: [..])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
