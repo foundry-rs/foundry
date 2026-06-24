@@ -193,10 +193,10 @@ async fn set(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
-    let warning = if force {
+    let recovery_risk = if force {
         None
     } else {
-        recovery_warning(sender_policy_id, recovery_authority, &send_tx.eth.rpc).await?
+        recovery_risk(sender_policy_id, recovery_authority, &send_tx.eth.rpc).await?
     };
 
     let call = ITIP403Registry::setReceivePolicyCall {
@@ -215,7 +215,7 @@ async fn set(
             "recovery_authority": format!("{recovery_authority}"),
             "recovery_mode": recovery_mode(recovery_authority),
             "calldata": format!("{calldata}"),
-            "warning": warning,
+            "warning": recovery_risk.as_ref().map(RecoveryRisk::message),
         });
         if shell::is_json() {
             print_json_success(payload)?;
@@ -229,15 +229,16 @@ async fn set(
                  Calldata:           {calldata}",
                 recovery_mode(recovery_authority)
             )?;
-            if let Some(warning) = warning.as_deref() {
-                sh_warn!("{warning}")?;
+            if let Some(risk) = recovery_risk.as_ref() {
+                sh_warn!("{}", risk.message())?;
             }
         }
         return Ok(());
     }
 
-    if let Some(warning) = warning.as_deref() {
-        sh_warn!("{warning}")?;
+    if let Some(risk) = recovery_risk.as_ref() {
+        risk.ensure_allowed()?;
+        sh_warn!("{}", risk.message())?;
     }
 
     let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
@@ -442,11 +443,37 @@ async fn claim(to: NameOrAddress, receipt: Bytes, send_tx: SendTxOpts, tx: TxPar
     .await
 }
 
-async fn recovery_warning(
+#[derive(Debug)]
+enum RecoveryRisk {
+    InvalidAuthority { message: String },
+    OriginatorBlockedSystemSenders { message: String },
+}
+
+impl RecoveryRisk {
+    fn message(&self) -> &str {
+        match self {
+            Self::InvalidAuthority { message }
+            | Self::OriginatorBlockedSystemSenders { message } => message,
+        }
+    }
+
+    fn ensure_allowed(&self) -> Result<()> {
+        match self {
+            Self::InvalidAuthority { message } => eyre::bail!("{message}"),
+            Self::OriginatorBlockedSystemSenders { .. } => Ok(()),
+        }
+    }
+}
+
+async fn recovery_risk(
     sender_policy_id: u64,
     recovery_authority: Address,
     rpc: &RpcOpts,
-) -> Result<Option<String>> {
+) -> Result<Option<RecoveryRisk>> {
+    if let Some(message) = invalid_recovery_authority_message(recovery_authority) {
+        return Ok(Some(RecoveryRisk::InvalidAuthority { message }));
+    }
+
     if recovery_authority != Address::ZERO {
         return Ok(None);
     }
@@ -465,14 +492,34 @@ async fn recovery_warning(
         return Ok(None);
     }
 
-    Ok(Some(format!(
-        "originator recovery is enabled because recovery authority is 0x0, but sender policy \
+    Ok(Some(RecoveryRisk::OriginatorBlockedSystemSenders {
+        message: format!(
+            "originator recovery is enabled because recovery authority is 0x0, but sender policy \
          {sender_policy_id} blocks {} Tempo system/precompile sender(s): {}. Receipts created \
          for those senders may not be claimable by a user. Choose receiver or third-party \
          recovery authority when blocking system senders, or pass --force if this is intentional.",
-        blocked.len(),
-        blocked.iter().map(Address::to_string).collect::<Vec<_>>().join(", ")
-    )))
+            blocked.len(),
+            blocked.iter().map(Address::to_string).collect::<Vec<_>>().join(", ")
+        ),
+    }))
+}
+
+fn invalid_recovery_authority_message(recovery_authority: Address) -> Option<String> {
+    if recovery_authority == Address::ZERO {
+        return None;
+    }
+    if recovery_authority.is_virtual() {
+        return Some("recovery authority cannot be a TIP-1022 virtual address".to_string());
+    }
+    if recovery_authority.is_tip20() {
+        return Some("recovery authority cannot be a TIP-20 token address".to_string());
+    }
+    if TEMPO_PRECOMPILE_ADDRESSES.contains(&recovery_authority) {
+        return Some(format!(
+            "recovery authority cannot be a fixed Tempo system precompile: {recovery_authority}"
+        ));
+    }
+    None
 }
 
 fn decode_claim_receipt(receipt: &Bytes) -> Result<IReceivePolicyGuard::ClaimReceiptV1> {
@@ -809,5 +856,34 @@ mod tests {
         };
         let calldata = call.abi_encode();
         assert_eq!(&calldata[..4], ITIP403Registry::setReceivePolicyCall::SELECTOR);
+    }
+
+    #[test]
+    fn rejects_unclaimable_recovery_authorities() {
+        assert_eq!(invalid_recovery_authority_message(Address::ZERO), None);
+        assert_eq!(
+            invalid_recovery_authority_message(address!(
+                "1111111111111111111111111111111111111111"
+            )),
+            None
+        );
+
+        for authority in TEMPO_PRECOMPILE_ADDRESSES {
+            let err = invalid_recovery_authority_message(*authority).unwrap();
+            assert!(err.contains("fixed Tempo system precompile"));
+        }
+
+        let err = invalid_recovery_authority_message(address!(
+            "20c0000000000000000000000000000000000001"
+        ))
+        .unwrap();
+        assert!(err.contains("TIP-20 token address"));
+
+        let virtual_address = Address::new_virtual(
+            MasterId::from([0x12, 0x34, 0x56, 0x78]),
+            UserTag::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]),
+        );
+        let err = invalid_recovery_authority_message(virtual_address).unwrap();
+        assert!(err.contains("TIP-1022 virtual address"));
     }
 }
