@@ -197,14 +197,15 @@ impl CorpusEntry {
         }
     }
 
-    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<()> {
+    fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<PathBuf> {
         let file_name = self.file_name(can_gzip);
         let path = dir.join(file_name);
         if self.should_gzip(can_gzip) {
-            foundry_common::fs::write_json_gzip_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_gzip_file(&path, &self.tx_seq)?;
         } else {
-            foundry_common::fs::write_json_file(&path, &self.tx_seq)
+            foundry_common::fs::write_json_file(&path, &self.tx_seq)?;
         }
+        Ok(path)
     }
 
     fn file_name(&self, can_gzip: bool) -> String {
@@ -226,6 +227,19 @@ impl CorpusEntry {
 pub(crate) struct CampaignCorpusEntry {
     tx_seq: Vec<BasicTxDetails>,
     dedupe_by_coverage: bool,
+}
+
+/// Persists one call sequence as a corpus seed in the canonical worker0 corpus directory.
+pub fn persist_corpus_seed(
+    config: &FuzzCorpusConfig,
+    tx_seq: Vec<BasicTxDetails>,
+) -> foundry_common::fs::Result<Option<PathBuf>> {
+    let Some(root) = &config.corpus_dir else {
+        return Ok(None);
+    };
+    let corpus_dir = root.join(format!("{WORKER}0")).join(CORPUS_DIR);
+    foundry_common::fs::create_dir_all(&corpus_dir)?;
+    CorpusEntry::new(tx_seq).write_to_disk_in(&corpus_dir, config.corpus_gzip).map(Some)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -5,7 +5,8 @@ use crate::{
     diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{
-        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, matches_artifact,
+        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactAction, SymbolicArtifactReplayConfig,
+        matches_artifact,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
@@ -271,6 +272,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub fuzz_corpus_random_sequence_weight: Option<u32>,
 
+    /// Directory for fuzz corpus persistence.
+    #[arg(long, env = "FOUNDRY_FUZZ_CORPUS_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub fuzz_corpus_dir: Option<PathBuf>,
+
     /// Percent chance that fuzzed payable calls carry non-zero msg.value.
     #[arg(long, env = "FOUNDRY_FUZZ_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
     pub fuzz_payable_value_weight: Option<u32>,
@@ -340,6 +345,10 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_RANDOM_SEQUENCE_WEIGHT", value_name = "PERCENT")]
     pub invariant_corpus_random_sequence_weight: Option<u32>,
 
+    /// Directory for invariant corpus persistence.
+    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub invariant_corpus_dir: Option<PathBuf>,
+
     /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
     #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
     pub invariant_payable_value_weight: Option<u32>,
@@ -389,6 +398,7 @@ pub struct TestArgs {
             "fuzz_input_file",
             "showmap_out",
             "path",
+            "export_symbolic_artifact_to_corpus",
             "test_pattern",
             "test_pattern_inverse",
             "contract_pattern",
@@ -398,6 +408,30 @@ pub struct TestArgs {
         ],
     )]
     pub replay_symbolic_artifact: Option<PathBuf>,
+
+    /// Export a durable symbolic counterexample artifact into the configured fuzz corpus.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::FilePath,
+        conflicts_with_all = [
+            "debug",
+            "flamegraph",
+            "flamechart",
+            "rerun",
+            "fuzz_input_file",
+            "showmap_out",
+            "path",
+            "replay_symbolic_artifact",
+            "test_pattern",
+            "test_pattern_inverse",
+            "contract_pattern",
+            "contract_pattern_inverse",
+            "path_pattern",
+            "no-match-path",
+        ],
+    )]
+    pub export_symbolic_artifact_to_corpus: Option<PathBuf>,
 
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
@@ -637,14 +671,18 @@ impl TestArgs {
         })
     }
 
-    fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
-        let Some(path) = &self.replay_symbolic_artifact else {
+    fn load_symbolic_artifact_action(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
+        let (path, action) = if let Some(path) = &self.replay_symbolic_artifact {
+            (path, SymbolicArtifactAction::Replay)
+        } else if let Some(path) = &self.export_symbolic_artifact_to_corpus {
+            (path, SymbolicArtifactAction::ExportCorpus)
+        } else {
             return Ok(None);
         };
 
         if !self.filter.is_empty() || self.path.is_some() {
             bail!(
-                "`--replay-symbolic-artifact` cannot be combined with test selection filters; \
+                "symbolic artifact mode cannot be combined with test selection filters; \
                  the artifact selects its original target"
             );
         }
@@ -707,7 +745,28 @@ impl TestArgs {
             );
         }
 
-        Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
+        Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone(), action }))
+    }
+
+    fn symbolic_target_not_found_message(replay: &SymbolicArtifactReplayConfig) -> String {
+        let target = format!("{}::{}", replay.artifact.test.contract, replay.artifact.test.test);
+        let Some((function_name, _)) = replay.artifact.test.test.split_once('(') else {
+            return format!("symbolic artifact target `{target}` was not found");
+        };
+
+        let is_symbolic_only = function_name.starts_with("check")
+            || function_name.starts_with("prove")
+            || function_name.starts_with("invariant")
+            || function_name.starts_with("statefulFuzz");
+        if replay.is_export_corpus() && is_symbolic_only {
+            format!(
+                "symbolic artifact target `{target}` was not found; \
+                 symbolic-only targets require --symbolic to be discovered, \
+                 and single-call artifact export still requires a fuzz test target"
+            )
+        } else {
+            format!("symbolic artifact target `{target}` was not found")
+        }
     }
 
     /// Reject flags whose stdout shape conflicts with the NDJSON stream
@@ -803,7 +862,7 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
-        let symbolic_artifact_replay = self.load_symbolic_artifact_replay()?;
+        let symbolic_artifact_replay = self.load_symbolic_artifact_action()?;
 
         // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
         // identifiers it constructs are project-relative. Match that here for the filter check
@@ -872,7 +931,7 @@ impl TestArgs {
         // Set up the project.
         let project = config.project()?;
 
-        let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
+        let replay_symbolic_artifact = self.load_symbolic_artifact_action()?;
 
         let mut filter = self.filter(&config)?;
         if let Some(replay) = &replay_symbolic_artifact {
@@ -975,6 +1034,9 @@ impl TestArgs {
             }
             if self.replay_symbolic_artifact.is_some() {
                 conflicts.push("--replay-symbolic-artifact");
+            }
+            if self.export_symbolic_artifact_to_corpus.is_some() {
+                conflicts.push("--export-symbolic-artifact-to-corpus");
             }
             if !conflicts.is_empty() {
                 bail!(
@@ -1126,15 +1188,12 @@ impl TestArgs {
         if let Some(replay) = &execution.replay_symbolic_artifact {
             let replayed = outcome.tests().count();
             if replayed == 0 {
-                bail!(
-                    "symbolic artifact target `{}::{}` was not found",
-                    replay.artifact.test.contract,
-                    replay.artifact.test.test
-                );
+                bail!("{}", Self::symbolic_target_not_found_message(replay));
             }
             if replayed > 1 {
+                let action = if replay.is_export_corpus() { "export" } else { "replay" };
                 bail!(
-                    "symbolic artifact target `{}::{}` matched {} tests; replay requires exactly one target",
+                    "symbolic artifact target `{}::{}` matched {} tests; {action} requires exactly one target",
                     replay.artifact.test.contract,
                     replay.artifact.test.test,
                     replayed
@@ -2231,6 +2290,12 @@ impl Provider for TestArgs {
                 fuzz_corpus_random_sequence_weight.into(),
             );
         }
+        if let Some(fuzz_corpus_dir) = self.fuzz_corpus_dir.clone() {
+            fuzz_dict.insert(
+                "corpus_dir".to_string(),
+                fuzz_corpus_dir.to_string_lossy().to_string().into(),
+            );
+        }
         if let Some(fuzz_payable_value_weight) = self.fuzz_payable_value_weight {
             fuzz_dict.insert("payable_value_weight".to_string(), fuzz_payable_value_weight.into());
         }
@@ -2305,6 +2370,12 @@ impl Provider for TestArgs {
             );
             invariant_dict
                 .insert("corpus_random_sequence_weight_configured".to_string(), true.into());
+        }
+        if let Some(invariant_corpus_dir) = self.invariant_corpus_dir.clone() {
+            invariant_dict.insert(
+                "corpus_dir".to_string(),
+                invariant_corpus_dir.to_string_lossy().to_string().into(),
+            );
         }
         if let Some(invariant_payable_value_weight) = self.invariant_payable_value_weight {
             invariant_dict
@@ -2895,6 +2966,38 @@ mod tests {
     }
 
     #[test]
+    fn corpus_dir_env_vars_are_parsed() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_fuzz = std::env::var_os("FOUNDRY_FUZZ_CORPUS_DIR");
+        let previous_invariant = std::env::var_os("FOUNDRY_INVARIANT_CORPUS_DIR");
+        unsafe {
+            std::env::set_var("FOUNDRY_FUZZ_CORPUS_DIR", "env_fuzz_corpus");
+            std::env::set_var("FOUNDRY_INVARIANT_CORPUS_DIR", "env_invariant_corpus");
+        }
+
+        let args = TestArgs::try_parse_from(["foundry-cli"]);
+
+        unsafe {
+            if let Some(previous) = previous_fuzz {
+                std::env::set_var("FOUNDRY_FUZZ_CORPUS_DIR", previous);
+            } else {
+                std::env::remove_var("FOUNDRY_FUZZ_CORPUS_DIR");
+            }
+            if let Some(previous) = previous_invariant {
+                std::env::set_var("FOUNDRY_INVARIANT_CORPUS_DIR", previous);
+            } else {
+                std::env::remove_var("FOUNDRY_INVARIANT_CORPUS_DIR");
+            }
+        }
+
+        let args = args.unwrap();
+        assert_eq!(args.fuzz_corpus_dir, Some(PathBuf::from("env_fuzz_corpus")));
+        assert_eq!(args.invariant_corpus_dir, Some(PathBuf::from("env_invariant_corpus")));
+    }
+
+    #[test]
     fn fuzz_and_invariant_config_flags() {
         let args = TestArgs::parse_from([
             "foundry-cli",
@@ -2908,6 +3011,8 @@ mod tests {
             "4321",
             "--fuzz-corpus-random-sequence-weight",
             "55",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
             "--fuzz-payable-value-weight",
             "12",
             "--fuzz-mutation-weight-splice",
@@ -2932,6 +3037,8 @@ mod tests {
             "6789",
             "--invariant-corpus-random-sequence-weight",
             "25",
+            "--invariant-corpus-dir",
+            "invariant_corpus",
             "--invariant-payable-value-weight",
             "34",
             "--invariant-mutation-weight-splice",
@@ -2955,6 +3062,10 @@ mod tests {
             "4321"
         );
         assert_eq!(figment.extract_inner::<u32>("fuzz.corpus_random_sequence_weight").unwrap(), 55);
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("fuzz.corpus_dir").unwrap(),
+            PathBuf::from("fuzz_corpus")
+        );
         assert_eq!(figment.extract_inner::<u32>("fuzz.payable_value_weight").unwrap(), 12);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
@@ -2982,6 +3093,10 @@ mod tests {
             figment.extract_inner::<u32>("invariant.corpus_random_sequence_weight").unwrap(),
             25
         );
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("invariant.corpus_dir").unwrap(),
+            PathBuf::from("invariant_corpus")
+        );
         assert_eq!(figment.extract_inner::<u32>("invariant.payable_value_weight").unwrap(), 34);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
@@ -2992,6 +3107,7 @@ mod tests {
         assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_values, 1234);
         assert_eq!(config.fuzz.dictionary.max_fuzz_dictionary_literals, 4321);
         assert_eq!(config.fuzz.corpus.corpus_random_sequence_weight, 55);
+        assert_eq!(config.fuzz.corpus.corpus_dir, Some(PathBuf::from("fuzz_corpus")));
         assert_eq!(config.fuzz.corpus.payable_value_weight, 12);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
@@ -3004,6 +3120,7 @@ mod tests {
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_values, usize::MAX);
         assert_eq!(config.invariant.dictionary.max_fuzz_dictionary_literals, 6789);
         assert_eq!(config.invariant.corpus.corpus_random_sequence_weight, 25);
+        assert_eq!(config.invariant.corpus.corpus_dir, Some(PathBuf::from("invariant_corpus")));
         assert!(config.invariant.corpus_random_sequence_weight_configured);
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
