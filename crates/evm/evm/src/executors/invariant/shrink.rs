@@ -248,22 +248,9 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     let calldata: Bytes = target_invariant.selector().to_vec().into();
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
-    let zero_call_result = check_sequence(
-        executor.clone(),
-        calls,
-        vec![],
-        target_address,
-        calldata.clone(),
-        CheckSequenceOptions {
-            accumulate_warp_roll: config.has_delay(),
-            fail_on_revert: config.fail_on_revert,
-            expect_assertion_failure,
-            call_after_invariant: invariant_contract.call_after_invariant,
-            rd,
-        },
-    )?;
-    if !zero_call_result.0 {
-        return Ok(ShrunkSequence { calls: vec![], result: Some(zero_call_result) });
+    let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
+    if !success {
+        return Ok(ShrunkSequence { calls: vec![], result: None });
     }
 
     let accumulate_warp_roll = config.has_delay();
