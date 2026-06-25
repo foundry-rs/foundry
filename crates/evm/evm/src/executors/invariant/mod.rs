@@ -2545,7 +2545,7 @@ mod tests {
 
         assert!(!invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
 
-        config.timeout = Some(1_801);
+        config.timeout = Some(config.corpus_sync.plateau_seconds + 1);
         assert!(invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
     }
 
