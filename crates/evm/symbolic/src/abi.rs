@@ -2,12 +2,22 @@ use super::{runtime::*, *};
 
 #[derive(Clone, Debug)]
 pub(super) struct SymbolicCalldata {
-    pub(super) bytes: Vec<SymWord>,
-    pub(super) inputs: Vec<SymbolicInput>,
-    pub(super) constraints: Vec<BoolExpr>,
+    bytes: Vec<SymWord>,
+    inputs: Vec<SymbolicInput>,
+    constraints: Vec<BoolExpr>,
 }
 
 impl SymbolicCalldata {
+    /// Constructs a raw symbolic calldata fixture.
+    #[cfg(test)]
+    pub(super) const fn from_raw(
+        bytes: Vec<SymWord>,
+        inputs: Vec<SymbolicInput>,
+        constraints: Vec<BoolExpr>,
+    ) -> Self {
+        Self { bytes, inputs, constraints }
+    }
+
     /// Constructs a new instance.
     #[cfg(test)]
     pub(super) fn new(function: &Function, config: &SymbolicConfig) -> Result<Self, SymbolicError> {
@@ -93,14 +103,14 @@ impl SymbolicCalldata {
             .collect()
     }
 
-    #[cfg(test)]
     /// Implements the `load` symbolic ABI helper.
+    #[cfg(test)]
     pub(super) fn load(&self, offset: usize) -> Result<SymWord, SymbolicError> {
         Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
-    #[cfg(test)]
     /// Implements the `byte` symbolic ABI helper.
+    #[cfg(test)]
     pub(super) fn byte(&self, offset: usize) -> SymWord {
         self.bytes.get(offset).cloned().unwrap_or_else(SymWord::zero)
     }
@@ -108,6 +118,28 @@ impl SymbolicCalldata {
     /// Implements the `call_data` symbolic ABI helper.
     pub(super) fn call_data(&self) -> SymCalldata {
         SymCalldata::new(self.bytes.clone())
+    }
+
+    /// Returns symbolic calldata constraints.
+    pub(super) fn constraints(&self) -> &[BoolExpr] {
+        &self.constraints
+    }
+
+    /// Consumes this symbolic calldata into its constraints.
+    pub(super) fn into_constraints(self) -> Vec<BoolExpr> {
+        self.constraints
+    }
+
+    /// Returns the encoded symbolic calldata length.
+    #[cfg(test)]
+    pub(super) const fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Returns symbolic ABI inputs.
+    #[cfg(test)]
+    pub(super) fn inputs(&self) -> &[SymbolicInput] {
+        &self.inputs
     }
 
     /// Returns the `model_to_args` symbolic ABI helper result.
@@ -121,10 +153,16 @@ impl SymbolicCalldata {
 
 #[derive(Clone, Debug)]
 pub(super) struct SymbolicInput {
-    pub(super) value: SymbolicAbiValue,
+    value: SymbolicAbiValue,
 }
 
 impl SymbolicInput {
+    /// Returns this symbolic input value.
+    #[cfg(test)]
+    pub(super) const fn value(&self) -> &SymbolicAbiValue {
+        &self.value
+    }
+
     /// Returns the `variants` symbolic ABI helper result.
     pub(super) fn variants<'a>(
         builder: SymbolicAbiBuilder<'a>,
@@ -146,9 +184,9 @@ impl SymbolicInput {
 
 #[derive(Clone)]
 pub(super) struct SymbolicAbiBuilder<'a> {
-    pub(super) config: &'a SymbolicConfig,
-    pub(super) constraints: Vec<BoolExpr>,
-    pub(super) positional_dynamic_index: usize,
+    config: &'a SymbolicConfig,
+    constraints: Vec<BoolExpr>,
+    positional_dynamic_index: usize,
 }
 
 impl<'a> SymbolicAbiBuilder<'a> {

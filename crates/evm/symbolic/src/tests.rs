@@ -6,11 +6,7 @@ fn empty_state() -> PathState {
         Address::ZERO,
         Address::ZERO,
         U256::ZERO,
-        SymbolicCalldata {
-            bytes: vec![SymWord::zero(); 4],
-            inputs: Vec::new(),
-            constraints: Vec::new(),
-        },
+        SymbolicCalldata::from_raw(vec![SymWord::zero(); 4], Vec::new(), Vec::new()),
         false,
     )
 }
@@ -394,7 +390,7 @@ fn dynamic_calldata_encodes_bounded_bytes() {
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
     let calldata = SymbolicCalldata::new(&function, &config).unwrap();
 
-    assert_eq!(calldata.bytes.len(), 100);
+    assert_eq!(calldata.len(), 100);
     assert_eq!(calldata.load(4).unwrap(), SymWord::Concrete(U256::from(32)));
     assert_eq!(calldata.load(36).unwrap(), SymWord::Concrete(U256::from(3)));
     assert_eq!(calldata.byte(71), SymWord::zero());
@@ -1869,7 +1865,7 @@ fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
     assert_eq!(variants.len(), 2);
     let element_counts = variants
         .iter()
-        .map(|calldata| match &calldata.inputs[0].value {
+        .map(|calldata| match calldata.inputs()[0].value() {
             SymbolicAbiValue::Array { elements } => elements.len(),
             value => panic!("expected array input, got {value:?}"),
         })

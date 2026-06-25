@@ -14,14 +14,16 @@ impl SymbolicExecutor {
         completed_paths: &mut usize,
     ) -> Result<Vec<InvariantCheckOutcome>, SymbolicError> {
         let calldata = SymbolicCalldata::selector_only(invariant)?;
+        let call_data = calldata.call_data();
+        let constraints = calldata.into_constraints();
         let outcomes = self.execute_sequence_call(
             executor,
             state,
             invariant_address,
             sender,
             invariant,
-            calldata.call_data(),
-            calldata.constraints,
+            call_data,
+            constraints,
             completed_paths,
         )?;
 
@@ -51,7 +53,7 @@ impl SymbolicExecutor {
                 sender,
                 after_invariant,
                 after_calldata.call_data(),
-                after_calldata.constraints.clone(),
+                after_calldata.constraints().to_vec(),
                 completed_paths,
             )? {
                 checked.push(InvariantCheckOutcome {

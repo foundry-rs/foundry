@@ -39,7 +39,7 @@ impl PathState {
         calldata: SymbolicCalldata,
         ffi_enabled: bool,
     ) -> Self {
-        let constraints = calldata.constraints.clone();
+        let constraints = calldata.constraints().to_vec();
         let call_data = calldata.call_data();
         Self {
             depth: 0,

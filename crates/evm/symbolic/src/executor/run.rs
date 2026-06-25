@@ -387,7 +387,7 @@ impl SymbolicExecutor {
                                 sender,
                                 &target.function,
                                 step.calldata.call_data(),
-                                step.calldata.constraints.clone(),
+                                step.calldata.constraints().to_vec(),
                                 &mut completed_paths,
                             )?;
 
