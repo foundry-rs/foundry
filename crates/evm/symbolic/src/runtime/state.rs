@@ -182,7 +182,7 @@ impl PathState {
         collect_eval_vars(expr, &mut vars);
         let mut model = BTreeMap::new();
         for var in vars {
-            let var_expr = Expr::Var(var.clone());
+            let var_expr = Expr::var(var.clone());
             let value = self.constraints.iter().find_map(|constraint| {
                 bool_forces_expr_const_with_context(constraint, &var_expr, &self.constraints)
             })?;
@@ -495,7 +495,7 @@ impl PathState {
     pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymWord {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymWord::Expr(Expr::Var(format!("{prefix}_{id}")))
+        SymWord::Expr(Expr::var(format!("{prefix}_{id}")))
     }
 
     /// Implements the `fresh_gasleft` symbolic state helper.
@@ -1184,7 +1184,7 @@ impl SymbolicWorld {
         concrete_key: Option<U256>,
     ) -> Result<SymWord, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
-            return Ok(SymWord::Expr(Expr::Var(stable_symbol(
+            return Ok(SymWord::Expr(Expr::var(stable_symbol(
                 "storage",
                 format!("{address:?}:{key:?}"),
             ))));
@@ -1203,7 +1203,7 @@ impl SymbolicWorld {
                 .map(SymWord::Concrete)
                 .map_err(|err| SymbolicError::Backend(err.to_string())),
             SymWord::Expr(_) if self.zero_init_symbolic_storage => Ok(SymWord::zero()),
-            SymWord::Expr(_) => Ok(SymWord::Expr(Expr::Var(stable_symbol(
+            SymWord::Expr(_) => Ok(SymWord::Expr(Expr::var(stable_symbol(
                 "storage",
                 format!("{address:?}:{key:?}"),
             )))),
@@ -1653,7 +1653,7 @@ impl Default for SymbolicBlock {
 fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
     expr.visit(&mut |expr| match expr {
         Expr::Var(var) => {
-            vars.insert(var.clone());
+            vars.insert(var.to_string());
         }
         Expr::Hash(hash) => {
             vars.insert(hash.name.to_string());

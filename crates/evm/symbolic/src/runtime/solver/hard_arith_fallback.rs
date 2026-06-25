@@ -276,7 +276,7 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut BTreeSet<String
     match expr {
         Expr::Const(_) | Expr::GasLeft(_) | Expr::Hash(_) => {}
         Expr::Var(var) => {
-            vars.insert(var.clone());
+            vars.insert(var.to_string());
         }
         Expr::Keccak(hash) => {
             collect_expr_fallback_vars(&hash.len, vars);
@@ -462,7 +462,7 @@ pub(crate) fn zero_mask_equality(var: &str, masked: &Expr, zero: &Expr) -> Optio
     match masked {
         Expr::Op(ExprOp::And, left, right) => match (left.as_ref(), right.as_ref()) {
             (Expr::Var(name), Expr::Const(mask)) | (Expr::Const(mask), Expr::Var(name))
-                if name == var =>
+                if name.as_ref() == var =>
             {
                 Some(*mask)
             }

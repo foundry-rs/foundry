@@ -152,7 +152,7 @@ pub(crate) fn symbolic_create_address_word(
     creator_identity: String,
     nonce: Expr,
 ) -> SymWord {
-    let word = SymWord::Expr(Expr::Var(stable_symbol(
+    let word = SymWord::Expr(Expr::var(stable_symbol(
         "create_address",
         format!("{creator_identity}:{nonce:?}"),
     )));
@@ -171,7 +171,7 @@ pub(crate) fn symbolic_create2_address_word(
     salt: Expr,
     initcode_identity: String,
 ) -> SymWord {
-    let word = SymWord::Expr(Expr::Var(stable_symbol(
+    let word = SymWord::Expr(Expr::var(stable_symbol(
         "create2_address",
         format!("{creator_identity}:{salt:?}:{initcode_identity}"),
     )));
@@ -723,7 +723,7 @@ pub(crate) fn eval_expr(
 ) -> Result<U256, SymbolicError> {
     Ok(match expr {
         Expr::Const(value) => *value,
-        Expr::Var(var) => model.get(var).copied().unwrap_or_default(),
+        Expr::Var(var) => model.get(var.as_ref()).copied().unwrap_or_default(),
         Expr::GasLeft(_) => return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled")),
         Expr::Keccak(hash) => eval_keccak_expr(&hash.len, &hash.bytes, model)?,
         Expr::Hash(hash) => model.get(hash.name.as_ref()).copied().unwrap_or_default(),
@@ -962,7 +962,7 @@ impl SymWord {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Expr {
     Const(U256),
-    Var(String),
+    Var(Arc<str>),
     GasLeft(usize),
     Keccak(Box<KeccakExpr>),
     Hash(Box<HashExpr>),
@@ -988,6 +988,11 @@ pub(crate) struct HashExpr {
 }
 
 impl Expr {
+    /// Builds a symbolic variable expression.
+    pub(crate) fn var(name: impl Into<Arc<str>>) -> Self {
+        Self::Var(name.into())
+    }
+
     /// Builds a symbolic keccak expression.
     pub(crate) fn keccak(name: impl Into<Arc<str>>, len: Self, bytes: Vec<Self>) -> Self {
         Self::Keccak(Box::new(KeccakExpr { name: name.into(), len: Box::new(len), bytes }))
@@ -1159,7 +1164,7 @@ impl Expr {
     pub(crate) fn collect_vars(&self, vars: &mut BTreeSet<String>) {
         self.visit(&mut |expr| match expr {
             Self::Var(var) => {
-                vars.insert(var.clone());
+                vars.insert(var.to_string());
             }
             Self::Keccak(hash) => {
                 vars.insert(hash.name.to_string());
@@ -1181,7 +1186,7 @@ impl Expr {
     pub(crate) fn smt(&self) -> String {
         match self {
             Self::Const(value) => format!("(_ bv{value} 256)"),
-            Self::Var(var) => var.clone(),
+            Self::Var(var) => var.to_string(),
             Self::GasLeft(id) => format!("gasleft_{id}"),
             Self::Keccak(hash) => hash.name.to_string(),
             Self::Hash(hash) => hash.name.to_string(),
