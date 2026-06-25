@@ -119,7 +119,7 @@ impl SymbolicExecutor {
                 let value = state.stack.pop()?;
                 state.stack.push(match value {
                     SymWord::Concrete(value) => SymWord::Concrete(!value),
-                    value => SymWord::from_expr(Expr::Not(Box::new(value.into_expr()))),
+                    value => SymWord::from_expr(Expr::not(value.into_expr())),
                 })?;
                 Ok(StepOutcome::Continue)
             }

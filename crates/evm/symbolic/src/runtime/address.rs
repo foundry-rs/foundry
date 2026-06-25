@@ -112,7 +112,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
         Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => {
             Some(extracted_byte_expr(expr, index))
         }
-        Expr::Not(value) => Some(Expr::Not(Box::new(expr_byte_term(value, index)?))),
+        Expr::Not(value) => Some(Expr::not(expr_byte_term(value, index)?)),
         Expr::Ite(cond, then_expr, else_expr) => Some(Expr::ite(
             (**cond).clone(),
             expr_byte_term(then_expr, index)?,

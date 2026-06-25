@@ -1020,6 +1020,15 @@ impl Expr {
         }
     }
 
+    /// Builds a bitwise-not expression.
+    pub(crate) fn not(value: Self) -> Self {
+        match value {
+            Self::Const(value) => Self::Const(!value),
+            Self::Not(value) => *value,
+            value => Self::Not(Box::new(value)),
+        }
+    }
+
     /// Visits this expression and all child expressions.
     pub(crate) fn visit(&self, visitor: &mut impl FnMut(&Self)) {
         visitor(self);

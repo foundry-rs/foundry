@@ -171,7 +171,7 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
 
     match expr {
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => expr,
-        Expr::Not(value) => Expr::Not(Box::new(normalize_expr_for_solver(*value))),
+        Expr::Not(value) => Expr::not(normalize_expr_for_solver(*value)),
         Expr::Op(op, left, right) => {
             let left = normalize_expr_for_solver(*left);
             let right = normalize_expr_for_solver(*right);

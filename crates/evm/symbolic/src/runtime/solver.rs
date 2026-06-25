@@ -688,7 +688,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
             hash.algorithm,
             hash.bytes.into_iter().map(cache_key_expr).collect(),
         ),
-        Expr::Not(value) => Expr::Not(Box::new(cache_key_expr(*value))),
+        Expr::Not(value) => Expr::not(cache_key_expr(*value)),
         Expr::Op(op, left, right) => {
             let left = cache_key_expr(*left);
             let right = cache_key_expr(*right);
