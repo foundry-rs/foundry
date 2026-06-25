@@ -298,6 +298,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 ..Default::default()
             });
         }
+        if let Some(reason) = SkipReason::decode(&call.result) {
+            return Ok(FuzzTestResult { skipped: true, reason: reason.0, ..Default::default() });
+        }
 
         let (breakpoints, deprecated_cheatcodes) =
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {

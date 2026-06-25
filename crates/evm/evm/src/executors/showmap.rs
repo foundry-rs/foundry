@@ -27,6 +27,7 @@ use alloy_primitives::{Address, B256, Selector, hex};
 use eyre::Result;
 use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
+    decode::SkipReason,
     evm::FoundryEvmNetwork,
 };
 use foundry_evm_coverage::HitMaps;
@@ -224,9 +225,11 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             let mut call_result = execute_tx(&mut executor, tx)?;
             // Snapshot the edge fingerprint before any coverage merge zeroes the buffer.
             let fingerprint = snapshot_edge_fingerprint(&call_result);
-            // `vm.assume` rejects are discarded by the campaign: the call is not
+            // `vm.assume` rejects and `vm.skip` are discarded by the campaign: the call is not
             // committed, checked, or counted toward coverage.
-            if call_result.result.as_ref() == MAGIC_ASSUME {
+            if call_result.result.as_ref() == MAGIC_ASSUME
+                || SkipReason::decode(&call_result.result).is_some()
+            {
                 continue;
             }
             // Coverage-collection asymmetry across calls within a stateful sequence:

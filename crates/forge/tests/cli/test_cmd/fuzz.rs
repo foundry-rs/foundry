@@ -306,6 +306,47 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(forge_fuzz_replay_treats_persisted_skip_as_skip, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplaySkip.t.sol",
+        r#"
+contract ForgeFuzzReplaySkipTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplaySkipTest", "-q"]).assert_failure();
+
+    prj.add_test(
+        "ForgeFuzzReplaySkip.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplaySkipTest is Test {
+    function testFuzz_reverts(uint256 value) public {
+        value;
+        vm.skip(true, "disabled");
+    }
+}
+   "#,
+    );
+
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplaySkipTest"])
+        .assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: disabled] testFuzz_reverts(uint256)"), "{stdout}");
+    assert!(!stdout.contains("[FAIL"), "{stdout}");
+});
+
 forgetest_init!(forge_fuzz_junit_output_stays_xml_only_on_failure, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.runs = 1;
@@ -807,6 +848,48 @@ contract ForgeFuzzZeroReplayTest is Test {
     let stdout = String::from_utf8(all_assume_showmap.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("(replay: 0 entries, 0 files, 1 skipped)"), "{stdout}");
     assert!(!has_regular_file(&prj.root().join("assume-showmap")));
+
+    prj.add_test(
+        "ForgeFuzzSkipReplay.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzSkipReplayTest is Test {
+    function testFuzz_skipEven(uint256 value) public {
+        if (value % 2 == 0) {
+            vm.skip(true, "even");
+        }
+    }
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["build", "-q"]).assert_success();
+
+    let abi =
+        artifact_abi(prj.root(), "out/ForgeFuzzSkipReplay.t.sol/ForgeFuzzSkipReplayTest.json");
+    let skip_corpus = prj.root().join("skip-corpus");
+    std::fs::create_dir_all(&skip_corpus).unwrap();
+    write_corpus_entry(
+        &skip_corpus,
+        "00000000-0000-0000-0000-000000000004-4.json",
+        &calldata_for(&abi, "testFuzz_skipEven", 8),
+    );
+    let all_skip_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "ForgeFuzzSkipReplayTest",
+            "--mt",
+            "testFuzz_skipEven",
+            "--corpus-dir",
+            "skip-corpus",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(all_skip_replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[SKIP: replayed 0 corpus entries from skip-corpus]"), "{stdout}");
+    assert!(!stdout.contains("corpus replay failed"), "{stdout}");
 
     let malformed_corpus = prj.root().join("malformed-corpus");
     std::fs::create_dir_all(&malformed_corpus).unwrap();
