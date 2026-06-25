@@ -186,7 +186,7 @@ impl PathState {
             let value = self.constraints.iter().find_map(|constraint| {
                 bool_forces_expr_const_with_context(constraint, &var_expr, &self.constraints)
             })?;
-            model.insert(var, value);
+            model.insert(var.to_string(), value);
         }
 
         eval_expr(expr, &model).ok()
@@ -1652,13 +1652,13 @@ impl Default for SymbolicBlock {
 }
 
 /// Collects the symbolic variables needed to concretely evaluate an expression.
-fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
+fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
     expr.visit(&mut |expr| match expr {
         Expr::Var(var) => {
-            vars.insert(var.to_string());
+            vars.insert(var.clone());
         }
         Expr::Hash(hash) => {
-            vars.insert(hash.name.to_string());
+            vars.insert(hash.name.clone());
         }
         Expr::Const(_)
         | Expr::GasLeft(_)

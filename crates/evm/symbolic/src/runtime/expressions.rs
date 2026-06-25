@@ -1,5 +1,8 @@
 use super::*;
 
+/// Set of symbolic variable names collected from expression trees.
+pub(crate) type SymbolicVars = BTreeSet<Arc<str>>;
+
 /// Computes the `keccak_word` symbolic expression helper result.
 pub(crate) fn keccak_word(bytes: Vec<SymWord>) -> SymWord {
     keccak_word_with_len(bytes.clone(), SymWord::Concrete(U256::from(bytes.len())))
@@ -1188,16 +1191,16 @@ impl Expr {
     }
 
     /// Implements the `collect_vars` symbolic expression helper.
-    pub(crate) fn collect_vars(&self, vars: &mut BTreeSet<String>) {
+    pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         self.visit(&mut |expr| match expr {
             Self::Var(var) => {
-                vars.insert(var.to_string());
+                vars.insert(var.clone());
             }
             Self::Keccak(hash) => {
-                vars.insert(hash.name.to_string());
+                vars.insert(hash.name.clone());
             }
             Self::Hash(hash) => {
-                vars.insert(hash.name.to_string());
+                vars.insert(hash.name.clone());
             }
             Self::Const(_)
             | Self::GasLeft(_)
@@ -1467,7 +1470,7 @@ impl BoolExpr {
     }
 
     /// Implements the `collect_vars` symbolic expression helper.
-    pub(crate) fn collect_vars(&self, vars: &mut BTreeSet<String>) {
+    pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         self.visit(&mut |expr| match expr {
             Self::Eq(left, right) | Self::Cmp(_, left, right) => {
                 left.collect_vars(vars);

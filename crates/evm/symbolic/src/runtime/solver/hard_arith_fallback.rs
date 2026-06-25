@@ -126,7 +126,7 @@ pub(crate) fn hard_arith_fallback_model(
 }
 
 /// Selects direct symbolic inputs for bounded fallback search.
-pub(crate) fn fallback_search_vars(vars: BTreeSet<String>) -> Vec<String> {
+pub(crate) fn fallback_search_vars(vars: SymbolicVars) -> Vec<Arc<str>> {
     if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
         return vars.into_iter().collect();
     }
@@ -189,9 +189,9 @@ pub(crate) fn fallback_candidates_for_var(
 /// Holds immutable state for recursive hard-arithmetic fallback search.
 struct FallbackSearch<'a> {
     constraints: &'a [BoolExpr],
-    constraint_vars: &'a [BTreeSet<String>],
-    searched_vars: &'a BTreeSet<String>,
-    vars: &'a [String],
+    constraint_vars: &'a [SymbolicVars],
+    searched_vars: &'a SymbolicVars,
+    vars: &'a [Arc<str>],
     candidates: &'a [Vec<U256>],
 }
 
@@ -213,7 +213,7 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
-            model.insert(self.vars[index].clone(), *candidate);
+            model.insert(self.vars[index].to_string(), *candidate);
             if fallback_partial_model_satisfies_known_constraints(
                 self.constraints,
                 self.constraint_vars,
@@ -227,7 +227,7 @@ impl FallbackSearch<'_> {
                 return None;
             }
         }
-        model.remove(&self.vars[index]);
+        model.remove(self.vars[index].as_ref());
         None
     }
 }
@@ -243,19 +243,19 @@ pub(crate) fn fallback_model_satisfies_all_constraints(
 /// Checks constraints that depend only on already-assigned fallback variables.
 pub(crate) fn fallback_partial_model_satisfies_known_constraints(
     constraints: &[BoolExpr],
-    constraint_vars: &[BTreeSet<String>],
-    searched_vars: &BTreeSet<String>,
+    constraint_vars: &[SymbolicVars],
+    searched_vars: &SymbolicVars,
     model: &BTreeMap<String, U256>,
 ) -> bool {
     constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
         !vars.is_subset(searched_vars)
-            || !vars.iter().all(|var| model.contains_key(var))
+            || !vars.iter().all(|var| model.contains_key(var.as_ref()))
             || eval_bool_expr(constraint, model).unwrap_or(false)
     })
 }
 
 /// Collects variables that local hard-arithmetic search can assign directly.
-pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut BTreeSet<String>) {
+pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut SymbolicVars) {
     match expr {
         BoolExpr::Const(_) => {}
         BoolExpr::Not(value) => collect_bool_fallback_vars(value, vars),
@@ -272,11 +272,11 @@ pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut BTreeSet<St
 }
 
 /// Collects assignable variables from an expression, recursing into recomputable hashes.
-pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
+pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
     match expr {
         Expr::Const(_) | Expr::GasLeft(_) | Expr::Hash(_) => {}
         Expr::Var(var) => {
-            vars.insert(var.to_string());
+            vars.insert(var.clone());
         }
         Expr::Keccak(hash) => {
             collect_expr_fallback_vars(&hash.len, vars);
@@ -348,7 +348,7 @@ pub(crate) fn fallback_single_var_model(
     }
 
     for candidate in candidates {
-        let model = BTreeMap::from([(var.clone(), candidate)]);
+        let model = BTreeMap::from([(var.to_string(), candidate)]);
         if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false))
         {
             return Some(model);
