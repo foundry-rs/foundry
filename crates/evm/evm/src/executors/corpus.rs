@@ -260,18 +260,11 @@ struct PendingCorpusEntry {
     dedupe_by_coverage: bool,
 }
 
-#[derive(Clone)]
-struct ShadowCorpusCandidate {
-    entry: CorpusEntry,
-    remaining_mutations: usize,
-}
-
 /// Summary of campaign-local corpus imports accepted by one worker.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CorpusImportStats {
     pub(crate) accepted: usize,
     pub(crate) rejected: usize,
-    pub(crate) shadowed: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -590,8 +583,6 @@ pub struct WorkerCorpus {
     config: Arc<FuzzCorpusConfig>,
     /// New entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
     new_entries: Vec<PendingCorpusEntry>,
-    /// Same-coverage imported candidates kept temporarily to escape local coverage shadowing.
-    shadow_candidates: Vec<ShadowCorpusCandidate>,
     /// Last sync timestamp in seconds.
     last_sync_timestamp: u64,
     /// Worker Dir
@@ -843,7 +834,6 @@ impl WorkerCorpus {
             current_mutated_index: None,
             config: config.into(),
             new_entries: Default::default(),
-            shadow_candidates: Default::default(),
             last_sync_timestamp: 0,
             worker_dir,
             last_sync_metrics: Default::default(),
@@ -1001,45 +991,6 @@ impl WorkerCorpus {
         self.in_memory_corpus.push(corpus);
     }
 
-    fn take_shadow_candidate(&mut self, rng: &mut impl Rng) -> Option<CorpusEntry> {
-        if self.shadow_candidates.is_empty() {
-            return None;
-        }
-
-        let index = rng.random_range(0..self.shadow_candidates.len());
-        let candidate = &mut self.shadow_candidates[index];
-        candidate.remaining_mutations = candidate.remaining_mutations.saturating_sub(1);
-        let entry = candidate.entry.clone();
-        if candidate.remaining_mutations == 0 {
-            self.shadow_candidates.swap_remove(index);
-        }
-        Some(entry)
-    }
-
-    fn import_shadow_entries(
-        &mut self,
-        entries: impl IntoIterator<Item = SharedCorpusEntry>,
-        limit: usize,
-        mutation_budget: usize,
-    ) -> CorpusImportStats {
-        let remaining_capacity = limit.saturating_sub(self.shadow_candidates.len());
-        let mut stats = CorpusImportStats::default();
-        for entry in entries {
-            if mutation_budget == 0 || stats.shadowed >= remaining_capacity {
-                stats.rejected += 1;
-                continue;
-            }
-
-            self.shadow_candidates.push(ShadowCorpusCandidate {
-                entry: entry.to_corpus_entry(Uuid::new_v4()),
-                remaining_mutations: mutation_budget,
-            });
-            stats.accepted += 1;
-            stats.shadowed += 1;
-        }
-        stats
-    }
-
     pub(crate) fn shuffle_corpus(&mut self, rng: &mut impl Rng) {
         if self.in_memory_corpus.len() < 2 {
             return;
@@ -1131,15 +1082,6 @@ impl WorkerCorpus {
             new_seq.push(self.new_tx(test_runner)?);
             return Ok(new_seq);
         };
-
-        if let Some(corpus) = self.take_shadow_candidate(test_runner.rng()) {
-            return self.mutate_shadow_sequence(
-                corpus,
-                test_runner,
-                fuzz_state,
-                targeted_contracts,
-            );
-        }
 
         if !self.in_memory_corpus.is_empty() {
             self.evict_oldest_corpus()?;
@@ -1289,44 +1231,6 @@ impl WorkerCorpus {
             new_seq.push(self.new_tx(test_runner)?);
         }
         trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
-
-        Ok(new_seq)
-    }
-
-    fn mutate_shadow_sequence(
-        &mut self,
-        corpus: CorpusEntry,
-        test_runner: &mut TestRunner,
-        fuzz_state: &InvariantFuzzState,
-        targeted_contracts: &FuzzRunIdentifiedContracts,
-    ) -> Result<Vec<BasicTxDetails>> {
-        let mut new_seq = corpus.tx_seq;
-        if new_seq.is_empty() {
-            return Ok(vec![self.new_tx(test_runner)?]);
-        }
-
-        let mut mutated = Self::try_cmp_mutate_sequence(
-            &mut new_seq,
-            &corpus.cmp_seq,
-            targeted_contracts,
-            test_runner,
-        )?;
-
-        if !mutated {
-            let idx = test_runner.rng().random_range(0..new_seq.len());
-            mutated = self.try_abi_mutate_at(
-                &mut new_seq,
-                idx,
-                targeted_contracts,
-                test_runner,
-                fuzz_state,
-            )?;
-        }
-
-        if !mutated {
-            let idx = test_runner.rng().random_range(0..new_seq.len());
-            new_seq[idx] = self.new_tx(test_runner)?;
-        }
 
         Ok(new_seq)
     }
@@ -1911,11 +1815,8 @@ impl WorkerCorpus {
         entries: impl IntoIterator<Item = SharedCorpusEntry>,
         executor: &Executor<FEN>,
         target: ReplayTarget<'_>,
-        shadow_limit: usize,
-        shadow_mutation_budget: usize,
     ) -> Result<CorpusImportStats> {
         let mut stats = CorpusImportStats::default();
-        let mut shadow_candidates = Vec::new();
         for entry in entries {
             if !entry.dedupe_by_coverage {
                 self.metrics.corpus_count += 1;
@@ -1936,14 +1837,9 @@ impl WorkerCorpus {
                 self.in_memory_corpus.push(corpus_entry);
                 stats.accepted += 1;
             } else {
-                shadow_candidates.push(entry);
+                stats.rejected += 1;
             }
         }
-        let shadow_stats =
-            self.import_shadow_entries(shadow_candidates, shadow_limit, shadow_mutation_budget);
-        stats.accepted += shadow_stats.accepted;
-        stats.shadowed += shadow_stats.shadowed;
-        stats.rejected += shadow_stats.rejected;
         Ok(stats)
     }
 
@@ -2567,48 +2463,6 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert!(entries[0].dedupe_by_coverage);
         assert!(!entries[1].dedupe_by_coverage);
-    }
-
-    #[test]
-    fn shadow_imports_are_temporary_mutation_candidates() {
-        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
-        let shadow_entry = SharedCorpusEntry {
-            tx_seq: vec![basic_tx()].into(),
-            cmp_seq: Vec::<Vec<CmpOperands>>::new().into(),
-            dedupe_by_coverage: true,
-        };
-
-        let stats = manager.import_shadow_entries([shadow_entry], 1, 1);
-
-        assert_eq!(stats.accepted, 1);
-        assert_eq!(manager.in_memory_corpus.len(), 0);
-        assert_eq!(manager.metrics.corpus_count, 0);
-        assert!(manager.export_for_exchange().is_empty());
-
-        let mut runner = TestRunner::default();
-        let seq = manager.take_shadow_candidate(runner.rng()).unwrap();
-
-        assert_eq!(seq.tx_seq.len(), 1);
-        assert!(manager.shadow_candidates.is_empty());
-    }
-
-    #[test]
-    fn shadow_imports_are_bounded_by_count_and_budget() {
-        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
-        let entries = (0..3).map(|_| SharedCorpusEntry {
-            tx_seq: vec![basic_tx()].into(),
-            cmp_seq: Vec::<Vec<CmpOperands>>::new().into(),
-            dedupe_by_coverage: true,
-        });
-
-        let stats = manager.import_shadow_entries(entries, 2, 3);
-
-        assert_eq!(stats.accepted, 2);
-        assert_eq!(stats.rejected, 1);
-        assert_eq!(manager.shadow_candidates.len(), 2);
-        assert!(
-            manager.shadow_candidates.iter().all(|candidate| candidate.remaining_mutations == 3)
-        );
     }
 
     #[test]

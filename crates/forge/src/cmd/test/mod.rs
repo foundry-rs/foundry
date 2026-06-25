@@ -250,14 +250,6 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_MAX_IMPORTS", value_name = "ENTRIES")]
     pub invariant_corpus_sync_max_imports: Option<usize>,
 
-    /// Maximum same-coverage corpus entries kept temporarily during one plateau sync.
-    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_SHADOW_IMPORTS", value_name = "ENTRIES")]
-    pub invariant_corpus_sync_shadow_imports: Option<usize>,
-
-    /// Mutations allowed for each temporary same-coverage corpus entry.
-    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_SHADOW_MUTATIONS", value_name = "MUTATIONS")]
-    pub invariant_corpus_sync_shadow_mutations: Option<usize>,
-
     /// Shuffle worker-local invariant corpus after a plateau sync.
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_SHUFFLE")]
     pub invariant_corpus_sync_shuffle: bool,
@@ -2366,14 +2358,6 @@ impl Provider for TestArgs {
             invariant_corpus_sync_dict
                 .insert("max_imports_per_sync".to_string(), max_imports.into());
         }
-        if let Some(shadow_imports) = self.invariant_corpus_sync_shadow_imports {
-            invariant_corpus_sync_dict
-                .insert("shadow_imports_per_sync".to_string(), shadow_imports.into());
-        }
-        if let Some(shadow_mutations) = self.invariant_corpus_sync_shadow_mutations {
-            invariant_corpus_sync_dict
-                .insert("shadow_mutations".to_string(), shadow_mutations.into());
-        }
         if self.invariant_corpus_sync_shuffle {
             invariant_corpus_sync_dict.insert("shuffle_on_sync".to_string(), true.into());
         }
@@ -2930,17 +2914,11 @@ mod tests {
             "60",
             "--invariant-corpus-sync-max-imports",
             "7",
-            "--invariant-corpus-sync-shadow-imports",
-            "3",
-            "--invariant-corpus-sync-shadow-mutations",
-            "2",
             "--invariant-corpus-sync-shuffle",
         ]);
         assert_eq!(args.invariant_corpus_sync, Some(InvariantCorpusSyncMode::Plateau));
         assert_eq!(args.invariant_corpus_sync_seconds, Some(60));
         assert_eq!(args.invariant_corpus_sync_max_imports, Some(7));
-        assert_eq!(args.invariant_corpus_sync_shadow_imports, Some(3));
-        assert_eq!(args.invariant_corpus_sync_shadow_mutations, Some(2));
         assert!(args.invariant_corpus_sync_shuffle);
 
         let figment = figment::Figment::from(&args);
@@ -2955,16 +2933,6 @@ mod tests {
         assert_eq!(
             figment.extract_inner::<usize>("invariant.corpus_sync.max_imports_per_sync").unwrap(),
             7
-        );
-        assert_eq!(
-            figment
-                .extract_inner::<usize>("invariant.corpus_sync.shadow_imports_per_sync")
-                .unwrap(),
-            3
-        );
-        assert_eq!(
-            figment.extract_inner::<usize>("invariant.corpus_sync.shadow_mutations").unwrap(),
-            2
         );
         assert!(figment.extract_inner::<bool>("invariant.corpus_sync.shuffle_on_sync").unwrap());
     }

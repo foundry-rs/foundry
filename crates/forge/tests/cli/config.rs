@@ -271,8 +271,6 @@ check_interval = 1
 mode = "plateau"
 plateau_seconds = 60
 max_imports_per_sync = 64
-shadow_imports_per_sync = 8
-shadow_mutations = 2
 shuffle_on_sync = true
 
 [coverage]
@@ -1527,8 +1525,6 @@ forgetest_init!(test_default_config, |prj, cmd| {
       "mode": "plateau",
       "plateau_seconds": 60,
       "max_imports_per_sync": 64,
-      "shadow_imports_per_sync": 8,
-      "shadow_mutations": 2,
       "shuffle_on_sync": true
     }
   },

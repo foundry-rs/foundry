@@ -1489,13 +1489,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             return Ok(());
         }
 
-        let stats = corpus_manager.import_shared_entries(
-            entries,
-            executor,
-            target,
-            meta.sync_config.shadow_imports_per_sync,
-            meta.sync_config.shadow_mutations,
-        )?;
+        let stats = corpus_manager.import_shared_entries(entries, executor, target)?;
         if stats.accepted > 0 {
             sync_state.record_import_progress(now);
             if meta.sync_config.shuffle_on_sync {
@@ -1507,7 +1501,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             worker_id = meta.worker_id,
             accepted = stats.accepted,
             rejected = stats.rejected,
-            shadowed = stats.shadowed,
             newest_epoch,
             "synced invariant worker corpus"
         );
