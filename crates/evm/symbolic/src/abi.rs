@@ -403,7 +403,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
 
     /// Implements the `fresh_word` symbolic ABI helper.
     pub(super) fn fresh_word(&self, name: String) -> SymWord {
-        SymWord::Expr(Expr::var(name))
+        SymWord::expr(Expr::var(name))
     }
 
     /// Implements the `fresh_byte` symbolic ABI helper.

@@ -170,7 +170,7 @@ impl SymMemory {
                 self.load_word(offset.to::<usize>())
             }
             SymWord::Expr(offset) => {
-                Ok(word_from_bytes(self.read_bytes_offset(SymWord::Expr(offset), 32)))
+                Ok(word_from_bytes(self.read_bytes_offset(SymWord::expr(offset), 32)))
             }
         }
     }

@@ -497,7 +497,7 @@ impl PathState {
     pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymWord {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymWord::Expr(Expr::var(format!("{prefix}_{id}")))
+        SymWord::expr(Expr::var(format!("{prefix}_{id}")))
     }
 
     /// Implements the `fresh_gasleft` symbolic state helper.
@@ -1186,7 +1186,7 @@ impl SymbolicWorld {
         concrete_key: Option<U256>,
     ) -> Result<SymWord, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
-            return Ok(SymWord::Expr(Expr::var(stable_symbol(
+            return Ok(SymWord::expr(Expr::var(stable_symbol(
                 "storage",
                 format!("{address:?}:{key:?}"),
             ))));
@@ -1205,7 +1205,7 @@ impl SymbolicWorld {
                 .map(SymWord::Concrete)
                 .map_err(|err| SymbolicError::Backend(err.to_string())),
             SymWord::Expr(_) if self.zero_init_symbolic_storage => Ok(SymWord::zero()),
-            SymWord::Expr(_) => Ok(SymWord::Expr(Expr::var(stable_symbol(
+            SymWord::Expr(_) => Ok(SymWord::expr(Expr::var(stable_symbol(
                 "storage",
                 format!("{address:?}:{key:?}"),
             )))),
@@ -1253,7 +1253,7 @@ impl SymbolicWorld {
         }
 
         let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::Expr(expr.clone()));
+        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
         let mut result = self.balance_word_for_address(executor, representative).into_expr();
         for (address, balance) in self.balances.iter().rev() {
             if self.destroyed_accounts.contains(address) {
@@ -1509,7 +1509,7 @@ impl SymbolicWorld {
         }
 
         let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::Expr(expr.clone()));
+        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
         let mut result = Expr::Const(U256::from(self.extcode(executor, representative)?.len()));
         for (address, code) in self.code_cache.iter().rev() {
             if self.destroyed_accounts.contains(address) {
@@ -1536,7 +1536,7 @@ impl SymbolicWorld {
         }
 
         let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::Expr(expr.clone()));
+        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
         let mut result = self.extcode_hash_for_address(executor, representative)?.into_expr();
         let cached_codes: Vec<_> =
             self.code_cache.iter().map(|(address, code)| (*address, code.clone())).collect();
@@ -1569,7 +1569,7 @@ impl SymbolicWorld {
         }
 
         let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::Expr(expr.clone()));
+        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
         let mut result =
             self.extcode(executor, representative)?.read_bytes_offset(offset.clone(), size);
         let cached_codes: Vec<_> =

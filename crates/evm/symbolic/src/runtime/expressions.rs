@@ -152,7 +152,7 @@ pub(crate) fn symbolic_create_address_word(
     creator_identity: String,
     nonce: Expr,
 ) -> SymWord {
-    let word = SymWord::Expr(Expr::var(stable_symbol(
+    let word = SymWord::expr(Expr::var(stable_symbol(
         "create_address",
         format!("{creator_identity}:{nonce:?}"),
     )));
@@ -171,7 +171,7 @@ pub(crate) fn symbolic_create2_address_word(
     salt: Expr,
     initcode_identity: String,
 ) -> SymWord {
-    let word = SymWord::Expr(Expr::var(stable_symbol(
+    let word = SymWord::expr(Expr::var(stable_symbol(
         "create2_address",
         format!("{creator_identity}:{salt:?}:{initcode_identity}"),
     )));
@@ -871,6 +871,11 @@ impl SymWord {
             Expr::Const(value) => Self::Concrete(value),
             expr => Self::Expr(expr),
         }
+    }
+
+    /// Builds a symbolic word from an expression.
+    pub(crate) fn expr(expr: Expr) -> Self {
+        Self::from_expr(expr)
     }
 
     /// Returns whether this word depends on the opaque `GAS` / `gasleft()` value.

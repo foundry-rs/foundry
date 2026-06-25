@@ -1485,7 +1485,7 @@ impl SymbolicExecutor {
                     out_offset.clone(),
                     &out_size,
                 )? {
-                    let symbolic_target = SymWord::Expr(target);
+                    let symbolic_target = SymWord::expr(target);
                     let to = branch.world.symbolic_address_slot(symbolic_target);
                     branch.world.transfer(executor, branch.address, to, value.clone());
                     branch.return_data = SymReturnData::default();
