@@ -1554,7 +1554,13 @@ impl BoolExpr {
             Self::Const(value) => value.to_string(),
             Self::Not(value) => format!("(not {})", value.smt()),
             Self::And(values) => {
-                format!("(and {})", values.iter().map(Self::smt).collect::<Vec<_>>().join(" "))
+                let mut smt = String::from("(and");
+                for value in values.iter() {
+                    smt.push(' ');
+                    smt.push_str(&value.smt());
+                }
+                smt.push(')');
+                smt
             }
             Self::Eq(left, right) => format!("(= {} {})", left.smt(), right.smt()),
             Self::Cmp(op, left, right) => format!("({} {} {})", op.smt(), left.smt(), right.smt()),
