@@ -36,7 +36,6 @@ Encountered 1 failing test in test/MedusaAssertionParity.t.sol:MedusaAssertionPa
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });

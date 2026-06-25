@@ -71,13 +71,11 @@
 </tspan>
     <tspan x="10px" y="460px"><tspan>Tip: Run </tspan><tspan class="fg-cyan">`forge test --rerun`</tspan><tspan> to retry only the 1 failed test</tspan>
 </tspan>
-    <tspan x="10px" y="478px"><tspan>Tip: Run </tspan><tspan class="fg-cyan">`forge test --debug --match-test &lt;TEST_NAME&gt;`</tspan><tspan> to inspect one failing test in the debugger</tspan>
+    <tspan x="10px" y="478px">
 </tspan>
-    <tspan x="10px" y="496px">
+    <tspan x="10px" y="496px"><tspan>Fuzz seed: </tspan><tspan class="fg-cyan">0x64</tspan><tspan> (use </tspan><tspan class="fg-cyan">`--fuzz-seed`</tspan><tspan> to reproduce)</tspan>
 </tspan>
-    <tspan x="10px" y="514px"><tspan>Fuzz seed: </tspan><tspan class="fg-cyan">0x64</tspan><tspan> (use </tspan><tspan class="fg-cyan">`--fuzz-seed`</tspan><tspan> to reproduce)</tspan>
-</tspan>
-    <tspan x="10px" y="532px">
+    <tspan x="10px" y="514px">
 </tspan>
   </text>
 
