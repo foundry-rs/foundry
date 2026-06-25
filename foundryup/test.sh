@@ -120,6 +120,61 @@ resolve_version_and_tag
 check_eq "nightly falls back to API tag" "nightly-deadbeef" "$FOUNDRYUP_TAG"
 check_eq "nightly calls API when feed fails" "1" "$(wc -l < "$api_marker" | tr -d ' ')"
 
+# --- rust foundryup migration shim ----------------------------------------
+
+# Sidecar binary path selection per platform.
+uname() { echo "Linux"; }
+check_eq "sidecar path on linux" \
+  "$FOUNDRYUP_RUST_HOME/bin/foundryup" "$(rust_foundryup_bin)"
+uname() { echo "MINGW64_NT-10.0"; }
+check_eq "sidecar path on windows" \
+  "$FOUNDRYUP_RUST_HOME/bin/foundryup.exe" "$(rust_foundryup_bin)"
+unset -f uname
+
+# Point the sidecar home at a temp dir and back ensure_rust_foundryup with a
+# fake binary so no real install is attempted.
+sidecar_home="$(mktemp -d)"
+trap 'rm -f "$api_marker" "$install_marker"; rm -rf "$sidecar_home"' EXIT
+FOUNDRYUP_RUST_HOME="$sidecar_home"
+mkdir -p "$sidecar_home/bin"
+fake_bin="$sidecar_home/bin/foundryup"
+FOUNDRYUP_BOOTSTRAP_VERSION="0.0.5"
+
+make_fake_bin() {
+  printf '#!/usr/bin/env sh\necho "foundryup %s (abc 2020)"\n' "$1" > "$fake_bin"
+  chmod +x "$fake_bin"
+}
+
+# `install_rust_foundryup` runs in a subshell-free context, so track calls via a file.
+install_marker="$(mktemp)"
+install_rust_foundryup() { echo called >> "$install_marker"; }
+
+check_eq "sidecar_version reads installed version" \
+  "0.0.5" "$(make_fake_bin 0.0.5; sidecar_version "$fake_bin")"
+
+: > "$install_marker"; make_fake_bin "0.0.5"; ensure_rust_foundryup
+check_eq "up-to-date sidecar skips reinstall" "0" "$(wc -l < "$install_marker" | tr -d ' ')"
+
+: > "$install_marker"; make_fake_bin "0.1.0"; ensure_rust_foundryup
+check_eq "newer sidecar is not downgraded" "0" "$(wc -l < "$install_marker" | tr -d ' ')"
+
+: > "$install_marker"; make_fake_bin "0.0.4"; ensure_rust_foundryup
+check_eq "older sidecar triggers reinstall" "1" "$(wc -l < "$install_marker" | tr -d ' ')"
+
+: > "$install_marker"; rm -f "$fake_bin"; ensure_rust_foundryup
+check_eq "missing sidecar triggers reinstall" "1" "$(wc -l < "$install_marker" | tr -d ' ')"
+
+# A sidecar whose --version is unparsable or fails must reinstall, not abort.
+: > "$install_marker"
+printf '#!/usr/bin/env sh\necho "garbage output"\n' > "$fake_bin"; chmod +x "$fake_bin"
+ensure_rust_foundryup
+check_eq "unparsable sidecar version triggers reinstall" "1" "$(wc -l < "$install_marker" | tr -d ' ')"
+
+: > "$install_marker"
+printf '#!/usr/bin/env sh\nexit 3\n' > "$fake_bin"; chmod +x "$fake_bin"
+ensure_rust_foundryup
+check_eq "failing sidecar --version triggers reinstall" "1" "$(wc -l < "$install_marker" | tr -d ' ')"
+
 # --- summary --------------------------------------------------------------
 
 if [ "$failures" -ne 0 ]; then
