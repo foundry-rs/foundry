@@ -79,8 +79,11 @@ url.workspace = true
 
 [dev-dependencies]
 alloy-serde.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
+tempo-primitives.workspace = true
 
 [features]
 default = ["optimism"]

@@ -123,6 +123,7 @@ Encountered 6 failing tests in test/CounterTable.t.sol:CounterTableTest
 Encountered a total of 6 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 6 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
