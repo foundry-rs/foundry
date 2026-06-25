@@ -654,7 +654,10 @@ pub(crate) fn model_word(
     word: &SymWord,
     model: &BTreeMap<String, U256>,
 ) -> Result<U256, SymbolicError> {
-    eval_expr(&word.clone().into_expr(), model)
+    match word {
+        SymWord::Concrete(value) => Ok(*value),
+        SymWord::Expr(expr) => eval_expr(expr, model),
+    }
 }
 
 /// Returns the `model_bytes` symbolic expression helper result.
