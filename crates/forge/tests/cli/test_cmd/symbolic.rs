@@ -1568,6 +1568,53 @@ contract SymbolicFuzzCorpusSeed {
     let calldata = corpus[0]["calldata"].as_str().expect("seed calldata");
     let expected_selector = &keccak256(b"testAcceptsMostValues(uint256)")[..4];
     assert_eq!(&hex::decode(&calldata[2..10]).unwrap(), expected_selector);
+    assert_eq!(&calldata[10..], "0".repeat(64));
+
+    prj.add_test(
+        "SymbolicFuzzCorpusSeed.t.sol",
+        r#"
+contract SymbolicFuzzCorpusSeed {
+    function testAcceptsMostValues(uint256 x) public pure {
+        require(x != 0, "seed replayed");
+        if (x > 100) return;
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testAcceptsMostValues",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--fuzz-corpus-random-sequence-weight",
+            "0",
+            "--fuzz-mutation-weight-splice",
+            "0",
+            "--fuzz-mutation-weight-repeat",
+            "0",
+            "--fuzz-mutation-weight-interleave",
+            "0",
+            "--fuzz-mutation-weight-prefix",
+            "0",
+            "--fuzz-mutation-weight-suffix",
+            "0",
+            "--fuzz-mutation-weight-abi",
+            "0",
+            "--fuzz-mutation-weight-cmp",
+            "1",
+            "--fuzz-runs",
+            "1",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("seed replayed"), "{stdout}");
+    assert!(stdout.contains("args=[0]"), "{stdout}");
 });
 
 forgetest_init!(symbolic_artifact_replay_uses_stored_fail_on_revert, |prj, cmd| {
