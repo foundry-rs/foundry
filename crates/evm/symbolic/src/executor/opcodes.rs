@@ -262,7 +262,7 @@ impl SymbolicExecutor {
                 Ok(StepOutcome::Continue)
             }
             opcode::CALLDATASIZE => {
-                let size = state.calldata.size_word.clone();
+                let size = state.calldata.size_word();
                 state.stack.push(size)?;
                 Ok(StepOutcome::Continue)
             }

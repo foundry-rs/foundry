@@ -7,7 +7,6 @@ fn empty_state() -> PathState {
         Address::ZERO,
         U256::ZERO,
         SymbolicCalldata {
-            size: 4,
             bytes: vec![SymWord::zero(); 4],
             inputs: Vec::new(),
             constraints: Vec::new(),
@@ -395,7 +394,7 @@ fn dynamic_calldata_encodes_bounded_bytes() {
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
     let calldata = SymbolicCalldata::new(&function, &config).unwrap();
 
-    assert_eq!(calldata.size, 100);
+    assert_eq!(calldata.bytes.len(), 100);
     assert_eq!(calldata.load(4).unwrap(), SymWord::Concrete(U256::from(32)));
     assert_eq!(calldata.load(36).unwrap(), SymWord::Concrete(U256::from(3)));
     assert_eq!(calldata.byte(71), SymWord::zero());
@@ -445,7 +444,7 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
     let calldata = calldata_from_call_input(input, &bounded_size);
     let model = BTreeMap::from([("size".to_string(), U256::from(2))]);
 
-    assert_eq!(model_word(&calldata.size_word, &model).unwrap(), U256::from(2));
+    assert_eq!(model_word(&calldata.size_word(), &model).unwrap(), U256::from(2));
     assert_eq!(model_word(&calldata.byte(0), &model).unwrap(), U256::from(0xaa));
     assert_eq!(model_word(&calldata.byte(1), &model).unwrap(), U256::from(0xbb));
     assert_eq!(model_word(&calldata.byte(2), &model).unwrap(), U256::ZERO);

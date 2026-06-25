@@ -2,7 +2,6 @@ use super::{runtime::*, *};
 
 #[derive(Clone, Debug)]
 pub(super) struct SymbolicCalldata {
-    pub(super) size: usize,
     pub(super) bytes: Vec<SymWord>,
     pub(super) inputs: Vec<SymbolicInput>,
     pub(super) constraints: Vec<BoolExpr>,
@@ -37,7 +36,7 @@ impl SymbolicCalldata {
             .copied()
             .map(|byte| SymWord::Concrete(U256::from(byte)))
             .collect::<Vec<_>>();
-        Ok(Self { size: bytes.len(), bytes, inputs: Vec::new(), constraints: Vec::new() })
+        Ok(Self { bytes, inputs: Vec::new(), constraints: Vec::new() })
     }
 
     /// Implements the `variants_with_prefix` symbolic ABI helper.
@@ -89,7 +88,7 @@ impl SymbolicCalldata {
                     ));
                 }
 
-                Ok(Self { size: bytes.len(), bytes, inputs, constraints: builder.constraints })
+                Ok(Self { bytes, inputs, constraints: builder.constraints })
             })
             .collect()
     }
@@ -108,11 +107,7 @@ impl SymbolicCalldata {
 
     /// Implements the `call_data` symbolic ABI helper.
     pub(super) fn call_data(&self) -> SymCalldata {
-        SymCalldata {
-            size: self.size,
-            size_word: SymWord::Concrete(U256::from(self.size)),
-            bytes: self.bytes.clone(),
-        }
+        SymCalldata::new(self.bytes.clone())
     }
 
     /// Returns the `model_to_args` symbolic ABI helper result.

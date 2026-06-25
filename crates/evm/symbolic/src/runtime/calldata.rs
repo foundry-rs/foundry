@@ -2,9 +2,9 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SymCalldata {
-    pub(crate) size: usize,
-    pub(crate) size_word: SymWord,
-    pub(crate) bytes: Vec<SymWord>,
+    size: usize,
+    size_word: SymWord,
+    bytes: Vec<SymWord>,
 }
 
 impl SymCalldata {
@@ -16,6 +16,11 @@ impl SymCalldata {
     /// Implements the `new_symbolic_size` symbolic calldata helper.
     pub(crate) const fn new_symbolic_size(bytes: Vec<SymWord>, size_word: SymWord) -> Self {
         Self { size: bytes.len(), size_word, bytes }
+    }
+
+    /// Returns the symbolic calldata size word.
+    pub(crate) fn size_word(&self) -> SymWord {
+        self.size_word.clone()
     }
 
     /// Returns the `load_word` symbolic calldata helper result.
