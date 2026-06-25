@@ -641,12 +641,12 @@ fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
             BoolExpr::and(conjuncts)
         }
         BoolExpr::Eq(left, right) => {
-            let left = cache_key_expr(left);
-            let right = cache_key_expr(right);
+            let left = cache_key_expr(*left);
+            let right = cache_key_expr(*right);
             if left <= right { BoolExpr::eq(left, right) } else { BoolExpr::eq(right, left) }
         }
         BoolExpr::Cmp(op, left, right) => {
-            cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
+            cache_key_cmp(op, cache_key_expr(*left), cache_key_expr(*right))
         }
     }
 }

@@ -386,19 +386,21 @@ pub(crate) fn bool_forces_expr_const_with_context(
     context: &[BoolExpr],
 ) -> Option<U256> {
     match condition {
-        BoolExpr::Eq(left, Expr::Const(value)) => {
-            expr_equality_forces_const(left, *value, expr, context)
-        }
-        BoolExpr::Eq(Expr::Const(value), right) => {
-            expr_equality_forces_const(right, *value, expr, context)
-        }
+        BoolExpr::Eq(left, right) => match (left.as_ref(), right.as_ref()) {
+            (left, Expr::Const(value)) => expr_equality_forces_const(left, *value, expr, context),
+            (Expr::Const(value), right) => expr_equality_forces_const(right, *value, expr, context),
+            _ => None,
+        },
         BoolExpr::Not(value) => match value.as_ref() {
-            BoolExpr::Eq(left, Expr::Const(value)) if value.is_zero() => {
-                expr_nonzero_forces_const(left, expr, context)
-            }
-            BoolExpr::Eq(Expr::Const(value), right) if value.is_zero() => {
-                expr_nonzero_forces_const(right, expr, context)
-            }
+            BoolExpr::Eq(left, right) => match (left.as_ref(), right.as_ref()) {
+                (left, Expr::Const(value)) if value.is_zero() => {
+                    expr_nonzero_forces_const(left, expr, context)
+                }
+                (Expr::Const(value), right) if value.is_zero() => {
+                    expr_nonzero_forces_const(right, expr, context)
+                }
+                _ => None,
+            },
             BoolExpr::Not(value) => bool_forces_expr_const_with_context(value, expr, context),
             _ => None,
         },
@@ -489,8 +491,8 @@ pub(crate) fn masked_expr_matches(candidate: &Expr, target: &Expr) -> Option<U25
 pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, mask: U256) -> bool {
     context.iter().any(|condition| match condition {
         BoolExpr::Eq(left, right) => {
-            (left == target && masked_expr_matches(right, target) == Some(mask))
-                || (right == target && masked_expr_matches(left, target) == Some(mask))
+            (left.as_ref() == target && masked_expr_matches(right, target) == Some(mask))
+                || (right.as_ref() == target && masked_expr_matches(left, target) == Some(mask))
         }
         BoolExpr::And(values) => context_forces_masked_expr(values, target, mask),
         _ => false,
@@ -1291,8 +1293,8 @@ pub(crate) enum BoolExpr {
     Const(bool),
     Not(Box<Self>),
     And(Vec<Self>),
-    Eq(Expr, Expr),
-    Cmp(BoolExprOp, Expr, Expr),
+    Eq(Box<Expr>, Box<Expr>),
+    Cmp(BoolExprOp, Box<Expr>, Box<Expr>),
 }
 
 impl BoolExpr {
@@ -1338,13 +1340,13 @@ impl BoolExpr {
                 if let Some(left) = expr_known_word(left) {
                     return Self::Const(left == *right);
                 }
-                Self::Eq(left.clone(), Expr::Const(*right))
+                Self::Eq(Box::new(left.clone()), Box::new(Expr::Const(*right)))
             }
             (Expr::Const(left), right) => {
                 if let Some(right) = expr_known_word(right) {
                     return Self::Const(*left == right);
                 }
-                Self::Eq(Expr::Const(*left), right.clone())
+                Self::Eq(Box::new(Expr::Const(*left)), Box::new(right.clone()))
             }
             (Expr::Keccak(left), Expr::Keccak(right)) if left.bytes.len() == right.bytes.len() => {
                 let mut conditions = vec![Self::eq((*left.len).clone(), (*right.len).clone())];
@@ -1369,7 +1371,7 @@ impl BoolExpr {
                         .collect(),
                 )
             }
-            _ => Self::Eq(left, right),
+            _ => Self::Eq(Box::new(left), Box::new(right)),
         }
     }
 
@@ -1454,7 +1456,7 @@ impl BoolExpr {
             }
             _ => {}
         }
-        Self::Cmp(op, left, right)
+        Self::Cmp(op, Box::new(left), Box::new(right))
     }
 
     /// Implements the `not` symbolic expression helper.
@@ -1534,13 +1536,13 @@ pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &Expr) -> Optio
             }
             bound
         }
-        BoolExpr::Eq(left, right) => match (left == expr, right == expr) {
+        BoolExpr::Eq(left, right) => match (left.as_ref() == expr, right.as_ref() == expr) {
             (true, _) => expr_const_value(right).and_then(u256_to_usize),
             (_, true) => expr_const_value(left).and_then(u256_to_usize),
             _ => None,
         },
         BoolExpr::Cmp(op, left, right) => {
-            if left == expr {
+            if left.as_ref() == expr {
                 match op {
                     BoolExprOp::Ult => expr_const_value(right)
                         .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
@@ -1548,7 +1550,7 @@ pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &Expr) -> Optio
                     BoolExprOp::Ule => expr_const_value(right).and_then(u256_to_usize),
                     _ => None,
                 }
-            } else if right == expr {
+            } else if right.as_ref() == expr {
                 match op {
                     BoolExprOp::Ugt => expr_const_value(left)
                         .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))

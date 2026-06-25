@@ -60,17 +60,14 @@ pub(crate) fn normalize_bool_for_solver(expr: BoolExpr) -> BoolExpr {
         }
         BoolExpr::Eq(left, right) => {
             let normalized =
-                BoolExpr::Eq(normalize_expr_for_solver(left), normalize_expr_for_solver(right));
-            normalize_udiv_bool_for_solver(&normalized).unwrap_or_else(|| match normalized {
-                BoolExpr::Eq(left, right) => BoolExpr::eq(left, right),
-                _ => unreachable!(),
-            })
+                BoolExpr::eq(normalize_expr_for_solver(*left), normalize_expr_for_solver(*right));
+            normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
         BoolExpr::Cmp(op, left, right) => {
-            let normalized = BoolExpr::Cmp(
+            let normalized = BoolExpr::cmp(
                 op,
-                normalize_expr_for_solver(left),
-                normalize_expr_for_solver(right),
+                normalize_expr_for_solver(*left),
+                normalize_expr_for_solver(*right),
             );
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
@@ -98,14 +95,13 @@ impl ConstraintContext {
 
     fn normalize_bool(&self, expr: BoolExpr) -> BoolExpr {
         match &expr {
-            BoolExpr::Eq(left, Expr::Const(value)) | BoolExpr::Eq(Expr::Const(value), left)
-                if value.is_zero() && self.word_bool_always_true(left) =>
-            {
+            _ if zero_check_operand(&expr).is_some_and(|left| self.word_bool_always_true(left)) => {
                 BoolExpr::Const(false)
             }
             BoolExpr::Not(value) => match value.as_ref() {
-                BoolExpr::Eq(left, Expr::Const(value)) | BoolExpr::Eq(Expr::Const(value), left)
-                    if value.is_zero() && self.word_bool_always_true(left) =>
+                value
+                    if zero_check_operand(value)
+                        .is_some_and(|left| self.word_bool_always_true(left)) =>
                 {
                     BoolExpr::Const(true)
                 }
@@ -130,10 +126,12 @@ impl ConstraintContext {
 
     fn upper_bound_constraint<'a>(&self, constraint: &'a BoolExpr) -> Option<(&'a Expr, U256)> {
         match constraint {
-            BoolExpr::Eq(left, Expr::Const(value)) | BoolExpr::Eq(Expr::Const(value), left) => {
-                Some((left, *value))
-            }
-            BoolExpr::Cmp(op, left, right) => match (*op, left, right) {
+            BoolExpr::Eq(left, right) => match (left.as_ref(), right.as_ref()) {
+                (left, Expr::Const(value)) => Some((left, *value)),
+                (Expr::Const(value), right) => Some((right, *value)),
+                _ => None,
+            },
+            BoolExpr::Cmp(op, left, right) => match (*op, left.as_ref(), right.as_ref()) {
                 (BoolExprOp::Ult, expr, Expr::Const(bound)) => {
                     (!bound.is_zero()).then(|| (expr, *bound - U256::from(1)))
                 }
@@ -145,17 +143,20 @@ impl ConstraintContext {
                 _ => None,
             },
             BoolExpr::Not(value) => match value.as_ref() {
-                BoolExpr::Cmp(BoolExprOp::Ugt, left, Expr::Const(bound)) => Some((left, *bound)),
-                BoolExpr::Cmp(BoolExprOp::Uge, left, Expr::Const(bound)) => {
-                    (!bound.is_zero()).then(|| (left, *bound - U256::from(1)))
-                }
-                BoolExpr::Cmp(BoolExprOp::Ult, Expr::Const(bound), right) => Some((right, *bound)),
-                BoolExpr::Cmp(BoolExprOp::Ule, Expr::Const(bound), right) => {
-                    (!bound.is_zero()).then(|| (right, *bound - U256::from(1)))
-                }
+                BoolExpr::Cmp(op, left, right) => match (*op, left.as_ref(), right.as_ref()) {
+                    (BoolExprOp::Ugt, left, Expr::Const(bound)) => Some((left, *bound)),
+                    (BoolExprOp::Uge, left, Expr::Const(bound)) => {
+                        (!bound.is_zero()).then(|| (left, *bound - U256::from(1)))
+                    }
+                    (BoolExprOp::Ult, Expr::Const(bound), right) => Some((right, *bound)),
+                    (BoolExprOp::Ule, Expr::Const(bound), right) => {
+                        (!bound.is_zero()).then(|| (right, *bound - U256::from(1)))
+                    }
+                    _ => None,
+                },
                 _ => None,
             },
-            BoolExpr::Eq(_, _) | BoolExpr::Const(_) | BoolExpr::And(_) => None,
+            BoolExpr::Const(_) | BoolExpr::And(_) => None,
         }
     }
 }
@@ -320,7 +321,7 @@ pub(crate) fn extracted_unshifted_byte_source(term: &Expr, index: usize) -> Opti
 /// Rewrites exact EVM unsigned-division zero/nonzero predicates without `bvudiv`.
 pub(crate) fn normalize_udiv_bool_for_solver(expr: &BoolExpr) -> Option<BoolExpr> {
     match expr {
-        BoolExpr::Eq(left, Expr::Const(value)) if value.is_zero() => {
+        BoolExpr::Eq(left, right) if matches!(right.as_ref(), Expr::Const(value) if value.is_zero()) => {
             bool_from_word_expr(left).map(BoolExpr::not).or_else(|| {
                 if word_bool_always_true(left) {
                     Some(BoolExpr::Const(false))
@@ -329,7 +330,7 @@ pub(crate) fn normalize_udiv_bool_for_solver(expr: &BoolExpr) -> Option<BoolExpr
                 }
             })
         }
-        BoolExpr::Eq(Expr::Const(value), right) if value.is_zero() => {
+        BoolExpr::Eq(left, right) if matches!(left.as_ref(), Expr::Const(value) if value.is_zero()) => {
             bool_from_word_expr(right).map(BoolExpr::not).or_else(|| {
                 if word_bool_always_true(right) {
                     Some(BoolExpr::Const(false))
@@ -338,10 +339,10 @@ pub(crate) fn normalize_udiv_bool_for_solver(expr: &BoolExpr) -> Option<BoolExpr
                 }
             })
         }
-        BoolExpr::Eq(left, Expr::Const(value)) if *value == U256::from(1) => {
+        BoolExpr::Eq(left, right) if matches!(right.as_ref(), Expr::Const(value) if *value == U256::from(1)) => {
             bool_from_word_expr(left)
         }
-        BoolExpr::Eq(Expr::Const(value), right) if *value == U256::from(1) => {
+        BoolExpr::Eq(left, right) if matches!(left.as_ref(), Expr::Const(value) if *value == U256::from(1)) => {
             bool_from_word_expr(right)
         }
         BoolExpr::Not(value) => match value.as_ref() {
@@ -350,14 +351,14 @@ pub(crate) fn normalize_udiv_bool_for_solver(expr: &BoolExpr) -> Option<BoolExpr
                     .map(BoolExpr::not)
                     .or_else(|| normalize_udiv_cmp_for_solver(*op, left, right).map(BoolExpr::not))
             }
-            BoolExpr::Eq(left, Expr::Const(value)) if value.is_zero() => {
+            BoolExpr::Eq(left, right) if matches!(right.as_ref(), Expr::Const(value) if value.is_zero()) => {
                 if word_bool_always_true(left) {
                     Some(BoolExpr::Const(true))
                 } else {
                     normalize_udiv_eq_zero(left, &Expr::Const(U256::ZERO)).map(BoolExpr::not)
                 }
             }
-            BoolExpr::Eq(Expr::Const(value), right) if value.is_zero() => {
+            BoolExpr::Eq(left, right) if matches!(left.as_ref(), Expr::Const(value) if value.is_zero()) => {
                 if word_bool_always_true(right) {
                     Some(BoolExpr::Const(true))
                 } else {
@@ -485,8 +486,12 @@ pub(crate) fn word_bool_term(expr: &Expr) -> Option<&BoolExpr> {
 /// Returns the operand tested by `operand == 0`.
 pub(crate) fn zero_check_operand(expr: &BoolExpr) -> Option<&Expr> {
     match expr {
-        BoolExpr::Eq(left, Expr::Const(value)) if value.is_zero() => Some(left),
-        BoolExpr::Eq(Expr::Const(value), right) if value.is_zero() => Some(right),
+        BoolExpr::Eq(left, right) if matches!(right.as_ref(), Expr::Const(value) if value.is_zero()) => {
+            Some(left)
+        }
+        BoolExpr::Eq(left, right) if matches!(left.as_ref(), Expr::Const(value) if value.is_zero()) => {
+            Some(right)
+        }
         _ => None,
     }
 }

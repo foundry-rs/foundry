@@ -35,15 +35,15 @@ pub(crate) fn collect_order_facts(
             }
         }
         BoolExpr::Cmp(BoolExprOp::Ult, left, right) => {
-            less_than.insert((left.clone(), right.clone()));
-            if matches!(left, Expr::Const(value) if value.is_zero()) {
-                positive.insert(right.clone());
+            less_than.insert(((**left).clone(), (**right).clone()));
+            if matches!(left.as_ref(), Expr::Const(value) if value.is_zero()) {
+                positive.insert((**right).clone());
             }
         }
         BoolExpr::Cmp(BoolExprOp::Ugt, left, right) => {
-            less_than.insert((right.clone(), left.clone()));
-            if matches!(right, Expr::Const(value) if value.is_zero()) {
-                positive.insert(left.clone());
+            less_than.insert(((**right).clone(), (**left).clone()));
+            if matches!(right.as_ref(), Expr::Const(value) if value.is_zero()) {
+                positive.insert((**left).clone());
             }
         }
         BoolExpr::Const(_) | BoolExpr::Not(_) | BoolExpr::Eq(_, _) | BoolExpr::Cmp(_, _, _) => {}
