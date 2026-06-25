@@ -124,6 +124,7 @@ script_execution_protection = true
 
 [profile.default.symbolic]
 enabled = false
+seed_corpus = false
 solver = "z3"
 timeout = 30
 max_depth = 10000
@@ -1519,6 +1520,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   },
   "symbolic": {
     "enabled": false,
+    "seed_corpus": false,
     "solver": "z3",
     "timeout": 30,
     "max_depth": 10000,
