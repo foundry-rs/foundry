@@ -74,36 +74,45 @@ fn selector_for(signature: &str) -> [u8; 4] {
     [hash[0], hash[1], hash[2], hash[3]]
 }
 
-const STATIC_SELECTOR_SIGNATURES: [&str; 17] = [
-    "createAddress(string)",
-    "createBool(string)",
-    "createBytes(string)",
-    "createBytes(uint256,string)",
-    "createBytes32(string)",
-    "createBytes4(string)",
-    "createCalldata(string)",
-    "createInt(uint256,string)",
-    "createInt256(string)",
-    "createString(string)",
-    "createString(uint256,string)",
-    "createUint(uint256,string)",
-    "createUint256(string)",
-    "enableSymbolicStorage(address)",
-    "setArbitraryStorage(address)",
-    "snapshotState()",
-    "snapshotStorage(address)",
-];
+struct SymbolicVmSelectors {
+    create_address: [u8; 4],
+    create_bool: [u8; 4],
+    create_bytes: [u8; 4],
+    create_bytes_sized: [u8; 4],
+    create_bytes32: [u8; 4],
+    create_bytes4: [u8; 4],
+    create_calldata: [u8; 4],
+    create_int: [u8; 4],
+    create_int256: [u8; 4],
+    create_string: [u8; 4],
+    create_string_sized: [u8; 4],
+    create_uint: [u8; 4],
+    create_uint256: [u8; 4],
+    enable_symbolic_storage: [u8; 4],
+    snapshot_storage: [u8; 4],
+}
 
-/// Returns a cached literal selector for static symbolic cheatcode signatures.
-fn static_selector_for(signature: &'static str) -> [u8; 4] {
-    static SELECTORS: std::sync::LazyLock<[(&str, [u8; 4]); 17]> = std::sync::LazyLock::new(|| {
-        STATIC_SELECTOR_SIGNATURES.map(|signature| (signature, selector_for(signature)))
-    });
-
-    SELECTORS
-        .iter()
-        .find_map(|(known, selector)| (*known == signature).then_some(*selector))
-        .expect("static selector signature must be registered")
+/// Returns cached selectors for static symbolic VM helper signatures.
+fn symbolic_vm_selectors() -> &'static SymbolicVmSelectors {
+    static SELECTORS: std::sync::LazyLock<SymbolicVmSelectors> =
+        std::sync::LazyLock::new(|| SymbolicVmSelectors {
+            create_address: selector_for("createAddress(string)"),
+            create_bool: selector_for("createBool(string)"),
+            create_bytes: selector_for("createBytes(string)"),
+            create_bytes_sized: selector_for("createBytes(uint256,string)"),
+            create_bytes32: selector_for("createBytes32(string)"),
+            create_bytes4: selector_for("createBytes4(string)"),
+            create_calldata: selector_for("createCalldata(string)"),
+            create_int: selector_for("createInt(uint256,string)"),
+            create_int256: selector_for("createInt256(string)"),
+            create_string: selector_for("createString(string)"),
+            create_string_sized: selector_for("createString(uint256,string)"),
+            create_uint: selector_for("createUint(uint256,string)"),
+            create_uint256: selector_for("createUint256(string)"),
+            enable_symbolic_storage: selector_for("enableSymbolicStorage(address)"),
+            snapshot_storage: selector_for("snapshotStorage(address)"),
+        });
+    &SELECTORS
 }
 
 /// Returns cached selectors for `createUint{bits}(string)` symbolic helpers.

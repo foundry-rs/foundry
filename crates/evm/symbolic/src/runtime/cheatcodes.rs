@@ -304,19 +304,20 @@ pub(crate) fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Option<usiz
 
 /// Returns the `symbolic_vm_cheatcode_min_input_size` cheatcode runtime helper result.
 pub(crate) fn symbolic_vm_cheatcode_min_input_size(selector: [u8; 4]) -> Option<usize> {
-    if signature_selector_in(
+    let selectors = symbolic_vm_selectors();
+    if selector_in(
         selector,
         &[
-            "createUint256(string)",
-            "createInt256(string)",
-            "createBytes32(string)",
-            "createAddress(string)",
-            "createBool(string)",
-            "createBytes(string)",
-            "createString(string)",
-            "createBytes4(string)",
-            "createCalldata(string)",
-            "snapshotState()",
+            selectors.create_uint256,
+            selectors.create_int256,
+            selectors.create_bytes32,
+            selectors.create_address,
+            selectors.create_bool,
+            selectors.create_bytes,
+            selectors.create_string,
+            selectors.create_bytes4,
+            selectors.create_calldata,
+            snapshotStateCall::SELECTOR,
         ],
     ) || symbolic_create_uint_selectors().iter().any(|(_, candidate)| selector == *candidate)
         || symbolic_create_int_selectors().iter().any(|(_, candidate)| selector == *candidate)
@@ -325,23 +326,23 @@ pub(crate) fn symbolic_vm_cheatcode_min_input_size(selector: [u8; 4]) -> Option<
         return Some(abi_static_input_size(0));
     }
 
-    if signature_selector_in(
+    if selector_in(
         selector,
         &[
-            "enableSymbolicStorage(address)",
-            "setArbitraryStorage(address)",
-            "snapshotStorage(address)",
+            selectors.enable_symbolic_storage,
+            setArbitraryStorage_0Call::SELECTOR,
+            selectors.snapshot_storage,
         ],
     ) {
         return Some(abi_static_input_size(1));
     }
-    if signature_selector_in(
+    if selector_in(
         selector,
         &[
-            "createUint(uint256,string)",
-            "createInt(uint256,string)",
-            "createBytes(uint256,string)",
-            "createString(uint256,string)",
+            selectors.create_uint,
+            selectors.create_int,
+            selectors.create_bytes_sized,
+            selectors.create_string_sized,
         ],
     ) {
         return Some(abi_static_input_size(1));
@@ -358,11 +359,6 @@ pub(crate) const fn abi_static_input_size(words: usize) -> usize {
 /// Returns the `selector_in` cheatcode runtime helper result.
 pub(crate) fn selector_in(selector: [u8; 4], selectors: &[[u8; 4]]) -> bool {
     selectors.contains(&selector)
-}
-
-/// Returns the `signature_selector_in` cheatcode runtime helper result.
-pub(crate) fn signature_selector_in(selector: [u8; 4], signatures: &[&'static str]) -> bool {
-    signatures.iter().any(|signature| selector == static_selector_for(signature))
 }
 
 /// Returns the `abi_bytes_return` cheatcode runtime helper result.

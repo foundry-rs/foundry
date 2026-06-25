@@ -2553,10 +2553,11 @@ impl SymbolicExecutor {
         selector: [u8; 4],
         in_offset: usize,
     ) -> Result<SymReturnData, SymbolicError> {
-        if selector == static_selector_for("createUint256(string)")
-            || selector == static_selector_for("createInt256(string)")
-            || selector == static_selector_for("createBytes32(string)")
-        {
+        let selectors = symbolic_vm_selectors();
+        if selector_in(
+            selector,
+            &[selectors.create_uint256, selectors.create_int256, selectors.create_bytes32],
+        ) {
             return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
         }
         for &(bits, candidate) in symbolic_create_uint_selectors() {
@@ -2586,7 +2587,7 @@ impl SymbolicExecutor {
                 return Ok(SymReturnData::from_words(vec![value]));
             }
         }
-        if selector == static_selector_for("createUint(uint256,string)") {
+        if selector == selectors.create_uint {
             let bits = read_abi_constrained_word_arg(
                 state,
                 in_offset + 4,
@@ -2596,7 +2597,7 @@ impl SymbolicExecutor {
             Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
             return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(bits)]));
         }
-        if selector == static_selector_for("createInt(uint256,string)") {
+        if selector == selectors.create_int {
             let bits = read_abi_constrained_word_arg(
                 state,
                 in_offset + 4,
@@ -2606,18 +2607,18 @@ impl SymbolicExecutor {
             Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
             return Ok(SymReturnData::from_words(vec![state.fresh_bounded_int(bits)]));
         }
-        if selector == static_selector_for("createAddress(string)") {
+        if selector == selectors.create_address {
             return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(160))]));
         }
-        if selector == static_selector_for("createBool(string)") {
+        if selector == selectors.create_bool {
             return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(1))]));
         }
-        if selector == static_selector_for("createBytes(string)") {
+        if selector == selectors.create_bytes {
             let len = self.config.default_dynamic_length as usize;
             let bytes = (0..len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
             return Ok(abi_bytes_return(bytes));
         }
-        if selector == static_selector_for("createBytes(uint256,string)") {
+        if selector == selectors.create_bytes_sized {
             let len = read_abi_constrained_word_arg(
                 state,
                 in_offset + 4,
@@ -2630,7 +2631,7 @@ impl SymbolicExecutor {
             let bytes = (0..len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
             return Ok(abi_bytes_return(bytes));
         }
-        if selector == static_selector_for("createString(string)") {
+        if selector == selectors.create_string {
             let len = self.config.default_dynamic_length as usize;
             let bytes = (0..len)
                 .map(|_| {
@@ -2650,7 +2651,7 @@ impl SymbolicExecutor {
                 .collect();
             return Ok(abi_bytes_return(bytes));
         }
-        if selector == static_selector_for("createString(uint256,string)") {
+        if selector == selectors.create_string_sized {
             let len = read_abi_constrained_word_arg(
                 state,
                 in_offset + 4,
@@ -2678,13 +2679,13 @@ impl SymbolicExecutor {
                 .collect();
             return Ok(abi_bytes_return(bytes));
         }
-        if selector == static_selector_for("createBytes4(string)") {
+        if selector == selectors.create_bytes4 {
             return Ok(SymReturnData::from_words(vec![shift_left(
                 state.fresh_bounded_uint(U256::from(32)),
                 224,
             )]));
         }
-        if selector == static_selector_for("createCalldata(string)") {
+        if selector == selectors.create_calldata {
             let max = self.config.max_calldata_bytes as usize;
             let len = if max < 4 {
                 max
@@ -2694,14 +2695,14 @@ impl SymbolicExecutor {
             let bytes = (0..len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
             return Ok(abi_bytes_return(bytes));
         }
-        if selector == static_selector_for("enableSymbolicStorage(address)")
+        if selector == selectors.enable_symbolic_storage
             || selector == setArbitraryStorage_0Call::SELECTOR
         {
             let target = read_abi_address_or_symbolic_slot_arg(state, in_offset + 4, 0)?;
             state.world.enable_arbitrary_storage(target);
             return Ok(SymReturnData::default());
         }
-        if selector == static_selector_for("snapshotStorage(address)") {
+        if selector == selectors.snapshot_storage {
             let _target = read_abi_address_or_symbolic_slot_arg(state, in_offset + 4, 0)?;
             let id = state.world.snapshot_state();
             return Ok(SymReturnData::from_words(vec![SymWord::Concrete(id)]));
