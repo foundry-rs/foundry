@@ -984,16 +984,53 @@ pub(crate) enum Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct KeccakExpr {
-    pub(crate) name: Arc<str>,
-    pub(crate) len: Box<Expr>,
-    pub(crate) bytes: Vec<Expr>,
+    name: Arc<str>,
+    len: Box<Expr>,
+    bytes: Vec<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct HashExpr {
-    pub(crate) name: Arc<str>,
-    pub(crate) algorithm: &'static str,
-    pub(crate) bytes: Vec<Expr>,
+    name: Arc<str>,
+    algorithm: &'static str,
+    bytes: Vec<Expr>,
+}
+
+impl KeccakExpr {
+    /// Returns this symbolic keccak input length.
+    pub(crate) fn len(&self) -> &Expr {
+        &self.len
+    }
+
+    /// Returns this symbolic keccak input bytes.
+    pub(crate) fn bytes(&self) -> &[Expr] {
+        &self.bytes
+    }
+
+    /// Consumes this symbolic keccak expression into its parts.
+    pub(crate) fn into_parts(self) -> (Arc<str>, Expr, Vec<Expr>) {
+        let Self { name, len, bytes } = self;
+        (name, *len, bytes)
+    }
+}
+
+impl HashExpr {
+    /// Returns this opaque symbolic hash variable name.
+    pub(crate) const fn name(&self) -> &Arc<str> {
+        &self.name
+    }
+
+    /// Returns this opaque symbolic hash algorithm label.
+    #[cfg(test)]
+    pub(crate) const fn algorithm(&self) -> &'static str {
+        self.algorithm
+    }
+
+    /// Consumes this opaque symbolic hash expression into its parts.
+    pub(crate) fn into_parts(self) -> (Arc<str>, &'static str, Vec<Expr>) {
+        let Self { name, algorithm, bytes } = self;
+        (name, algorithm, bytes)
+    }
 }
 
 impl Expr {

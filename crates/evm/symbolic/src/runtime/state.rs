@@ -1658,7 +1658,7 @@ fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
             vars.insert(var.clone());
         }
         Expr::Hash(hash) => {
-            vars.insert(hash.name.clone());
+            vars.insert(hash.name().clone());
         }
         Expr::Const(_)
         | Expr::GasLeft(_)

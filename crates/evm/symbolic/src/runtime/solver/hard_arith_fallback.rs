@@ -279,8 +279,8 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
             vars.insert(var.clone());
         }
         Expr::Keccak(hash) => {
-            collect_expr_fallback_vars(&hash.len, vars);
-            for byte in &hash.bytes {
+            collect_expr_fallback_vars(hash.len(), vars);
+            for byte in hash.bytes() {
                 collect_expr_fallback_vars(byte, vars);
             }
         }

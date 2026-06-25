@@ -1509,8 +1509,8 @@ fn symbolic_keccak_tracks_symbolic_length() {
     let SymWord::Expr(Expr::Keccak(hash)) = word else {
         panic!("expected symbolic keccak term");
     };
-    assert_eq!(*hash.len, Expr::var("len"));
-    assert_eq!(hash.bytes.len(), 3);
+    assert_eq!(hash.len(), &Expr::var("len"));
+    assert_eq!(hash.bytes().len(), 3);
 }
 
 #[test]
@@ -1558,7 +1558,7 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 
     assert_eq!(sha.len(), 32);
     assert_eq!(sha_word, sha_again_word);
-    assert!(matches!(sha_word, SymWord::Expr(Expr::Hash(hash)) if hash.algorithm == "sha256"));
+    assert!(matches!(sha_word, SymWord::Expr(Expr::Hash(hash)) if hash.algorithm() == "sha256"));
 
     let ecrecover = execute_symbolic_precompile(
         precompile_address(1),
