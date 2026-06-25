@@ -242,10 +242,6 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC", value_name = "MODE")]
     pub invariant_corpus_sync: Option<InvariantCorpusSyncMode>,
 
-    /// Runs without new coverage before plateau corpus sync is attempted.
-    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_RUNS", value_name = "RUNS")]
-    pub invariant_corpus_sync_runs: Option<u32>,
-
     /// Seconds without new coverage before plateau corpus sync is attempted.
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_SECONDS", value_name = "SECONDS")]
     pub invariant_corpus_sync_seconds: Option<u32>,
@@ -2363,9 +2359,6 @@ impl Provider for TestArgs {
         if let Some(mode) = self.invariant_corpus_sync {
             invariant_corpus_sync_dict.insert("mode".to_string(), Value::serialize(mode)?);
         }
-        if let Some(runs) = self.invariant_corpus_sync_runs {
-            invariant_corpus_sync_dict.insert("plateau_runs".to_string(), runs.into());
-        }
         if let Some(seconds) = self.invariant_corpus_sync_seconds {
             invariant_corpus_sync_dict.insert("plateau_seconds".to_string(), seconds.into());
         }
@@ -2933,8 +2926,6 @@ mod tests {
             "foundry-cli",
             "--invariant-corpus-sync",
             "plateau",
-            "--invariant-corpus-sync-runs",
-            "25",
             "--invariant-corpus-sync-seconds",
             "60",
             "--invariant-corpus-sync-max-imports",
@@ -2946,7 +2937,6 @@ mod tests {
             "--invariant-corpus-sync-shuffle",
         ]);
         assert_eq!(args.invariant_corpus_sync, Some(InvariantCorpusSyncMode::Plateau));
-        assert_eq!(args.invariant_corpus_sync_runs, Some(25));
         assert_eq!(args.invariant_corpus_sync_seconds, Some(60));
         assert_eq!(args.invariant_corpus_sync_max_imports, Some(7));
         assert_eq!(args.invariant_corpus_sync_shadow_imports, Some(3));
@@ -2958,7 +2948,6 @@ mod tests {
             figment.extract_inner::<InvariantCorpusSyncMode>("invariant.corpus_sync.mode").unwrap(),
             InvariantCorpusSyncMode::Plateau
         );
-        assert_eq!(figment.extract_inner::<u32>("invariant.corpus_sync.plateau_runs").unwrap(), 25);
         assert_eq!(
             figment.extract_inner::<u32>("invariant.corpus_sync.plateau_seconds").unwrap(),
             60

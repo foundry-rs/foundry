@@ -153,10 +153,8 @@ impl FromStr for InvariantDepthMode {
 pub struct InvariantCorpusSyncConfig {
     /// Sync strategy.
     pub mode: InvariantCorpusSyncMode,
-    /// Number of completed runs without new coverage before a plateau sync is attempted.
-    pub plateau_runs: u32,
-    /// Optional number of seconds without new coverage before a plateau sync is attempted.
-    pub plateau_seconds: Option<u32>,
+    /// Number of seconds without new coverage before a plateau sync is attempted.
+    pub plateau_seconds: u32,
     /// Maximum candidate entries imported by one worker during a single sync.
     pub max_imports_per_sync: usize,
     /// Maximum same-coverage candidates retained temporarily during one plateau sync.
@@ -171,8 +169,7 @@ impl Default for InvariantCorpusSyncConfig {
     fn default() -> Self {
         Self {
             mode: InvariantCorpusSyncMode::Plateau,
-            plateau_runs: 64,
-            plateau_seconds: Some(60),
+            plateau_seconds: 60,
             max_imports_per_sync: 64,
             shadow_imports_per_sync: 8,
             shadow_mutations: 2,

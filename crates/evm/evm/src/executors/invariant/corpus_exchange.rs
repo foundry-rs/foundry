@@ -64,14 +64,13 @@ impl InvariantCorpusExchange {
 }
 
 pub(super) struct InvariantCorpusSyncState {
-    runs_since_new_coverage: u32,
     last_new_coverage_at: Instant,
     last_seen_epoch: u64,
 }
 
 impl InvariantCorpusSyncState {
     pub(super) const fn new(now: Instant) -> Self {
-        Self { runs_since_new_coverage: 0, last_new_coverage_at: now, last_seen_epoch: 0 }
+        Self { last_new_coverage_at: now, last_seen_epoch: 0 }
     }
 
     pub(super) const fn last_seen_epoch(&self) -> u64 {
@@ -84,38 +83,22 @@ impl InvariantCorpusSyncState {
 
     pub(super) const fn record_completed_run(&mut self, new_coverage: bool, now: Instant) {
         if new_coverage {
-            self.runs_since_new_coverage = 0;
             self.last_new_coverage_at = now;
-        } else {
-            self.runs_since_new_coverage = self.runs_since_new_coverage.saturating_add(1);
         }
     }
 
     pub(super) const fn record_import_progress(&mut self, now: Instant) {
-        self.runs_since_new_coverage = 0;
         self.last_new_coverage_at = now;
     }
 
-    pub(super) fn should_sync(
-        &self,
-        config: &InvariantCorpusSyncConfig,
-        run_budget: Option<u32>,
-        now: Instant,
-    ) -> bool {
+    pub(super) fn should_sync(&self, config: &InvariantCorpusSyncConfig, now: Instant) -> bool {
         if !matches!(config.mode, InvariantCorpusSyncMode::Plateau) {
             return false;
         }
 
-        self.runs_since_new_coverage >= effective_plateau_runs(config.plateau_runs, run_budget)
-            || config.plateau_seconds.is_some_and(|seconds| {
-                now.duration_since(self.last_new_coverage_at) >= Duration::from_secs(seconds.into())
-            })
+        now.duration_since(self.last_new_coverage_at)
+            >= Duration::from_secs(config.plateau_seconds.into())
     }
-}
-
-fn effective_plateau_runs(configured_runs: u32, run_budget: Option<u32>) -> u32 {
-    let Some(run_budget) = run_budget else { return configured_runs };
-    configured_runs.min((run_budget / 2).max(1))
 }
 
 #[cfg(test)]
@@ -180,22 +163,21 @@ mod tests {
     }
 
     #[test]
-    fn plateau_sync_triggers_after_runs_without_coverage() {
-        let mut state = InvariantCorpusSyncState::new(Instant::now());
+    fn plateau_sync_triggers_after_time_without_coverage() {
+        let now = Instant::now();
+        let mut state = InvariantCorpusSyncState::new(now);
         let config = InvariantCorpusSyncConfig {
             mode: InvariantCorpusSyncMode::Plateau,
-            plateau_runs: 2,
-            plateau_seconds: None,
+            plateau_seconds: 60,
             max_imports_per_sync: 8,
             ..Default::default()
         };
 
-        state.record_completed_run(false, Instant::now());
-        assert!(!state.should_sync(&config, None, Instant::now()));
-        state.record_completed_run(false, Instant::now());
-        assert!(state.should_sync(&config, None, Instant::now()));
-        state.record_completed_run(true, Instant::now());
-        assert!(!state.should_sync(&config, None, Instant::now()));
+        state.record_completed_run(false, now + Duration::from_secs(30));
+        assert!(!state.should_sync(&config, now + Duration::from_secs(59)));
+        assert!(state.should_sync(&config, now + Duration::from_secs(60)));
+        state.record_completed_run(true, now + Duration::from_secs(60));
+        assert!(!state.should_sync(&config, now + Duration::from_secs(119)));
     }
 
     #[test]
@@ -204,45 +186,14 @@ mod tests {
         let mut state = InvariantCorpusSyncState::new(now);
         let config = InvariantCorpusSyncConfig {
             mode: InvariantCorpusSyncMode::Plateau,
-            plateau_runs: 2,
-            plateau_seconds: None,
+            plateau_seconds: 60,
             max_imports_per_sync: 8,
             ..Default::default()
         };
 
-        state.record_completed_run(false, now);
-        state.record_completed_run(false, now);
-        assert!(state.should_sync(&config, None, now));
+        assert!(state.should_sync(&config, now + Duration::from_secs(60)));
 
-        state.record_import_progress(now);
-        assert!(!state.should_sync(&config, None, now));
-    }
-
-    #[test]
-    fn fixed_run_plateau_sync_leaves_runs_to_use_imported_entries() {
-        let mut state = InvariantCorpusSyncState::new(Instant::now());
-        let config = InvariantCorpusSyncConfig::default();
-
-        for _ in 0..31 {
-            state.record_completed_run(false, Instant::now());
-            assert!(!state.should_sync(&config, Some(64), Instant::now()));
-        }
-
-        state.record_completed_run(false, Instant::now());
-        assert!(state.should_sync(&config, Some(64), Instant::now()));
-    }
-
-    #[test]
-    fn fixed_run_plateau_sync_keeps_configured_threshold_for_long_shards() {
-        let mut state = InvariantCorpusSyncState::new(Instant::now());
-        let config = InvariantCorpusSyncConfig::default();
-
-        for _ in 0..63 {
-            state.record_completed_run(false, Instant::now());
-            assert!(!state.should_sync(&config, Some(256), Instant::now()));
-        }
-
-        state.record_completed_run(false, Instant::now());
-        assert!(state.should_sync(&config, Some(256), Instant::now()));
+        state.record_import_progress(now + Duration::from_secs(60));
+        assert!(!state.should_sync(&config, now + Duration::from_secs(119)));
     }
 }

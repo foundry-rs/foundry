@@ -269,7 +269,6 @@ check_interval = 1
 
 [invariant.corpus_sync]
 mode = "plateau"
-plateau_runs = 64
 plateau_seconds = 60
 max_imports_per_sync = 64
 shadow_imports_per_sync = 8
@@ -1526,7 +1525,6 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "check_interval": 1,
     "corpus_sync": {
       "mode": "plateau",
-      "plateau_runs": 64,
       "plateau_seconds": 60,
       "max_imports_per_sync": 64,
       "shadow_imports_per_sync": 8,
