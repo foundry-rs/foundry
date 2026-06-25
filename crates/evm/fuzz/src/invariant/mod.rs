@@ -1,5 +1,5 @@
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{Address, B256, Selector, keccak256, map::HashMap};
+use alloy_primitives::{Address, B256, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,10 @@ pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::utils::{StateChangeset, get_function};
 
+type DynamicTargetCacheKey = (Address, B256);
+type DynamicTargetArtifactMatchCache =
+    Rc<RefCell<HashMap<DynamicTargetCacheKey, Option<CachedTargetContract>>>>;
+
 /// Returns true if the function returns `int256`, indicating optimization mode.
 /// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
 pub fn is_optimization_invariant(func: &Function) -> bool {
@@ -36,7 +40,7 @@ pub struct FuzzRunIdentifiedContracts {
     pub targets: Rc<RefCell<TargetedContracts>>,
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
-    artifact_matches: Rc<RefCell<HashMap<B256, Option<CachedTargetContract>>>>,
+    artifact_matches: DynamicTargetArtifactMatchCache,
 }
 
 impl FuzzRunIdentifiedContracts {
@@ -81,13 +85,10 @@ impl FuzzRunIdentifiedContracts {
             if code.is_empty() {
                 continue;
             }
+            let code_hash = code.hash_slow();
             let code = code.original_byte_slice();
-            let code_hash = if account.info.code_hash == B256::ZERO {
-                keccak256(code)
-            } else {
-                account.info.code_hash
-            };
             let Some(contract) = self.target_contract_for_code(
+                *address,
                 code_hash,
                 code,
                 project_contracts,
@@ -104,12 +105,14 @@ impl FuzzRunIdentifiedContracts {
 
     fn target_contract_for_code(
         &self,
+        address: Address,
         code_hash: B256,
         code: &[u8],
         project_contracts: &ContractsByArtifact,
         artifact_filters: &ArtifactFilters,
     ) -> eyre::Result<Option<CachedTargetContract>> {
-        if let Some(cached_match) = self.artifact_matches.borrow().get(&code_hash) {
+        let cache_key = (address, code_hash);
+        if let Some(cached_match) = self.artifact_matches.borrow().get(&cache_key) {
             return Ok(cached_match.clone());
         }
 
@@ -122,12 +125,13 @@ impl FuzzRunIdentifiedContracts {
                     abi: contract_data.abi.clone(),
                     targeted_functions,
                     storage_layout: contract_data.storage_layout.as_ref().map(Arc::clone),
+                    event_lookup: Arc::new(TargetedContractEvents::new(&contract_data.abi)),
                 },
             )
         } else {
             None
         };
-        self.artifact_matches.borrow_mut().insert(code_hash, cached_match.clone());
+        self.artifact_matches.borrow_mut().insert(cache_key, cached_match.clone());
         Ok(cached_match)
     }
 
@@ -148,14 +152,19 @@ struct CachedTargetContract {
     abi: JsonAbi,
     targeted_functions: Vec<Function>,
     storage_layout: Option<Arc<StorageLayout>>,
+    event_lookup: Arc<TargetedContractEvents>,
 }
 
 impl CachedTargetContract {
     fn into_targeted_contract(self) -> TargetedContract {
-        let mut contract = TargetedContract::new(self.identifier, self.abi);
-        contract.targeted_functions = self.targeted_functions;
-        contract.storage_layout = self.storage_layout;
-        contract
+        TargetedContract {
+            identifier: self.identifier,
+            abi: self.abi,
+            targeted_functions: self.targeted_functions,
+            excluded_functions: Vec::new(),
+            storage_layout: self.storage_layout,
+            event_lookup: self.event_lookup,
+        }
     }
 }
 
