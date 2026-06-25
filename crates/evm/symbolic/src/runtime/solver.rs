@@ -718,11 +718,9 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::mulmod(left, right, modulus)
             }
         }
-        Expr::Ite(cond, left, right) => Expr::Ite(
-            Box::new(cache_key_bool(*cond)),
-            Box::new(cache_key_expr(*left)),
-            Box::new(cache_key_expr(*right)),
-        ),
+        Expr::Ite(cond, left, right) => {
+            Expr::ite(cache_key_bool(*cond), cache_key_expr(*left), cache_key_expr(*right))
+        }
     }
 }
 

@@ -211,11 +211,9 @@ pub(crate) fn storage_select(
     match condition {
         BoolExpr::Const(true) => write_value,
         BoolExpr::Const(false) => base,
-        condition => SymWord::from_expr(Expr::Ite(
-            Box::new(condition),
-            Box::new(write_value.into_expr()),
-            Box::new(base.into_expr()),
-        )),
+        condition => {
+            SymWord::from_expr(Expr::ite(condition, write_value.into_expr(), base.into_expr()))
+        }
     }
 }
 
@@ -900,10 +898,10 @@ impl SymWord {
     pub(crate) fn from_bool(value: BoolExpr) -> Self {
         match value {
             BoolExpr::Const(value) => Self::Concrete(U256::from(value)),
-            value => Self::Expr(Expr::Ite(
-                Box::new(value),
-                Box::new(Expr::Const(U256::from(1))),
-                Box::new(Expr::Const(U256::ZERO)),
+            value => Self::from_expr(Expr::ite(
+                value,
+                Expr::Const(U256::from(1)),
+                Expr::Const(U256::ZERO),
             )),
         }
     }
@@ -1005,6 +1003,21 @@ impl Expr {
         bytes: Vec<Self>,
     ) -> Self {
         Self::Hash(Box::new(HashExpr { name: name.into(), algorithm, bytes }))
+    }
+
+    /// Builds a conditional expression.
+    pub(crate) fn ite(cond: BoolExpr, then_expr: Self, else_expr: Self) -> Self {
+        match cond {
+            BoolExpr::Const(true) => then_expr,
+            BoolExpr::Const(false) => else_expr,
+            cond => {
+                if then_expr == else_expr {
+                    then_expr
+                } else {
+                    Self::Ite(Box::new(cond), Box::new(then_expr), Box::new(else_expr))
+                }
+            }
+        }
     }
 
     /// Visits this expression and all child expressions.

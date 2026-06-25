@@ -324,10 +324,10 @@ impl PathState {
             (a, b) => {
                 let a = a.into_expr();
                 let b = b.into_expr();
-                SymWord::from_expr(Expr::Ite(
-                    Box::new(BoolExpr::eq(b.clone(), Expr::Const(U256::ZERO))),
-                    Box::new(Expr::Const(U256::ZERO)),
-                    Box::new(Expr::op(op, a, b)),
+                SymWord::from_expr(Expr::ite(
+                    BoolExpr::eq(b.clone(), Expr::Const(U256::ZERO)),
+                    Expr::Const(U256::ZERO),
+                    Expr::op(op, a, b),
                 ))
             }
         })?;
@@ -417,10 +417,10 @@ impl PathState {
             let base = base.into_expr();
             let mut expr = Expr::Const(U256::ZERO);
             for candidate in (0..=max_exponent).rev() {
-                expr = Expr::Ite(
-                    Box::new(BoolExpr::eq(exponent.clone(), Expr::Const(U256::from(candidate)))),
-                    Box::new(exp_expr_for_concrete_exponent(base.clone(), candidate)),
-                    Box::new(expr),
+                expr = Expr::ite(
+                    BoolExpr::eq(exponent.clone(), Expr::Const(U256::from(candidate))),
+                    exp_expr_for_concrete_exponent(base.clone(), candidate),
+                    expr,
                 );
             }
             SymWord::from_expr(expr)
@@ -1259,10 +1259,10 @@ impl SymbolicWorld {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = Expr::Ite(
-                Box::new(BoolExpr::eq(expr.clone(), Expr::Const(address_word(*address)))),
-                Box::new(balance.clone().into_expr()),
-                Box::new(result),
+            result = Expr::ite(
+                BoolExpr::eq(expr.clone(), Expr::Const(address_word(*address))),
+                balance.clone().into_expr(),
+                result,
             );
         }
 
@@ -1515,10 +1515,10 @@ impl SymbolicWorld {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = Expr::Ite(
-                Box::new(BoolExpr::eq(expr.clone(), Expr::Const(address_word(*address)))),
-                Box::new(Expr::Const(U256::from(code.len()))),
-                Box::new(result),
+            result = Expr::ite(
+                BoolExpr::eq(expr.clone(), Expr::Const(address_word(*address))),
+                Expr::Const(U256::from(code.len())),
+                result,
             );
         }
 
@@ -1546,10 +1546,10 @@ impl SymbolicWorld {
             } else {
                 keccak_word(code.read_bytes(0, code.len()))
             };
-            result = Expr::Ite(
-                Box::new(BoolExpr::eq(expr.clone(), Expr::Const(address_word(address)))),
-                Box::new(hash.into_expr()),
-                Box::new(result),
+            result = Expr::ite(
+                BoolExpr::eq(expr.clone(), Expr::Const(address_word(address))),
+                hash.into_expr(),
+                result,
             );
         }
 
@@ -1581,10 +1581,10 @@ impl SymbolicWorld {
                 code.read_bytes_offset(offset.clone(), size)
             };
             for (idx, byte) in bytes.into_iter().enumerate() {
-                result[idx] = SymWord::from_expr(Expr::Ite(
-                    Box::new(BoolExpr::eq(expr.clone(), Expr::Const(address_word(address)))),
-                    Box::new(byte.into_expr()),
-                    Box::new(result[idx].clone().into_expr()),
+                result[idx] = SymWord::from_expr(Expr::ite(
+                    BoolExpr::eq(expr.clone(), Expr::Const(address_word(address))),
+                    byte.into_expr(),
+                    result[idx].clone().into_expr(),
                 ));
             }
         }
@@ -1763,10 +1763,10 @@ impl SymbolicBlock {
             if matches!(&hash, SymWord::Concrete(hash) if hash.is_zero()) {
                 continue;
             }
-            result = Expr::Ite(
-                Box::new(BoolExpr::eq(block_number.clone(), Expr::Const(candidate))),
-                Box::new(hash.into_expr()),
-                Box::new(result),
+            result = Expr::ite(
+                BoolExpr::eq(block_number.clone(), Expr::Const(candidate)),
+                hash.into_expr(),
+                result,
             );
         }
 

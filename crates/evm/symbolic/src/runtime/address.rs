@@ -113,10 +113,10 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
             Some(extracted_byte_expr(expr, index))
         }
         Expr::Not(value) => Some(Expr::Not(Box::new(expr_byte_term(value, index)?))),
-        Expr::Ite(cond, then_expr, else_expr) => Some(Expr::Ite(
-            cond.clone(),
-            Box::new(expr_byte_term(then_expr, index)?),
-            Box::new(expr_byte_term(else_expr, index)?),
+        Expr::Ite(cond, then_expr, else_expr) => Some(Expr::ite(
+            (**cond).clone(),
+            expr_byte_term(then_expr, index)?,
+            expr_byte_term(else_expr, index)?,
         )),
         Expr::Op(op, left, right) => match op {
             ExprOp::And => expr_binary_byte_term(

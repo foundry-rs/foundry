@@ -218,16 +218,12 @@ pub(crate) fn normalize_ite_expr_for_solver(cond: BoolExpr, left: Expr, right: E
     {
         return left;
     }
-    Expr::Ite(Box::new(cond), Box::new(left), Box::new(right))
+    Expr::ite(cond, left, right)
 }
 
 /// Converts a boolean condition into its 0/1 word representation.
 fn word_from_bool_expr(condition: BoolExpr) -> Expr {
-    Expr::Ite(
-        Box::new(condition),
-        Box::new(Expr::Const(U256::from(1))),
-        Box::new(Expr::Const(U256::ZERO)),
-    )
+    Expr::ite(condition, Expr::Const(U256::from(1)), Expr::Const(U256::ZERO))
 }
 
 /// Returns the boolean represented by `a == 0 ? 0 : a / a`.

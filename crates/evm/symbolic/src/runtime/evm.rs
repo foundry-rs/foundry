@@ -91,13 +91,13 @@ pub(crate) fn signextend_word(byte_index: U256, value: SymWord) -> SymWord {
             let sign_bit = U256::from(1) << bit_index;
             let mask = sign_bit - U256::from(1);
             let value = value.into_expr();
-            SymWord::from_expr(Expr::Ite(
-                Box::new(BoolExpr::eq(
+            SymWord::from_expr(Expr::ite(
+                BoolExpr::eq(
                     Expr::op(ExprOp::And, value.clone(), Expr::Const(sign_bit)),
                     Expr::Const(U256::ZERO),
-                )),
-                Box::new(Expr::op(ExprOp::And, value.clone(), Expr::Const(mask))),
-                Box::new(Expr::op(ExprOp::Or, value, Expr::Const(!mask))),
+                ),
+                Expr::op(ExprOp::And, value.clone(), Expr::Const(mask)),
+                Expr::op(ExprOp::Or, value, Expr::Const(!mask)),
             ))
         }
     }
@@ -112,10 +112,10 @@ pub(crate) fn signextend_word_dynamic(byte_index: SymWord, value: SymWord) -> Sy
     let byte_index = byte_index.into_expr();
     let mut result = value.clone().into_expr();
     for idx in (0..32).rev() {
-        result = Expr::Ite(
-            Box::new(BoolExpr::eq(byte_index.clone(), Expr::Const(U256::from(idx)))),
-            Box::new(signextend_word(U256::from(idx), value.clone()).into_expr()),
-            Box::new(result),
+        result = Expr::ite(
+            BoolExpr::eq(byte_index.clone(), Expr::Const(U256::from(idx))),
+            signextend_word(U256::from(idx), value.clone()).into_expr(),
+            result,
         );
     }
     SymWord::from_expr(result)
@@ -153,10 +153,10 @@ pub(crate) fn byte_word_dynamic(index: SymWord, word: SymWord) -> SymWord {
     let index = index.into_expr();
     let mut result = Expr::Const(U256::ZERO);
     for idx in (0..32).rev() {
-        result = Expr::Ite(
-            Box::new(BoolExpr::eq(index.clone(), Expr::Const(U256::from(idx)))),
-            Box::new(byte_word(U256::from(idx), word.clone()).into_expr()),
-            Box::new(result),
+        result = Expr::ite(
+            BoolExpr::eq(index.clone(), Expr::Const(U256::from(idx))),
+            byte_word(U256::from(idx), word.clone()).into_expr(),
+            result,
         );
     }
     SymWord::from_expr(result)

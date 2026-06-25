@@ -50,10 +50,10 @@ impl SymCalldata {
     pub(crate) fn load_dynamic(&self, offset: Expr) -> Result<SymWord, SymbolicError> {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (0..self.size).rev() {
-            result = Expr::Ite(
-                Box::new(BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate)))),
-                Box::new(self.load(candidate)?.into_expr()),
-                Box::new(result),
+            result = Expr::ite(
+                BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate))),
+                self.load(candidate)?.into_expr(),
+                result,
             );
         }
         Ok(SymWord::from_expr(result))
@@ -63,10 +63,10 @@ impl SymCalldata {
     pub(crate) fn byte_dynamic_with_delta(&self, offset: Expr, delta: usize) -> SymWord {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (delta..self.size).rev() {
-            result = Expr::Ite(
-                Box::new(BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta)))),
-                Box::new(self.byte(candidate).into_expr()),
-                Box::new(result),
+            result = Expr::ite(
+                BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
+                self.byte(candidate).into_expr(),
+                result,
             );
         }
         SymWord::from_expr(result)

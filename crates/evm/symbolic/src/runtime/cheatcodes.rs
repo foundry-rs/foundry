@@ -544,14 +544,10 @@ pub(crate) fn hex_nibble_ascii(nibble: SymWord) -> SymWord {
         }
         nibble => {
             let nibble = nibble.into_expr();
-            SymWord::from_expr(Expr::Ite(
-                Box::new(BoolExpr::cmp(
-                    BoolExprOp::Ult,
-                    nibble.clone(),
-                    Expr::Const(U256::from(10)),
-                )),
-                Box::new(Expr::op(ExprOp::Add, nibble.clone(), Expr::Const(U256::from(b'0')))),
-                Box::new(Expr::op(ExprOp::Add, nibble, Expr::Const(U256::from(b'a' - 10)))),
+            SymWord::from_expr(Expr::ite(
+                BoolExpr::cmp(BoolExprOp::Ult, nibble.clone(), Expr::Const(U256::from(10))),
+                Expr::op(ExprOp::Add, nibble.clone(), Expr::Const(U256::from(b'0'))),
+                Expr::op(ExprOp::Add, nibble, Expr::Const(U256::from(b'a' - 10))),
             ))
         }
     }
