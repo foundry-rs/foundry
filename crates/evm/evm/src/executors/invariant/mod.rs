@@ -934,7 +934,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     #[allow(clippy::too_many_arguments)]
     fn run_invariant_worker(
         mut executor: Executor<FEN>,
-        mut runner: TestRunner,
+        runner: TestRunner,
         config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
         project_contracts: &'a ContractsByArtifact,
@@ -1307,7 +1307,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     corpus_exchange,
                     &mut corpus_sync_state,
                     &executor,
-                    runner.rng(),
                     ReplayTarget {
                         fuzzed_function: None,
                         fuzzed_contracts: Some(&invariant_test.targeted_contracts),
@@ -1475,7 +1474,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         corpus_exchange: &InvariantCorpusExchange,
         sync_state: &mut InvariantCorpusSyncState,
         executor: &Executor<FEN>,
-        rng: &mut TestRng,
         target: ReplayTarget<'_>,
         meta: InvariantCorpusSyncMeta<'_>,
     ) -> Result<()> {
@@ -1500,9 +1498,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let stats = corpus_manager.import_shared_entries(entries, executor, target)?;
         if stats.accepted > 0 {
             sync_state.record_import_progress(now);
-            if meta.sync_config.shuffle_on_sync {
-                corpus_manager.shuffle_corpus(rng);
-            }
         }
         trace!(
             target: "corpus",

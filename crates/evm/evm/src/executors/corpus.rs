@@ -987,29 +987,6 @@ impl WorkerCorpus {
         self.in_memory_corpus.push(corpus);
     }
 
-    pub(crate) fn shuffle_corpus(&mut self, rng: &mut impl Rng) {
-        if self.in_memory_corpus.len() < 2 {
-            return;
-        }
-
-        let len = self.in_memory_corpus.len();
-        let mut old_indices = (0..len).collect::<Vec<_>>();
-        for idx in (1..len).rev() {
-            let swap = rng.random_range(0..=idx);
-            self.in_memory_corpus.swap(idx, swap);
-            old_indices.swap(idx, swap);
-        }
-
-        let mut old_to_new = vec![0; len];
-        for (new_index, old_index) in old_indices.into_iter().enumerate() {
-            old_to_new[old_index] = new_index;
-        }
-
-        for entry in &mut self.new_entries {
-            entry.index = old_to_new[entry.index];
-        }
-    }
-
     /// Returns the previously persisted optimization best value and sequence (if any).
     pub fn optimization_initial_state(&self) -> (Option<I256>, Vec<BasicTxDetails>) {
         (self.optimization_best_value, self.optimization_best_sequence.clone())
@@ -2459,28 +2436,6 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert!(entries[0].dedupe_by_coverage);
         assert!(!entries[1].dedupe_by_coverage);
-    }
-
-    #[test]
-    fn shuffle_corpus_preserves_pending_exchange_entries() {
-        let mut manager = empty_worker_corpus(1, temp_corpus_dir());
-        let first = vec![BasicTxDetails { sender: Address::repeat_byte(1), ..basic_tx() }];
-        let second = vec![BasicTxDetails { sender: Address::repeat_byte(2), ..basic_tx() }];
-
-        manager.process_inputs_for_campaign(&first, &[], true, None).unwrap();
-        manager.process_inputs_for_campaign(&second, &[], true, None).unwrap();
-
-        let mut runner = TestRunner::default();
-        manager.shuffle_corpus(runner.rng());
-        let exported = manager.export_for_exchange();
-
-        let senders = exported
-            .iter()
-            .map(|entry| entry.tx_seq[0].sender)
-            .collect::<std::collections::HashSet<_>>();
-        assert_eq!(senders.len(), 2);
-        assert!(senders.contains(&Address::repeat_byte(1)));
-        assert!(senders.contains(&Address::repeat_byte(2)));
     }
 
     #[test]

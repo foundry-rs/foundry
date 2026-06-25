@@ -271,7 +271,6 @@ check_interval = 1
 mode = "plateau"
 plateau_seconds = 1800
 max_imports_per_sync = 64
-shuffle_on_sync = true
 
 [coverage]
 report = ["summary"]
@@ -1524,8 +1523,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_sync": {
       "mode": "plateau",
       "plateau_seconds": 1800,
-      "max_imports_per_sync": 64,
-      "shuffle_on_sync": true
+      "max_imports_per_sync": 64
     }
   },
   "symbolic": {

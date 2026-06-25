@@ -157,8 +157,6 @@ pub struct InvariantCorpusSyncConfig {
     pub plateau_seconds: u32,
     /// Maximum candidate entries imported by one worker during a single sync.
     pub max_imports_per_sync: usize,
-    /// Shuffle worker-local corpus order after a plateau sync to perturb stale selection bias.
-    pub shuffle_on_sync: bool,
 }
 
 impl Default for InvariantCorpusSyncConfig {
@@ -167,7 +165,6 @@ impl Default for InvariantCorpusSyncConfig {
             mode: InvariantCorpusSyncMode::Plateau,
             plateau_seconds: 30 * 60,
             max_imports_per_sync: 64,
-            shuffle_on_sync: true,
         }
     }
 }
