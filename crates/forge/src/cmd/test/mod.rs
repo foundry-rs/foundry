@@ -303,6 +303,14 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_CMP", value_name = "WEIGHT")]
     pub fuzz_mutation_weight_cmp: Option<u32>,
 
+    /// Corpus mutation weight for inserting persisted corpus transactions.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_CROSSOVER_INSERT", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_crossover_insert: Option<u32>,
+
+    /// Corpus mutation weight for replacing calls with persisted corpus transactions.
+    #[arg(long, env = "FOUNDRY_FUZZ_MUTATION_WEIGHT_CROSSOVER_REPLACE", value_name = "WEIGHT")]
+    pub fuzz_mutation_weight_crossover_replace: Option<u32>,
+
     /// File to rerun fuzz failures from.
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
@@ -371,6 +379,18 @@ pub struct TestArgs {
     /// Corpus mutation weight for comparison-operand mutation.
     #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_CMP", value_name = "WEIGHT")]
     pub invariant_mutation_weight_cmp: Option<u32>,
+
+    /// Corpus mutation weight for inserting persisted corpus transactions.
+    #[arg(long, env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_CROSSOVER_INSERT", value_name = "WEIGHT")]
+    pub invariant_mutation_weight_crossover_insert: Option<u32>,
+
+    /// Corpus mutation weight for replacing calls with persisted corpus transactions.
+    #[arg(
+        long,
+        env = "FOUNDRY_INVARIANT_MUTATION_WEIGHT_CROSSOVER_REPLACE",
+        value_name = "WEIGHT"
+    )]
+    pub invariant_mutation_weight_crossover_replace: Option<u32>,
 
     /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC")]
@@ -2255,6 +2275,12 @@ impl Provider for TestArgs {
         if let Some(weight) = self.fuzz_mutation_weight_cmp {
             fuzz_dict.insert("mutation_weight_cmp".to_string(), weight.into());
         }
+        if let Some(weight) = self.fuzz_mutation_weight_crossover_insert {
+            fuzz_dict.insert("mutation_weight_crossover_insert".to_string(), weight.into());
+        }
+        if let Some(weight) = self.fuzz_mutation_weight_crossover_replace {
+            fuzz_dict.insert("mutation_weight_crossover_replace".to_string(), weight.into());
+        }
         if let Some(fuzz_input_file) = self.fuzz_input_file.clone() {
             fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
         }
@@ -2330,6 +2356,12 @@ impl Provider for TestArgs {
         }
         if let Some(weight) = self.invariant_mutation_weight_cmp {
             invariant_dict.insert("mutation_weight_cmp".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_crossover_insert {
+            invariant_dict.insert("mutation_weight_crossover_insert".to_string(), weight.into());
+        }
+        if let Some(weight) = self.invariant_mutation_weight_crossover_replace {
+            invariant_dict.insert("mutation_weight_crossover_replace".to_string(), weight.into());
         }
         if !invariant_dict.is_empty() {
             dict.insert("invariant".to_string(), invariant_dict.into());
@@ -2916,6 +2948,10 @@ mod tests {
             "3",
             "--fuzz-mutation-weight-cmp",
             "5",
+            "--fuzz-mutation-weight-crossover-insert",
+            "1",
+            "--fuzz-mutation-weight-crossover-replace",
+            "2",
             "--invariant-depth",
             "300",
             "--invariant-min-depth",
@@ -2938,6 +2974,10 @@ mod tests {
             "2",
             "--invariant-mutation-weight-cmp",
             "7",
+            "--invariant-mutation-weight-crossover-insert",
+            "1",
+            "--invariant-mutation-weight-crossover-replace",
+            "3",
         ]);
 
         let figment = figment::Figment::from(&args);
@@ -2959,6 +2999,14 @@ mod tests {
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
+        assert_eq!(
+            figment.extract_inner::<u32>("fuzz.mutation_weight_crossover_insert").unwrap(),
+            1
+        );
+        assert_eq!(
+            figment.extract_inner::<u32>("fuzz.mutation_weight_crossover_replace").unwrap(),
+            2
+        );
         assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
         assert_eq!(figment.extract_inner::<u32>("invariant.min_depth").unwrap(), 20);
         assert_eq!(
@@ -2985,6 +3033,14 @@ mod tests {
         assert_eq!(figment.extract_inner::<u32>("invariant.payable_value_weight").unwrap(), 34);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
         assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
+        assert_eq!(
+            figment.extract_inner::<u32>("invariant.mutation_weight_crossover_insert").unwrap(),
+            1
+        );
+        assert_eq!(
+            figment.extract_inner::<u32>("invariant.mutation_weight_crossover_replace").unwrap(),
+            3
+        );
 
         let config = Config::default().merge_inline_provider(&args).unwrap();
         assert_eq!(config.fuzz.dictionary.dictionary_weight, 35);
@@ -2996,6 +3052,8 @@ mod tests {
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_splice, 4);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_abi, 3);
         assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_cmp, 5);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_crossover_insert, 1);
+        assert_eq!(config.fuzz.corpus.mutation_weights.mutation_weight_crossover_replace, 2);
         assert_eq!(config.invariant.depth, 300);
         assert_eq!(config.invariant.min_depth, 20);
         assert_eq!(config.invariant.depth_mode, InvariantDepthMode::Random);
@@ -3008,6 +3066,8 @@ mod tests {
         assert_eq!(config.invariant.corpus.payable_value_weight, 34);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_splice, 2);
         assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_cmp, 7);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_crossover_insert, 1);
+        assert_eq!(config.invariant.corpus.mutation_weights.mutation_weight_crossover_replace, 3);
     }
 
     #[test]
