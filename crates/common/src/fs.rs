@@ -18,12 +18,6 @@ pub fn create_file(path: impl AsRef<Path>) -> Result<fs::File> {
     File::create(path).map_err(|err| FsPathError::create_file(err, path))
 }
 
-/// Wrapper for [`File::create_new`].
-pub fn create_new_file(path: impl AsRef<Path>) -> Result<fs::File> {
-    let path = path.as_ref();
-    File::create_new(path).map_err(|err| FsPathError::create_file(err, path))
-}
-
 /// Wrapper for [`std::fs::remove_file`].
 pub fn remove_file(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
@@ -93,16 +87,6 @@ fn read_inner(path: &Path, file: &mut File) -> Result<Vec<u8>> {
 /// Writes the object as a JSON object.
 pub fn write_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let file = create_file(path)?;
-    write_json(file, path, obj)
-}
-
-/// Writes the object as a JSON object, failing if the file already exists.
-pub fn write_json_file_create_new<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
-    let file = create_new_file(path)?;
-    write_json(file, path, obj)
-}
-
-fn write_json<T: Serialize>(file: File, path: &Path, obj: &T) -> Result<()> {
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, obj)
         .map_err(|source| FsPathError::WriteJson { source, path: path.into() })?;
@@ -121,16 +105,6 @@ pub fn write_pretty_json_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> 
 /// Writes the object as a gzip compressed file.
 pub fn write_json_gzip_file<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
     let file = create_file(path)?;
-    write_json_gzip(file, path, obj)
-}
-
-/// Writes the object as a gzip compressed file, failing if the file already exists.
-pub fn write_json_gzip_file_create_new<T: Serialize>(path: &Path, obj: &T) -> Result<()> {
-    let file = create_new_file(path)?;
-    write_json_gzip(file, path, obj)
-}
-
-fn write_json_gzip<T: Serialize>(file: File, path: &Path, obj: &T) -> Result<()> {
     let writer = BufWriter::new(file);
     let mut encoder = GzEncoder::new(writer, Compression::default());
     serde_json::to_writer(&mut encoder, obj)

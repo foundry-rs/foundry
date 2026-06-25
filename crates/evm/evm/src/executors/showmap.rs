@@ -12,19 +12,14 @@
 //!
 //! Output is consumable by tools like `riesentoaster/differential-coverage`.
 
-use crate::{
-    executors::{
-        Executor,
-        corpus::{
-            DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created,
-        },
-        corpus_io::read_corpus_tree,
-        invariant::{
-            call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
-            snapshot_edge_fingerprint,
-        },
+use crate::executors::{
+    Executor,
+    corpus::{DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created},
+    corpus_io::read_corpus_tree,
+    invariant::{
+        call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
+        snapshot_edge_fingerprint,
     },
-    inspectors::EdgeIndexMap,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -35,7 +30,7 @@ use foundry_evm_core::{
     evm::FoundryEvmNetwork,
 };
 use foundry_evm_coverage::HitMaps;
-use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
+use foundry_evm_fuzz::invariant::FuzzRunIdentifiedContracts;
 use std::{
     collections::HashMap,
     fmt,
@@ -129,16 +124,7 @@ pub struct InvariantReplayOptions {
     pub call_after_invariant: bool,
 }
 
-/// A structured, comparable identity for a failure observed during replay.
-///
-/// Used by `forge fuzz tmin` to decide whether a minimized candidate still
-/// reproduces the *same* failure. It deliberately keys on the failure site (and,
-/// for code paths within a single function, an edge-coverage fingerprint) rather
-/// than on raw revert bytes, so that:
-/// - the same bug reached with different revert arguments is still considered the same failure
-///   (avoids false negatives), and
-/// - distinct assertion sites that produce identical revert data (e.g. two `Panic(0x01)` paths) are
-///   kept distinct (avoids false positives).
+/// A structured identity for a failure observed during corpus replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplayFailure {
     /// A stateless fuzz test call failed. Keyed by selector and code-path fingerprint.
@@ -153,20 +139,6 @@ pub enum ReplayFailure {
     AfterInvariant,
 }
 
-impl ReplayFailure {
-    /// Whether this failure terminates the run (mirrors the campaign: handler-side
-    /// assertion bugs let the campaign keep running, everything else stops it).
-    const fn is_terminal(&self) -> bool {
-        !matches!(self, Self::Handler { terminal: false, .. })
-    }
-
-    /// Whether this failure is a broken invariant predicate (used to gate
-    /// `afterInvariant`, which the campaign skips only on predicate breaks).
-    const fn is_predicate(&self) -> bool {
-        matches!(self, Self::Invariant { .. } | Self::AfterInvariant)
-    }
-}
-
 impl fmt::Display for ReplayFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -177,54 +149,6 @@ impl fmt::Display for ReplayFailure {
             Self::Invariant { name } => write!(f, "invariant `{name}` broken"),
             Self::AfterInvariant => f.write_str("afterInvariant broken"),
         }
-    }
-}
-
-/// Records `failure` as the representative failure for an observation, preferring
-/// terminal failures over non-terminal (handler) ones and keeping the first of
-/// each class.
-fn record_replay_failure(slot: &mut Option<ReplayFailure>, failure: ReplayFailure) {
-    match slot {
-        None => *slot = Some(failure),
-        Some(existing) if !existing.is_terminal() && failure.is_terminal() => *slot = Some(failure),
-        Some(_) => {}
-    }
-}
-
-/// Facts observed while replaying one candidate for minimization.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ReplayObservation {
-    /// AFL-bucketed EVM edge coverage for the candidate.
-    pub evm_edges: Vec<u8>,
-    /// AFL-bucketed native sancov edge coverage for the candidate.
-    pub sancov_edges: Vec<u8>,
-    /// Comparable failure identity, if replaying this candidate fails.
-    pub failure: Option<ReplayFailure>,
-    /// Number of replayable transactions executed.
-    pub replayed: usize,
-    /// Number of transactions skipped because they do not target this fuzz/invariant
-    /// context, or were rejected via `vm.assume`.
-    pub skipped: usize,
-}
-
-impl ReplayObservation {
-    pub fn has_coverage(&self) -> bool {
-        self.evm_edges.iter().any(|&edge| edge != 0)
-            || self.sancov_edges.iter().any(|&edge| edge != 0)
-    }
-
-    pub fn merge_edge_coverage(&mut self, other: &Self) {
-        merge_edge_vec(&mut self.evm_edges, &other.evm_edges);
-        merge_edge_vec(&mut self.sancov_edges, &other.sancov_edges);
-    }
-}
-
-fn merge_edge_vec(dst: &mut Vec<u8>, src: &[u8]) {
-    if dst.len() < src.len() {
-        dst.resize(src.len(), 0);
-    }
-    for (dst, src) in dst.iter_mut().zip(src) {
-        *dst = (*dst).max(*src);
     }
 }
 
@@ -413,130 +337,6 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     }
 
     Ok(stats)
-}
-
-/// Replay one in-memory candidate and return edge/failure observations.
-pub struct MinimizationReplayInput<'a> {
-    pub sequence: &'a [BasicTxDetails],
-    pub evm_edge_indices: &'a mut EdgeIndexMap,
-}
-
-pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
-    executor: &Executor<FEN>,
-    input: MinimizationReplayInput<'_>,
-    target: ShowmapReplayTarget<'_>,
-) -> Result<ReplayObservation> {
-    let mut observation = ReplayObservation::default();
-    let mut executor = executor.clone();
-    executor.inspector_mut().collect_edge_coverage(true);
-    executor.inspector_mut().collect_sancov_edges(true);
-
-    let fail_on_revert = target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
-    let mut created = Vec::new();
-    // Number of committed (non-`vm.assume`) calls, used to gate invariant checks.
-    let mut accepted = 0usize;
-    for tx in input.sequence {
-        if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
-            observation.skipped += 1;
-            continue;
-        }
-        let mut call_result = execute_tx(&mut executor, tx)?;
-        let target_addr = tx.call_details.target;
-        let selector =
-            tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
-        // Snapshot the edge fingerprint before `merge_all_coverage` zeroes the buffer.
-        let fingerprint = snapshot_edge_fingerprint(&call_result);
-        // `vm.assume` rejects are discarded by the campaign: the call is not
-        // committed, checked, counted toward coverage, or treated as a failure.
-        if call_result.result.as_ref() == MAGIC_ASSUME {
-            observation.skipped += 1;
-            continue;
-        }
-        call_result.merge_all_coverage(
-            &mut observation.evm_edges,
-            input.evm_edge_indices,
-            &mut observation.sancov_edges,
-        );
-        observation.replayed += 1;
-
-        register_replay_created(
-            &call_result.state_changeset,
-            target.dynamic,
-            target.fuzzed_contracts,
-            &mut created,
-        );
-
-        if target.fuzzed_contracts.is_some() {
-            accepted += 1;
-            if let Some(failure) = invariant_handler_failure(
-                target_addr,
-                selector,
-                did_fail_on_assert(&call_result, &call_result.state_changeset),
-                fail_on_revert,
-                &call_result,
-                fingerprint,
-            ) {
-                let terminal = failure.is_terminal();
-                record_replay_failure(&mut observation.failure, failure);
-                if terminal {
-                    break;
-                }
-            }
-            executor.commit(&mut call_result);
-            // Skip the predicate check only when a predicate already broke; handler
-            // bugs are non-terminal and the campaign keeps checking.
-            if !observation.failure.as_ref().is_some_and(ReplayFailure::is_predicate)
-                && should_check_invariant(accepted, target.invariant_replay.check_interval)
-                && let Some(address) = target.invariant_address
-                && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
-            {
-                record_replay_failure(&mut observation.failure, failure);
-            }
-        } else {
-            let success = if !target.fuzz_fail_on_revert
-                && call_result.reverter.is_some_and(|reverter| {
-                    reverter != target_addr && reverter != CHEATCODE_ADDRESS
-                }) {
-                true
-            } else {
-                executor.is_raw_call_mut_success(target_addr, &mut call_result, false)
-            };
-            if !success {
-                record_replay_failure(
-                    &mut observation.failure,
-                    ReplayFailure::Fuzz { selector, fingerprint },
-                );
-            }
-        }
-
-        // The campaign stops a run on a terminal failure (broken predicate / failed
-        // fuzz call); handler-side assertion bugs let it continue.
-        if observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal) {
-            break;
-        }
-    }
-    // Mirror the campaign's "always check on the last call" by running a final
-    // predicate check, unless the run already hit a terminal failure.
-    if !observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal)
-        && accepted > 0
-        && target.fuzzed_contracts.is_some()
-        && let Some(address) = target.invariant_address
-        && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
-    {
-        record_replay_failure(&mut observation.failure, failure);
-    }
-    // `afterInvariant` runs unless the run already hit a terminal failure.
-    if !observation.failure.as_ref().is_some_and(ReplayFailure::is_terminal)
-        && accepted > 0
-        && target.fuzzed_contracts.is_some()
-        && target.invariant_replay.call_after_invariant
-        && let Some(address) = target.invariant_address
-        && let Some(failure) = broken_after_invariant(&executor, address)?
-    {
-        record_replay_failure(&mut observation.failure, failure);
-    }
-    rollback_replay_created(target.fuzzed_contracts, created);
-    Ok(observation)
 }
 
 /// Returns a [`ReplayFailure::Handler`] if a handler call should be treated as a
@@ -761,62 +561,6 @@ mod tests {
     }
 
     #[test]
-    fn record_replay_failure_prefers_terminal_then_keeps_first() {
-        let handler = ReplayFailure::Handler {
-            target: Address::ZERO,
-            selector: Selector::from([1, 2, 3, 4]),
-            fingerprint: None,
-            terminal: false,
-        };
-        let terminal_handler = ReplayFailure::Handler {
-            target: Address::ZERO,
-            selector: Selector::from([4, 3, 2, 1]),
-            fingerprint: None,
-            terminal: true,
-        };
-        let predicate = ReplayFailure::Invariant { name: "inv".to_string() };
-
-        // Handler recorded first, then upgraded by a terminal predicate failure.
-        let mut slot = None;
-        record_replay_failure(&mut slot, handler.clone());
-        assert_eq!(slot, Some(handler.clone()));
-        record_replay_failure(&mut slot, predicate.clone());
-        assert_eq!(slot, Some(predicate.clone()));
-        // A later handler failure does not displace an existing terminal failure.
-        record_replay_failure(&mut slot, handler.clone());
-        assert_eq!(slot, Some(predicate.clone()));
-
-        // First terminal failure wins over a subsequent terminal failure.
-        let mut slot = None;
-        record_replay_failure(&mut slot, predicate.clone());
-        record_replay_failure(&mut slot, ReplayFailure::AfterInvariant);
-        assert_eq!(slot, Some(predicate));
-
-        assert!(!handler.is_terminal());
-        assert!(terminal_handler.is_terminal());
-        assert!(ReplayFailure::AfterInvariant.is_predicate());
-    }
-
-    #[test]
-    fn replay_failure_handler_distinguishes_code_paths_by_fingerprint() {
-        let site = (Address::with_last_byte(7), Selector::from([9, 9, 9, 9]));
-        let a = ReplayFailure::Handler {
-            target: site.0,
-            selector: site.1,
-            fingerprint: Some(B256::with_last_byte(1)),
-            terminal: false,
-        };
-        let b = ReplayFailure::Handler {
-            target: site.0,
-            selector: site.1,
-            fingerprint: Some(B256::with_last_byte(2)),
-            terminal: false,
-        };
-        // Same site, different code path => distinct identities (no false positive).
-        assert_ne!(a, b);
-    }
-
-    #[test]
     fn invariant_handler_failure_ignores_plain_revert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
@@ -849,7 +593,7 @@ mod tests {
             &call_result,
             None,
         );
-        assert!(failure.is_some_and(|failure| failure.is_terminal()));
+        assert!(matches!(failure, Some(ReplayFailure::Handler { terminal: true, .. })));
     }
 
     #[test]

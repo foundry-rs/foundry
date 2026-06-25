@@ -25,10 +25,10 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
-    executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
+    executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
     fork::CreateFork,
-    fuzz::{BasicTxDetails, strategies::LiteralsDictionary},
-    inspectors::{CheatsConfig, EdgeIndexMap},
+    fuzz::strategies::LiteralsDictionary,
+    inspectors::CheatsConfig,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
@@ -41,7 +41,7 @@ use std::{
     collections::BTreeMap,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, mpsc},
     time::Instant,
 };
 
@@ -385,18 +385,6 @@ pub struct ShowmapConfig {
     pub emit_files: bool,
 }
 
-/// CLI-only options that switch fuzz/invariant tests into single-entry replay
-/// mode for corpus/testcase minimization.
-#[derive(Clone, Debug)]
-pub struct FuzzMinimizeConfig {
-    /// Entry to replay.
-    pub input: Vec<BasicTxDetails>,
-    /// Shared edge-index assignment for all candidate replays in this minimization invocation.
-    pub evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
-    /// Shared replay observations collected from matched fuzz/invariant tests.
-    pub observations: Arc<Mutex<Vec<ReplayObservation>>>,
-}
-
 /// CLI-only options for replaying a durable symbolic counterexample artifact.
 #[derive(Clone, Debug)]
 pub struct SymbolicArtifactReplayConfig {
@@ -444,8 +432,6 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     /// When set, fuzz/invariant tests run in corpus replay mode and emit
     /// AFL-`afl-showmap`-style files instead of running a campaign.
     pub showmap: Option<ShowmapConfig>,
-    /// When set, fuzz/invariant tests replay one candidate input and record minimization facts.
-    pub fuzz_minimize: Option<FuzzMinimizeConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
@@ -800,7 +786,6 @@ impl MultiContractRunnerBuilder {
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
                 showmap: self.showmap,
-                fuzz_minimize: None,
                 fuzz_only: self.fuzz_only,
                 fuzz_failure_replay: self.fuzz_failure_replay,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,

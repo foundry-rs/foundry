@@ -77,9 +77,8 @@ pub use corpus_io::{
     CorpusDirEntry, canonical_replay_dirs, parse_corpus_filename, read_corpus_dir, read_corpus_tree,
 };
 pub use showmap::{
-    InvariantReplayOptions, MinimizationReplayInput, ReplayFailure, ReplayObservation,
-    ShowmapDomain, ShowmapOpts, ShowmapReplayTarget, ShowmapStats, replay_corpus_to_showmap,
-    replay_sequence_for_minimization,
+    InvariantReplayOptions, ReplayFailure, ShowmapDomain, ShowmapOpts, ShowmapReplayTarget,
+    ShowmapStats, replay_corpus_to_showmap,
 };
 pub use trace::TracingExecutor;
 

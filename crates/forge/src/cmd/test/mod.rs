@@ -5,17 +5,12 @@ use crate::{
     diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{
-        FuzzMinimizeConfig, MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig,
-        matches_artifact,
+        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, matches_artifact,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
         SymbolicReplayStatus, TestKindReport, TestOutcome, TestResult, TestStatus,
-    },
-    runner::{
-        InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
-        function_matches_network_pass,
     },
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -61,10 +56,9 @@ use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
-    executors::{ReplayObservation, ShowmapDomain},
-    fuzz::{BasicTxDetails, CounterExample},
+    executors::ShowmapDomain,
+    fuzz::CounterExample,
     hardforks::TempoHardfork,
-    inspectors::EdgeIndexMap,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -75,7 +69,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc::channel},
+    sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
 use yansi::Paint;
@@ -104,142 +98,6 @@ fn validate_showmap_name(kind: &str, name: &str) -> Result<()> {
         );
     }
     Ok(())
-}
-
-pub(crate) struct FuzzMinimizeReplaySession {
-    filter: ProjectPathsAwareFilter,
-    passes: Vec<FuzzMinimizeReplayPass>,
-}
-
-type FuzzMinimizeReplay = Box<dyn Fn(&ProjectPathsAwareFilter, FuzzMinimizeConfig) -> Result<()>>;
-
-struct FuzzMinimizeReplayPass {
-    target_count: usize,
-    replay: FuzzMinimizeReplay,
-}
-
-impl FuzzMinimizeReplaySession {
-    pub(crate) fn replay(
-        &self,
-        sequence: Vec<BasicTxDetails>,
-        evm_edge_indices: Arc<Mutex<EdgeIndexMap>>,
-    ) -> Result<ReplayObservation> {
-        let observations = Arc::new(Mutex::new(Vec::new()));
-        let fuzz_minimize = FuzzMinimizeConfig {
-            input: sequence,
-            evm_edge_indices,
-            observations: observations.clone(),
-        };
-
-        for pass in &self.passes {
-            if pass.target_count == 0 {
-                continue;
-            }
-            (pass.replay)(&self.filter, fuzz_minimize.clone())?;
-        }
-
-        let observations = observations
-            .lock()
-            .map_err(|_| eyre::eyre!("minimize observations lock poisoned"))?
-            .clone();
-        // The session is built with exactly one matched fuzz/invariant target, so a
-        // replay that produces no observation means the target silently did not run.
-        if observations.is_empty() {
-            bail!("fuzz minimization replay produced no observation for the matched test");
-        }
-        Ok(merge_replay_observations(observations))
-    }
-}
-
-fn replay_with_runner<FEN: FoundryEvmNetwork>(
-    runner: &MultiContractRunner<FEN>,
-    filter: &ProjectPathsAwareFilter,
-    fuzz_minimize: FuzzMinimizeConfig,
-) -> Result<()> {
-    let mut runner = runner.clone();
-    runner.tcfg.fuzz_minimize = Some(fuzz_minimize);
-    let results = runner.test_collect(filter)?;
-    // Minimization replay encodes internal errors (executor failures, poisoned
-    // locks) as failed test results; surface them instead of silently dropping
-    // them so the minimizer doesn't act on an empty observation.
-    for (suite, suite_result) in results {
-        for (test, test_result) in suite_result.test_results {
-            if test_result.status == TestStatus::Failure {
-                bail!(
-                    "fuzz minimization replay failed for {suite}::{test}: {}",
-                    test_result.reason.as_deref().unwrap_or("unknown error")
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn fuzz_minimize_replay<FEN: FoundryEvmNetwork>(
-    runner: MultiContractRunner<FEN>,
-    filter: &ProjectPathsAwareFilter,
-) -> FuzzMinimizeReplayPass {
-    let target_count = count_fuzz_minimize_targets(&runner, filter);
-    FuzzMinimizeReplayPass {
-        target_count,
-        replay: Box::new(move |filter, fuzz_minimize| {
-            replay_with_runner(&runner, filter, fuzz_minimize)
-        }),
-    }
-}
-
-fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
-    runner: &MultiContractRunner<FEN>,
-    filter: &dyn TestFilter,
-) -> usize {
-    runner
-        .matching_contracts(filter)
-        .map(|(id, contract)| {
-            let contract_name = id.identifier();
-            let fuzz_targets = contract
-                .abi
-                .functions()
-                .filter(|func| func.is_fuzz_test())
-                .filter(|func| filter.matches_test_function_in_contract(&contract_name, func))
-                .filter(|func| {
-                    function_matches_network_pass(
-                        &runner.tcfg.multi_network.all_override_networks,
-                        runner.tcfg.multi_network.pass_network.as_ref(),
-                        runner.tcfg.inline_config.network_for(
-                            &runner.tcfg.config.profile,
-                            &contract_name,
-                            &func.name,
-                        ),
-                    )
-                })
-                .count();
-            let invariant_targets = count_runnable_invariant_campaign_anchors(
-                &contract.abi,
-                filter,
-                InvariantCampaignScope {
-                    config: &runner.tcfg.config,
-                    inline_config: &runner.tcfg.inline_config,
-                    contract_name: &contract_name,
-                    all_override_networks: &runner.tcfg.multi_network.all_override_networks,
-                    pass_network: runner.tcfg.multi_network.pass_network.as_ref(),
-                },
-            );
-            fuzz_targets + invariant_targets
-        })
-        .sum()
-}
-
-fn merge_replay_observations(observations: Vec<ReplayObservation>) -> ReplayObservation {
-    let mut merged = ReplayObservation::default();
-    for observation in observations {
-        merged.merge_edge_coverage(&observation);
-        merged.replayed += observation.replayed;
-        merged.skipped += observation.skipped;
-        if merged.failure.is_none() {
-            merged.failure = observation.failure;
-        }
-    }
-    merged
 }
 
 /// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
@@ -825,20 +683,6 @@ impl TestArgs {
         self.showmap_override = Some(showmap);
     }
 
-    /// Sets replay-critical options for internal fuzz minimizer callers.
-    pub(crate) fn set_fuzz_minimize_replay_options(
-        &mut self,
-        global: GlobalArgs,
-        evm: EvmArgs,
-        build: BuildOpts,
-        filter: FilterArgs,
-    ) {
-        self.global = global;
-        self.evm = evm;
-        self.build = build;
-        self.filter = filter;
-    }
-
     /// Replays persisted fuzz failures without running a new fuzz campaign.
     pub(crate) const fn enable_fuzz_failure_replay(&mut self) {
         self.fuzz_failure_replay = true;
@@ -1148,92 +992,6 @@ impl TestArgs {
         }
 
         Ok((project_root, config, evm_opts, output, filter, replay_symbolic_artifact))
-    }
-
-    pub(crate) async fn prepare_fuzz_minimize_replay(
-        &mut self,
-    ) -> Result<FuzzMinimizeReplaySession> {
-        let (_, mut config, mut evm_opts, output, filter, _) = self.compile_project().await?;
-
-        if config.fuzz.run == Some(0) {
-            bail!("`fuzz.run` must be greater than 0");
-        }
-
-        if self.gas_report {
-            evm_opts.isolate = true;
-        } else {
-            config.fuzz.gas_report_samples = 0;
-            config.invariant.gas_report_samples = 0;
-        }
-
-        config.fuzz.seed = config
-            .fuzz
-            .seed
-            .or_else(|| Some(U256::from_be_bytes(rand::rng().random::<[u8; 32]>())));
-
-        evm_opts.infer_network_from_fork().await;
-
-        let inline_config = InlineConfig::new_parsed(&output, &config)?;
-        let override_networks = inline_config.referenced_override_networks(&config.profile);
-        let mut passes = Vec::new();
-
-        if override_networks.is_empty() {
-            passes.push(
-                self.dispatch_fuzz_minimize_network(
-                    &evm_opts,
-                    config,
-                    evm_opts.clone(),
-                    &output,
-                    MultiNetworkConfig::default(),
-                    &filter,
-                )
-                .await?,
-            );
-        } else {
-            let all_override_networks = override_networks.clone();
-            passes.push(
-                self.dispatch_fuzz_minimize_network(
-                    &evm_opts,
-                    config.clone(),
-                    evm_opts.clone(),
-                    &output,
-                    MultiNetworkConfig {
-                        all_override_networks: all_override_networks.clone(),
-                        pass_network: None,
-                    },
-                    &filter,
-                )
-                .await?,
-            );
-
-            for &network in &override_networks {
-                let mut pass_evm_opts = evm_opts.clone();
-                pass_evm_opts.networks = network.into();
-                passes.push(
-                    self.dispatch_fuzz_minimize_network(
-                        &pass_evm_opts,
-                        config.clone(),
-                        pass_evm_opts.clone(),
-                        &output,
-                        MultiNetworkConfig {
-                            all_override_networks: all_override_networks.clone(),
-                            pass_network: Some(network),
-                        },
-                        &filter,
-                    )
-                    .await?,
-                );
-            }
-        }
-
-        let target_count = passes.iter().map(|pass| pass.target_count).sum::<usize>();
-        if target_count != 1 {
-            bail!(
-                "fuzz minimization requires exactly one matched fuzz or invariant test; matched {target_count}"
-            );
-        }
-
-        Ok(FuzzMinimizeReplaySession { filter, passes })
     }
 
     /// Executes all the tests in the project.
@@ -1801,29 +1559,6 @@ impl TestArgs {
         Ok((libraries, outcome))
     }
 
-    async fn build_fuzz_minimize_runner<FEN: FoundryEvmNetwork>(
-        &self,
-        config: Config,
-        evm_opts: EvmOpts,
-        output: &ProjectCompileOutput,
-        multi_network: MultiNetworkConfig,
-    ) -> eyre::Result<MultiContractRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
-            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
-
-        let config = Arc::new(config);
-        MultiContractRunnerBuilder::new(config.clone())
-            .initial_balance(evm_opts.initial_balance)
-            .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
-            .enable_isolation(evm_opts.isolate)
-            .fail_fast(self.fail_fast)
-            .with_multi_network(multi_network)
-            .with_fuzz_only(self.fuzz_only)
-            .with_fuzz_failure_replay(self.fuzz_failure_replay)
-            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
-    }
-
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
     async fn dispatch_network(
         &self,
@@ -1849,40 +1584,6 @@ impl TestArgs {
             self.build_and_run_tests::<EthEvmNetwork>(config, evm_opts, output, filter, execution)
                 .await
         }
-    }
-
-    async fn dispatch_fuzz_minimize_network(
-        &self,
-        dispatch_opts: &EvmOpts,
-        config: Config,
-        evm_opts: EvmOpts,
-        output: &ProjectCompileOutput,
-        multi_network: MultiNetworkConfig,
-        filter: &ProjectPathsAwareFilter,
-    ) -> eyre::Result<FuzzMinimizeReplayPass> {
-        if dispatch_opts.networks.is_tempo() {
-            return self
-                .build_fuzz_minimize_runner::<TempoEvmNetwork>(
-                    config,
-                    evm_opts,
-                    output,
-                    multi_network,
-                )
-                .await
-                .map(|runner| fuzz_minimize_replay(runner, filter));
-        }
-
-        #[cfg(feature = "optimism")]
-        if dispatch_opts.networks.is_optimism() {
-            return self
-                .build_fuzz_minimize_runner::<OpEvmNetwork>(config, evm_opts, output, multi_network)
-                .await
-                .map(|runner| fuzz_minimize_replay(runner, filter));
-        }
-
-        self.build_fuzz_minimize_runner::<EthEvmNetwork>(config, evm_opts, output, multi_network)
-            .await
-            .map(|runner| fuzz_minimize_replay(runner, filter))
     }
 
     /// Run all tests that matches the filter predicate from a test runner

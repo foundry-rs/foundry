@@ -28,15 +28,15 @@ use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
-        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
-        RawCallResult, ShowmapOpts, ShowmapReplayTarget,
+        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, RawCallResult, ShowmapOpts,
+        ShowmapReplayTarget,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
             check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
-        replay_corpus_to_showmap, replay_sequence_for_minimization,
+        replay_corpus_to_showmap,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -2113,64 +2113,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             Cow::Borrowed(func.name.as_str())
         };
 
-        if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.clone() {
-            if let Err(e) = evm.select_contract_artifacts(self.address) {
-                self.result.invariant_setup_fail(e);
-                return self.result;
-            }
-            let targeted = match evm.select_contracts_and_senders(self.address) {
-                Ok((_, t)) => t,
-                Err(e) => {
-                    self.result.invariant_setup_fail(e);
-                    return self.result;
-                }
-            };
-            let dynamic = evm.dynamic_target_ctx();
-            let mut evm_edge_indices = match minimize.evm_edge_indices.lock() {
-                Ok(indices) => indices,
-                Err(_) => {
-                    self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
-                    return self.result;
-                }
-            };
-            match replay_sequence_for_minimization(
-                &evm.executor,
-                MinimizationReplayInput {
-                    sequence: &minimize.input,
-                    evm_edge_indices: &mut evm_edge_indices,
-                },
-                ShowmapReplayTarget {
-                    fuzzed_function: None,
-                    fuzz_fail_on_revert: false,
-                    fuzzed_contracts: Some(&targeted),
-                    invariant_address: Some(invariant_contract.address),
-                    invariant_fns: &invariant_contract.invariant_fns,
-                    invariant_replay: InvariantReplayOptions {
-                        check_interval: invariant_config.check_interval,
-                        call_after_invariant,
-                    },
-                    dynamic: Some(&dynamic),
-                },
-            ) {
-                Ok(observation) => {
-                    let replayed = observation.replayed;
-                    let skipped = observation.skipped;
-                    match minimize.observations.lock() {
-                        Ok(mut observations) => observations.push(observation),
-                        Err(_) => {
-                            self.result.single_fail(Some(
-                                "minimize observations lock poisoned".to_string(),
-                            ));
-                            return self.result;
-                        }
-                    }
-                    self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
-                }
-                Err(e) => self.result.single_fail(Some(e.to_string())),
-            }
-            return self.result;
-        }
-
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
@@ -2786,52 +2728,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     dynamic: None,
                 },
             );
-        }
-
-        if let Some(minimize) = self.cr.mcr.tcfg.fuzz_minimize.clone() {
-            let mut executor = self.executor.clone().into_owned();
-            executor.inspector_mut().collect_edge_coverage(true);
-            executor.inspector_mut().collect_sancov_edges(true);
-            let mut evm_edge_indices = match minimize.evm_edge_indices.lock() {
-                Ok(indices) => indices,
-                Err(_) => {
-                    self.result.single_fail(Some("minimize edge index lock poisoned".to_string()));
-                    return self.result;
-                }
-            };
-            match replay_sequence_for_minimization(
-                &executor,
-                MinimizationReplayInput {
-                    sequence: &minimize.input,
-                    evm_edge_indices: &mut evm_edge_indices,
-                },
-                ShowmapReplayTarget {
-                    fuzzed_function: Some(func),
-                    fuzz_fail_on_revert: fuzz_config.fail_on_revert,
-                    fuzzed_contracts: None,
-                    invariant_address: None,
-                    invariant_fns: &[],
-                    invariant_replay: InvariantReplayOptions::default(),
-                    dynamic: None,
-                },
-            ) {
-                Ok(observation) => {
-                    let replayed = observation.replayed;
-                    let skipped = observation.skipped;
-                    match minimize.observations.lock() {
-                        Ok(mut observations) => observations.push(observation),
-                        Err(_) => {
-                            self.result.single_fail(Some(
-                                "minimize observations lock poisoned".to_string(),
-                            ));
-                            return self.result;
-                        }
-                    }
-                    self.result.replay_result(replayed, 0, skipped, std::time::Duration::ZERO);
-                }
-                Err(e) => self.result.single_fail(Some(e.to_string())),
-            }
-            return self.result;
         }
 
         // Load persisted counterexample, if any.
