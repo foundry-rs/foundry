@@ -329,6 +329,15 @@ impl InvariantCorpusPersistence {
     }
 }
 
+fn invariant_corpus_sync_enabled(
+    config: &InvariantConfig,
+    corpus_persistence: InvariantCorpusPersistence,
+) -> bool {
+    config.corpus_sync.is_enabled()
+        && corpus_persistence.is_deferred()
+        && !config.timeout.is_some_and(|timeout| timeout <= config.corpus_sync.plateau_seconds)
+}
+
 /// Converts a cumulative campaign total into an average per-second rate.
 ///
 /// Returns `0.0` during the initial zero-elapsed startup window to avoid
@@ -803,9 +812,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let base_executor = self.executor.clone();
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
-        let corpus_exchange = (self.config.corpus_sync.is_enabled()
-            && corpus_persistence.is_deferred())
-        .then(|| Arc::new(InvariantCorpusExchange::new()));
+        let corpus_exchange = invariant_corpus_sync_enabled(&self.config, corpus_persistence)
+            .then(|| Arc::new(InvariantCorpusExchange::new()));
 
         let worker_outputs = if corpus_persistence.is_deferred() {
             let worker_jobs = worker_plans
@@ -2528,6 +2536,28 @@ mod tests {
         assert!(should_continue_invariant_worker(&timed, 0, plan));
         assert!(should_continue_invariant_worker(&timed, 1, plan));
         assert!(should_continue_invariant_worker(&timed, 10_000, plan));
+    }
+
+    #[test]
+    fn invariant_corpus_sync_skips_timed_campaigns_shorter_than_plateau() {
+        let mut config = InvariantConfig { timeout: Some(1_800), ..InvariantConfig::default() };
+        config.corpus_sync.plateau_seconds = 1_800;
+
+        assert!(!invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
+
+        config.timeout = Some(1_801);
+        assert!(invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
+    }
+
+    #[test]
+    fn invariant_corpus_sync_requires_enabled_deferred_campaign() {
+        let mut config = InvariantConfig::default();
+
+        assert!(!invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Live));
+        assert!(invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
+
+        config.corpus_sync.mode = foundry_config::InvariantCorpusSyncMode::Off;
+        assert!(!invariant_corpus_sync_enabled(&config, InvariantCorpusPersistence::Deferred));
     }
 
     #[test]
