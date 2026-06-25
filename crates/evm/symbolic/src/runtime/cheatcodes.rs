@@ -318,10 +318,9 @@ pub(crate) fn symbolic_vm_cheatcode_min_input_size(selector: [u8; 4]) -> Option<
             "createCalldata(string)",
             "snapshotState()",
         ],
-    ) || (8..=256).step_by(8).any(|bits| {
-        selector == selector_for(&format!("createUint{bits}(string)"))
-            || selector == selector_for(&format!("createInt{bits}(string)"))
-    }) || (1..=32).any(|bytes| selector == selector_for(&format!("createBytes{bytes}(string)")))
+    ) || symbolic_create_uint_selectors().iter().any(|(_, candidate)| selector == *candidate)
+        || symbolic_create_int_selectors().iter().any(|(_, candidate)| selector == *candidate)
+        || symbolic_create_bytes_selectors().iter().any(|(_, candidate)| selector == *candidate)
     {
         return Some(abi_static_input_size(0));
     }

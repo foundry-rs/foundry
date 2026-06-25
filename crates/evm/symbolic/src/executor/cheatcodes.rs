@@ -2559,8 +2559,8 @@ impl SymbolicExecutor {
         {
             return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
         }
-        for bits in (8..=256).step_by(8) {
-            if selector == selector_for(&format!("createUint{bits}(string)")) {
+        for &(bits, candidate) in symbolic_create_uint_selectors() {
+            if selector == candidate {
                 if bits == 256 {
                     return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
                 }
@@ -2568,7 +2568,9 @@ impl SymbolicExecutor {
                     state.fresh_bounded_uint(U256::from(bits)),
                 ]));
             }
-            if selector == selector_for(&format!("createInt{bits}(string)")) {
+        }
+        for &(bits, candidate) in symbolic_create_int_selectors() {
+            if selector == candidate {
                 if bits == 256 {
                     return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
                 }
@@ -2577,8 +2579,8 @@ impl SymbolicExecutor {
                 ]));
             }
         }
-        for bytes in 1..=32 {
-            if selector == selector_for(&format!("createBytes{bytes}(string)")) {
+        for &(bytes, candidate) in symbolic_create_bytes_selectors() {
+            if selector == candidate {
                 let value = state.fresh_bounded_uint(U256::from(bytes * 8));
                 let value = if bytes == 32 { value } else { shift_left(value, (32 - bytes) * 8) };
                 return Ok(SymReturnData::from_words(vec![value]));

@@ -103,6 +103,42 @@ fn static_selector_for(signature: &'static str) -> [u8; 4] {
         .expect("static selector signature must be registered")
 }
 
+/// Returns cached selectors for `createUint{bits}(string)` symbolic helpers.
+fn symbolic_create_uint_selectors() -> &'static [(usize, [u8; 4]); 32] {
+    static SELECTORS: std::sync::LazyLock<[(usize, [u8; 4]); 32]> =
+        std::sync::LazyLock::new(|| {
+            std::array::from_fn(|idx| {
+                let bits = (idx + 1) * 8;
+                (bits, selector_for(&format!("createUint{bits}(string)")))
+            })
+        });
+    &SELECTORS
+}
+
+/// Returns cached selectors for `createInt{bits}(string)` symbolic helpers.
+fn symbolic_create_int_selectors() -> &'static [(usize, [u8; 4]); 32] {
+    static SELECTORS: std::sync::LazyLock<[(usize, [u8; 4]); 32]> =
+        std::sync::LazyLock::new(|| {
+            std::array::from_fn(|idx| {
+                let bits = (idx + 1) * 8;
+                (bits, selector_for(&format!("createInt{bits}(string)")))
+            })
+        });
+    &SELECTORS
+}
+
+/// Returns cached selectors for `createBytes{bytes}(string)` symbolic helpers.
+fn symbolic_create_bytes_selectors() -> &'static [(usize, [u8; 4]); 32] {
+    static SELECTORS: std::sync::LazyLock<[(usize, [u8; 4]); 32]> =
+        std::sync::LazyLock::new(|| {
+            std::array::from_fn(|idx| {
+                let bytes = idx + 1;
+                (bytes, selector_for(&format!("createBytes{bytes}(string)")))
+            })
+        });
+    &SELECTORS
+}
+
 /// Outcome of a symbolic test execution.
 ///
 /// The forge runner treats `Safe` as a passing symbolic test, `Counterexample` as a
