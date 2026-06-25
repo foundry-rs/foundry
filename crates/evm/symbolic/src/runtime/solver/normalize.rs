@@ -54,20 +54,22 @@ pub(crate) fn normalize_bool_for_solver(expr: BoolExpr) -> BoolExpr {
 
     match expr {
         BoolExpr::Const(value) => BoolExpr::Const(value),
-        BoolExpr::Not(value) => normalize_bool_for_solver(*value).not(),
+        BoolExpr::Not(value) => normalize_bool_for_solver(Arc::unwrap_or_clone(value)).not(),
         BoolExpr::And(values) => {
             BoolExpr::and(values.iter().cloned().map(normalize_bool_for_solver).collect())
         }
         BoolExpr::Eq(left, right) => {
-            let normalized =
-                BoolExpr::eq(normalize_expr_for_solver(*left), normalize_expr_for_solver(*right));
+            let normalized = BoolExpr::eq(
+                normalize_expr_for_solver(Arc::unwrap_or_clone(left)),
+                normalize_expr_for_solver(Arc::unwrap_or_clone(right)),
+            );
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
         BoolExpr::Cmp(op, left, right) => {
             let normalized = BoolExpr::cmp(
                 op,
-                normalize_expr_for_solver(*left),
-                normalize_expr_for_solver(*right),
+                normalize_expr_for_solver(Arc::unwrap_or_clone(left)),
+                normalize_expr_for_solver(Arc::unwrap_or_clone(right)),
             );
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
@@ -171,10 +173,10 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
 
     match expr {
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => expr,
-        Expr::Not(value) => Expr::not(normalize_expr_for_solver(*value)),
+        Expr::Not(value) => Expr::not(normalize_expr_for_solver(Arc::unwrap_or_clone(value))),
         Expr::Op(op, left, right) => {
-            let left = normalize_expr_for_solver(*left);
-            let right = normalize_expr_for_solver(*right);
+            let left = normalize_expr_for_solver(Arc::unwrap_or_clone(left));
+            let right = normalize_expr_for_solver(Arc::unwrap_or_clone(right));
             if matches!(op, ExprOp::Add | ExprOp::Mul | ExprOp::And | ExprOp::Or | ExprOp::Xor)
                 && right < left
             {
@@ -184,16 +186,20 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
             }
         }
         Expr::AddMod { left, right, modulus } => Expr::addmod(
-            normalize_expr_for_solver(*left),
-            normalize_expr_for_solver(*right),
-            normalize_expr_for_solver(*modulus),
+            normalize_expr_for_solver(Arc::unwrap_or_clone(left)),
+            normalize_expr_for_solver(Arc::unwrap_or_clone(right)),
+            normalize_expr_for_solver(Arc::unwrap_or_clone(modulus)),
         ),
         Expr::MulMod { left, right, modulus } => Expr::mulmod(
-            normalize_expr_for_solver(*left),
-            normalize_expr_for_solver(*right),
-            normalize_expr_for_solver(*modulus),
+            normalize_expr_for_solver(Arc::unwrap_or_clone(left)),
+            normalize_expr_for_solver(Arc::unwrap_or_clone(right)),
+            normalize_expr_for_solver(Arc::unwrap_or_clone(modulus)),
         ),
-        Expr::Ite(cond, left, right) => normalize_ite_expr_for_solver(*cond, *left, *right),
+        Expr::Ite(cond, left, right) => normalize_ite_expr_for_solver(
+            Arc::unwrap_or_clone(cond),
+            Arc::unwrap_or_clone(left),
+            Arc::unwrap_or_clone(right),
+        ),
     }
 }
 
@@ -311,7 +317,7 @@ pub(crate) fn extracted_unshifted_byte_source(term: &Expr, index: usize) -> Opti
     }
     let Expr::Op(ExprOp::Shr, source, shift) = expr else { return None };
     let Expr::Const(shift) = shift.as_ref() else { return None };
-    (*shift == U256::from((31 - index) * 8)).then(|| *source.clone())
+    (*shift == U256::from((31 - index) * 8)).then(|| source.as_ref().clone())
 }
 
 /// Rewrites exact EVM unsigned-division zero/nonzero predicates without `bvudiv`.

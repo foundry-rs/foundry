@@ -234,10 +234,10 @@ fn symbolic_division_guards_zero_divisor() {
 
     assert_eq!(
         state.stack.pop().unwrap(),
-        SymWord::Expr(Expr::Ite(
-            Box::new(BoolExpr::eq(Expr::var("den"), Expr::Const(U256::ZERO))),
-            Box::new(Expr::Const(U256::ZERO)),
-            Box::new(Expr::op(ExprOp::UDiv, Expr::var("num"), Expr::var("den"))),
+        SymWord::Expr(Expr::ite(
+            BoolExpr::eq(Expr::var("den"), Expr::Const(U256::ZERO)),
+            Expr::Const(U256::ZERO),
+            Expr::op(ExprOp::UDiv, Expr::var("num"), Expr::var("den")),
         ))
     );
 }
@@ -1391,11 +1391,7 @@ fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
         ExprOp::And,
         Expr::op(
             ExprOp::Shr,
-            Expr::Ite(
-                Box::new(condition),
-                Box::new(Expr::Const(U256::from(1))),
-                Box::new(Expr::Const(U256::ZERO)),
-            ),
+            Expr::ite(condition, Expr::Const(U256::from(1)), Expr::Const(U256::ZERO)),
             Expr::Const(U256::ZERO),
         ),
         Expr::Const(U256::from(0xff)),
@@ -1727,10 +1723,10 @@ fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
 
     assert_eq!(
         read_storage_writes(&writes, address, read_key.clone(), SymWord::zero()),
-        SymWord::Expr(Expr::Ite(
-            Box::new(BoolExpr::eq(read_key.into_expr(), write_key.into_expr())),
-            Box::new(value.into_expr()),
-            Box::new(Expr::Const(U256::ZERO)),
+        SymWord::Expr(Expr::ite(
+            BoolExpr::eq(read_key.into_expr(), write_key.into_expr()),
+            value.into_expr(),
+            Expr::Const(U256::ZERO),
         ))
     );
 }
@@ -1909,13 +1905,13 @@ fn calldata_variant_expansion_respects_path_width() {
 fn symbolic_signextend_uses_sign_bit_ite() {
     assert_eq!(
         signextend_word(U256::ZERO, SymWord::Expr(Expr::var("word"))),
-        SymWord::Expr(Expr::Ite(
-            Box::new(BoolExpr::eq(
+        SymWord::Expr(Expr::ite(
+            BoolExpr::eq(
                 Expr::op(ExprOp::And, Expr::var("word"), Expr::Const(U256::from(0x80))),
-                Expr::Const(U256::ZERO)
-            )),
-            Box::new(Expr::op(ExprOp::And, Expr::var("word"), Expr::Const(U256::from(0x7f)))),
-            Box::new(Expr::op(ExprOp::Or, Expr::var("word"), Expr::Const(!U256::from(0x7f)))),
+                Expr::Const(U256::ZERO),
+            ),
+            Expr::op(ExprOp::And, Expr::var("word"), Expr::Const(U256::from(0x7f))),
+            Expr::op(ExprOp::Or, Expr::var("word"), Expr::Const(!U256::from(0x7f))),
         ))
     );
 }
@@ -2239,14 +2235,14 @@ fn solver_rebuilds_word_from_extracted_byte_terms() {
 
 fn checked_mul_guard_word(zero_operand: &Expr, expected: &Expr) -> Expr {
     let operand_is_zero = BoolExpr::eq(zero_operand.clone(), Expr::Const(U256::ZERO));
-    let checked_product = Expr::Ite(
-        Box::new(operand_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(
+    let checked_product = Expr::ite(
+        operand_is_zero.clone(),
+        Expr::Const(U256::ZERO),
+        Expr::op(
             ExprOp::UDiv,
             Expr::op(ExprOp::Mul, zero_operand.clone(), expected.clone()),
             zero_operand.clone(),
-        )),
+        ),
     );
 
     Expr::op(
@@ -2294,11 +2290,8 @@ fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
 fn solver_normalizes_guarded_self_division_guard() {
     let a = Expr::var("a");
     let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_quotient = Expr::Ite(
-        Box::new(a_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
-    );
+    let checked_quotient =
+        Expr::ite(a_is_zero.clone(), Expr::Const(U256::ZERO), Expr::op(ExprOp::UDiv, a.clone(), a));
     let guard = Expr::op(
         ExprOp::Or,
         SymWord::from_bool(a_is_zero).into_expr(),
@@ -2320,21 +2313,14 @@ fn solver_normalizes_guarded_self_division_guard() {
 fn solver_normalizes_guarded_self_division_word() {
     let a = Expr::var("a");
     let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_quotient = Expr::Ite(
-        Box::new(a_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
-    );
+    let checked_quotient =
+        Expr::ite(a_is_zero.clone(), Expr::Const(U256::ZERO), Expr::op(ExprOp::UDiv, a.clone(), a));
     let normalized = normalize_expr_for_solver(checked_quotient.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
     assert_eq!(
         normalized,
-        Expr::Ite(
-            Box::new(a_is_zero.not()),
-            Box::new(Expr::Const(U256::from(1))),
-            Box::new(Expr::Const(U256::ZERO)),
-        )
+        Expr::ite(a_is_zero.not(), Expr::Const(U256::from(1)), Expr::Const(U256::ZERO))
     );
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
@@ -2351,11 +2337,8 @@ fn solver_normalizes_guarded_self_division_word() {
 fn solver_does_not_invert_guarded_zero_self_division() {
     let a = Expr::var("a");
     let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let mirrored = Expr::Ite(
-        Box::new(a_is_zero),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
-        Box::new(Expr::Const(U256::ZERO)),
-    );
+    let mirrored =
+        Expr::ite(a_is_zero, Expr::op(ExprOp::UDiv, a.clone(), a), Expr::Const(U256::ZERO));
     let normalized = normalize_expr_for_solver(mirrored.clone());
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
@@ -2369,11 +2352,8 @@ fn solver_does_not_invert_guarded_zero_self_division() {
 fn solver_normalizes_guarded_self_division_add_overflow_guard() {
     let a = Expr::var("a");
     let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_quotient = Expr::Ite(
-        Box::new(a_is_zero),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
-    );
+    let checked_quotient =
+        Expr::ite(a_is_zero, Expr::Const(U256::ZERO), Expr::op(ExprOp::UDiv, a.clone(), a));
 
     assert_eq!(
         normalize_bool_for_solver(BoolExpr::cmp(

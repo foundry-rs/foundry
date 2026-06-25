@@ -621,7 +621,7 @@ pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<Expr
     }
     let Expr::Op(ExprOp::Shr, source, shift) = expr else { return None };
     let Expr::Const(shift) = shift.as_ref() else { return None };
-    (*shift == U256::from((31 - index) * 8)).then(|| *source.clone())
+    (*shift == U256::from((31 - index) * 8)).then(|| source.as_ref().clone())
 }
 
 /// Implements the `strip_low_byte_mask` symbolic expression helper.
@@ -933,13 +933,13 @@ impl SymWord {
                 if then_expr.as_ref() == &Expr::Const(U256::from(1))
                     && else_expr.as_ref() == &Expr::Const(U256::ZERO) =>
             {
-                cond.not()
+                Arc::unwrap_or_clone(cond).not()
             }
             Self::Expr(Expr::Ite(cond, then_expr, else_expr))
                 if then_expr.as_ref() == &Expr::Const(U256::ZERO)
                     && else_expr.as_ref() == &Expr::Const(U256::from(1)) =>
             {
-                *cond
+                Arc::unwrap_or_clone(cond)
             }
             value => BoolExpr::eq(value.into_expr(), Expr::Const(U256::ZERO)),
         }
@@ -973,19 +973,19 @@ pub(crate) enum Expr {
     Const(U256),
     Var(Arc<str>),
     GasLeft(usize),
-    Keccak(Box<KeccakExpr>),
-    Hash(Box<HashExpr>),
-    Not(Box<Self>),
-    Op(ExprOp, Box<Self>, Box<Self>),
-    AddMod { left: Box<Self>, right: Box<Self>, modulus: Box<Self> },
-    MulMod { left: Box<Self>, right: Box<Self>, modulus: Box<Self> },
-    Ite(Box<BoolExpr>, Box<Self>, Box<Self>),
+    Keccak(Arc<KeccakExpr>),
+    Hash(Arc<HashExpr>),
+    Not(Arc<Self>),
+    Op(ExprOp, Arc<Self>, Arc<Self>),
+    AddMod { left: Arc<Self>, right: Arc<Self>, modulus: Arc<Self> },
+    MulMod { left: Arc<Self>, right: Arc<Self>, modulus: Arc<Self> },
+    Ite(Arc<BoolExpr>, Arc<Self>, Arc<Self>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct KeccakExpr {
     name: Arc<str>,
-    len: Box<Expr>,
+    len: Arc<Expr>,
     bytes: Arc<[Expr]>,
 }
 
@@ -1010,7 +1010,7 @@ impl KeccakExpr {
     /// Consumes this symbolic keccak expression into its parts.
     pub(crate) fn into_parts(self) -> (Arc<str>, Expr, Arc<[Expr]>) {
         let Self { name, len, bytes } = self;
-        (name, *len, bytes)
+        (name, Arc::unwrap_or_clone(len), bytes)
     }
 }
 
@@ -1041,9 +1041,9 @@ impl Expr {
 
     /// Builds a symbolic keccak expression.
     pub(crate) fn keccak(name: impl Into<Arc<str>>, len: Self, bytes: Vec<Self>) -> Self {
-        Self::Keccak(Box::new(KeccakExpr {
+        Self::Keccak(Arc::new(KeccakExpr {
             name: name.into(),
-            len: Box::new(len),
+            len: Arc::new(len),
             bytes: bytes.into(),
         }))
     }
@@ -1054,7 +1054,7 @@ impl Expr {
         algorithm: &'static str,
         bytes: Vec<Self>,
     ) -> Self {
-        Self::Hash(Box::new(HashExpr { name: name.into(), algorithm, bytes: bytes.into() }))
+        Self::Hash(Arc::new(HashExpr { name: name.into(), algorithm, bytes: bytes.into() }))
     }
 
     /// Builds a conditional expression.
@@ -1066,7 +1066,7 @@ impl Expr {
                 if then_expr == else_expr {
                     then_expr
                 } else {
-                    Self::Ite(Box::new(cond), Box::new(then_expr), Box::new(else_expr))
+                    Self::Ite(Arc::new(cond), Arc::new(then_expr), Arc::new(else_expr))
                 }
             }
         }
@@ -1076,8 +1076,8 @@ impl Expr {
     pub(crate) fn not(value: Self) -> Self {
         match value {
             Self::Const(value) => Self::Const(!value),
-            Self::Not(value) => *value,
-            value => Self::Not(Box::new(value)),
+            Self::Not(value) => Arc::unwrap_or_clone(value),
+            value => Self::Not(Arc::new(value)),
         }
     }
 
@@ -1178,7 +1178,7 @@ impl Expr {
             (ExprOp::Shl | ExprOp::Shr, Self::Const(value), _) if value.is_zero() => {
                 Self::Const(U256::ZERO)
             }
-            (op, left, right) => Self::Op(op, Box::new(left), Box::new(right)),
+            (op, left, right) => Self::Op(op, Arc::new(left), Arc::new(right)),
         }
     }
 
@@ -1192,7 +1192,7 @@ impl Expr {
         {
             return Self::Const(addmod_word(*left, *right, *modulus));
         }
-        Self::AddMod { left: Box::new(left), right: Box::new(right), modulus: Box::new(modulus) }
+        Self::AddMod { left: Arc::new(left), right: Arc::new(right), modulus: Arc::new(modulus) }
     }
 
     /// Builds an exact EVM `MULMOD` expression.
@@ -1205,7 +1205,7 @@ impl Expr {
         {
             return Self::Const(mulmod_word(*left, *right, *modulus));
         }
-        Self::MulMod { left: Box::new(left), right: Box::new(right), modulus: Box::new(modulus) }
+        Self::MulMod { left: Arc::new(left), right: Arc::new(right), modulus: Arc::new(modulus) }
     }
 
     fn and_const(expr: Self, mask: U256) -> Self {
@@ -1217,20 +1217,24 @@ impl Expr {
         }
 
         match expr {
-            Self::Op(ExprOp::And, left, right) => match (*left, *right) {
-                (Self::Const(existing), inner) | (inner, Self::Const(existing))
-                    if existing == mask =>
-                {
-                    Self::and_const(inner, mask)
+            Self::Op(ExprOp::And, left, right) => {
+                let left = Arc::unwrap_or_clone(left);
+                let right = Arc::unwrap_or_clone(right);
+                match (left, right) {
+                    (Self::Const(existing), inner) | (inner, Self::Const(existing))
+                        if existing == mask =>
+                    {
+                        Self::and_const(inner, mask)
+                    }
+                    (left, right) if left == right => Self::and_const(left, mask),
+                    (left, right) => Self::Op(
+                        ExprOp::And,
+                        Arc::new(Self::Op(ExprOp::And, Arc::new(left), Arc::new(right))),
+                        Arc::new(Self::Const(mask)),
+                    ),
                 }
-                (left, right) if left == right => Self::and_const(left, mask),
-                (left, right) => Self::Op(
-                    ExprOp::And,
-                    Box::new(Self::Op(ExprOp::And, Box::new(left), Box::new(right))),
-                    Box::new(Self::Const(mask)),
-                ),
-            },
-            expr => Self::Op(ExprOp::And, Box::new(expr), Box::new(Self::Const(mask))),
+            }
+            expr => Self::Op(ExprOp::And, Arc::new(expr), Arc::new(Self::Const(mask))),
         }
     }
 
@@ -1335,10 +1339,10 @@ impl ExprOp {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum BoolExpr {
     Const(bool),
-    Not(Box<Self>),
+    Not(Arc<Self>),
     And(Arc<[Self]>),
-    Eq(Box<Expr>, Box<Expr>),
-    Cmp(BoolExprOp, Box<Expr>, Box<Expr>),
+    Eq(Arc<Expr>, Arc<Expr>),
+    Cmp(BoolExprOp, Arc<Expr>, Arc<Expr>),
 }
 
 impl BoolExpr {
@@ -1384,13 +1388,13 @@ impl BoolExpr {
                 if let Some(left) = expr_known_word(left) {
                     return Self::Const(left == *right);
                 }
-                Self::Eq(Box::new(left.clone()), Box::new(Expr::Const(*right)))
+                Self::Eq(Arc::new(left.clone()), Arc::new(Expr::Const(*right)))
             }
             (Expr::Const(left), right) => {
                 if let Some(right) = expr_known_word(right) {
                     return Self::Const(*left == right);
                 }
-                Self::Eq(Box::new(Expr::Const(*left)), Box::new(right.clone()))
+                Self::Eq(Arc::new(Expr::Const(*left)), Arc::new(right.clone()))
             }
             (Expr::Keccak(left), Expr::Keccak(right)) if left.bytes.len() == right.bytes.len() => {
                 let mut conditions = vec![Self::eq((*left.len).clone(), (*right.len).clone())];
@@ -1415,7 +1419,7 @@ impl BoolExpr {
                         .collect(),
                 )
             }
-            _ => Self::Eq(Box::new(left), Box::new(right)),
+            _ => Self::Eq(Arc::new(left), Arc::new(right)),
         }
     }
 
@@ -1500,16 +1504,16 @@ impl BoolExpr {
             }
             _ => {}
         }
-        Self::Cmp(op, Box::new(left), Box::new(right))
+        Self::Cmp(op, Arc::new(left), Arc::new(right))
     }
 
     /// Implements the `not` symbolic expression helper.
     pub(crate) fn not(self) -> Self {
         match self {
             Self::Const(value) => Self::Const(!value),
-            Self::Not(value) => *value,
-            Self::And(values) => Self::Not(Box::new(Self::And(values))),
-            value => Self::Not(Box::new(value)),
+            Self::Not(value) => Arc::unwrap_or_clone(value),
+            Self::And(values) => Self::Not(Arc::new(Self::And(values))),
+            value => Self::Not(Arc::new(value)),
         }
     }
 

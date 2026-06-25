@@ -630,7 +630,7 @@ fn sorted_bool_exprs_are_subset(subset: &[BoolExpr], superset: &[BoolExpr]) -> b
 fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
     match expr {
         BoolExpr::Const(_) => expr,
-        BoolExpr::Not(value) => cache_key_bool(*value).not(),
+        BoolExpr::Not(value) => cache_key_bool(Arc::unwrap_or_clone(value)).not(),
         BoolExpr::And(values) => {
             let mut conjuncts = Vec::new();
             for value in values.iter().cloned().map(cache_key_bool) {
@@ -641,13 +641,15 @@ fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
             BoolExpr::and(conjuncts)
         }
         BoolExpr::Eq(left, right) => {
-            let left = cache_key_expr(*left);
-            let right = cache_key_expr(*right);
+            let left = cache_key_expr(Arc::unwrap_or_clone(left));
+            let right = cache_key_expr(Arc::unwrap_or_clone(right));
             if left <= right { BoolExpr::eq(left, right) } else { BoolExpr::eq(right, left) }
         }
-        BoolExpr::Cmp(op, left, right) => {
-            cache_key_cmp(op, cache_key_expr(*left), cache_key_expr(*right))
-        }
+        BoolExpr::Cmp(op, left, right) => cache_key_cmp(
+            op,
+            cache_key_expr(Arc::unwrap_or_clone(left)),
+            cache_key_expr(Arc::unwrap_or_clone(right)),
+        ),
     }
 }
 
@@ -679,7 +681,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
     match expr {
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => expr,
         Expr::Keccak(hash) => {
-            let (name, len, bytes) = (*hash).into_parts();
+            let (name, len, bytes) = Arc::unwrap_or_clone(hash).into_parts();
             Expr::keccak(
                 name,
                 cache_key_expr(len),
@@ -687,13 +689,13 @@ fn cache_key_expr(expr: Expr) -> Expr {
             )
         }
         Expr::Hash(hash) => {
-            let (name, algorithm, bytes) = (*hash).into_parts();
+            let (name, algorithm, bytes) = Arc::unwrap_or_clone(hash).into_parts();
             Expr::hash(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
         }
-        Expr::Not(value) => Expr::not(cache_key_expr(*value)),
+        Expr::Not(value) => Expr::not(cache_key_expr(Arc::unwrap_or_clone(value))),
         Expr::Op(op, left, right) => {
-            let left = cache_key_expr(*left);
-            let right = cache_key_expr(*right);
+            let left = cache_key_expr(Arc::unwrap_or_clone(left));
+            let right = cache_key_expr(Arc::unwrap_or_clone(right));
             if expr_op_is_commutative(op) && right < left {
                 Expr::op(op, right, left)
             } else {
@@ -701,9 +703,9 @@ fn cache_key_expr(expr: Expr) -> Expr {
             }
         }
         Expr::AddMod { left, right, modulus } => {
-            let left = cache_key_expr(*left);
-            let right = cache_key_expr(*right);
-            let modulus = cache_key_expr(*modulus);
+            let left = cache_key_expr(Arc::unwrap_or_clone(left));
+            let right = cache_key_expr(Arc::unwrap_or_clone(right));
+            let modulus = cache_key_expr(Arc::unwrap_or_clone(modulus));
             if right < left {
                 Expr::addmod(right, left, modulus)
             } else {
@@ -711,18 +713,20 @@ fn cache_key_expr(expr: Expr) -> Expr {
             }
         }
         Expr::MulMod { left, right, modulus } => {
-            let left = cache_key_expr(*left);
-            let right = cache_key_expr(*right);
-            let modulus = cache_key_expr(*modulus);
+            let left = cache_key_expr(Arc::unwrap_or_clone(left));
+            let right = cache_key_expr(Arc::unwrap_or_clone(right));
+            let modulus = cache_key_expr(Arc::unwrap_or_clone(modulus));
             if right < left {
                 Expr::mulmod(right, left, modulus)
             } else {
                 Expr::mulmod(left, right, modulus)
             }
         }
-        Expr::Ite(cond, left, right) => {
-            Expr::ite(cache_key_bool(*cond), cache_key_expr(*left), cache_key_expr(*right))
-        }
+        Expr::Ite(cond, left, right) => Expr::ite(
+            cache_key_bool(Arc::unwrap_or_clone(cond)),
+            cache_key_expr(Arc::unwrap_or_clone(left)),
+            cache_key_expr(Arc::unwrap_or_clone(right)),
+        ),
     }
 }
 
