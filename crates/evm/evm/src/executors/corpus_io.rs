@@ -30,6 +30,7 @@ pub fn canonical_replay_dirs(root: &Path) -> Vec<PathBuf> {
 }
 
 /// A single corpus file on disk.
+#[derive(Clone)]
 pub struct CorpusDirEntry {
     pub path: PathBuf,
     pub uuid: Uuid,
