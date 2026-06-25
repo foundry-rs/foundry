@@ -1178,6 +1178,54 @@ contract ForgeFuzzReplayHandlerFailureTest is Test {
     assert!(!stdout.contains("[SKIP: no persisted invariant failure reproduced"), "{stdout}");
 });
 
+forgetest_init!(forge_fuzz_replay_replays_non_anchor_invariant_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "ForgeFuzzReplayNonAnchorInvariant.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzReplayNonAnchorInvariantTest is Test {
+    uint256 count;
+
+    function setUp() public {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = this.tick.selector;
+        targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function tick() external {
+        count++;
+    }
+
+    function invariant_a_first() public view {
+        require(count >= 0, "a");
+    }
+
+    function invariant_b_middle() public view {
+        require(count < 1, "middle broken");
+    }
+
+    function invariant_c_last() public view {
+        require(count >= 0, "c");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgeFuzzReplayNonAnchorInvariantTest", "-q"]).assert_failure();
+    let replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayNonAnchorInvariantTest"])
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("[FAIL: middle broken]"), "{stdout}");
+    assert!(!stdout.contains("[SKIP: no persisted invariant failure reproduced"), "{stdout}");
+});
+
 // Test 256 runs regardless number of test rejects.
 // <https://github.com/foundry-rs/foundry/issues/9054>
 forgetest_init!(test_fuzz_runs_with_rejects, |prj, cmd| {

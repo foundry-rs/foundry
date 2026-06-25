@@ -2404,7 +2404,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
         // aren't surprised when fewer invariants appear in the report than their contract
         // defines (Echidna/Medusa never skip properties between runs).
-        if !is_optimization {
+        if !is_optimization && !self.cr.mcr.tcfg.fuzz_failure_replay {
             let persisted_skipped: Vec<&str> = live_invariants
                 .iter()
                 .filter(|(invariant_fn, _)| {
@@ -2428,6 +2428,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // and every other selected predicate that doesn't already have a compatible persisted
         // failure. Track the anchor's index so downstream consumers can resolve the campaign
         // anchor without searching by name.
+        let replay_invariant_fns = live_invariants.clone();
         let invariant_fns: Vec<(&Function, bool)> = live_invariants
             .into_iter()
             .filter(|(invariant_fn, _)| {
@@ -2472,18 +2473,59 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             revert_decoder: self.revert_decoder(),
             show_solidity,
         };
-
-        // Try to replay recorded failure if any.
         let primary_failure_file =
             invariant_failure_file(&failure_dir, invariant_contract.anchor());
-        let persisted_primary = persisted_invariant_failure(
-            &failure_dir,
-            invariant_contract.anchor(),
-            &current_settings,
-        );
-        if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
-            persisted_primary
-        {
+
+        // Try to replay recorded failure if any. `forge fuzz replay` checks each selected
+        // predicate as the replay anchor because merged invariant suites persist failures per
+        // predicate, while campaign runs use a stable suite anchor.
+        let mut replayed_persisted_invariant = false;
+        let replay_candidates: Vec<(&Function, bool)> =
+            if self.cr.mcr.tcfg.fuzz_failure_replay && !is_optimization {
+                replay_invariant_fns
+                    .iter()
+                    .filter(|(invariant_fn, _)| *invariant_fn != invariant_contract.anchor())
+                    .chain(
+                        replay_invariant_fns.iter().filter(|(invariant_fn, _)| {
+                            *invariant_fn == invariant_contract.anchor()
+                        }),
+                    )
+                    .copied()
+                    .collect()
+            } else {
+                vec![(invariant_contract.anchor(), false)]
+            };
+        for (replay_invariant, _) in replay_candidates {
+            let replay_failure_file = invariant_failure_file(&failure_dir, replay_invariant);
+            let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
+                persisted_invariant_failure(&failure_dir, replay_invariant, &current_settings)
+            else {
+                continue;
+            };
+            replayed_persisted_invariant = true;
+            let replay_fns = if self.cr.mcr.tcfg.fuzz_failure_replay && !is_optimization {
+                replay_invariant_fns.clone()
+            } else {
+                invariant_contract.invariant_fns.clone()
+            };
+            let replay_anchor_idx = replay_fns
+                .iter()
+                .position(|(invariant_fn, _)| *invariant_fn == replay_invariant)
+                .expect("replay anchor must be present in invariant_fns");
+            let replay_contract = InvariantContract::new(
+                self.address,
+                self.cr.name,
+                replay_fns,
+                replay_anchor_idx,
+                call_after_invariant,
+                &self.cr.contract.abi,
+            );
+            let replay_ctx = ReplayContext {
+                invariant_contract: &replay_contract,
+                invariant_config,
+                revert_decoder: self.revert_decoder(),
+                show_solidity,
+            };
             let (txes, replay) = replay_persisted_call_sequence(
                 &replay_ctx,
                 self.clone_executor(),
@@ -2517,8 +2559,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     assertion_failure,
                     Some(replay_ctx.revert_decoder),
                     None, // check mode
-                    &invariant_contract,
-                    invariant_contract.anchor(),
+                    &replay_contract,
+                    replay_contract.anchor(),
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -2541,7 +2583,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         // Persist error in invariant failure dir.
                         record_invariant_failure(
                             failure_dir.as_path(),
-                            primary_failure_file.as_path(),
+                            replay_failure_file.as_path(),
                             &call_sequence,
                             &current_settings,
                             assertion_failure,
@@ -2555,15 +2597,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 self.result.invariant_replay_fail(
                     replayed_entirely,
-                    &invariant_contract.anchor().name,
+                    &replay_contract.anchor().name,
                     replay_reason,
                     calls_count,
                     reverts,
                     call_sequence.clone(),
                 );
                 if let Some(artifact) = self.persist_invariant_sequence_counterexample_artifact(
-                    &invariant_contract.anchor().signature(),
-                    &format!("{}-replay", invariant_contract.anchor().signature()),
+                    &replay_contract.anchor().signature(),
+                    &format!("{}-replay", replay_contract.anchor().signature()),
                     &call_sequence,
                 ) {
                     self.result.add_counterexample_artifact(artifact);
@@ -2585,10 +2627,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // must never start a fresh campaign. If handler bugs still reproduce, surface them
         // through the normal invariant result path below; otherwise report a skip.
         if self.cr.mcr.tcfg.fuzz_failure_replay && persisted_handler_failures.is_empty() {
-            self.result.single_skip(SkipReason(Some(format!(
-                "no persisted invariant failure reproduced for {}",
-                invariant_contract.anchor().name
-            ))));
+            let reason = if replayed_persisted_invariant {
+                "no persisted invariant failure reproduced for selected invariants".to_string()
+            } else {
+                format!(
+                    "no persisted invariant failure reproduced for {}",
+                    invariant_contract.anchor().name
+                )
+            };
+            self.result.single_skip(SkipReason(Some(reason)));
             return self.result;
         }
 
