@@ -200,6 +200,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let fail_on_revert = target.invariant_fns.iter().any(|(_, fail_on_revert)| *fail_on_revert);
         // Number of committed (non-`vm.assume`) calls, used to gate invariant checks.
         let mut accepted = 0usize;
+        let mut last_accepted_checked_invariant = false;
         let mut entry_failure: Option<ReplayFailure> = None;
         for tx in &tx_seq {
             if !WorkerCorpus::can_replay_tx(tx, target.fuzzed_function, target.fuzzed_contracts) {
@@ -246,6 +247,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             // Stateful tests need the tx committed so subsequent calls see its effects.
             if target.fuzzed_contracts.is_some() {
                 accepted += 1;
+                last_accepted_checked_invariant = false;
                 if !opts.emit_files
                     && let Some(failure) = invariant_handler_failure(
                         target_addr,
@@ -262,12 +264,15 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                 executor.commit(&mut call_result);
                 if !opts.emit_files
                     && should_check_invariant(accepted, target.invariant_replay.check_interval)
-                    && let Some(address) = target.invariant_address
-                    && let Some(failure) =
-                        broken_invariant(&executor, address, target.invariant_fns)?
                 {
-                    entry_failure = Some(failure);
-                    break;
+                    last_accepted_checked_invariant = true;
+                    if let Some(address) = target.invariant_address
+                        && let Some(failure) =
+                            broken_invariant(&executor, address, target.invariant_fns)?
+                    {
+                        entry_failure = Some(failure);
+                        break;
+                    }
                 }
             } else if !opts.emit_files {
                 let success = if !target.fuzz_fail_on_revert
@@ -293,7 +298,9 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             && target.fuzzed_contracts.is_some()
             && let Some(address) = target.invariant_address
         {
-            if let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)? {
+            if !last_accepted_checked_invariant
+                && let Some(failure) = broken_invariant(&executor, address, target.invariant_fns)?
+            {
                 entry_failure = Some(failure);
             } else if target.invariant_replay.call_after_invariant
                 && let Some(failure) = broken_after_invariant(&executor, address)?
