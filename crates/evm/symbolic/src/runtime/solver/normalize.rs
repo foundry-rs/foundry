@@ -77,7 +77,7 @@ pub(crate) fn normalize_bool_for_solver(expr: BoolExpr) -> BoolExpr {
 /// Simple facts learned from the normalized conjunction currently being queried.
 #[derive(Default)]
 struct ConstraintContext {
-    upper_bounds: BTreeMap<Expr, U256>,
+    upper_bounds: HashMap<Expr, U256>,
 }
 
 impl ConstraintContext {
