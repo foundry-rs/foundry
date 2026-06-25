@@ -824,15 +824,14 @@ impl SymCode {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SymReturnData {
-    len: usize,
     len_word: SymWord,
-    bytes: HashMap<usize, SymWord>,
+    bytes: Vec<SymWord>,
 }
 
 impl Default for SymReturnData {
     /// Implements the `default` symbolic memory helper.
     fn default() -> Self {
-        Self { len: 0, len_word: SymWord::zero(), bytes: HashMap::default() }
+        Self { len_word: SymWord::zero(), bytes: Vec::new() }
     }
 }
 
@@ -853,17 +852,15 @@ impl SymReturnData {
     /// Converts values for the `from_symbolic_bytes` symbolic memory helper.
     pub(crate) fn from_symbolic_bytes(bytes: Vec<SymWord>) -> Self {
         let len = bytes.len();
-        Self {
-            len,
-            len_word: SymWord::Concrete(U256::from(len)),
-            bytes: bytes.into_iter().enumerate().collect(),
-        }
+        Self { len_word: SymWord::Concrete(U256::from(len)), bytes }
     }
 
     /// Converts values for the `from_symbolic_bytes_with_len` symbolic memory helper.
-    pub(crate) fn from_symbolic_bytes_with_len(bytes: Vec<SymWord>, len_word: SymWord) -> Self {
-        let len = bytes.len();
-        Self { len, len_word, bytes: bytes.into_iter().enumerate().collect() }
+    pub(crate) const fn from_symbolic_bytes_with_len(
+        bytes: Vec<SymWord>,
+        len_word: SymWord,
+    ) -> Self {
+        Self { len_word, bytes }
     }
 
     /// Implements the `len_word` symbolic memory helper.
@@ -873,7 +870,7 @@ impl SymReturnData {
 
     /// Returns the concrete backing byte length.
     pub(crate) const fn len(&self) -> usize {
-        self.len
+        self.bytes.len()
     }
 
     /// Implements the `len_expr` symbolic memory helper.
@@ -888,7 +885,7 @@ impl SymReturnData {
 
     /// Implements the `byte` symbolic memory helper.
     pub(crate) fn byte(&self, offset: usize) -> SymWord {
-        self.bytes.get(&offset).cloned().unwrap_or_else(SymWord::zero)
+        self.bytes.get(offset).cloned().unwrap_or_else(SymWord::zero)
     }
 
     /// Returns the `read_bytes_offset` symbolic memory helper result.
@@ -910,10 +907,10 @@ impl SymReturnData {
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
     pub(crate) fn byte_dynamic_with_delta(&self, offset: Expr, delta: usize) -> SymWord {
         let mut result = Expr::Const(U256::ZERO);
-        for candidate in (delta..self.len).rev() {
+        for candidate in (delta..self.len()).rev() {
             result = Expr::ite(
                 BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
-                self.byte(candidate).into_expr(),
+                self.bytes[candidate].clone().into_expr(),
                 result,
             );
         }
@@ -922,7 +919,7 @@ impl SymReturnData {
 
     /// Returns the `load_word` symbolic memory helper result.
     pub(crate) fn load_word(&self, offset: usize) -> Result<SymWord, SymbolicError> {
-        if offset.saturating_add(32) > self.len {
+        if offset.saturating_add(32) > self.len() {
             return Err(SymbolicError::Unsupported("out-of-bounds symbolic returndata word"));
         }
         Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
@@ -930,9 +927,9 @@ impl SymReturnData {
 
     /// Returns the `read_concrete` symbolic memory helper result.
     pub(crate) fn read_concrete(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
-        let mut out = Vec::with_capacity(self.len);
-        for offset in 0..self.len {
-            match self.byte(offset) {
+        let mut out = Vec::with_capacity(self.len());
+        for byte in &self.bytes {
+            match byte {
                 SymWord::Concrete(value) => out.push(value.to::<u8>()),
                 SymWord::Expr(_) => return Err(SymbolicError::Unsupported(reason)),
             }
@@ -947,6 +944,6 @@ impl SymReturnData {
                 "CREATE with symbolic runtime size not modeled",
             ));
         }
-        Ok(SymCode::from_symbolic_bytes((0..self.len).map(|offset| self.byte(offset)).collect()))
+        Ok(SymCode::from_symbolic_bytes(self.bytes.clone()))
     }
 }
