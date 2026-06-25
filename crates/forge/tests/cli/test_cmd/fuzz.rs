@@ -144,6 +144,33 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 1 skipped (2 total tests)
 "#]]);
 });
 
+forgetest_init!(forge_fuzz_skips_unit_only_failing_setup, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzUnitOnly.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzUnitOnlyTest is Test {
+    function setUp() public pure {
+        revert("setUp should not run");
+    }
+
+    function test_unit() public pure {}
+}
+   "#,
+    );
+
+    let run =
+        cmd.forge_fuse().args(["fuzz", "run", "--mc", "ForgeFuzzUnitOnlyTest"]).assert_success();
+    let stdout = String::from_utf8(run.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("setUp should not run"), "{stdout}");
+
+    let replay =
+        cmd.forge_fuse().args(["fuzz", "replay", "--mc", "ForgeFuzzUnitOnlyTest"]).assert_success();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("setUp should not run"), "{stdout}");
+});
+
 forgetest_init!(forge_fuzz_replay_reports_missing_corpus, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzReplay.t.sol",
