@@ -3,6 +3,30 @@ use super::*;
 /// Set of symbolic variable names collected from expression trees.
 pub(crate) type SymbolicVars = IndexSet<Arc<str>>;
 
+#[derive(Default)]
+struct SymbolInterner {
+    names: IndexSet<Arc<str>>,
+}
+
+impl SymbolInterner {
+    fn intern(&mut self, name: &str) -> Arc<str> {
+        if let Some(name) = self.names.get(name) {
+            return Arc::clone(name);
+        }
+
+        let name = Arc::<str>::from(name);
+        self.names.insert(Arc::clone(&name));
+        name
+    }
+}
+
+fn intern_symbol(name: impl AsRef<str>) -> Arc<str> {
+    static INTERNER: std::sync::LazyLock<std::sync::Mutex<SymbolInterner>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(SymbolInterner::default()));
+    let mut interner = INTERNER.lock().expect("symbol interner mutex poisoned");
+    interner.intern(name.as_ref())
+}
+
 /// Computes the `keccak_word` symbolic expression helper result.
 pub(crate) fn keccak_word(bytes: Vec<SymWord>) -> SymWord {
     let len = bytes.len();
@@ -1035,26 +1059,22 @@ impl HashExpr {
 
 impl Expr {
     /// Builds a symbolic variable expression.
-    pub(crate) fn var(name: impl Into<Arc<str>>) -> Self {
-        Self::Var(name.into())
+    pub(crate) fn var(name: impl AsRef<str>) -> Self {
+        Self::Var(intern_symbol(name))
     }
 
     /// Builds a symbolic keccak expression.
-    pub(crate) fn keccak(name: impl Into<Arc<str>>, len: Self, bytes: Vec<Self>) -> Self {
+    pub(crate) fn keccak(name: impl AsRef<str>, len: Self, bytes: Vec<Self>) -> Self {
         Self::Keccak(Arc::new(KeccakExpr {
-            name: name.into(),
+            name: intern_symbol(name),
             len: Arc::new(len),
             bytes: bytes.into(),
         }))
     }
 
     /// Builds an opaque symbolic hash expression.
-    pub(crate) fn hash(
-        name: impl Into<Arc<str>>,
-        algorithm: &'static str,
-        bytes: Vec<Self>,
-    ) -> Self {
-        Self::Hash(Arc::new(HashExpr { name: name.into(), algorithm, bytes: bytes.into() }))
+    pub(crate) fn hash(name: impl AsRef<str>, algorithm: &'static str, bytes: Vec<Self>) -> Self {
+        Self::Hash(Arc::new(HashExpr { name: intern_symbol(name), algorithm, bytes: bytes.into() }))
     }
 
     /// Builds a conditional expression.

@@ -2634,7 +2634,7 @@ fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
 /// Regression coverage for local hard arithmetic search avoiding unsupported hash symbols.
 fn hard_arithmetic_fallback_skips_symbolic_hashes() {
     let x = Expr::var("x");
-    let hash = Expr::hash("hash".to_string(), "sha256", vec![x.clone()]);
+    let hash = Expr::hash("hash", "sha256", vec![x.clone()]);
     let constraints =
         vec![BoolExpr::eq(Expr::op(ExprOp::Mul, x, hash), Expr::Const(U256::from(1)))];
 
