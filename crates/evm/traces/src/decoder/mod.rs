@@ -43,68 +43,10 @@ use tempo_precompiles::{
     TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS, nonce::INonce, tip20::ITIP20,
 };
 
+mod monad;
 mod precompiles;
 
-alloy_sol_types::sol! {
-    /// Monad staking precompile interface at address 0x1000.
-    /// Reference: https://docs.monad.xyz/developer-essentials/staking/staking-precompile
-    #[sol(abi)]
-    interface IMonadStaking {
-        function getEpoch() external returns (uint64 epoch, bool inEpochDelayPeriod);
-        function getProposerValId() external returns (uint64 val_id);
-        function getValidator(uint64 validatorId) external view returns (
-            address authAddress, uint64 flags, uint256 stake,
-            uint256 accRewardPerToken, uint256 commission, uint256 unclaimedRewards,
-            uint256 consensusStake, uint256 consensusCommission,
-            uint256 snapshotStake, uint256 snapshotCommission,
-            bytes memory secpPubkey, bytes memory blsPubkey);
-        function getDelegator(uint64 validatorId, address delegator) external returns (
-            uint256 stake, uint256 accRewardPerToken, uint256 unclaimedRewards,
-            uint256 deltaStake, uint256 nextDeltaStake, uint64 deltaEpoch, uint64 nextDeltaEpoch);
-        function getWithdrawalRequest(uint64 validatorId, address delegator, uint8 withdrawId)
-            external returns (uint256 withdrawalAmount, uint256 accRewardPerToken, uint64 withdrawEpoch);
-        function getConsensusValidatorSet(uint32 startIndex)
-            external returns (bool isDone, uint32 nextIndex, uint64[] memory valIds);
-        function getSnapshotValidatorSet(uint32 startIndex)
-            external returns (bool isDone, uint32 nextIndex, uint64[] memory valIds);
-        function getExecutionValidatorSet(uint32 startIndex)
-            external returns (bool isDone, uint32 nextIndex, uint64[] memory valIds);
-        function getDelegations(address delegator, uint64 startValId)
-            external returns (bool isDone, uint64 nextValId, uint64[] memory valIds);
-        function getDelegators(uint64 validatorId, address startDelegator)
-            external returns (bool isDone, address nextDelegator, address[] memory delegators);
-
-        function addValidator(bytes calldata payload, bytes calldata signedSecpMessage, bytes calldata signedBlsMessage)
-            external payable returns (uint64 validatorId);
-        function delegate(uint64 validatorId) external payable returns (bool success);
-        function undelegate(uint64 validatorId, uint256 amount, uint8 withdrawId) external returns (bool success);
-        function withdraw(uint64 validatorId, uint8 withdrawId) external returns (bool success);
-        function compound(uint64 validatorId) external returns (bool success);
-        function claimRewards(uint64 validatorId) external returns (bool success);
-        function changeCommission(uint64 validatorId, uint256 commission) external returns (bool success);
-        function externalReward(uint64 validatorId) external returns (bool success);
-
-        function syscallOnEpochChange(uint64 epoch) external;
-        function syscallReward(address blockAuthor) external;
-        function syscallSnapshot() external;
-
-        event ClaimRewards(uint64 indexed validatorId, address indexed delegator, uint256 amount, uint64 epoch);
-        event CommissionChanged(uint64 indexed validatorId, uint256 oldCommission, uint256 newCommission);
-        event Delegate(uint64 indexed validatorId, address indexed delegator, uint256 amount, uint64 activationEpoch);
-        event EpochChanged(uint64 oldEpoch, uint64 newEpoch);
-        event Undelegate(uint64 indexed validatorId, address indexed delegator, uint8 withdrawId, uint256 amount, uint64 activationEpoch);
-        event ValidatorCreated(uint64 indexed validatorId, address indexed authAddress, uint256 commission);
-        event ValidatorRewarded(uint64 indexed validatorId, address indexed from, uint256 amount, uint64 epoch);
-        event ValidatorStatusChanged(uint64 indexed validatorId, uint64 flags);
-        event Withdraw(uint64 indexed validatorId, address indexed delegator, uint8 withdrawId, uint256 amount, uint64 withdrawEpoch);
-    }
-
-    /// Monad reserve-balance precompile interface at address 0x1001.
-    #[sol(abi)]
-    interface IReserveBalance {
-        function dippedIntoReserve() external returns (bool);
-    }
-}
+use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -358,6 +300,7 @@ impl CallTraceDecoder {
                 .chain(IReceivePolicyGuard::abi::functions().into_values())
                 // Monad
                 .chain(IMonadStaking::abi::functions().into_values())
+                .chain(IMonadStakingSyscalls::abi::functions().into_values())
                 .chain(IReserveBalance::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
@@ -1194,7 +1137,7 @@ fn indexed_inputs(event: &Event) -> usize {
 mod tests {
     use super::*;
     use alloy_primitives::{address, aliases::U96, hex};
-    use alloy_sol_types::{SolCall, SolEvent, SolValue};
+    use alloy_sol_types::{SolCall, SolEvent};
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
         staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
@@ -1923,6 +1866,28 @@ mod tests {
         assert_eq!(call_data.signature, "getEpoch()");
         assert!(call_data.args.is_empty());
         assert_eq!(decoded.return_data.as_deref(), Some("42, true"));
+    }
+
+    #[tokio::test]
+    async fn test_decodes_monad_staking_syscall() {
+        let block_author = Address::from([0x42; 20]);
+        let trace = CallTrace {
+            address: STAKING_ADDRESS,
+            data: IMonadStakingSyscalls::syscallRewardCall { blockAuthor: block_author }
+                .abi_encode()
+                .into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoder = CallTraceDecoder::new();
+        let expected_author = decoder.format_value(&DynSolValue::Address(block_author));
+        let decoded = decoder.decode_function(&trace).await;
+
+        assert_eq!(decoded.label.as_deref(), Some("Staking"));
+        let call_data = decoded.call_data.expect("call data");
+        assert_eq!(call_data.signature, "syscallReward(address)");
+        assert_eq!(call_data.args, vec![expected_author]);
     }
 
     #[tokio::test]
