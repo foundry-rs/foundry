@@ -295,7 +295,8 @@ fn read_entries(
 ) -> Result<Vec<DisplayCorpusEntry>> {
     let iter = read_corpus_entries(path)?.into_iter().take(limit.unwrap_or(usize::MAX));
     iter.map(|entry| {
-        let sequence = read_sequence(&entry.path)
+        let sequence = entry
+            .read_tx_seq()
             .with_context(|| format!("failed to read corpus entry {}", entry.path.display()))?;
         let sequence = sequence
             .into_iter()
@@ -315,18 +316,4 @@ fn read_corpus_entries(path: &Path) -> Result<Vec<CorpusDirEntry>> {
         bail!("no corpus entries found under {}", path.display());
     }
     Ok(entries)
-}
-
-fn read_sequence(path: &Path) -> Result<Vec<BasicTxDetails>> {
-    if is_gzip_path(path) {
-        Ok(fs::read_json_gzip_file(path)?)
-    } else {
-        Ok(fs::read_json_file(path)?)
-    }
-}
-
-fn is_gzip_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
 }
