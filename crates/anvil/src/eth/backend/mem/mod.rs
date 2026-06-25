@@ -1933,14 +1933,13 @@ impl<N: Network> Backend<N> {
         versioned_hashes: Vec<B256>,
     ) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         Ok(self.get_block(id).map(|block| {
+            let storage = self.blockchain.storage.read();
             block
                 .body
                 .transactions
                 .iter()
-                .filter_map(|tx| tx.as_ref().sidecar())
-                .flat_map(|sidecar| {
-                    sidecar.sidecar.blobs().iter().zip(sidecar.sidecar.commitments().iter())
-                })
+                .filter_map(|tx| storage.blob_sidecars.get(&tx.hash()))
+                .flat_map(|sidecar| sidecar.blobs().iter().zip(sidecar.commitments().iter()))
                 .filter(|(_, commitment)| {
                     // Filter blobs by versioned_hashes if provided
                     versioned_hashes.is_empty()
@@ -1954,22 +1953,14 @@ impl<N: Network> Backend<N> {
     #[allow(clippy::large_stack_frames)]
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
-        for block in storage.blocks.values() {
-            for tx in &block.body.transactions {
-                let typed_tx = tx.as_ref();
-                if let Some(sidecar) = typed_tx.sidecar() {
-                    for versioned_hash in sidecar.sidecar.versioned_hashes() {
-                        if versioned_hash == hash
-                            && let Some(index) =
-                                sidecar.sidecar.commitments().iter().position(|commitment| {
-                                    kzg_to_versioned_hash(commitment.as_slice()) == *hash
-                                })
-                            && let Some(blob) = sidecar.sidecar.blobs().get(index)
-                        {
-                            return Ok(Some(*blob));
-                        }
-                    }
-                }
+        for sidecar in storage.blob_sidecars.values() {
+            if let Some(index) = sidecar
+                .commitments()
+                .iter()
+                .position(|commitment| kzg_to_versioned_hash(commitment.as_slice()) == hash)
+                && let Some(blob) = sidecar.blobs().get(index)
+            {
+                return Ok(Some(*blob));
             }
         }
         Ok(None)
@@ -2363,6 +2354,7 @@ impl<N: Network> Backend<N> {
                     {
                         for tx in block.body.transactions {
                             let _ = storage.transactions.remove(&tx.hash());
+                            let _ = storage.blob_sidecars.remove(&tx.hash());
                         }
                     }
                 }
@@ -2662,7 +2654,7 @@ where
                 self.states.write().insert(best_hash, db);
             }
 
-            let (block_info, included, invalid, not_yet_valid, block_hash) = {
+            let (block_info, included, invalid, not_yet_valid, blob_sidecars, block_hash) = {
                 let mut db = self.db.write().await;
 
                 // finally set the next block timestamp, this is done just before execution, because
@@ -2691,6 +2683,7 @@ where
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
+                let blob_sidecars = pool_result.blob_sidecars;
 
                 let state_root = db.maybe_state_root().unwrap_or_default();
                 let block_info = Self::build_block_info(
@@ -2707,7 +2700,7 @@ where
                 let block_hash = block_info.block.header.hash_slow();
                 db.insert_block_hash(U256::from(block_info.block.header.number()), block_hash);
 
-                (block_info, included, invalid, not_yet_valid, block_hash)
+                (block_info, included, invalid, not_yet_valid, blob_sidecars, block_hash)
             };
 
             // create the new block with the current timestamp
@@ -2735,6 +2728,9 @@ where
 
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
+            storage
+                .blob_sidecars
+                .extend(blob_sidecars.into_iter().map(|(hash, sidecar)| (hash, Arc::new(sidecar))));
 
             node_info!("");
             // insert all transactions
@@ -3289,7 +3285,7 @@ where
         for<'a> F:
             FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
     {
-        let block = {
+        let (block, blob_sidecars) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { block_hash, .. } = storage
                 .transactions
@@ -3297,7 +3293,20 @@ where
                 .cloned()
                 .ok_or(BlockchainError::TransactionNotFound)?;
 
-            storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
+            let block =
+                storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?;
+            let blob_sidecars: HashMap<_, _> = block
+                .body
+                .transactions
+                .iter()
+                .filter_map(|tx| {
+                    storage
+                        .blob_sidecars
+                        .get(&tx.hash())
+                        .map(|sidecar| (tx.hash(), Arc::clone(sidecar)))
+                })
+                .collect();
+            (block, blob_sidecars)
         };
 
         let index = block
@@ -3307,12 +3316,24 @@ where
             .position(|tx| tx.hash() == hash)
             .expect("transaction not found in block");
 
+        // Block bodies store blob transactions in their canonical form (impersonated ones
+        // excepted, which never lose their sidecar); reattach the stored sidecars for replay,
+        // since pool transaction validation expects pooled (sidecarful) blob transactions.
+        // Reattachment is a no-op for transactions that already carry a sidecar.
+        let rehydrate = |tx: &MaybeImpersonatedTransaction<FoundryTxEnvelope>| {
+            let tx = tx.clone();
+            match blob_sidecars.get(&tx.hash()) {
+                Some(sidecar) => tx.with_blob_sidecar((**sidecar).clone()),
+                None => tx,
+            }
+        };
+
         let pool_txs: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>> = block.body.transactions
             [..index]
             .iter()
             .map(|tx| {
                 let pending_tx =
-                    PendingTransaction::from_maybe_impersonated(tx.clone()).expect("is valid");
+                    PendingTransaction::from_maybe_impersonated(rehydrate(tx)).expect("is valid");
                 Arc::new(PoolTransaction {
                     pending_transaction: pending_tx,
                     requires: vec![],
@@ -3349,7 +3370,7 @@ where
             // Extract inner CacheDB to match the expected types for the target tx execution
             let cache_db = cache_db.0;
 
-            let target_tx = block.body.transactions[index].clone();
+            let target_tx = rehydrate(&block.body.transactions[index]);
             let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
             let (result, base_tx_env) = self.transact_envelope_with_inspector_ref(
                 &cache_db,
@@ -4262,15 +4283,8 @@ impl Backend<FoundryNetwork> {
     }
 
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
-        // Try to get the mined transaction by hash
-        if let Some(tx) = self.mined_transaction_by_hash(hash)
-            && let Ok(typed_tx) = FoundryTxEnvelope::try_from(tx)
-            && let Some(sidecar) = typed_tx.sidecar()
-        {
-            return Ok(Some(sidecar.sidecar.blobs().to_vec()));
-        }
-
-        Ok(None)
+        let storage = self.blockchain.storage.read();
+        Ok(storage.blob_sidecars.get(&hash).map(|sidecar| sidecar.blobs().to_vec()))
     }
 
     /// Sets the fee token for a user address (Tempo-only).

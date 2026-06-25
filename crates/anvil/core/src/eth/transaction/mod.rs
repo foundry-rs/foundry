@@ -1,6 +1,6 @@
 //! Transaction related types
 use alloy_consensus::{
-    Transaction, Typed2718,
+    BlobTransactionSidecarVariant, Transaction, Typed2718,
     crypto::RecoveryError,
     transaction::{SignerRecoverable, TxHashRef},
 };
@@ -50,6 +50,35 @@ impl<T> MaybeImpersonatedTransaction<T> {
     /// Returns the inner transaction.
     pub fn into_inner(self) -> T {
         self.transaction
+    }
+}
+
+impl MaybeImpersonatedTransaction<FoundryTxEnvelope> {
+    /// Removes the blob sidecar from the wrapped transaction so it can be included in a block
+    /// body in its canonical (non-pooled) form, returning the sidecar, if any.
+    ///
+    /// Impersonated transactions are left untouched: their synthetic hash is derived from the
+    /// encoded transaction (see [`Self::hash`]), so stripping the sidecar would change the hash
+    /// users received at submission, and changing the hash derivation would break loading state
+    /// files written by earlier versions (which key mined transactions by the stored synthetic
+    /// hash). Their sidecar is still returned so callers can index it.
+    pub fn strip_blob_sidecar(self) -> (Self, Option<BlobTransactionSidecarVariant>) {
+        let Self { transaction, impersonated_sender } = self;
+        if impersonated_sender.is_some() {
+            let sidecar = transaction.sidecar().map(|tx| tx.sidecar.clone());
+            (Self { transaction, impersonated_sender }, sidecar)
+        } else {
+            let (transaction, sidecar) = transaction.strip_blob_sidecar();
+            (Self { transaction, impersonated_sender }, sidecar)
+        }
+    }
+
+    /// Reattaches a blob sidecar to the wrapped transaction, returning the pooled (sidecarful)
+    /// form. No-op for non-EIP-4844 transactions and transactions that already carry a sidecar,
+    /// so the hash is unchanged in all cases (see [`FoundryTxEnvelope::with_blob_sidecar`]).
+    pub fn with_blob_sidecar(self, sidecar: BlobTransactionSidecarVariant) -> Self {
+        let Self { transaction, impersonated_sender } = self;
+        Self { transaction: transaction.with_blob_sidecar(sidecar), impersonated_sender }
     }
 }
 
@@ -191,4 +220,84 @@ pub struct TransactionInfo {
     pub out: Option<Bytes>,
     pub nonce: u64,
     pub gas_used: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{
+        BlobTransactionSidecar, SignableTransaction, TxEip4844,
+        transaction::eip4844::TxEip4844Variant,
+    };
+    use alloy_primitives::{Signature, U256};
+
+    fn sidecarful_4844_envelope() -> (FoundryTxEnvelope, BlobTransactionSidecarVariant) {
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            to: Address::ZERO,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            blob_versioned_hashes: vec![B256::ZERO],
+            max_fee_per_blob_gas: 1,
+            input: Bytes::default(),
+        };
+        let sidecar = BlobTransactionSidecarVariant::Eip4844(BlobTransactionSidecar::new(
+            vec![Default::default()],
+            vec![Default::default()],
+            vec![Default::default()],
+        ));
+        let signature = Signature::new(U256::from(1), U256::from(1), false);
+        let variant = TxEip4844Variant::TxEip4844WithSidecar(tx.with_sidecar(sidecar.clone()));
+        (FoundryTxEnvelope::Eip4844(variant.into_signed(signature)), sidecar)
+    }
+
+    // Impersonated transactions are not stripped (their synthetic hash is derived from the
+    // encoded transaction), but the sidecar is still returned so callers can index it.
+    #[test]
+    fn impersonated_blob_strip_keeps_sidecar_and_hash() {
+        let (transaction, sidecar) = sidecarful_4844_envelope();
+        let transaction =
+            MaybeImpersonatedTransaction::impersonated(transaction, Address::with_last_byte(1));
+        let hash = transaction.hash();
+
+        assert!(transaction.as_ref().sidecar().is_some());
+
+        let (kept, returned_sidecar) = transaction.strip_blob_sidecar();
+
+        assert_eq!(returned_sidecar, Some(sidecar));
+        assert!(kept.as_ref().sidecar().is_some());
+        assert_eq!(kept.hash(), hash);
+    }
+
+    // Properly-signed transactions are stripped to their canonical form, hash unchanged.
+    #[test]
+    fn signed_blob_strip_removes_sidecar_and_preserves_hash() {
+        let (transaction, sidecar) = sidecarful_4844_envelope();
+        let transaction = MaybeImpersonatedTransaction::new(transaction);
+        let hash = transaction.hash();
+
+        let (stripped, stripped_sidecar) = transaction.strip_blob_sidecar();
+
+        assert_eq!(stripped_sidecar, Some(sidecar));
+        assert!(stripped.as_ref().sidecar().is_none());
+        assert_eq!(stripped.hash(), hash);
+    }
+
+    #[test]
+    fn impersonated_hash_includes_sender() {
+        let (transaction, _) = sidecarful_4844_envelope();
+
+        let first = MaybeImpersonatedTransaction::impersonated(
+            transaction.clone(),
+            Address::with_last_byte(1),
+        );
+        let second =
+            MaybeImpersonatedTransaction::impersonated(transaction, Address::with_last_byte(2));
+
+        assert_ne!(first.hash(), second.hash());
+    }
 }

@@ -1,11 +1,17 @@
 use crate::utils::{http_provider, http_provider_with_signer};
-use alloy_consensus::{BlobTransactionSidecar, SidecarBuilder, SimpleCoder, Transaction};
+use alloy_consensus::{
+    BlobTransactionSidecar, EthereumTxEnvelope, SidecarBuilder, SimpleCoder, Transaction,
+    TxEip4844, proofs::calculate_transaction_root,
+};
 use alloy_eips::{
     Typed2718,
-    eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN},
+    eip2718::Decodable2718,
+    eip4844::{
+        BLOB_TX_MIN_BLOB_GASPRICE, BYTES_PER_BLOB, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN,
+    },
 };
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
-use alloy_primitives::{Address, U256, b256};
+use alloy_primitives::{Address, Bytes, U64, U256, b256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -484,4 +490,316 @@ async fn can_get_blobs_by_tx_hash() {
     api.anvil_set_auto_mine(true).await.unwrap();
     let blobs = api.anvil_get_blob_by_tx_hash(hash).unwrap().unwrap();
     assert_eq!(blobs, sidecar.blobs);
+}
+
+/// Mines one block containing a blob tx and a plain tx, then asserts the mined block commits to
+/// the canonical (sidecar-less) EIP-2718 transaction encodings, like blocks on a real network.
+async fn assert_mined_blob_block_is_canonical(node_config: NodeConfig, use_7594: bool) {
+    let (api, handle) = spawn(node_config).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"canonical root test");
+
+    let blob_tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(0)
+        .with_max_fee_per_blob_gas(gas_price + 1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .value(U256::from(1));
+    let blob_tx = if use_7594 {
+        blob_tx.with_blob_sidecar_7594(sidecar.build_7594().unwrap())
+    } else {
+        blob_tx.with_blob_sidecar_4844(sidecar.build().unwrap())
+    };
+    let blob_pending = provider.send_transaction(WithOtherFields::new(blob_tx)).await.unwrap();
+
+    let plain_tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .value(U256::from(2));
+    let plain_pending = provider.send_transaction(WithOtherFields::new(plain_tx)).await.unwrap();
+
+    api.mine_one().await;
+
+    let blob_receipt = blob_pending.get_receipt().await.unwrap();
+    let plain_receipt = plain_pending.get_receipt().await.unwrap();
+    assert_eq!(blob_receipt.block_number, plain_receipt.block_number);
+    let block_number = blob_receipt.block_number.unwrap();
+
+    let block = provider.get_block_by_number(block_number.into()).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 2);
+
+    // Fetch the raw EIP-2718 encoding of every transaction in the block. Decoding into the
+    // sidecar-less envelope type enforces that mined blob transactions are served in their
+    // canonical form rather than the pooled `rlp([tx, blobs, commitments, proofs])` wrapper.
+    let mut leaves = Vec::new();
+    for index in 0..block.transactions.len() {
+        let raw: Bytes = provider
+            .client()
+            .request(
+                "eth_getRawTransactionByBlockNumberAndIndex",
+                (U64::from(block_number), U64::from(index as u64)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            raw.len() < BYTES_PER_BLOB,
+            "raw mined tx {index} should not contain blob data ({} bytes)",
+            raw.len()
+        );
+        let envelope = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw.as_ref())
+            .unwrap_or_else(|err| panic!("mined tx {index} is not canonically encoded: {err}"));
+        leaves.push(envelope);
+    }
+    assert_eq!(*leaves[0].tx_hash(), blob_receipt.transaction_hash);
+
+    // The header must commit to the canonical transaction trie root and hash to the reported
+    // block hash.
+    assert_eq!(
+        block.header.transactions_root,
+        calculate_transaction_root(&leaves),
+        "header.transactionsRoot is not the canonical transaction trie root"
+    );
+    let consensus_header: alloy_consensus::Header = block.header.inner.clone().try_into().unwrap();
+    assert_eq!(consensus_header.hash_slow(), block.header.hash);
+
+    // The block's blobs must remain retrievable after mining.
+    let blobs = api.anvil_get_blob_by_tx_hash(blob_receipt.transaction_hash).unwrap().unwrap();
+    assert!(!blobs.is_empty());
+
+    // Full-block RPC responses must serve the standard transaction shape, without the pooled
+    // sidecar fields.
+    let full_block: serde_json::Value = provider
+        .client()
+        .request("eth_getBlockByNumber", (U64::from(block_number), true))
+        .await
+        .unwrap();
+    let tx_json = &full_block["transactions"][0];
+    for field in ["blobs", "commitments", "proofs", "cellProofs"] {
+        assert!(
+            tx_json.get(field).is_none(),
+            "mined blob tx RPC response must not expose `{field}`"
+        );
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/15132>
+#[tokio::test(flavor = "multi_thread")]
+async fn mined_blob_block_has_canonical_transactions_root() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    assert_mined_blob_block_is_canonical(node_config, false).await;
+}
+
+// <https://github.com/foundry-rs/foundry/issues/15132>
+#[tokio::test(flavor = "multi_thread")]
+async fn mined_blob_block_has_canonical_transactions_root_eip7594() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()));
+    assert_mined_blob_block_is_canonical(node_config, true).await;
+}
+
+// <https://github.com/foundry-rs/foundry/issues/15132>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_trace_transaction_after_blob_tx() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"trace replay");
+    let blob_tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(0)
+        .with_max_fee_per_blob_gas(gas_price + 1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_blob_sidecar_4844(sidecar.build().unwrap())
+        .value(U256::from(1));
+    let blob_pending = provider.send_transaction(WithOtherFields::new(blob_tx)).await.unwrap();
+
+    let plain_tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .value(U256::from(2));
+    let plain_pending = provider.send_transaction(WithOtherFields::new(plain_tx)).await.unwrap();
+
+    api.mine_one().await;
+
+    let blob_receipt = blob_pending.get_receipt().await.unwrap();
+    let plain_receipt = plain_pending.get_receipt().await.unwrap();
+    assert_eq!(blob_receipt.block_number, plain_receipt.block_number);
+
+    // Tracing the plain tx replays the preceding blob tx from the stored block body, which
+    // requires reattaching its sidecar for pool transaction validation.
+    api.debug_trace_transaction(
+        plain_receipt.transaction_hash,
+        alloy_rpc_types::trace::geth::GethDebugTracingOptions::default(),
+    )
+    .await
+    .unwrap();
+
+    // Tracing the blob tx itself must work as well.
+    api.debug_trace_transaction(
+        blob_receipt.transaction_hash,
+        alloy_rpc_types::trace::geth::GethDebugTracingOptions::default(),
+    )
+    .await
+    .unwrap();
+}
+
+// <https://github.com/foundry-rs/foundry/issues/15132>
+#[tokio::test(flavor = "multi_thread")]
+async fn can_load_state_with_blob_txs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state_file = tmp.path().join("state.json");
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"dump and reload");
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
+    let blob_tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(0)
+        .with_max_fee_per_blob_gas(gas_price + 1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_blob_sidecar_4844(sidecar.clone())
+        .value(U256::from(1));
+    let blob_pending = provider.send_transaction(WithOtherFields::new(blob_tx)).await.unwrap();
+
+    let plain_tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .value(U256::from(2));
+    let plain_pending = provider.send_transaction(WithOtherFields::new(plain_tx)).await.unwrap();
+
+    api.mine_one().await;
+
+    let receipt = blob_pending.get_receipt().await.unwrap();
+    let plain_receipt = plain_pending.get_receipt().await.unwrap();
+    assert_eq!(receipt.block_number, plain_receipt.block_number);
+    let tx_hash = receipt.transaction_hash;
+    let block_number = receipt.block_number.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+
+    let state = api.serialized_state(true).await.unwrap();
+    foundry_common::fs::write_json_file(&state_file, &state).unwrap();
+
+    let node_config = NodeConfig::test()
+        .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+        .with_init_state_path(state_file);
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    // The block hash must be unchanged after the dump/load round trip.
+    let block = provider.get_block_by_number(block_number.into()).await.unwrap().unwrap();
+    assert_eq!(block.header.hash, block_hash);
+
+    // Blobs must be retrievable from the migrated sidecar store.
+    let blobs = api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().unwrap();
+    assert_eq!(blobs, sidecar.blobs);
+
+    // The mined blob tx is still served in its canonical raw form.
+    let raw: Bytes = provider
+        .client()
+        .request(
+            "eth_getRawTransactionByBlockNumberAndIndex",
+            (U64::from(block_number), U64::from(0u64)),
+        )
+        .await
+        .unwrap();
+    assert!(raw.len() < BYTES_PER_BLOB);
+    EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw.as_ref()).unwrap();
+
+    // Tracing a tx mined after the blob tx works on the loaded chain: the replay reattaches
+    // the migrated sidecar.
+    api.debug_trace_transaction(
+        plain_receipt.transaction_hash,
+        alloy_rpc_types::trace::geth::GethDebugTracingOptions::default(),
+    )
+    .await
+    .unwrap();
+}
+
+// <https://github.com/foundry-rs/foundry/issues/15132>
+#[tokio::test(flavor = "multi_thread")]
+async fn reverting_snapshot_removes_blob_sidecars() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"reverted away");
+    let sidecar: BlobTransactionSidecar = sidecar.build().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(0)
+        .with_max_fee_per_blob_gas(gas_price + 1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_blob_sidecar_4844(sidecar.clone())
+        .value(U256::from(1));
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let tx_hash = receipt.transaction_hash;
+    let versioned_hash = sidecar.versioned_hash_for_blob(0).unwrap();
+
+    assert!(api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().is_some());
+    assert!(api.anvil_get_blob_by_versioned_hash(versioned_hash).unwrap().is_some());
+
+    // Reverting to the snapshot must also drop the reverted transactions' sidecars.
+    assert!(api.evm_revert(snapshot_id).await.unwrap());
+    assert!(api.anvil_get_blob_by_tx_hash(tx_hash).unwrap().is_none());
+    assert!(api.anvil_get_blob_by_versioned_hash(versioned_hash).unwrap().is_none());
 }

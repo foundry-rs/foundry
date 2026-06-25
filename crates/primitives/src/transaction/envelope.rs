@@ -1,13 +1,14 @@
-#[cfg(feature = "optimism")]
-use alloy_consensus::{Sealed, Transaction as _};
 use alloy_consensus::{
-    Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxType, Typed2718,
+    BlobTransactionSidecarVariant, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope,
+    TxLegacy, TxType, Typed2718,
     crypto::RecoveryError,
     transaction::{
         SignerRecoverable, TxEip7702, TxHashRef,
         eip4844::{TxEip4844Variant, TxEip4844WithSidecar},
     },
 };
+#[cfg(feature = "optimism")]
+use alloy_consensus::{Sealed, Transaction as _};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxHash};
@@ -95,6 +96,45 @@ impl FoundryTxEnvelope {
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    /// Reattaches a blob sidecar to an EIP-4844 transaction, returning the pooled (sidecarful)
+    /// form. The transaction hash and signature are unchanged.
+    ///
+    /// No-op for non-EIP-4844 transactions and transactions that already carry a sidecar.
+    pub fn with_blob_sidecar(self, sidecar: BlobTransactionSidecarVariant) -> Self {
+        match self {
+            Self::Eip4844(signed) => Self::Eip4844(signed.map(|variant| match variant {
+                TxEip4844Variant::TxEip4844(tx) => {
+                    TxEip4844Variant::TxEip4844WithSidecar(tx.with_sidecar(sidecar))
+                }
+                variant @ TxEip4844Variant::TxEip4844WithSidecar(_) => variant,
+            })),
+            tx => tx,
+        }
+    }
+
+    /// Removes the blob sidecar from an EIP-4844 transaction, returning the transaction in its
+    /// canonical (non-pooled) form along with the sidecar, if any.
+    ///
+    /// The canonical form is what belongs in a block body: its EIP-2718 encoding is the bare
+    /// `0x03 || rlp([...])` payload used for the transaction trie, without the pooled
+    /// `rlp([tx, blobs, commitments, proofs])` wrapper. The transaction hash and signature are
+    /// unchanged, since the EIP-4844 transaction hash is always computed over the non-sidecar
+    /// encoding.
+    pub fn strip_blob_sidecar(self) -> (Self, Option<BlobTransactionSidecarVariant>) {
+        match self {
+            Self::Eip4844(signed) => {
+                let mut sidecar = None;
+                let signed = signed.map(|variant| {
+                    let (tx, stripped) = variant.strip_sidecar();
+                    sidecar = stripped;
+                    tx
+                });
+                (Self::Eip4844(signed), sidecar)
+            }
+            tx => (tx, None),
         }
     }
 
@@ -475,6 +515,74 @@ mod tests {
     use alloy_signer::Signature;
 
     use super::*;
+
+    fn sidecarful_4844_envelope(sidecar: BlobTransactionSidecarVariant) -> FoundryTxEnvelope {
+        use alloy_consensus::{SignableTransaction, TxEip4844};
+
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            to: Address::ZERO,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            blob_versioned_hashes: vec![B256::ZERO],
+            max_fee_per_blob_gas: 1,
+            input: Bytes::default(),
+        };
+        let signature = Signature::new(U256::from(1), U256::from(1), false);
+        let variant = TxEip4844Variant::TxEip4844WithSidecar(tx.with_sidecar(sidecar));
+        FoundryTxEnvelope::Eip4844(variant.into_signed(signature))
+    }
+
+    fn assert_strip_blob_sidecar_roundtrip(sidecar: BlobTransactionSidecarVariant) {
+        use alloy_network::eip2718::Encodable2718;
+
+        let envelope = sidecarful_4844_envelope(sidecar.clone());
+        let pooled_len = envelope.encode_2718_len();
+
+        // Stripping yields the canonical (shorter) encoding and preserves the hash, which is
+        // always computed over the non-sidecar encoding.
+        let (canonical, stripped) = envelope.clone().strip_blob_sidecar();
+        assert_eq!(stripped, Some(sidecar));
+        assert_eq!(canonical.hash(), envelope.hash());
+        assert!(canonical.sidecar().is_none());
+        assert!(canonical.encode_2718_len() < pooled_len);
+
+        // Reattaching restores the exact pooled encoding.
+        let reattached = canonical.with_blob_sidecar(stripped.unwrap());
+        assert_eq!(reattached.hash(), envelope.hash());
+        assert_eq!(reattached.encoded_2718(), envelope.encoded_2718());
+    }
+
+    #[test]
+    fn test_strip_blob_sidecar_roundtrip_eip4844() {
+        assert_strip_blob_sidecar_roundtrip(BlobTransactionSidecarVariant::Eip4844(
+            alloy_consensus::BlobTransactionSidecar::new(
+                vec![Default::default()],
+                vec![Default::default()],
+                vec![Default::default()],
+            ),
+        ));
+    }
+
+    #[test]
+    fn test_strip_blob_sidecar_roundtrip_eip7594() {
+        assert_strip_blob_sidecar_roundtrip(BlobTransactionSidecarVariant::Eip7594(
+            Default::default(),
+        ));
+    }
+
+    #[test]
+    fn test_strip_blob_sidecar_non_blob_tx() {
+        let bytes = hex::decode("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9").unwrap();
+        let envelope = FoundryTxEnvelope::decode(&mut &bytes[..]).unwrap();
+        let (unchanged, sidecar) = envelope.clone().strip_blob_sidecar();
+        assert!(sidecar.is_none());
+        assert_eq!(unchanged.hash(), envelope.hash());
+    }
 
     #[test]
     fn test_decode_call() {

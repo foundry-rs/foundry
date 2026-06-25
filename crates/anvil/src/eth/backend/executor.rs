@@ -6,7 +6,7 @@ use crate::{
     mem::inspector::{AnvilInspector, InspectorTxConfig},
 };
 use alloy_consensus::{
-    Eip658Value, Transaction, TransactionEnvelope, TxReceipt,
+    BlobTransactionSidecarVariant, Eip658Value, Transaction, TransactionEnvelope, TxReceipt,
     transaction::{Either, Recovered},
 };
 use alloy_eips::{
@@ -24,7 +24,7 @@ use alloy_evm::{
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
     },
 };
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -313,8 +313,12 @@ pub struct ExecutedPoolTransactions<T> {
     pub not_yet_valid: Vec<Arc<PoolTransaction<T>>>,
     /// Per-transaction execution info.
     pub tx_info: Vec<TransactionInfo>,
-    /// The raw pending transactions that were included (in order).
+    /// The included transactions (in order), in their canonical block-body form, i.e. EIP-4844
+    /// transactions without their blob sidecar (except impersonated ones, whose synthetic hash
+    /// depends on the encoded transaction).
     pub txs: Vec<MaybeImpersonatedTransaction<T>>,
+    /// Blob sidecars stripped from included EIP-4844 transactions, keyed by transaction hash.
+    pub blob_sidecars: Vec<(TxHash, BlobTransactionSidecarVariant)>,
 }
 
 /// Gas-related configuration for pool transaction execution.
@@ -362,6 +366,7 @@ where
     let mut not_yet_valid = Vec::new();
     let mut tx_info: Vec<TransactionInfo> = Vec::new();
     let mut transactions = Vec::new();
+    let mut blob_sidecars = Vec::new();
     let mut blob_gas_used = 0u64;
 
     for pool_tx in pool_transactions {
@@ -481,7 +486,18 @@ where
 
                 included.push(pool_tx.clone());
                 tx_info.push(info);
-                transactions.push(pending.transaction.clone());
+
+                // Strip the blob sidecar before the transaction enters the block body: the
+                // transaction trie commits to the canonical EIP-2718 encoding, not the pooled
+                // sidecarful one. The sidecar is kept so it can be served via `anvil_getBlobs*`.
+                // Impersonated transactions are deliberately not stripped (see
+                // `MaybeImpersonatedTransaction::strip_blob_sidecar`), but their sidecar is
+                // still mirrored into the store.
+                let (transaction, sidecar) = pending.transaction.clone().strip_blob_sidecar();
+                if let Some(sidecar) = sidecar {
+                    blob_sidecars.push((transaction.hash(), sidecar));
+                }
+                transactions.push(transaction);
             }
             Err(err) => {
                 if err.as_validation().is_some() {
@@ -494,7 +510,14 @@ where
         }
     }
 
-    ExecutedPoolTransactions { included, invalid, not_yet_valid, tx_info, txs: transactions }
+    ExecutedPoolTransactions {
+        included,
+        invalid,
+        not_yet_valid,
+        tx_info,
+        txs: transactions,
+        blob_sidecars,
+    }
 }
 
 /// Builds the EVM transaction env from a pending pool transaction.

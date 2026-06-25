@@ -9,7 +9,9 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
+use alloy_consensus::{
+    BlobTransactionSidecarVariant, BlockHeader, Header, constants::EMPTY_WITHDRAWALS,
+};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_evm::EvmEnv;
 use alloy_network::Network;
@@ -293,6 +295,16 @@ pub struct BlockchainStorage<N: Network> {
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     pub transactions: B256HashMap<MinedTransaction<N>>,
+    /// Blob sidecars of mined EIP-4844 transactions (transaction hash -> sidecar).
+    ///
+    /// Block bodies store blob transactions in their canonical form, without the sidecar, so
+    /// that the transaction trie commits to the canonical EIP-2718 encoding. The sidecars are
+    /// kept here so they can be served via the `anvil_getBlobs*` endpoints and reattached when
+    /// replaying block transactions. Exception: impersonated blob transactions keep their
+    /// sidecar in the block body (their synthetic hash depends on the encoded transaction, see
+    /// `MaybeImpersonatedTransaction::strip_blob_sidecar`); their sidecar is mirrored here so
+    /// lookups have a single source.
+    pub blob_sidecars: B256HashMap<Arc<BlobTransactionSidecarVariant>>,
     /// The total difficulty of the chain until this block
     pub total_difficulty: U256,
 }
@@ -342,6 +354,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_number,
             genesis_hash,
             transactions: Default::default(),
+            blob_sidecars: Default::default(),
             total_difficulty: Default::default(),
         }
     }
@@ -357,6 +370,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_number: block_number,
             genesis_hash: Default::default(),
             transactions: Default::default(),
+            blob_sidecars: Default::default(),
             total_difficulty,
         }
     }
@@ -393,6 +407,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_number: Default::default(),
             genesis_hash: Default::default(),
             transactions: Default::default(),
+            blob_sidecars: Default::default(),
             total_difficulty: Default::default(),
         }
     }
@@ -409,20 +424,58 @@ impl<N: Network> BlockchainStorage<N> {
         if let Some(block) = self.blocks.get_mut(&block_hash) {
             for tx in &block.body.transactions {
                 self.transactions.remove(&tx.hash());
+                self.blob_sidecars.remove(&tx.hash());
             }
             block.body.transactions.clear();
         }
     }
 
     /// Serialize all blocks in storage
+    ///
+    /// Blob sidecars are reattached to their transactions so the on-disk format stays
+    /// compatible with state files produced before sidecars were stored separately from block
+    /// bodies.
     pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
-        self.blocks.values().map(|block| block.clone().into()).collect()
+        self.blocks
+            .values()
+            .map(|block| {
+                let mut block = block.clone();
+                block.body.transactions = block
+                    .body
+                    .transactions
+                    .into_iter()
+                    .map(|tx| match self.blob_sidecars.get(&tx.hash()) {
+                        Some(sidecar) => tx.with_blob_sidecar((**sidecar).clone()),
+                        None => tx,
+                    })
+                    .collect();
+                block.into()
+            })
+            .collect()
     }
 
     /// Deserialize and add all blocks data to the backend storage
+    ///
+    /// Blob sidecars carried inside the serialized block bodies are moved into the sidecar
+    /// store, leaving the block-body transactions in their canonical form (impersonated blob
+    /// transactions stay sidecarful, with the sidecar mirrored into the store). The headers are
+    /// kept as-is: blocks mined before the canonical encoding fix keep their historical
+    /// `transactions_root` and block hash.
     pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
         for serializable_block in &serializable_blocks {
-            let block: Block = serializable_block.clone().into();
+            let mut block: Block = serializable_block.clone().into();
+            block.body.transactions = block
+                .body
+                .transactions
+                .into_iter()
+                .map(|tx| {
+                    let (tx, sidecar) = tx.strip_blob_sidecar();
+                    if let Some(sidecar) = sidecar {
+                        self.blob_sidecars.insert(tx.hash(), Arc::new(sidecar));
+                    }
+                    tx
+                })
+                .collect();
             let block_hash = block.header.hash_slow();
             let block_number = block.header.number();
             self.blocks.insert(block_hash, block);
@@ -827,5 +880,72 @@ mod tests {
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
         let loaded_tx = loaded_block.body.transactions.first().unwrap();
         assert_eq!(loaded_tx, &tx);
+    }
+
+    // Verifies that blob sidecars are reattached to their transactions on dump (keeping the
+    // on-disk format compatible with state files that carry sidecars inside block bodies) and
+    // stripped back into the sidecar store on load, without changing the block hash.
+    #[test]
+    fn test_storage_dump_reload_blob_sidecar_cycle() {
+        use alloy_consensus::{
+            BlobTransactionSidecar, SignableTransaction, TxEip4844,
+            transaction::eip4844::TxEip4844Variant,
+        };
+        use alloy_primitives::{Signature, U256};
+
+        let mut dump_storage = BlockchainStorage::<FoundryNetwork>::empty();
+
+        let tx = TxEip4844 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            to: Address::ZERO,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            blob_versioned_hashes: vec![B256::ZERO],
+            max_fee_per_blob_gas: 1,
+            input: Bytes::default(),
+        };
+        let sidecar = BlobTransactionSidecarVariant::Eip4844(BlobTransactionSidecar::new(
+            vec![Default::default()],
+            vec![Default::default()],
+            vec![Default::default()],
+        ));
+        let signature = Signature::new(U256::from(1), U256::from(1), false);
+        let variant = TxEip4844Variant::TxEip4844WithSidecar(tx.with_sidecar(sidecar));
+        let pooled_tx: MaybeImpersonatedTransaction<FoundryTxEnvelope> =
+            FoundryTxEnvelope::Eip4844(variant.into_signed(signature)).into();
+
+        // Mining stores the canonical transaction in the block body and the sidecar separately.
+        let (canonical_tx, sidecar) = pooled_tx.strip_blob_sidecar();
+        let sidecar = sidecar.unwrap();
+        let block = create_block(Header::default(), vec![canonical_tx.clone()]);
+        let block_hash = block.header.hash_slow();
+        let block_number = block.header.number();
+        dump_storage.blocks.insert(block_hash, block);
+        dump_storage.hashes.insert(block_number, block_hash);
+        dump_storage.blob_sidecars.insert(canonical_tx.hash(), Arc::new(sidecar.clone()));
+
+        // The serialized block carries the sidecar inside the transaction (legacy format).
+        let serialized_blocks = dump_storage.serialized_blocks();
+        let serialized_tx_block: Block = serialized_blocks[0].clone().into();
+        assert!(serialized_tx_block.body.transactions[0].as_ref().sidecar().is_some());
+
+        // Loading strips the sidecar back into the store and keeps the block hash unchanged.
+        let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
+        load_storage.load_blocks(serialized_blocks);
+
+        let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
+        assert_eq!(loaded_block.body.transactions.first().unwrap(), &canonical_tx);
+        assert_eq!(
+            load_storage.blob_sidecars.get(&canonical_tx.hash()).map(|s| (**s).clone()),
+            Some(sidecar)
+        );
+
+        // Removing the block's transactions clears the sidecar store as well.
+        load_storage.remove_block_transactions(block_hash);
+        assert!(load_storage.blob_sidecars.is_empty());
     }
 }
