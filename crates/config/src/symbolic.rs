@@ -32,6 +32,8 @@ pub enum SymbolicExplorationOrder {
 pub struct SymbolicConfig {
     /// Whether symbolic tests are enabled.
     pub enabled: bool,
+    /// Whether fuzz tests should be symbolically concretized into fuzz corpus seeds.
+    pub seed_corpus: bool,
     /// Solver executable to invoke.
     pub solver: String,
     /// Exact solver command to invoke. When set, this overrides `solver`.
@@ -91,6 +93,7 @@ impl Default for SymbolicConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            seed_corpus: false,
             solver: "z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
@@ -143,6 +146,7 @@ mod tests {
     fn missing_exploration_order_defaults_to_bfs() {
         let value = serde_json::json!({
             "enabled": false,
+            "seed_corpus": false,
             "solver": "z3",
             "timeout": 30,
             "max_depth": 10000,

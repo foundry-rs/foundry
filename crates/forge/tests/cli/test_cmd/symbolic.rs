@@ -33,73 +33,6 @@ fn read_artifact(symbolic: &Value) -> Value {
     read_artifact_ref(&symbolic["artifact"])
 }
 
-fn manual_symbolic_artifact(
-    kind: &str,
-    contract: &str,
-    test: &str,
-    fail_on_revert: bool,
-    calls: Vec<Value>,
-) -> Value {
-    serde_json::json!({
-        "schema_version": 1,
-        "schema": "foundry:symbolic.counterexample@v1",
-        "kind": kind,
-        "test": {
-            "contract": contract,
-            "test": test
-        },
-        "replay": {
-            "required": true,
-            "status": "confirmed",
-            "reason": "manual regression artifact"
-        },
-        "replay_semantics": {
-            "fail_on_revert": fail_on_revert
-        },
-        "bounds": {
-            "timeout_seconds": null,
-            "loop_bound": null,
-            "max_depth": 0,
-            "max_paths": 0,
-            "invariant_depth": if kind == "sequence" { 1 } else { 0 },
-            "exploration_order": "bfs",
-            "max_solver_queries": 0,
-            "default_dynamic_length": 0,
-            "max_dynamic_length": 0,
-            "array_lengths": [],
-            "dynamic_lengths": {},
-            "default_array_lengths": [],
-            "default_bytes_lengths": [],
-            "max_calldata_bytes": 0,
-            "symbolic_call_targets": false,
-            "storage_layout": "solidity"
-        },
-        "solver": {
-            "name": "manual",
-            "command": null,
-            "portfolio": [],
-            "stats": {
-                "paths": 0,
-                "solver_queries": 0,
-                "smt_queries": 0,
-                "sat_queries": 0,
-                "model_queries": 0,
-                "sat_cache_hits": 0,
-                "model_cache_hits": 0,
-                "heuristic_witnesses": 0,
-                "solver_time_ms": 0
-            }
-        },
-        "assumptions": [],
-        "call_trace": {
-            "available": false,
-            "source": null,
-            "format": null
-        },
-        "calls": calls
-    })
-}
-
 forgetest_init!(symbolic_tests_are_ignored_without_flag, |prj, cmd| {
     prj.add_test(
         "SymbolicIgnored.t.sol",
@@ -511,34 +444,6 @@ contract SymbolicJsonCounterexample {
 "#,
     );
     cmd.forge_fuse().args(["test", "--replay-symbolic-artifact", &artifact_path]).assert_success();
-
-    let export_without_symbolic_stderr = cmd
-        .forge_fuse()
-        .args(["test", "--export-symbolic-artifact-to-corpus", &artifact_path])
-        .assert_failure()
-        .get_output()
-        .stderr_lossy();
-    assert!(
-        export_without_symbolic_stderr.contains("symbolic-only targets require --symbolic"),
-        "{export_without_symbolic_stderr}"
-    );
-    assert!(
-        export_without_symbolic_stderr
-            .contains("single-call artifact export still requires a fuzz test target"),
-        "{export_without_symbolic_stderr}"
-    );
-
-    let export_with_symbolic_stdout = cmd
-        .forge_fuse()
-        .args(["test", "--symbolic", "--export-symbolic-artifact-to-corpus", &artifact_path])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-    assert!(
-        export_with_symbolic_stdout
-            .contains("single-call symbolic artifact export requires a fuzz test target"),
-        "{export_with_symbolic_stdout}"
-    );
 
     prj.add_test(
         "SymbolicJsonCounterexample.t.sol",
@@ -1490,142 +1395,41 @@ args=[7]
     );
 });
 
-forgetest_init!(symbolic_sequence_artifact_exports_to_invariant_corpus, |prj, cmd| {
-    prj.update_config(|config| {
-        config.invariant.fail_on_revert = true;
-    });
-    prj.add_test(
-        "SymbolicArtifactCorpusExport.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicArtifactCorpusExport is Test {
-    function setUp() public {
-        targetContract(address(this));
+forgetest_init!(symbolic_seed_corpus_persists_non_failing_fuzz_input, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_seed_corpus_persists_non_failing_fuzz_input because z3 is not available"
+        );
+        return;
     }
 
-    function step() external {
-        revert("boom");
-    }
-
-    function invariant_noop() public pure {}
-}
-"#,
-    );
-
-    let artifact_path = prj.root().join("corpus-export-artifact.json");
-    let artifact = manual_symbolic_artifact(
-        "sequence",
-        "test/SymbolicArtifactCorpusExport.t.sol:SymbolicArtifactCorpusExport",
-        "invariant_noop()",
-        true,
-        vec![serde_json::json!({
-            "warp": null,
-            "roll": null,
-            "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
-            "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-            "calldata": "0xe25fe175",
-            "value": null,
-            "contract_name": "SymbolicArtifactCorpusExport",
-            "function_name": "step",
-            "signature": "step()",
-            "args": "",
-            "raw_args": ""
-        })],
-    );
-    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
-
-    let stdout = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--export-symbolic-artifact-to-corpus",
-            artifact_path.to_str().unwrap(),
-            "--invariant-corpus-dir",
-            "invariant_corpus",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(stdout.contains("Exported symbolic artifact to corpus:"), "{stdout}");
-
-    let corpus_dir = prj
-        .root()
-        .join("invariant_corpus")
-        .join("SymbolicArtifactCorpusExport")
-        .join("worker0")
-        .join("corpus");
-    let mut entries = std::fs::read_dir(&corpus_dir)
-        .unwrap_or_else(|err| panic!("failed to read corpus dir {}: {err}", corpus_dir.display()))
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    entries.sort_by_key(|entry| entry.path());
-    assert_eq!(entries.len(), 1);
-    let corpus: Value = serde_json::from_slice(&std::fs::read(entries[0].path()).unwrap()).unwrap();
-    assert_eq!(corpus.as_array().unwrap().len(), 1);
-    assert_eq!(corpus[0]["calldata"], "0xe25fe175");
-});
-
-forgetest_init!(symbolic_single_call_artifact_exports_to_fuzz_corpus_flag, |prj, cmd| {
     prj.add_test(
-        "SymbolicFuzzCorpusExport.t.sol",
+        "SymbolicFuzzCorpusSeed.t.sol",
         r#"
-contract SymbolicFuzzCorpusExport {
-    function testRejectsFortyTwo(uint256 x) public pure {
-        assert(x != 42);
+contract SymbolicFuzzCorpusSeed {
+    function testAcceptsMostValues(uint256 x) public pure {
+        if (x > 100) return;
     }
 }
 "#,
     );
 
-    let selector = &keccak256(b"testRejectsFortyTwo(uint256)")[..4];
-    let mut calldata = selector.to_vec();
-    calldata.extend_from_slice(&[0; 31]);
-    calldata.push(42);
-    let calldata = format!("0x{}", hex::encode(calldata));
-
-    let artifact_path = prj.root().join("fuzz-corpus-export-artifact.json");
-    let call = serde_json::json!({
-        "warp": null,
-        "roll": null,
-        "sender": "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38",
-        "target": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-        "calldata": calldata,
-        "value": null,
-        "contract_name": "SymbolicFuzzCorpusExport",
-        "function_name": "testRejectsFortyTwo",
-        "signature": "testRejectsFortyTwo(uint256)",
-        "args": "42",
-        "raw_args": "42"
-    });
-    let artifact = manual_symbolic_artifact(
-        "single_call",
-        "test/SymbolicFuzzCorpusExport.t.sol:SymbolicFuzzCorpusExport",
-        "testRejectsFortyTwo(uint256)",
-        false,
-        vec![call],
-    );
-    std::fs::write(&artifact_path, serde_json::to_vec_pretty(&artifact).unwrap()).unwrap();
-
-    let stdout = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args([
             "test",
-            "--export-symbolic-artifact-to-corpus",
-            artifact_path.to_str().unwrap(),
+            "--match-test",
+            "testAcceptsMostValues",
+            "--symbolic-seed-corpus",
             "--fuzz-corpus-dir",
             "fuzz_corpus",
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-    assert!(stdout.contains("Exported symbolic artifact to corpus:"), "{stdout}");
+        .assert_success();
 
     let corpus_dir = prj
         .root()
         .join("fuzz_corpus")
-        .join("SymbolicFuzzCorpusExport")
-        .join("testRejectsFortyTwo")
+        .join("SymbolicFuzzCorpusSeed")
+        .join("testAcceptsMostValues")
         .join("worker0")
         .join("corpus");
     let mut entries = std::fs::read_dir(&corpus_dir)
@@ -1636,25 +1440,9 @@ contract SymbolicFuzzCorpusExport {
     assert_eq!(entries.len(), 1);
     let corpus: Value = serde_json::from_slice(&std::fs::read(entries[0].path()).unwrap()).unwrap();
     assert_eq!(corpus.as_array().unwrap().len(), 1);
-    assert_eq!(corpus[0]["calldata"], calldata);
-
-    let json_output = cmd
-        .forge_fuse()
-        .args([
-            "test",
-            "--json",
-            "--export-symbolic-artifact-to-corpus",
-            artifact_path.to_str().unwrap(),
-            "--fuzz-corpus-dir",
-            "json_fuzz_corpus",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout
-        .clone();
-    let json_stdout = String::from_utf8_lossy(&json_output);
-    assert!(!json_stdout.contains("Exported symbolic artifact to corpus:"), "{json_stdout}");
-    let _: Value = serde_json::from_slice(&json_output).expect("forge test --json output");
+    let calldata = corpus[0]["calldata"].as_str().expect("seed calldata");
+    let expected_selector = &keccak256(b"testAcceptsMostValues(uint256)")[..4];
+    assert_eq!(&hex::decode(&calldata[2..10]).unwrap(), expected_selector);
 });
 
 forgetest_init!(symbolic_artifact_replay_uses_stored_fail_on_revert, |prj, cmd| {

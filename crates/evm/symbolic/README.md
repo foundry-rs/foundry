@@ -93,17 +93,15 @@ schema lives at
 the replay status, bounds, assumptions, solver metadata, optional trace
 reference, and concrete call data needed by downstream minimizers and exporters.
 
-Confirmed artifacts can seed coverage-guided fuzzing with a configured
-`corpus_dir`, or a one-off corpus directory:
+Symbolic execution can also seed coverage-guided fuzzing by concretizing
+non-failing fuzz-test inputs into the configured `fuzz.corpus_dir`:
 
 ```sh
-forge test --export-symbolic-artifact-to-corpus <artifact.json> --fuzz-corpus-dir fuzz_corpus
-forge test --export-symbolic-artifact-to-corpus <artifact.json> --invariant-corpus-dir invariant_corpus
+forge test --symbolic-seed-corpus --fuzz-corpus-dir fuzz_corpus
 ```
 
-Forge validates the artifact against its original target, then writes it into
-the existing corpus layout. Only `confirmed` artifacts can be exported. Manual
-sequence artifacts must preserve recorded target addresses.
+Forge symbolically executes matching fuzz tests, reuses their normal corpus
+layout, and writes a successful concrete input as a seed for later fuzz runs.
 
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use

@@ -20,11 +20,11 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, Selector, U256, address, hex, keccak256, map::HashMap};
 use eyre::Result;
-use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress, shell};
+use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, FuzzCorpusConfig, InlineConfig, InvariantConfig};
 use foundry_evm::{
-    constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
+    constants::{CALLER, CHEATCODE_ADDRESS},
     core::evm::FoundryEvmNetwork,
     decode::{RevertDecoder, SkipReason},
     executors::{
@@ -74,6 +74,10 @@ pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6e
 
 pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
+}
+
+fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
+    config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
 }
 
 pub(crate) struct InvariantCampaignScope<'a> {
@@ -836,9 +840,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 .into_iter()
                 .map(|func| {
                     let start = Instant::now();
-                    let kind = if replay.is_replay()
-                        && artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
-                    {
+                    let kind = if artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall {
                         TestFunctionKind::SymbolicTest
                     } else {
                         func.test_function_kind()
@@ -855,40 +857,19 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                             )),
                         );
                     }
-                    if replay.is_export_corpus()
-                        && artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
-                        && !kind.is_fuzz_test()
-                    {
-                        return (
-                            func.signature(),
-                            TestResult::fail(format!(
-                                "single-call symbolic artifact export requires a fuzz test target, but matched {} function `{}`",
-                                kind.name(),
-                                func.signature(),
-                            )),
-                        );
-                    }
                     let invariants =
                         if artifact.kind == SymbolicCounterexampleArtifactKind::Sequence {
                             std::slice::from_ref(&func)
                         } else {
                             &[][..]
                         };
-                    let mut res = if replay.is_export_corpus() {
-                        FunctionRunner::new(&self, &setup).run_symbolic_artifact_export_to_corpus(
-                            func,
-                            invariants,
-                            call_after_invariant,
-                        )
-                    } else {
-                        FunctionRunner::new(&self, &setup).run_symbolic_artifact_replay(
-                            func,
-                            invariants,
-                            call_after_invariant,
-                        )
-                    };
+                    let mut res = FunctionRunner::new(&self, &setup).run_symbolic_artifact_replay(
+                        func,
+                        invariants,
+                        call_after_invariant,
+                    );
                     res.duration = start.elapsed();
-                    debug!(%kind, action = ?replay.action, path = %replay.path.display(), "processed symbolic artifact");
+                    debug!(%kind, path = %replay.path.display(), "replayed symbolic artifact");
                     (func.signature(), res)
                 })
                 .collect::<BTreeMap<_, _>>();
@@ -972,7 +953,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = if symbolic_enabled && is_symbolic_entrypoint(func) {
+                let kind = if (symbolic_enabled && is_symbolic_entrypoint(func))
+                    || should_symbolically_seed_fuzz_corpus(&self.config, func)
+                {
                     TestFunctionKind::SymbolicTest
                 } else {
                     func.test_function_kind()
@@ -1317,12 +1300,37 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             function: func,
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
+            collect_success_input: should_symbolically_seed_fuzz_corpus(&self.config, func),
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
 
         match result {
-            SymbolicRunResult::Safe(stats) => {
+            SymbolicRunResult::Safe { stats, success_input } => {
+                if let Some(input) = success_input {
+                    let mut fuzz_config = self.config.fuzz.clone();
+                    let _ = test_paths(
+                        &mut fuzz_config.corpus,
+                        fuzz_config.failure_persist_dir.clone().unwrap(),
+                        self.cr.name,
+                        &func.name,
+                    );
+                    if let Err(err) = persist_corpus_seed(
+                        &fuzz_config.corpus,
+                        vec![BasicTxDetails {
+                            warp: None,
+                            roll: None,
+                            sender: self.sender,
+                            call_details: CallDetails {
+                                target: self.address,
+                                calldata: input.calldata,
+                                value: Some(U256::ZERO),
+                            },
+                        }],
+                    ) {
+                        warn!(%err, test = %func.signature(), "failed to persist symbolic fuzz corpus seed");
+                    }
+                }
                 self.result.symbolic_result(
                     TestStatus::Success,
                     None,
@@ -1785,255 +1793,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 }
             }
-        }
-
-        self.result
-    }
-
-    /// Exports a durable symbolic counterexample artifact into the configured corpus directory.
-    fn run_symbolic_artifact_export_to_corpus(
-        mut self,
-        func: &Function,
-        invariants: &[&Function],
-        call_after_invariant: bool,
-    ) -> TestResult {
-        let Some(replay) = &self.cr.mcr.tcfg.symbolic_artifact_replay else {
-            self.result.single_fail(Some("missing symbolic artifact config".to_string()));
-            return self.result;
-        };
-        let artifact = &replay.artifact;
-        if let Err(e) = self.apply_function_inline_config(func) {
-            self.result.single_fail(Some(e.to_string()));
-            return self.result;
-        }
-        if artifact.replay.status != SymbolicReplayStatus::Confirmed {
-            self.result.single_fail(Some(format!(
-                "symbolic artifact replay status must be confirmed, got {:?}",
-                artifact.replay.status
-            )));
-            return self.result;
-        }
-
-        let export = match artifact.kind {
-            SymbolicCounterexampleArtifactKind::SingleCall => {
-                let Some(call) = artifact.calls.first() else {
-                    self.result.single_fail(Some("symbolic artifact has no calls".to_string()));
-                    return self.result;
-                };
-                if artifact.calls.len() != 1 {
-                    self.result.single_fail(Some(
-                        "single-call symbolic artifact must contain exactly one call".to_string(),
-                    ));
-                    return self.result;
-                }
-                if let Err(err) = validate_single_call_symbolic_replay(func, call, self.address) {
-                    self.result.single_fail(Some(err));
-                    return self.result;
-                }
-                if self.prepare_test(func).is_err() {
-                    return self.result;
-                }
-                let mut executor = self.clone_executor();
-                match execute_tx(&mut executor, &call.to_basic_tx_details()) {
-                    Ok(raw_call_result) => {
-                        if executor.is_raw_call_success(
-                            self.address,
-                            Cow::Borrowed(&raw_call_result.state_changeset),
-                            &raw_call_result,
-                            false,
-                        ) {
-                            self.result.single_fail(Some(
-                                "single-call symbolic artifact no longer reproduces".to_string(),
-                            ));
-                            return self.result;
-                        }
-                        if raw_call_result.result.as_ref() == MAGIC_ASSUME {
-                            self.result.single_fail(Some(
-                                "single-call symbolic artifact no longer reproduces".to_string(),
-                            ));
-                            return self.result;
-                        }
-                        match raw_call_result.into_evm_error(Some(self.revert_decoder())) {
-                            EvmError::Execution(_) => {}
-                            EvmError::Skip(_) => {
-                                self.result.single_fail(Some(
-                                    "single-call symbolic artifact no longer reproduces"
-                                        .to_string(),
-                                ));
-                                return self.result;
-                            }
-                            err => {
-                                self.result.single_fail(Some(err.to_string()));
-                                return self.result;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        self.result.single_fail(Some(err.to_string()));
-                        return self.result;
-                    }
-                }
-
-                let mut fuzz_config = self.config.fuzz.clone();
-                let _ = test_paths(
-                    &mut fuzz_config.corpus,
-                    fuzz_config.failure_persist_dir.clone().unwrap(),
-                    self.cr.name,
-                    &func.name,
-                );
-                persist_corpus_seed(&fuzz_config.corpus, vec![call.to_basic_tx_details()])
-            }
-            SymbolicCounterexampleArtifactKind::Sequence => {
-                let Some(invariant) = invariants.first() else {
-                    self.result.single_fail(Some(
-                        "sequence symbolic artifact must target an invariant test".to_string(),
-                    ));
-                    return self.result;
-                };
-                if artifact.calls.is_empty() {
-                    self.result.single_fail(Some("symbolic artifact has no calls".to_string()));
-                    return self.result;
-                }
-
-                let calls = artifact
-                    .calls
-                    .iter()
-                    .map(SymbolicCounterexampleCall::to_base_counterexample)
-                    .collect::<Vec<_>>();
-                let txes = artifact
-                    .calls
-                    .iter()
-                    .map(SymbolicCounterexampleCall::to_basic_tx_details)
-                    .collect::<Vec<_>>();
-                let setup_contracts = load_contracts(
-                    self.setup.traces.iter().map(|(_, trace)| &trace.arena),
-                    &self.cr.mcr.known_contracts,
-                );
-                let mut config = self.config.invariant.clone();
-                let _ = invariant_suite_paths(
-                    &mut config.corpus,
-                    config.failure_persist_dir.clone().unwrap(),
-                    self.cr.name,
-                    func.name.as_str(),
-                    is_optimization_invariant(func),
-                );
-                let mut evm = InvariantExecutor::new_with_fuzz_seed(
-                    self.clone_executor(),
-                    self.invariant_runner(),
-                    self.config.fuzz.seed,
-                    config.clone(),
-                    &setup_contracts,
-                    &self.cr.mcr.known_contracts,
-                    self.cr.num_invariant_campaign_anchors,
-                );
-                if let Err(err) = evm.select_contract_artifacts(self.address) {
-                    self.result.invariant_setup_fail(err);
-                    return self.result;
-                }
-                let (sender_filters, targeted) =
-                    match evm.select_contracts_and_senders(self.address) {
-                        Ok(selected) => selected,
-                        Err(err) => {
-                            self.result.invariant_setup_fail(err);
-                            return self.result;
-                        }
-                    };
-                {
-                    let dynamic_target_ctx = evm.dynamic_target_ctx();
-                    let mut validation_executor =
-                        targeted.is_updatable.then(|| self.clone_executor());
-                    let mut validation_created_contracts = Vec::new();
-                    for (idx, tx) in txes.iter().enumerate() {
-                        let Some(selector) = tx.call_details.calldata.get(..4) else {
-                            self.result.single_fail(Some(format!(
-                                "sequence symbolic artifact call {} has calldata shorter than a selector",
-                                idx + 1
-                            )));
-                            return self.result;
-                        };
-                        if !targeted.targets().can_replay(tx) {
-                            self.result.single_fail(Some(format!(
-                                "sequence symbolic artifact call {} targets unknown function {} on {}",
-                                idx + 1,
-                                hex::encode_prefixed(selector),
-                                tx.call_details.target
-                            )));
-                            return self.result;
-                        }
-                        if (!sender_filters.targeted.is_empty()
-                            && !sender_filters.targeted.contains(&tx.sender))
-                            || sender_filters.excluded.contains(&tx.sender)
-                        {
-                            self.result.single_fail(Some(format!(
-                                "sequence symbolic artifact call {} uses forbidden sender {}",
-                                idx + 1,
-                                tx.sender
-                            )));
-                            return self.result;
-                        }
-                        if let Some(validation_executor) = validation_executor.as_mut()
-                            && let Err(err) = execute_tx_and_register_created(
-                                validation_executor,
-                                tx,
-                                &targeted,
-                                &dynamic_target_ctx,
-                                &mut validation_created_contracts,
-                            )
-                        {
-                            self.result.single_fail(Some(format!(
-                                "sequence symbolic artifact call {} failed during target validation: {err}",
-                                idx + 1
-                            )));
-                            return self.result;
-                        }
-                    }
-                }
-                match check_sequence(
-                    self.clone_executor(),
-                    &txes,
-                    (0..txes.len()).collect(),
-                    self.setup.address,
-                    invariant.selector().to_vec().into(),
-                    CheckSequenceOptions {
-                        accumulate_warp_roll: false,
-                        fail_on_revert: artifact.replay_semantics.fail_on_revert,
-                        expect_assertion_failure: false,
-                        call_after_invariant,
-                        rd: Some(self.revert_decoder()),
-                    },
-                ) {
-                    Ok((success, ..)) => {
-                        if success {
-                            self.result.single_fail(Some(
-                                "sequence symbolic artifact no longer reproduces".to_string(),
-                            ));
-                            return self.result;
-                        }
-                    }
-                    Err(err) => {
-                        self.result.counterexample =
-                            Some(CounterExample::Sequence(calls.len(), calls));
-                        self.result.single_fail(Some(err.to_string()));
-                        return self.result;
-                    }
-                }
-                persist_corpus_seed(&config.corpus, txes)
-            }
-        };
-
-        match export {
-            Ok(Some(path)) => {
-                if !shell::is_json() && !foundry_cli::is_machine() {
-                    let _ = sh_println!("Exported symbolic artifact to corpus: {}", path.display());
-                }
-                self.result.replay_result(1, 0, 0, Default::default());
-            }
-            Ok(None) => self.result.single_fail(Some(
-                "symbolic artifact export requires a configured corpus_dir".to_string(),
-            )),
-            Err(err) => self
-                .result
-                .single_fail(Some(format!("failed to export symbolic artifact to corpus: {err}"))),
         }
 
         self.result

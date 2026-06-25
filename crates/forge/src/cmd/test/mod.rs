@@ -5,8 +5,7 @@ use crate::{
     diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{
-        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactAction, SymbolicArtifactReplayConfig,
-        matches_artifact,
+        MultiNetworkConfig, ShowmapConfig, SymbolicArtifactReplayConfig, matches_artifact,
     },
     mutation::{MutationRunConfig, run_mutation_testing},
     result::{
@@ -398,7 +397,6 @@ pub struct TestArgs {
             "fuzz_input_file",
             "showmap_out",
             "path",
-            "export_symbolic_artifact_to_corpus",
             "test_pattern",
             "test_pattern_inverse",
             "contract_pattern",
@@ -409,29 +407,9 @@ pub struct TestArgs {
     )]
     pub replay_symbolic_artifact: Option<PathBuf>,
 
-    /// Export a durable symbolic counterexample artifact into the configured fuzz corpus.
-    #[arg(
-        long,
-        value_name = "PATH",
-        value_hint = ValueHint::FilePath,
-        conflicts_with_all = [
-            "debug",
-            "flamegraph",
-            "flamechart",
-            "rerun",
-            "fuzz_input_file",
-            "showmap_out",
-            "path",
-            "replay_symbolic_artifact",
-            "test_pattern",
-            "test_pattern_inverse",
-            "contract_pattern",
-            "contract_pattern_inverse",
-            "path_pattern",
-            "no-match-path",
-        ],
-    )]
-    pub export_symbolic_artifact_to_corpus: Option<PathBuf>,
+    /// Run fuzz tests symbolically and persist non-failing concrete inputs to the fuzz corpus.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_SEED_CORPUS")]
+    pub symbolic_seed_corpus: bool,
 
     /// Solver executable used for symbolic tests.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
@@ -671,12 +649,8 @@ impl TestArgs {
         })
     }
 
-    fn load_symbolic_artifact_action(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
-        let (path, action) = if let Some(path) = &self.replay_symbolic_artifact {
-            (path, SymbolicArtifactAction::Replay)
-        } else if let Some(path) = &self.export_symbolic_artifact_to_corpus {
-            (path, SymbolicArtifactAction::ExportCorpus)
-        } else {
+    fn load_symbolic_artifact_replay(&self) -> Result<Option<SymbolicArtifactReplayConfig>> {
+        let Some(path) = &self.replay_symbolic_artifact else {
             return Ok(None);
         };
 
@@ -745,28 +719,7 @@ impl TestArgs {
             );
         }
 
-        Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone(), action }))
-    }
-
-    fn symbolic_target_not_found_message(replay: &SymbolicArtifactReplayConfig) -> String {
-        let target = format!("{}::{}", replay.artifact.test.contract, replay.artifact.test.test);
-        let Some((function_name, _)) = replay.artifact.test.test.split_once('(') else {
-            return format!("symbolic artifact target `{target}` was not found");
-        };
-
-        let is_symbolic_only = function_name.starts_with("check")
-            || function_name.starts_with("prove")
-            || function_name.starts_with("invariant")
-            || function_name.starts_with("statefulFuzz");
-        if replay.is_export_corpus() && is_symbolic_only {
-            format!(
-                "symbolic artifact target `{target}` was not found; \
-                 symbolic-only targets require --symbolic to be discovered, \
-                 and single-call artifact export still requires a fuzz test target"
-            )
-        } else {
-            format!("symbolic artifact target `{target}` was not found")
-        }
+        Ok(Some(SymbolicArtifactReplayConfig { artifact, path: path.clone() }))
     }
 
     /// Reject flags whose stdout shape conflicts with the NDJSON stream
@@ -862,7 +815,7 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
-        let symbolic_artifact_replay = self.load_symbolic_artifact_action()?;
+        let symbolic_artifact_replay = self.load_symbolic_artifact_replay()?;
 
         // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
         // identifiers it constructs are project-relative. Match that here for the filter check
@@ -931,7 +884,7 @@ impl TestArgs {
         // Set up the project.
         let project = config.project()?;
 
-        let replay_symbolic_artifact = self.load_symbolic_artifact_action()?;
+        let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
 
         let mut filter = self.filter(&config)?;
         if let Some(replay) = &replay_symbolic_artifact {
@@ -1034,9 +987,6 @@ impl TestArgs {
             }
             if self.replay_symbolic_artifact.is_some() {
                 conflicts.push("--replay-symbolic-artifact");
-            }
-            if self.export_symbolic_artifact_to_corpus.is_some() {
-                conflicts.push("--export-symbolic-artifact-to-corpus");
             }
             if !conflicts.is_empty() {
                 bail!(
@@ -1188,12 +1138,15 @@ impl TestArgs {
         if let Some(replay) = &execution.replay_symbolic_artifact {
             let replayed = outcome.tests().count();
             if replayed == 0 {
-                bail!("{}", Self::symbolic_target_not_found_message(replay));
+                bail!(
+                    "symbolic artifact target `{}::{}` was not found",
+                    replay.artifact.test.contract,
+                    replay.artifact.test.test
+                );
             }
             if replayed > 1 {
-                let action = if replay.is_export_corpus() { "export" } else { "replay" };
                 bail!(
-                    "symbolic artifact target `{}::{}` matched {} tests; {action} requires exactly one target",
+                    "symbolic artifact target `{}::{}` matched {} tests; replay requires exactly one target",
                     replay.artifact.test.contract,
                     replay.artifact.test.test,
                     replayed
@@ -2409,6 +2362,9 @@ impl Provider for TestArgs {
         let mut symbolic_dict = Dict::default();
         if self.symbolic {
             symbolic_dict.insert("enabled".to_string(), true.into());
+        }
+        if self.symbolic_seed_corpus {
+            symbolic_dict.insert("seed_corpus".to_string(), true.into());
         }
         if let Some(solver) = self.symbolic_solver.clone() {
             symbolic_dict.insert("solver".to_string(), solver.into());

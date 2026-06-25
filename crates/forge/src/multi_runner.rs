@@ -383,32 +383,17 @@ pub struct ShowmapConfig {
     pub corpus_dir: Option<PathBuf>,
 }
 
-/// CLI-only options for replaying a durable symbolic counterexample artifact.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SymbolicArtifactAction {
-    /// Replay the artifact as a test result.
-    Replay,
-    /// Export the artifact calls into the configured fuzz/invariant corpus.
-    ExportCorpus,
-}
-
 #[derive(Clone, Debug)]
 pub struct SymbolicArtifactReplayConfig {
     /// Artifact payload to replay.
     pub artifact: SymbolicCounterexampleArtifact,
     /// Path the artifact was loaded from, used in diagnostics.
     pub path: PathBuf,
-    /// How the artifact should be consumed.
-    pub action: SymbolicArtifactAction,
 }
 
 impl SymbolicArtifactReplayConfig {
     pub const fn is_replay(&self) -> bool {
-        matches!(self.action, SymbolicArtifactAction::Replay)
-    }
-
-    pub const fn is_export_corpus(&self) -> bool {
-        matches!(self.action, SymbolicArtifactAction::ExportCorpus)
+        true
     }
 }
 

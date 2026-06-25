@@ -173,6 +173,7 @@ impl SymbolicExecutor {
         let mut completed_paths = 0usize;
         let mut reverted_paths = 0usize;
         let mut normal_paths = 0usize;
+        let mut success_input = None;
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
@@ -216,6 +217,15 @@ impl SymbolicExecutor {
                             stats: self.stats_with_paths(completed_paths + 1),
                         });
                     }
+                    if input.collect_success_input && success_input.is_none() {
+                        success_input = Some(self.materialize_stateless_input(
+                            state.root_calldata.as_ref().ok_or_else(|| {
+                                SymbolicError::Unsupported("missing root symbolic calldata")
+                            })?,
+                            input.function,
+                            &state,
+                        )?);
+                    }
                     completed_paths += 1;
                     break;
                 };
@@ -246,6 +256,15 @@ impl SymbolicExecutor {
                                 calldata: calldata_bytes,
                                 stats: self.stats_with_paths(completed_paths + 1),
                             });
+                        }
+                        if input.collect_success_input && success_input.is_none() {
+                            success_input = Some(self.materialize_stateless_input(
+                                state.root_calldata.as_ref().ok_or_else(|| {
+                                    SymbolicError::Unsupported("missing root symbolic calldata")
+                                })?,
+                                input.function,
+                                &state,
+                            )?);
                         }
                         completed_paths += 1;
                         normal_paths += 1;
@@ -302,7 +321,7 @@ impl SymbolicExecutor {
         }
 
         debug!(completed_paths, "symbolic execution safe");
-        Ok(SymbolicRunResult::Safe(self.stats_with_paths(completed_paths)))
+        Ok(SymbolicRunResult::Safe { stats: self.stats_with_paths(completed_paths), success_input })
     }
 
     /// Runs the `materialize_stateless_counterexample` symbolic executor helper.
@@ -316,10 +335,21 @@ impl SymbolicExecutor {
             constraint_count = state.constraints.len(),
             "materializing counterexample from solver model"
         );
+        self.materialize_stateless_input(calldata, function, state)
+            .map(|input| (input.args, input.calldata))
+    }
+
+    /// Runs the `materialize_stateless_input` symbolic executor helper.
+    pub(super) fn materialize_stateless_input(
+        &mut self,
+        calldata: &SymbolicCalldata,
+        function: &Function,
+        state: &PathState,
+    ) -> Result<SymbolicConcreteInput, SymbolicError> {
         let model = self.solver.model(&state.constraints)?;
         let args = calldata.model_to_args(&model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
-        Ok((args, calldata_bytes))
+        Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
     }
 
     /// Runs the `run_invariant_inner` symbolic executor helper.

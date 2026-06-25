@@ -363,6 +363,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         symbolic: SymbolicConfig {
             enabled: true,
+            seed_corpus: true,
             solver: "custom-z3".to_string(),
             solver_command: None,
             solver_portfolio: Vec::new(),
