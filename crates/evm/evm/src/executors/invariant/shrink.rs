@@ -57,6 +57,65 @@ enum ShrinkErrorPolicy {
     RestoreRemoved,
 }
 
+/// Attempt counters collected while trying shrink candidates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShrinkRunStats {
+    pub attempts: usize,
+    pub accepted: usize,
+}
+
+/// Shared shrink attempt driver.
+///
+/// Candidate generation stays with each shrinker; this type only centralizes limit enforcement
+/// and the "accept when the candidate still reproduces the bug" accounting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShrinkRun {
+    max_attempts: usize,
+    stats: ShrinkRunStats,
+}
+
+impl ShrinkRun {
+    pub const fn new(max_attempts: usize) -> Self {
+        Self { max_attempts, stats: ShrinkRunStats { attempts: 0, accepted: 0 } }
+    }
+
+    pub const fn can_try(&self) -> bool {
+        self.stats.attempts < self.max_attempts
+    }
+
+    pub const fn remaining_attempts(&self) -> usize {
+        self.max_attempts - self.stats.attempts
+    }
+
+    pub const fn finish(self) -> ShrinkRunStats {
+        self.stats
+    }
+
+    pub fn try_candidate(&mut self, still_fails: impl FnOnce() -> bool) -> bool {
+        if !self.can_try() {
+            return false;
+        }
+
+        self.stats.attempts += 1;
+        if still_fails() {
+            self.stats.accepted += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn try_fallible_candidate<P>(&mut self, error_policy: ShrinkErrorPolicy, predicate: P) -> bool
+    where
+        P: FnOnce() -> eyre::Result<bool>,
+    {
+        self.try_candidate(|| match predicate() {
+            Ok(bug_still_present) => bug_still_present,
+            Err(_) => matches!(error_policy, ShrinkErrorPolicy::KeepRemoved),
+        })
+    }
+}
+
 /// Per-call decision returned by callbacks driving `replay_sequence`. `Continue` hands
 /// the result back so non-reverted calls auto-commit; `Stop` short-circuits.
 #[expect(clippy::large_enum_variant)]
@@ -212,10 +271,14 @@ where
     P: FnMut(&CallSequenceShrinker) -> eyre::Result<bool>,
 {
     let mut shrinker = CallSequenceShrinker::new(calls_len);
+    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
     let mut call_idx = 0;
 
-    for _ in 0..config.shrink_run_limit {
+    while run.can_try() {
         if early_exit.should_stop() {
+            break;
+        }
+        if shrinker.included_calls.count() == 0 {
             break;
         }
 
@@ -227,10 +290,7 @@ where
 
         shrinker.included_calls.clear(call_idx);
 
-        let bug_still_present = match predicate(&shrinker) {
-            Ok(b) => b,
-            Err(_) => matches!(error_policy, ShrinkErrorPolicy::KeepRemoved),
-        };
+        let bug_still_present = run.try_fallible_candidate(error_policy, || predicate(&shrinker));
         if bug_still_present {
             if shrinker.included_calls.count() == 1 {
                 break;
@@ -846,7 +906,9 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 
 #[cfg(test)]
 mod tests {
-    use super::{CallSequenceShrinker, ShrinkErrorPolicy, build_shrunk_sequence, run_shrink_loop};
+    use super::{
+        CallSequenceShrinker, ShrinkErrorPolicy, ShrinkRun, build_shrunk_sequence, run_shrink_loop,
+    };
     use crate::executors::EarlyExit;
     use alloy_primitives::{Address, Bytes, U256};
     use foundry_config::InvariantConfig;
@@ -895,6 +957,26 @@ mod tests {
     }
 
     #[test]
+    fn shrink_run_counts_attempts_and_accepts() {
+        let mut run = ShrinkRun::new(2);
+
+        assert_eq!(run.remaining_attempts(), 2);
+        assert!(!run.try_candidate(|| false));
+        assert!(run.try_candidate(|| true));
+
+        let mut called_after_limit = false;
+        assert!(!run.try_candidate(|| {
+            called_after_limit = true;
+            true
+        }));
+
+        assert!(!called_after_limit);
+        let stats = run.finish();
+        assert_eq!(stats.attempts, 2);
+        assert_eq!(stats.accepted, 1);
+    }
+
+    #[test]
     fn shrink_loop_keep_removed_treats_candidate_error_as_still_failing() {
         let config = InvariantConfig { shrink_run_limit: 1, ..Default::default() };
         let early_exit = EarlyExit::new(false);
@@ -905,5 +987,27 @@ mod tests {
             });
 
         assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![1]);
+    }
+
+    #[test]
+    fn shrink_loop_limit_counts_candidate_replays_not_skipped_indices() {
+        let config = InvariantConfig { shrink_run_limit: 4, ..Default::default() };
+        let early_exit = EarlyExit::new(false);
+        let mut replay_attempts = 0;
+
+        let shrinker = run_shrink_loop(
+            &config,
+            3,
+            None,
+            &early_exit,
+            ShrinkErrorPolicy::RestoreRemoved,
+            |_| {
+                replay_attempts += 1;
+                Ok(matches!(replay_attempts, 1 | 4))
+            },
+        );
+
+        assert_eq!(replay_attempts, 4);
+        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![2]);
     }
 }
