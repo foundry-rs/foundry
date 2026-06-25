@@ -1003,15 +1003,15 @@ pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
     pub(crate) current_transaction_created_accounts: HashSet<Address>,
-    pub(crate) balances: BTreeMap<Address, SymWord>,
-    pub(crate) code_cache: BTreeMap<Address, SymCode>,
+    pub(crate) balances: HashMap<Address, SymWord>,
+    pub(crate) code_cache: HashMap<Address, SymCode>,
     pub(crate) nonces: HashMap<Address, u64>,
     pub(crate) existing_accounts: HashSet<Address>,
     pub(crate) destroyed_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
     pub(crate) zero_init_symbolic_storage: bool,
-    pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
+    pub(crate) symbolic_address_aliases: HashMap<SymWord, Address>,
 }
 
 impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
@@ -1041,15 +1041,15 @@ pub(crate) struct SymbolicWorld {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
     pub(crate) current_transaction_created_accounts: HashSet<Address>,
-    pub(crate) balances: BTreeMap<Address, SymWord>,
-    pub(crate) code_cache: BTreeMap<Address, SymCode>,
+    pub(crate) balances: HashMap<Address, SymWord>,
+    pub(crate) code_cache: HashMap<Address, SymCode>,
     pub(crate) nonces: HashMap<Address, u64>,
     pub(crate) existing_accounts: HashSet<Address>,
     pub(crate) destroyed_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
     pub(crate) zero_init_symbolic_storage: bool,
-    pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
+    pub(crate) symbolic_address_aliases: HashMap<SymWord, Address>,
     pub(crate) snapshots: HashMap<U256, SymbolicWorldSnapshot>,
     pub(crate) next_snapshot_id: u64,
 }
@@ -1255,7 +1255,7 @@ impl SymbolicWorld {
         let expr = word.into_expr();
         let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
         let mut result = self.balance_word_for_address(executor, representative).into_expr();
-        for (address, balance) in self.balances.iter().rev() {
+        for (address, balance) in &self.balances {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
@@ -1511,7 +1511,7 @@ impl SymbolicWorld {
         let expr = word.into_expr();
         let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
         let mut result = Expr::Const(U256::from(self.extcode(executor, representative)?.len()));
-        for (address, code) in self.code_cache.iter().rev() {
+        for (address, code) in &self.code_cache {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }

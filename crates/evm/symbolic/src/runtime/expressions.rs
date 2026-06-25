@@ -853,7 +853,7 @@ pub(crate) fn eval_bool_expr(
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum SymWord {
     Concrete(U256),
     Expr(Expr),
@@ -962,7 +962,7 @@ impl SymWord {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum Expr {
     Const(U256),
     Var(Arc<str>),
@@ -976,14 +976,14 @@ pub(crate) enum Expr {
     Ite(Box<BoolExpr>, Box<Self>, Box<Self>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct KeccakExpr {
     pub(crate) name: Arc<str>,
     pub(crate) len: Box<Expr>,
     pub(crate) bytes: Vec<Expr>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct HashExpr {
     pub(crate) name: Arc<str>,
     pub(crate) algorithm: &'static str,
@@ -1247,7 +1247,7 @@ fn smt_wide_modular_arithmetic(
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum ExprOp {
     Add,
     Sub,
@@ -1285,7 +1285,7 @@ impl ExprOp {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum BoolExpr {
     Const(bool),
     Not(Box<Self>),
@@ -1491,7 +1491,7 @@ impl BoolExpr {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum BoolExprOp {
     Ult,
     Ugt,
