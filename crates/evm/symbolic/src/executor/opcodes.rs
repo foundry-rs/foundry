@@ -378,8 +378,8 @@ impl SymbolicExecutor {
                     None => {
                         let available = state
                             .constrained_usize(&offset)
-                            .map(|offset| state.return_data.len.saturating_sub(offset))
-                            .unwrap_or(state.return_data.len);
+                            .map(|offset| state.return_data.len().saturating_sub(offset))
+                            .unwrap_or(state.return_data.len());
                         let max_limit = available.min(self.config.max_calldata_bytes as usize);
                         let max_size = state
                             .upper_bound_usize(&size)

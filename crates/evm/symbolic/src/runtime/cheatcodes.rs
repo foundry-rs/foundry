@@ -801,7 +801,7 @@ pub(crate) fn expected_revert_match_condition(
     match &expected.data {
         ExpectedRevertData::Any => {}
         ExpectedRevertData::Prefix(prefix) => {
-            if return_data.len < prefix.len() {
+            if return_data.len() < prefix.len() {
                 return None;
             }
             conditions.push(BoolExpr::cmp(
@@ -814,7 +814,7 @@ pub(crate) fn expected_revert_match_condition(
             }));
         }
         ExpectedRevertData::Exact(data) => {
-            if return_data.len < data.len() {
+            if return_data.len() < data.len() {
                 return None;
             }
             conditions

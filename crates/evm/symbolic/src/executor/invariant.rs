@@ -76,7 +76,7 @@ impl SymbolicExecutor {
         if invariant.outputs.len() != 1 || invariant.outputs[0].selector_type().as_ref() != "bool" {
             return Ok(false);
         }
-        if return_data.len < 32 {
+        if return_data.len() < 32 {
             return Ok(true);
         }
 

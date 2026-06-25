@@ -1183,7 +1183,7 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
 
     let return_data = recorded_logs_json_return_data(vec![log]).unwrap();
     let encoded = model_bytes(
-        &(0..return_data.len).map(|idx| return_data.byte(idx)).collect::<Vec<_>>(),
+        &(0..return_data.len()).map(|idx| return_data.byte(idx)).collect::<Vec<_>>(),
         &BTreeMap::from([
             ("topic".to_string(), U256::from(0xabcd)),
             ("byte".to_string(), U256::from(0xef)),
@@ -1560,7 +1560,7 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     let sha_word = word_from_bytes((0..32).map(|idx| sha.byte(idx)));
     let sha_again_word = word_from_bytes((0..32).map(|idx| sha_again.byte(idx)));
 
-    assert_eq!(sha.len, 32);
+    assert_eq!(sha.len(), 32);
     assert_eq!(sha_word, sha_again_word);
     assert!(matches!(sha_word, SymWord::Expr(Expr::Hash(hash)) if hash.algorithm == "sha256"));
 
@@ -1581,7 +1581,7 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(ecrecover.len, 32);
+    assert_eq!(ecrecover.len(), 32);
     for idx in 0..12 {
         assert_eq!(ecrecover.byte(idx), SymWord::zero());
     }
@@ -1602,7 +1602,7 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
             .unwrap()
             .unwrap();
 
-    assert_eq!(ripemd.len, 32);
+    assert_eq!(ripemd.len(), 32);
     for idx in 0..12 {
         assert_eq!(ripemd.byte(idx), SymWord::zero());
     }
@@ -1630,7 +1630,7 @@ fn identity_precompile_preserves_symbolic_input_len() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(return_data.len, 4);
+    assert_eq!(return_data.len(), 4);
     assert_eq!(return_data.len_word(), input_len);
     assert_eq!(return_data.byte(0), SymWord::Concrete(U256::from(1)));
     assert_eq!(return_data.byte(3), SymWord::Concrete(U256::from(4)));
@@ -1663,7 +1663,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(modexp.len, 1);
+    assert_eq!(modexp.len(), 1);
     assert_eq!(modexp.byte(0), modexp_again.byte(0));
 
     let mut blake_input = vec![SymWord::Expr(Expr::var("blake_input")); 213];
@@ -1676,7 +1676,7 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(blake.len, 64);
+    assert_eq!(blake.len(), 64);
 }
 
 #[test]

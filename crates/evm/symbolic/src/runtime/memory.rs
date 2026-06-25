@@ -484,7 +484,7 @@ impl SymMemory {
             if *offset > U256::from(usize::MAX) {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic RETURNDATACOPY"));
             }
-            if offset.to::<usize>().saturating_add(size) > return_data.len {
+            if offset.to::<usize>().saturating_add(size) > return_data.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic RETURNDATACOPY"));
             }
         }
@@ -508,7 +508,7 @@ impl SymMemory {
             if *offset > U256::from(usize::MAX) {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic RETURNDATACOPY"));
             }
-            if offset.to::<usize>().saturating_add(max_size) > return_data.len {
+            if offset.to::<usize>().saturating_add(max_size) > return_data.len() {
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic RETURNDATACOPY"));
             }
         }
@@ -525,7 +525,7 @@ impl SymMemory {
     ) -> Result<(), SymbolicError> {
         match size {
             BoundedCopySize::Concrete(size) => {
-                let size = (*size).min(return_data.len);
+                let size = (*size).min(return_data.len());
                 if size != 0 {
                     if return_data.has_symbolic_len() {
                         let bytes = (0..size)
@@ -542,7 +542,7 @@ impl SymMemory {
             }
             BoundedCopySize::Symbolic { size, max_size } => {
                 let output_size = size.clone().into_expr();
-                let max_size = (*max_size).min(return_data.len);
+                let max_size = (*max_size).min(return_data.len());
                 if max_size != 0 {
                     let bytes = (0..max_size)
                         .map(|idx| {
@@ -832,7 +832,7 @@ impl SymCode {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SymReturnData {
-    pub(crate) len: usize,
+    len: usize,
     len_word: SymWord,
     bytes: HashMap<usize, SymWord>,
 }
@@ -877,6 +877,11 @@ impl SymReturnData {
     /// Implements the `len_word` symbolic memory helper.
     pub(crate) fn len_word(&self) -> SymWord {
         self.len_word.clone()
+    }
+
+    /// Returns the concrete backing byte length.
+    pub(crate) const fn len(&self) -> usize {
+        self.len
     }
 
     /// Implements the `len_expr` symbolic memory helper.
