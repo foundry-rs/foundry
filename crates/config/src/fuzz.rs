@@ -274,6 +274,12 @@ pub struct FuzzCorpusMutationWeights {
     pub mutation_weight_crossover_insert: u32,
     /// Weight for replacing a transaction with one loaded from the persisted corpus.
     pub mutation_weight_crossover_replace: u32,
+    /// Weight for inserting a freshly generated transaction into a corpus sequence.
+    pub mutation_weight_insert: u32,
+    /// Weight for deleting a transaction from a corpus sequence.
+    pub mutation_weight_delete: u32,
+    /// Weight for swapping two transactions in a corpus sequence.
+    pub mutation_weight_swap: u32,
 }
 
 impl FuzzCorpusMutationWeights {
@@ -287,6 +293,9 @@ impl FuzzCorpusMutationWeights {
             + self.mutation_weight_cmp as u64
             + self.mutation_weight_crossover_insert as u64
             + self.mutation_weight_crossover_replace as u64
+            + self.mutation_weight_insert as u64
+            + self.mutation_weight_delete as u64
+            + self.mutation_weight_swap as u64
     }
 
     /// Returns defaults if every configured weight is zero.
@@ -307,6 +316,9 @@ impl Default for FuzzCorpusMutationWeights {
             mutation_weight_cmp: 4,
             mutation_weight_crossover_insert: 1,
             mutation_weight_crossover_replace: 1,
+            mutation_weight_insert: 4,
+            mutation_weight_delete: 4,
+            mutation_weight_swap: 4,
         }
     }
 }
