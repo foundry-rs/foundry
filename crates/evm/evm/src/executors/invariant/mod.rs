@@ -75,8 +75,8 @@ pub use result::InvariantFuzzTestResult;
 
 mod shrink;
 pub use shrink::{
-    CheckSequenceOptions, HandlerReplayOutcome, check_sequence, check_sequence_value,
-    replay_handler_failure_sequence,
+    CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
+    check_sequence, check_sequence_value, replay_handler_failure_sequence,
 };
 
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant
@@ -1027,7 +1027,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 }
 
                 // Collect line coverage from last fuzzed call.
-                invariant_test.merge_line_coverage(call_result.line_coverage.clone());
+                invariant_test.merge_line_coverage(call_result.line_coverage.take());
                 // Snapshot the edge fingerprint before `merge_edge_coverage` zeroes the
                 // buffer. Gate on `assertion_failure` to skip keccak on plain reverts.
                 let assertion_failure =

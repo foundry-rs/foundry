@@ -57,7 +57,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
         logs.extend(call_result.logs.clone());
         debug_bytecodes.extend(call_result.debug_bytecodes.clone());
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-        HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
+        HitMaps::merge_opt(line_coverage, call_result.line_coverage.take());
 
         // Commit state changes to persist across calls in the sequence.
         executor.commit(&mut call_result);
