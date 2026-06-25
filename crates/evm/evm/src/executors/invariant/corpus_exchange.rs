@@ -157,7 +157,6 @@ mod tests {
         let config = InvariantCorpusSyncConfig {
             mode: InvariantCorpusSyncMode::Plateau,
             plateau_seconds: 60,
-            ..Default::default()
         };
 
         state.record_completed_run(false, now + Duration::from_secs(30));
@@ -174,7 +173,6 @@ mod tests {
         let config = InvariantCorpusSyncConfig {
             mode: InvariantCorpusSyncMode::Plateau,
             plateau_seconds: 60,
-            ..Default::default()
         };
 
         assert!(state.should_sync(&config, now + Duration::from_secs(60)));

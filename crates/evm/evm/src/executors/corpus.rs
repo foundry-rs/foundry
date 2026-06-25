@@ -237,7 +237,7 @@ pub(crate) struct SharedCorpusEntry {
 }
 
 impl SharedCorpusEntry {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         tx_seq: Vec<BasicTxDetails>,
         cmp_seq: Vec<Vec<CmpOperands>>,
         dedupe_by_coverage: bool,
