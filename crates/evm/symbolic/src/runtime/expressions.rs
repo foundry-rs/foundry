@@ -507,7 +507,7 @@ pub(crate) fn bool_const_value(expr: &BoolExpr) -> Option<bool> {
         BoolExpr::Not(value) => Some(!bool_const_value(value)?),
         BoolExpr::And(values) => {
             let mut all_true = true;
-            for value in values {
+            for value in values.iter() {
                 all_true &= bool_const_value(value)?;
             }
             Some(all_true)
@@ -836,7 +836,7 @@ pub(crate) fn eval_bool_expr(
         BoolExpr::Const(value) => *value,
         BoolExpr::Not(value) => !eval_bool_expr(value, model)?,
         BoolExpr::And(values) => {
-            for value in values {
+            for value in values.iter() {
                 if !eval_bool_expr(value, model)? {
                     return Ok(false);
                 }
@@ -1336,7 +1336,7 @@ impl ExprOp {
 pub(crate) enum BoolExpr {
     Const(bool),
     Not(Box<Self>),
-    And(Vec<Self>),
+    And(Arc<[Self]>),
     Eq(Box<Expr>, Box<Expr>),
     Cmp(BoolExprOp, Box<Expr>, Box<Expr>),
 }
@@ -1349,7 +1349,7 @@ impl BoolExpr {
             Self::Const(_) | Self::Eq(_, _) | Self::Cmp(_, _, _) => {}
             Self::Not(value) => value.visit(visitor),
             Self::And(values) => {
-                for value in values {
+                for value in values.iter() {
                     value.visit(visitor);
                 }
             }
@@ -1362,7 +1362,7 @@ impl BoolExpr {
             Self::Const(_) => {}
             Self::Not(value) => value.visit_exprs(visitor),
             Self::And(values) => {
-                for value in values {
+                for value in values.iter() {
                     value.visit_exprs(visitor);
                 }
             }
@@ -1426,7 +1426,7 @@ impl BoolExpr {
             match value {
                 Self::Const(true) => {}
                 Self::Const(false) => return Self::Const(false),
-                Self::And(values) => out.extend(values),
+                Self::And(values) => out.extend(values.iter().cloned()),
                 value => out.push(value),
             }
         }
@@ -1435,7 +1435,7 @@ impl BoolExpr {
         } else if out.len() == 1 {
             out.pop().expect("single item exists")
         } else {
-            Self::And(out)
+            Self::And(out.into())
         }
     }
 
@@ -1573,7 +1573,7 @@ pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &Expr) -> Optio
         BoolExpr::Const(_) | BoolExpr::Not(_) => None,
         BoolExpr::And(values) => {
             let mut bound: Option<usize> = None;
-            for value in values {
+            for value in values.iter() {
                 if let Some(candidate) = bool_upper_bound_usize(value, expr) {
                     bound = Some(bound.map_or(candidate, |bound| bound.min(candidate)));
                 }

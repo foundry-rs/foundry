@@ -30,7 +30,7 @@ pub(crate) fn collect_order_facts(
 ) {
     match expr {
         BoolExpr::And(values) => {
-            for value in values {
+            for value in values.iter() {
                 collect_order_facts(value, less_than, positive);
             }
         }

@@ -633,7 +633,7 @@ fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
         BoolExpr::Not(value) => cache_key_bool(*value).not(),
         BoolExpr::And(values) => {
             let mut conjuncts = Vec::new();
-            for value in values.into_iter().map(cache_key_bool) {
+            for value in values.iter().cloned().map(cache_key_bool) {
                 collect_cache_key_conjunct(value, &mut conjuncts);
             }
             conjuncts.sort();
@@ -656,7 +656,7 @@ fn collect_cache_key_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
     match expr {
         BoolExpr::Const(true) => {}
         BoolExpr::And(values) => {
-            for value in values {
+            for value in values.iter().cloned() {
                 collect_cache_key_conjunct(value, out);
             }
         }

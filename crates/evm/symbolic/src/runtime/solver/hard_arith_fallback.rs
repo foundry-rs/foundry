@@ -260,7 +260,7 @@ pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut SymbolicVar
         BoolExpr::Const(_) => {}
         BoolExpr::Not(value) => collect_bool_fallback_vars(value, vars),
         BoolExpr::And(values) => {
-            for value in values {
+            for value in values.iter() {
                 collect_bool_fallback_vars(value, vars);
             }
         }
@@ -373,7 +373,7 @@ pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut BTreeSet<U
         BoolExpr::Const(_) => {}
         BoolExpr::Not(value) => collect_bool_constants(value, constants),
         BoolExpr::And(values) => {
-            for value in values {
+            for value in values.iter() {
                 collect_bool_constants(value, constants);
             }
         }
@@ -431,7 +431,7 @@ impl MaskHints {
             BoolExpr::Const(_) => {}
             BoolExpr::Not(value) => self.apply_bool(var, value, !inverted),
             BoolExpr::And(values) if !inverted => {
-                for value in values {
+                for value in values.iter() {
                     self.apply_bool(var, value, false);
                 }
             }

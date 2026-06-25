@@ -2194,9 +2194,9 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     let a = BoolExpr::cmp(BoolExprOp::Ult, x.clone(), Expr::Const(U256::from(10)));
     let b = BoolExpr::eq(y.clone(), Expr::Const(U256::from(3)));
     let grouped = vec![
-        BoolExpr::And(vec![b.clone(), BoolExpr::Const(true), a.clone()]),
+        BoolExpr::And(vec![b.clone(), BoolExpr::Const(true), a.clone()].into()),
         a.clone(),
-        BoolExpr::And(vec![b.clone()]),
+        BoolExpr::And(vec![b.clone()].into()),
     ];
 
     let normalized = normalize_constraints_for_solver(&grouped);
@@ -3073,7 +3073,7 @@ fn sat_cache_deduplicates_nested_repeated_constraints() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
     let x = Expr::var("x");
     let constraint = BoolExpr::eq(x, Expr::Const(U256::from(1)));
-    let duplicated = vec![BoolExpr::And(vec![constraint.clone(), constraint.clone()])];
+    let duplicated = vec![BoolExpr::And(vec![constraint.clone(), constraint.clone()].into())];
     let deduplicated = vec![constraint];
 
     assert!(solver.is_sat(&duplicated).unwrap());
@@ -3100,7 +3100,9 @@ fn sat_cache_flattens_grouped_conjunction_keys() {
     let a = BoolExpr::eq(x, Expr::Const(U256::from(1)));
     let b = BoolExpr::eq(y, Expr::Const(U256::from(2)));
     let c = BoolExpr::eq(z, Expr::Const(U256::from(3)));
-    let grouped = vec![BoolExpr::And(vec![BoolExpr::And(vec![b.clone(), c.clone()]), a.clone()])];
+    let grouped = vec![BoolExpr::And(
+        vec![BoolExpr::And(vec![b.clone(), c.clone()].into()), a.clone()].into(),
+    )];
     let split = vec![c, a, b];
 
     assert!(solver.is_sat(&grouped).unwrap());

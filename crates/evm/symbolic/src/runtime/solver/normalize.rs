@@ -38,7 +38,7 @@ fn collect_normalized_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
     match expr {
         BoolExpr::Const(true) => {}
         BoolExpr::And(values) => {
-            for value in values {
+            for value in values.iter().cloned() {
                 collect_normalized_conjunct(value, out);
             }
         }
@@ -56,7 +56,7 @@ pub(crate) fn normalize_bool_for_solver(expr: BoolExpr) -> BoolExpr {
         BoolExpr::Const(value) => BoolExpr::Const(value),
         BoolExpr::Not(value) => normalize_bool_for_solver(*value).not(),
         BoolExpr::And(values) => {
-            BoolExpr::and(values.into_iter().map(normalize_bool_for_solver).collect())
+            BoolExpr::and(values.iter().cloned().map(normalize_bool_for_solver).collect())
         }
         BoolExpr::Eq(left, right) => {
             let normalized =
