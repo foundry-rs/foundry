@@ -71,7 +71,7 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[BoolEx
         return false;
     }
 
-    let mut vars = BTreeSet::new();
+    let mut vars = SymbolicVars::default();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
     }
@@ -89,7 +89,7 @@ pub(crate) fn hard_arith_fallback_model(
         return None;
     }
 
-    let mut vars = BTreeSet::new();
+    let mut vars = SymbolicVars::default();
     let mut constants = BTreeSet::new();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
@@ -104,11 +104,11 @@ pub(crate) fn hard_arith_fallback_model(
         .iter()
         .map(|var| fallback_candidates_for_var(var, constraints, &constants))
         .collect::<Option<Vec<_>>>()?;
-    let searched_vars = vars.iter().cloned().collect::<BTreeSet<_>>();
+    let searched_vars = vars.iter().cloned().collect::<SymbolicVars>();
     let constraint_vars = constraints
         .iter()
         .map(|constraint| {
-            let mut vars = BTreeSet::new();
+            let mut vars = SymbolicVars::default();
             constraint.collect_vars(&mut vars);
             vars
         })
@@ -307,7 +307,7 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
 pub(crate) fn fallback_single_var_model(
     constraints: &[BoolExpr],
 ) -> Option<BTreeMap<String, U256>> {
-    let mut vars = BTreeSet::new();
+    let mut vars = SymbolicVars::default();
     let mut constants = BTreeSet::new();
     for constraint in constraints {
         constraint.collect_vars(&mut vars);

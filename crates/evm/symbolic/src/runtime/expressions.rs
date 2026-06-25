@@ -1,7 +1,7 @@
 use super::*;
 
 /// Set of symbolic variable names collected from expression trees.
-pub(crate) type SymbolicVars = BTreeSet<Arc<str>>;
+pub(crate) type SymbolicVars = IndexSet<Arc<str>>;
 
 /// Computes the `keccak_word` symbolic expression helper result.
 pub(crate) fn keccak_word(bytes: Vec<SymWord>) -> SymWord {

@@ -537,7 +537,7 @@ impl SmtLibSubprocessSolver {
         model_constraints: &[BoolExpr],
     ) -> Result<String, SymbolicError> {
         self.smt_queries += 1;
-        let mut vars = BTreeSet::new();
+        let mut vars = SymbolicVars::default();
         for constraint in smt_constraints {
             constraint.collect_vars(&mut vars);
         }

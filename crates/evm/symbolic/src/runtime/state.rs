@@ -178,7 +178,7 @@ impl PathState {
             return Some(value);
         }
 
-        let mut vars = BTreeSet::new();
+        let mut vars = SymbolicVars::default();
         collect_eval_vars(expr, &mut vars);
         let mut model = BTreeMap::new();
         for var in vars {
