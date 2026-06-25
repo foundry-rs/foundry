@@ -254,8 +254,8 @@ pub(crate) fn shift_left(value: SymWord, bits: usize) -> SymWord {
 }
 
 /// Computes the `analyze_jumpdests` EVM semantics helper result.
-pub(crate) fn analyze_jumpdests(code: &SymCode) -> BTreeSet<usize> {
-    let mut jumpdests = BTreeSet::new();
+pub(crate) fn analyze_jumpdests(code: &SymCode) -> HashSet<usize> {
+    let mut jumpdests = HashSet::default();
     let mut pc = 0;
     while pc < code.len() {
         let op = code.analysis_opcode(pc).unwrap_or(opcode::STOP);
@@ -274,7 +274,7 @@ pub(crate) fn analyze_jumpdests(code: &SymCode) -> BTreeSet<usize> {
 /// Computes the `ensure_jumpdest` EVM semantics helper result.
 pub(crate) fn ensure_jumpdest(
     dest: usize,
-    jumpdests: &BTreeSet<usize>,
+    jumpdests: &HashSet<usize>,
 ) -> Result<(), SymbolicError> {
     if jumpdests.contains(&dest) { Ok(()) } else { Err(SymbolicError::InvalidJump(dest)) }
 }

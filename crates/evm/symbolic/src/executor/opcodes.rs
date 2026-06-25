@@ -7,7 +7,7 @@ impl SymbolicExecutor {
         &mut self,
         executor: &Executor<FEN>,
         code: &SymCode,
-        jumpdests: &BTreeSet<usize>,
+        jumpdests: &HashSet<usize>,
         state: &mut PathState,
         worklist: &mut VecDeque<PathState>,
         completed_paths: &mut usize,
