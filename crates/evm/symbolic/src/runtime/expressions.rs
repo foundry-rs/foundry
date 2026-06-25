@@ -338,45 +338,16 @@ fn u256_from_u512(value: U512) -> U256 {
 
 /// Returns the `expr_contains_keccak` symbolic expression helper result.
 pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
-    match expr {
-        Expr::Keccak(_) => true,
-        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Hash(_) => false,
-        Expr::Not(value) => expr_contains_keccak(value),
-        Expr::Op(_, left, right) => expr_contains_keccak(left) || expr_contains_keccak(right),
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_keccak(left)
-                || expr_contains_keccak(right)
-                || expr_contains_keccak(modulus)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_keccak(cond) || expr_contains_keccak(left) || expr_contains_keccak(right)
-        }
-    }
+    let mut contains = false;
+    expr.visit(&mut |expr| contains |= matches!(expr, Expr::Keccak(_)));
+    contains
 }
 
 /// Returns whether a word expression depends on the opaque `GAS` / `gasleft()` value.
 pub(crate) fn expr_contains_gasleft(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_) => false,
-        Expr::Var(_) => false,
-        Expr::GasLeft(_) => true,
-        Expr::Keccak(hash) => {
-            expr_contains_gasleft(&hash.len) || hash.bytes.iter().any(expr_contains_gasleft)
-        }
-        Expr::Hash(hash) => hash.bytes.iter().any(expr_contains_gasleft),
-        Expr::Not(value) => expr_contains_gasleft(value),
-        Expr::Op(_, left, right) => expr_contains_gasleft(left) || expr_contains_gasleft(right),
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_gasleft(left)
-                || expr_contains_gasleft(right)
-                || expr_contains_gasleft(modulus)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_gasleft(cond)
-                || expr_contains_gasleft(left)
-                || expr_contains_gasleft(right)
-        }
-    }
+    let mut contains = false;
+    expr.visit(&mut |expr| contains |= matches!(expr, Expr::GasLeft(_)));
+    contains
 }
 
 /// Returns the `bool_forces_expr_const_with_context` symbolic expression helper result.
@@ -558,26 +529,16 @@ pub(crate) fn bool_const_value(expr: &BoolExpr) -> Option<bool> {
 
 /// Returns the `bool_contains_keccak` symbolic expression helper result.
 pub(crate) fn bool_contains_keccak(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_keccak(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_keccak),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_keccak(left) || expr_contains_keccak(right)
-        }
-    }
+    let mut contains = false;
+    expr.visit_exprs(&mut |expr| contains |= matches!(expr, Expr::Keccak(_)));
+    contains
 }
 
 /// Returns whether a boolean expression depends on the opaque `GAS` / `gasleft()` value.
 pub(crate) fn bool_contains_gasleft(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_gasleft(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_gasleft),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_gasleft(left) || expr_contains_gasleft(right)
-        }
-    }
+    let mut contains = false;
+    expr.visit_exprs(&mut |expr| contains |= matches!(expr, Expr::GasLeft(_)));
+    contains
 }
 
 /// Returns the `word_bytes` symbolic expression helper result.

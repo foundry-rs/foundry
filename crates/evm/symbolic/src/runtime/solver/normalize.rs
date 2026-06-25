@@ -396,37 +396,21 @@ pub(crate) fn bool_from_word_expr(expr: &Expr) -> Option<BoolExpr> {
 
 /// Returns whether a word expression syntactically contains unsigned division.
 pub(crate) fn expr_contains_udiv(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => false,
-        Expr::Keccak(hash) => {
-            expr_contains_udiv(&hash.len) || hash.bytes.iter().any(expr_contains_udiv)
-        }
-        Expr::Hash(hash) => hash.bytes.iter().any(expr_contains_udiv),
-        Expr::Not(value) => expr_contains_udiv(value),
-        Expr::Op(op, left, right) => {
-            matches!(op, ExprOp::UDiv) || expr_contains_udiv(left) || expr_contains_udiv(right)
-        }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_udiv(left) || expr_contains_udiv(right) || expr_contains_udiv(modulus)
-        }
-        Expr::Ite(condition, then_expr, else_expr) => {
-            bool_contains_udiv(condition)
-                || expr_contains_udiv(then_expr)
-                || expr_contains_udiv(else_expr)
-        }
-    }
+    let mut contains = false;
+    expr.visit(&mut |expr| contains |= matches!(expr, Expr::Op(ExprOp::UDiv, _, _)));
+    contains
 }
 
 /// Returns whether a boolean expression syntactically contains unsigned division.
 pub(crate) fn bool_contains_udiv(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_udiv(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_udiv),
+    let mut contains = false;
+    expr.visit(&mut |expr| match expr {
         BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_udiv(left) || expr_contains_udiv(right)
+            contains |= expr_contains_udiv(left) || expr_contains_udiv(right);
         }
-    }
+        BoolExpr::Const(_) | BoolExpr::Not(_) | BoolExpr::And(_) => {}
+    });
+    contains
 }
 
 /// Rewrites exact unsigned-addition overflow checks when operand bounds preclude overflow.

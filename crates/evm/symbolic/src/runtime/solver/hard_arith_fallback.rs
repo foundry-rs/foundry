@@ -37,69 +37,30 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
 
 /// Returns whether the expression contains symbolic hash variables that local search should avoid.
 pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
-    match expr {
-        Expr::Hash(_) => true,
-        Expr::Keccak(hash) => {
-            expr_contains_symbolic_hash(&hash.len)
-                || hash.bytes.iter().any(expr_contains_symbolic_hash)
-        }
-        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => false,
-        Expr::Not(value) => expr_contains_symbolic_hash(value),
-        Expr::Op(_, left, right) => {
-            expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right)
-        }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_symbolic_hash(left)
-                || expr_contains_symbolic_hash(right)
-                || expr_contains_symbolic_hash(modulus)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_symbolic_hash(cond)
-                || expr_contains_symbolic_hash(left)
-                || expr_contains_symbolic_hash(right)
-        }
-    }
+    let mut contains = false;
+    expr.visit(&mut |expr| contains |= matches!(expr, Expr::Hash(_)));
+    contains
 }
 
 /// Returns whether the boolean expression contains symbolic hash variables.
 pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_symbolic_hash(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_symbolic_hash),
+    let mut contains = false;
+    expr.visit(&mut |expr| match expr {
         BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right)
+            contains |= expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right);
         }
-    }
+        BoolExpr::Const(_) | BoolExpr::Not(_) | BoolExpr::And(_) => {}
+    });
+    contains
 }
 
 /// Returns the `expr_contains_var` solver helper result.
 pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_) => false,
-        Expr::Var(_) | Expr::Keccak(_) | Expr::Hash(_) => true,
-        Expr::GasLeft(_) => false,
-        Expr::Not(value) => expr_contains_var(value),
-        Expr::Op(_, left, right) => expr_contains_var(left) || expr_contains_var(right),
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_var(cond) || expr_contains_var(left) || expr_contains_var(right)
-        }
-    }
-}
-
-/// Returns the `bool_contains_var` solver helper result.
-pub(crate) fn bool_contains_var(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_var(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_var),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_var(left) || expr_contains_var(right)
-        }
-    }
+    let mut contains = false;
+    expr.visit(&mut |expr| {
+        contains |= matches!(expr, Expr::Var(_) | Expr::Keccak(_) | Expr::Hash(_))
+    });
+    contains
 }
 
 /// Returns whether local hard-arithmetic search should run before asking the solver.
