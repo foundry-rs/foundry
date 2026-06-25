@@ -2,7 +2,7 @@ use crate::result::SymbolicCounterexampleCall;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Function as SolFunction, I256, U256};
-use foundry_evm::executors::invariant::ShrinkRun;
+use foundry_evm::executors::invariant::{SequenceShrink, ShrinkRun, shrink_sequence_by_removing};
 use itertools::Itertools;
 use std::collections::HashSet;
 
@@ -149,26 +149,36 @@ impl<'a> SequenceMinimizer<'a> {
     }
 
     fn minimize_len(&mut self) {
-        loop {
-            if self.current_calls.len() <= 1 || !self.can_try() {
-                break;
-            }
-
-            let mut changed = false;
-            let mut idx = 0usize;
-            while idx < self.current_calls.len() && self.current_calls.len() > 1 && self.can_try() {
-                let candidate_calls = sequence_without_call(&self.current_calls, idx);
-                if self.try_candidate(candidate_calls) {
-                    changed = true;
-                } else {
-                    idx += 1;
-                }
-            }
-
-            if !changed {
-                break;
-            }
+        if self.current_calls.len() <= 1 || !self.can_try() {
+            return;
         }
+
+        let base_calls = self.current_calls.clone();
+        let current_calls = &mut self.current_calls;
+        let tried_candidates = &mut self.tried_candidates;
+        let still_fails = &mut self.still_fails;
+
+        shrink_sequence_by_removing(
+            base_calls.len(),
+            &mut self.run,
+            || false,
+            || {},
+            |shrinker| {
+                let candidate_calls = sequence_from_shrink(&base_calls, shrinker);
+                if candidate_calls == *current_calls
+                    || !tried_candidates.insert(replay_sequence_key(&candidate_calls))
+                {
+                    return None;
+                }
+
+                if (*still_fails)(&candidate_calls) {
+                    *current_calls = candidate_calls;
+                    Some(true)
+                } else {
+                    Some(false)
+                }
+            },
+        );
     }
 
     fn minimize_calldata(&mut self) {
@@ -256,16 +266,32 @@ impl<'a> SequenceMinimizer<'a> {
     }
 }
 
-fn sequence_without_call(
+fn sequence_from_shrink(
     calls: &[SymbolicCounterexampleCall],
-    idx: usize,
+    shrinker: &SequenceShrink,
 ) -> Vec<SymbolicCounterexampleCall> {
-    let mut candidate = calls.to_vec();
-    let removed = candidate.remove(idx);
-    if let Some(next) = candidate.get_mut(idx) {
-        next.warp = add_optional_u256(removed.warp, next.warp);
-        next.roll = add_optional_u256(removed.roll, next.roll);
+    let mut candidate = Vec::new();
+    let mut accumulated_warp = U256::ZERO;
+    let mut accumulated_roll = U256::ZERO;
+
+    for (idx, call) in calls.iter().enumerate() {
+        if shrinker.contains(idx) {
+            let mut kept = call.clone();
+            if !accumulated_warp.is_zero() {
+                kept.warp = add_optional_u256(Some(accumulated_warp), kept.warp);
+            }
+            if !accumulated_roll.is_zero() {
+                kept.roll = add_optional_u256(Some(accumulated_roll), kept.roll);
+            }
+            candidate.push(kept);
+            accumulated_warp = U256::ZERO;
+            accumulated_roll = U256::ZERO;
+        } else {
+            accumulated_warp += call.warp.unwrap_or_default();
+            accumulated_roll += call.roll.unwrap_or_default();
+        }
     }
+
     candidate
 }
 

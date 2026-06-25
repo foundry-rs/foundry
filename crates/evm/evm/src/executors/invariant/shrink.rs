@@ -18,27 +18,44 @@ use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use revm::context::Block;
+use std::cell::Cell;
 
 /// Shrinker for a call sequence failure.
 /// Iterates sequence call sequence top down and removes calls one by one.
 /// If the failure is still reproducible with removed call then moves to the next one.
 /// If the failure is not reproducible then restore removed call and moves to next one.
 #[derive(Debug)]
-struct CallSequenceShrinker {
+pub struct SequenceShrink {
     /// Length of call sequence to be shrunk.
     call_sequence_len: usize,
     /// Call ids contained in current shrunk sequence.
     included_calls: VarBitSet,
 }
 
-impl CallSequenceShrinker {
-    fn new(call_sequence_len: usize) -> Self {
+impl SequenceShrink {
+    pub fn new(call_sequence_len: usize) -> Self {
         Self { call_sequence_len, included_calls: VarBitSet::saturated(call_sequence_len) }
     }
 
     /// Return candidate shrink sequence to be tested, by removing ids from original sequence.
-    fn current(&self) -> impl Iterator<Item = usize> + '_ {
+    pub fn current(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.call_sequence_len).filter(|&call_id| self.included_calls.test(call_id))
+    }
+
+    pub fn contains(&self, call_idx: usize) -> bool {
+        self.included_calls.test(call_idx)
+    }
+
+    pub fn included_count(&self) -> usize {
+        self.included_calls.count()
+    }
+
+    fn remove(&mut self, call_idx: usize) {
+        self.included_calls.clear(call_idx);
+    }
+
+    fn restore(&mut self, call_idx: usize) {
+        self.included_calls.set(call_idx);
     }
 
     /// Advance to the next call index, wrapping around to 0 at the end.
@@ -92,27 +109,20 @@ impl ShrinkRun {
     }
 
     pub fn try_candidate(&mut self, still_fails: impl FnOnce() -> bool) -> bool {
-        if !self.can_try() {
-            return false;
-        }
-
-        self.stats.attempts += 1;
-        if still_fails() {
-            self.stats.accepted += 1;
-            true
-        } else {
-            false
-        }
+        self.try_candidate_decision(|| Some(still_fails())).unwrap_or(false)
     }
 
-    fn try_fallible_candidate<P>(&mut self, error_policy: ShrinkErrorPolicy, predicate: P) -> bool
-    where
-        P: FnOnce() -> eyre::Result<bool>,
-    {
-        self.try_candidate(|| match predicate() {
-            Ok(bug_still_present) => bug_still_present,
-            Err(_) => matches!(error_policy, ShrinkErrorPolicy::KeepRemoved),
-        })
+    fn try_candidate_decision(&mut self, decide: impl FnOnce() -> Option<bool>) -> Option<bool> {
+        if !self.can_try() {
+            return None;
+        }
+
+        let accepted = decide()?;
+        self.stats.attempts += 1;
+        if accepted {
+            self.stats.accepted += 1;
+        }
+        Some(accepted)
     }
 }
 
@@ -232,7 +242,7 @@ fn apply_warp_roll_to_env<FEN: FoundryEvmNetwork>(
 /// kept call so the final sequence remains reproducible.
 fn build_shrunk_sequence(
     calls: &[BasicTxDetails],
-    shrinker: &CallSequenceShrinker,
+    shrinker: &SequenceShrink,
     accumulate_warp_roll: bool,
 ) -> Vec<BasicTxDetails> {
     if !accumulate_warp_roll {
@@ -247,7 +257,7 @@ fn build_shrunk_sequence(
         accumulated_warp += call.warp.unwrap_or(U256::ZERO);
         accumulated_roll += call.roll.unwrap_or(U256::ZERO);
 
-        if shrinker.included_calls.test(idx) {
+        if shrinker.contains(idx) {
             result.push(apply_warp_roll(call, accumulated_warp, accumulated_roll));
             accumulated_warp = U256::ZERO;
             accumulated_roll = U256::ZERO;
@@ -255,6 +265,64 @@ fn build_shrunk_sequence(
     }
 
     result
+}
+
+/// Shared sequence shrinker. Tries to drop each call; `predicate` decides whether the candidate
+/// should be accepted, rejected, or skipped without spending a replay attempt.
+pub fn shrink_sequence_by_removing<P, S, A>(
+    calls_len: usize,
+    run: &mut ShrinkRun,
+    mut should_stop: S,
+    mut on_attempt: A,
+    mut predicate: P,
+) -> SequenceShrink
+where
+    P: FnMut(&SequenceShrink) -> Option<bool>,
+    S: FnMut() -> bool,
+    A: FnMut(),
+{
+    let mut shrinker = SequenceShrink::new(calls_len);
+    let mut call_idx = 0;
+    let mut skipped_candidates = 0usize;
+
+    while run.can_try() {
+        if should_stop() {
+            break;
+        }
+        let included_count = shrinker.included_count();
+        if included_count == 0 || skipped_candidates >= included_count {
+            break;
+        }
+
+        // Already-removed indices have nothing to drop.
+        if !shrinker.contains(call_idx) {
+            call_idx = shrinker.next_index(call_idx);
+            continue;
+        }
+
+        shrinker.remove(call_idx);
+
+        let Some(accepted) = run.try_candidate_decision(|| predicate(&shrinker)) else {
+            shrinker.restore(call_idx);
+            skipped_candidates += 1;
+            call_idx = shrinker.next_index(call_idx);
+            continue;
+        };
+
+        on_attempt();
+        skipped_candidates = 0;
+        if accepted {
+            if shrinker.included_count() == 1 {
+                break;
+            }
+        } else {
+            shrinker.restore(call_idx);
+        }
+
+        call_idx = shrinker.next_index(call_idx);
+    }
+
+    shrinker
 }
 
 /// Shared shrink loop driver. Tries to drop each call; `predicate` returns whether the
@@ -266,46 +334,25 @@ fn run_shrink_loop<P>(
     early_exit: &EarlyExit,
     error_policy: ShrinkErrorPolicy,
     mut predicate: P,
-) -> CallSequenceShrinker
+) -> SequenceShrink
 where
-    P: FnMut(&CallSequenceShrinker) -> eyre::Result<bool>,
+    P: FnMut(&SequenceShrink) -> eyre::Result<bool>,
 {
-    let mut shrinker = CallSequenceShrinker::new(calls_len);
     let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
-    let mut call_idx = 0;
-
-    while run.can_try() {
-        if early_exit.should_stop() {
-            break;
-        }
-        if shrinker.included_calls.count() == 0 {
-            break;
-        }
-
-        // Already-removed indices have nothing to drop.
-        if !shrinker.included_calls.test(call_idx) {
-            call_idx = shrinker.next_index(call_idx);
-            continue;
-        }
-
-        shrinker.included_calls.clear(call_idx);
-
-        let bug_still_present = run.try_fallible_candidate(error_policy, || predicate(&shrinker));
-        if bug_still_present {
-            if shrinker.included_calls.count() == 1 {
-                break;
+    shrink_sequence_by_removing(
+        calls_len,
+        &mut run,
+        || early_exit.should_stop(),
+        || {
+            if let Some(progress) = progress {
+                progress.inc(1);
             }
-        } else {
-            shrinker.included_calls.set(call_idx);
-        }
-
-        if let Some(progress) = progress {
-            progress.inc(1);
-        }
-        call_idx = shrinker.next_index(call_idx);
-    }
-
-    shrinker
+        },
+        |shrinker| match predicate(shrinker) {
+            Ok(bug_still_present) => Some(bug_still_present),
+            Err(_) => Some(matches!(error_policy, ShrinkErrorPolicy::KeepRemoved)),
+        },
+    )
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -697,37 +744,36 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
         return Ok(vec![]);
     }
 
-    let mut call_idx = 0;
-    let mut shrinker = CallSequenceShrinker::new(calls.len());
-
-    for _ in 0..config.shrink_run_limit {
-        if early_exit.should_stop() {
-            break;
-        }
-
-        shrinker.included_calls.clear(call_idx);
-
-        let keeps_target = check_sequence_value(
+    let replay_failed = Cell::new(false);
+    let mut replay_error = None;
+    let mut run = ShrinkRun::new(config.shrink_run_limit as usize);
+    let shrinker = shrink_sequence_by_removing(
+        calls.len(),
+        &mut run,
+        || early_exit.should_stop() || replay_failed.get(),
+        || {
+            if let Some(progress) = progress {
+                progress.inc(1);
+            }
+        },
+        |shrinker| match check_sequence_value(
             executor.clone(),
             calls,
             shrinker.current().collect(),
             target_address,
             calldata.clone(),
-        )? == Some(target_value);
-
-        if keeps_target {
-            if shrinker.included_calls.count() == 1 {
-                break;
+        ) {
+            Ok(Some(value)) => Some(value == target_value),
+            Ok(None) => Some(false),
+            Err(err) => {
+                replay_error = Some(err);
+                replay_failed.set(true);
+                None
             }
-        } else {
-            shrinker.included_calls.set(call_idx);
-        }
-
-        if let Some(progress) = progress {
-            progress.inc(1);
-        }
-
-        call_idx = shrinker.next_index(call_idx);
+        },
+    );
+    if let Some(err) = replay_error {
+        return Err(err);
     }
 
     Ok(build_shrunk_sequence(calls, &shrinker, true))
@@ -907,13 +953,13 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CallSequenceShrinker, ShrinkErrorPolicy, ShrinkRun, build_shrunk_sequence, run_shrink_loop,
+        SequenceShrink, ShrinkErrorPolicy, ShrinkRun, build_shrunk_sequence, run_shrink_loop,
+        shrink_sequence_by_removing,
     };
     use crate::executors::EarlyExit;
     use alloy_primitives::{Address, Bytes, U256};
     use foundry_config::InvariantConfig;
     use foundry_evm_fuzz::{BasicTxDetails, CallDetails};
-    use proptest::bits::BitSetLike;
 
     fn tx(warp: Option<u64>, roll: Option<u64>) -> BasicTxDetails {
         BasicTxDetails {
@@ -931,8 +977,8 @@ mod tests {
     #[test]
     fn build_shrunk_sequence_accumulates_removed_delay_into_next_kept_call() {
         let calls = vec![tx(Some(3), Some(5)), tx(Some(7), Some(11)), tx(Some(13), Some(17))];
-        let mut shrinker = CallSequenceShrinker::new(calls.len());
-        shrinker.included_calls.clear(0);
+        let mut shrinker = SequenceShrink::new(calls.len());
+        shrinker.remove(0);
 
         let shrunk = build_shrunk_sequence(&calls, &shrinker, true);
 
@@ -946,8 +992,8 @@ mod tests {
     #[test]
     fn build_shrunk_sequence_does_not_move_trailing_delay_backward() {
         let calls = vec![tx(Some(3), Some(5)), tx(Some(7), Some(11))];
-        let mut shrinker = CallSequenceShrinker::new(calls.len());
-        shrinker.included_calls.clear(1);
+        let mut shrinker = SequenceShrink::new(calls.len());
+        shrinker.remove(1);
 
         let shrunk = build_shrunk_sequence(&calls, &shrinker, true);
 
@@ -1009,5 +1055,32 @@ mod tests {
 
         assert_eq!(replay_attempts, 4);
         assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![2]);
+    }
+
+    #[test]
+    fn sequence_shrinker_skips_duplicate_candidates_without_spending_attempts() {
+        let mut run = ShrinkRun::new(2);
+        let mut seen = Vec::new();
+
+        let shrinker = shrink_sequence_by_removing(
+            2,
+            &mut run,
+            || false,
+            || {},
+            |shrinker| {
+                let candidate = shrinker.current().collect::<Vec<_>>();
+                if seen.contains(&candidate) {
+                    None
+                } else {
+                    seen.push(candidate);
+                    Some(false)
+                }
+            },
+        );
+
+        assert_eq!(shrinker.current().collect::<Vec<_>>(), vec![0, 1]);
+        let stats = run.finish();
+        assert_eq!(stats.attempts, 2);
+        assert_eq!(stats.accepted, 0);
     }
 }
