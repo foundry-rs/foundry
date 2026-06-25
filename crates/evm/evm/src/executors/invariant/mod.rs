@@ -1869,13 +1869,13 @@ fn collect_data<FEN: FoundryEvmNetwork>(
 ) {
     // We keep the nonce changes to apply later.
     let sender_changeset = match state_changeset.entry(tx.sender) {
-        AddressMapEntry::Occupied(entry) => {
-            if entry.get().info.code.as_ref().is_none_or(|code| code.is_empty()) {
-                Some(entry.remove())
-            } else {
-                None
-            }
-        }
+        AddressMapEntry::Occupied(entry) => entry
+            .get()
+            .info
+            .code
+            .as_ref()
+            .is_none_or(|code| code.is_empty())
+            .then(|| entry.remove()),
         AddressMapEntry::Vacant(_) => None,
     };
 
