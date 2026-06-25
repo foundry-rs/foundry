@@ -17,6 +17,10 @@ export FOUNDRYUP_TEST=1
 . "$SCRIPT_DIR/foundryup"
 
 failures=0
+api_marker=""
+install_marker=""
+sidecar_home=""
+selector_tmp=""
 
 check_eq() {
   local desc="$1" expected="$2" actual="$3"
@@ -64,6 +68,21 @@ FEED="<feed>
 curl() { printf '%s' "$FEED"; }
 check_eq "nightly feed returns newest nightly-<sha>" \
   "nightly-$NIGHTLY_SHA" "$(resolve_nightly_tag_via_feed foundry-rs/foundry)"
+check_eq "nightly feed returns bounded unique candidates" \
+  $'nightly-bc3b7f1e90bb7a30903d7d1ae2c532e4fba5679d\nnightly-55210f8c412eac24e9318341efab1e27c5b03822' \
+  "$(FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5 resolve_nightly_tags_via_feed foundry-rs/foundry)"
+
+FEED_WITH_DUPLICATES="<feed>
+  <entry><link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$NIGHTLY_SHA\"/></entry>
+  <entry><content>compare nightly-$OLDER_SHA...nightly-$NIGHTLY_SHA</content></entry>
+  <entry><link href=\"https://github.com/foundry-rs/foundry/releases/tag/nightly-$OLDER_SHA\"/></entry>
+</feed>"
+curl() { printf '%s' "$FEED_WITH_DUPLICATES"; }
+check_eq "nightly feed deduplicates candidates in order" \
+  $'nightly-bc3b7f1e90bb7a30903d7d1ae2c532e4fba5679d\nnightly-55210f8c412eac24e9318341efab1e27c5b03822' \
+  "$(FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5 resolve_nightly_tags_via_feed foundry-rs/foundry)"
+
+curl() { printf '%s' "$FEED"; }
 
 curl() { printf '<feed><entry><link href="https://github.com/foundry-rs/foundry/releases/tag/v1.7.1"/></entry></feed>'; }
 check_eq "nightly feed without nightly entry returns empty" \
@@ -72,6 +91,26 @@ check_eq "nightly feed without nightly entry returns empty" \
 curl() { return 1; }
 check_eq "nightly feed fetch failure returns empty" \
   "" "$(resolve_nightly_tag_via_feed foundry-rs/foundry)"
+
+selector_tmp="$(mktemp -d)"
+trap 'rm -f "$api_marker" "$install_marker"; rm -rf "$sidecar_home" "$selector_tmp"' EXIT
+mkdir -p "$selector_tmp/archive"
+touch "$selector_tmp/archive/forge"
+tar -czf "$selector_tmp/foundry.tar.gz" -C "$selector_tmp/archive" forge
+download() {
+  case "$1" in
+    *"nightly-$OLDER_SHA"*) cp "$selector_tmp/foundry.tar.gz" "$2" ;;
+    *) printf 'not a tar archive' > "$2"; return 0 ;;
+  esac
+}
+PLATFORM=linux
+ARCHITECTURE=amd64
+EXT=tar.gz
+FOUNDRYUP_REPO=foundry-rs/foundry
+FOUNDRYUP_NIGHTLY_CANDIDATES=("nightly-$NIGHTLY_SHA" "nightly-$OLDER_SHA")
+check_eq "nightly selector skips invalid archive candidate" \
+  "nightly-$OLDER_SHA" "$(select_installable_nightly_tag)"
+unset -f download
 
 # --- resolve_version_and_tag (redirect + API fallback) --------------------
 
