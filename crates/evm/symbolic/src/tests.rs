@@ -1148,9 +1148,9 @@ fn recorded_logs_return_data_matches_abi_encoding() {
     let emitter = Address::from([0x33; 20]);
     let topic = B256::from([0x11; 32]);
     let log = SymbolicLog {
-        topics: vec![SymWord::Concrete(U256::from_be_bytes(topic.0))],
+        topics: vec![SymWord::Concrete(U256::from_be_bytes(topic.0))].into(),
         data_len: SymWord::Concrete(U256::from(2)),
-        data: vec![SymWord::Concrete(U256::from(0x22)), SymWord::Concrete(U256::from(0x33))],
+        data: vec![SymWord::Concrete(U256::from(0x22)), SymWord::Concrete(U256::from(0x33))].into(),
         emitter,
     };
 
@@ -1171,9 +1171,9 @@ fn recorded_logs_return_data_matches_abi_encoding() {
 fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let emitter = Address::from([0x33; 20]);
     let log = SymbolicLog {
-        topics: vec![SymWord::Expr(Expr::var("topic"))],
+        topics: vec![SymWord::Expr(Expr::var("topic"))].into(),
         data_len: SymWord::Concrete(U256::from(2)),
-        data: vec![SymWord::Concrete(U256::from(0x12)), SymWord::Expr(Expr::var("byte"))],
+        data: vec![SymWord::Concrete(U256::from(0x12)), SymWord::Expr(Expr::var("byte"))].into(),
         emitter,
     };
 

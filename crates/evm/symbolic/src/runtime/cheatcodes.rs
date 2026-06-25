@@ -395,7 +395,8 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
             .map(|log| {
                 let topics = log
                     .topics
-                    .into_iter()
+                    .iter()
+                    .cloned()
                     .map(|topic| SymbolicAbiValue::FixedBytes {
                         bytes: word_bytes(topic),
                         size: 32,
@@ -404,7 +405,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                 SymbolicAbiValue::Tuple {
                     elements: vec![
                         SymbolicAbiValue::Array { elements: topics },
-                        SymbolicAbiValue::Bytes { len: log.data_len, bytes: log.data },
+                        SymbolicAbiValue::Bytes { len: log.data_len, bytes: log.data.to_vec() },
                         SymbolicAbiValue::Address {
                             word: SymWord::Concrete(address_word(log.emitter)),
                         },
@@ -427,7 +428,7 @@ pub(crate) fn recorded_logs_json_return_data(
             push_ascii(&mut bytes, ",");
         }
         push_ascii(&mut bytes, "{\"topics\":[");
-        for (topic_idx, topic) in log.topics.into_iter().enumerate() {
+        for (topic_idx, topic) in log.topics.iter().cloned().enumerate() {
             if topic_idx > 0 {
                 push_ascii(&mut bytes, ",");
             }
@@ -450,7 +451,7 @@ pub(crate) fn recorded_logs_json_return_data(
         if len > log.data.len() {
             return Err(SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length"));
         }
-        for byte in log.data.into_iter().take(len) {
+        for byte in log.data.iter().take(len).cloned() {
             push_hex_byte(&mut bytes, byte);
         }
 

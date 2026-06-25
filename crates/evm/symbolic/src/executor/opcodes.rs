@@ -722,7 +722,12 @@ impl SymbolicExecutor {
                 }
                 self.handle_log(
                     state,
-                    SymbolicLog { topics: log_topics, data_len, data, emitter: state.address },
+                    SymbolicLog {
+                        topics: log_topics.into(),
+                        data_len,
+                        data: data.into(),
+                        emitter: state.address,
+                    },
                 )
             }
             _ => Err(SymbolicError::UnsupportedOpcode(op)),

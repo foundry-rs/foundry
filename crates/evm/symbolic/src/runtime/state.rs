@@ -618,9 +618,9 @@ impl PathState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SymbolicLog {
-    pub(crate) topics: Vec<SymWord>,
+    pub(crate) topics: Arc<[SymWord]>,
     pub(crate) data_len: SymWord,
-    pub(crate) data: Vec<SymWord>,
+    pub(crate) data: Arc<[SymWord]>,
     pub(crate) emitter: Address,
 }
 
