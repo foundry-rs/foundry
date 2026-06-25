@@ -6,7 +6,9 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest};
+use alloy_rpc_types::{
+    Authorization, BlockNumberOrTag, Index, TransactionRequest, engine::JwtSecret,
+};
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
@@ -5169,6 +5171,78 @@ casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
     }
 });
 
+// tests that `cast call --trace` executes the call with the gas limit given via `--gas-limit`,
+// matching a plain `cast call` rather than running with an unbounded gas limit.
+// <https://github.com/foundry-rs/foundry/issues/15357>
+forgetest_async!(cast_call_trace_respects_gas_limit, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Contract that reverts when the call is given an unrealistically large gas limit.
+    prj.add_source(
+        "GasDependent",
+        r#"
+contract GasDependent {
+    function run() external view returns (uint256) {
+        require(gasleft() < 30_000_000, "unrealistic gas limit");
+        return gasleft();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    let bytecode_path = prj.root().join("out/GasDependent.sol/GasDependent.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    let deploy_output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--json",
+            "--create",
+            bytecode,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = serde_json::from_str(&deploy_output).unwrap();
+    let address = receipt["contractAddress"].as_str().unwrap().to_string();
+
+    // A plain `cast call` (eth_call) uses a realistic gas limit, so it succeeds.
+    cmd.cast_fuse()
+        .args(["call", &address, "run()(uint256)", "--rpc-url", &endpoint])
+        .assert_success();
+
+    // `--trace` with an explicit `--gas-limit` executes the call with that limit, so it succeeds
+    // too instead of reverting.
+    let trace_output = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &address,
+            "run()(uint256)",
+            "--trace",
+            "--gas-limit",
+            "1000000",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        trace_output.contains("[Return]") && !trace_output.contains("unrealistic gas limit"),
+        "expected traced call to respect --gas-limit and succeed, got:\n{trace_output}"
+    );
+});
+
 // tests that cast call properly applies state diff override
 // <https://github.com/foundry-rs/foundry/issues/10930>
 casttest!(cast_call_can_override_state_diff, |_prj, cmd| {
@@ -5652,6 +5726,75 @@ casttest!(curl_rpc, |_prj, cmd| {
     assert!(output.contains("eth_blockNumber"));
     assert!(output.contains("jsonrpc"));
     assert!(output.contains(rpc));
+});
+
+// tests that the --jwt-secret flag outputs a valid curl command with Authorization header
+casttest!(curl_call_with_jwt, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let jwt_secret = "cabee703106087906e50f3e75a6ddbab60809f980511d1d1548d449d52220795";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args([
+            "call",
+            to,
+            "balanceOf(address)(uint256)",
+            to,
+            "--rpc-url",
+            rpc,
+            "--jwt-secret",
+            jwt_secret,
+            "--curl",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("-H 'Content-Type: application/json'"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains("jsonrpc"));
+    assert!(output.contains(rpc));
+
+    let jwt = output
+        .split("Authorization: Bearer ")
+        .nth(1)
+        .expect("missing Authorization header")
+        .split('\'')
+        .next()
+        .expect("malformed Authorization header");
+    let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+    secret.validate(jwt).unwrap();
+});
+
+// tests that the --jwt-secret flag outputs a valid curl command with Authorization header
+casttest!(curl_rpc_with_jwt, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let jwt_secret = "cabee703106087906e50f3e75a6ddbab60809f980511d1d1548d449d52220795";
+
+    let output = cmd
+        .args(["rpc", "eth_blockNumber", "--rpc-url", rpc, "--jwt-secret", jwt_secret, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("-H 'Content-Type: application/json'"));
+    assert!(output.contains("eth_blockNumber"));
+    assert!(output.contains("jsonrpc"));
+    assert!(output.contains(rpc));
+
+    let jwt = output
+        .split("Authorization: Bearer ")
+        .nth(1)
+        .expect("missing Authorization header")
+        .split('\'')
+        .next()
+        .expect("malformed Authorization header");
+    let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+    secret.validate(jwt).unwrap();
 });
 
 // tests that the --curl flag outputs a valid curl command for cast block-number
