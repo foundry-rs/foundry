@@ -17,7 +17,7 @@ pub(crate) struct PathState {
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     pub(crate) access_record: Option<AccessRecord>,
     pub(crate) root_calldata: Option<SymbolicCalldata>,
-    pub(crate) loop_jumps: BTreeMap<usize, u32>,
+    pub(crate) loop_jumps: HashMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
     pub(crate) expected_emit: Option<ExpectedEmit>,
@@ -25,9 +25,9 @@ pub(crate) struct PathState {
     pub(crate) expected_creates: Vec<ExpectedCreate>,
     pub(crate) call_mocks: Vec<CallMock>,
     pub(crate) function_mocks: Vec<FunctionMock>,
-    pub(crate) persistent_accounts: BTreeSet<Address>,
+    pub(crate) persistent_accounts: HashSet<Address>,
     pub(crate) wallets: BTreeSet<Address>,
-    pub(crate) labels: BTreeMap<Address, String>,
+    pub(crate) labels: HashMap<Address, String>,
 }
 
 impl PathState {
@@ -65,7 +65,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: Some(calldata),
-            loop_jumps: BTreeMap::new(),
+            loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
@@ -73,9 +73,9 @@ impl PathState {
             expected_creates: Vec::new(),
             call_mocks: Vec::new(),
             function_mocks: Vec::new(),
-            persistent_accounts: BTreeSet::new(),
+            persistent_accounts: HashSet::default(),
             wallets: BTreeSet::new(),
-            labels: BTreeMap::new(),
+            labels: HashMap::default(),
         }
     }
 
@@ -105,7 +105,7 @@ impl PathState {
             recorded_logs: None,
             access_record: None,
             root_calldata: None,
-            loop_jumps: BTreeMap::new(),
+            loop_jumps: HashMap::default(),
             expected_revert: None,
             assume_no_revert_next_call: None,
             expected_emit: None,
@@ -113,9 +113,9 @@ impl PathState {
             expected_creates: Vec::new(),
             call_mocks: Vec::new(),
             function_mocks: Vec::new(),
-            persistent_accounts: BTreeSet::new(),
+            persistent_accounts: HashSet::default(),
             wallets: BTreeSet::new(),
-            labels: BTreeMap::new(),
+            labels: HashMap::default(),
         }
     }
 
@@ -136,7 +136,7 @@ impl PathState {
         let mut child = self.clone();
         child.call_depth += 1;
         child.frame = frame;
-        child.loop_jumps = BTreeMap::new();
+        child.loop_jumps = HashMap::default();
         child
     }
 
@@ -624,8 +624,8 @@ pub(crate) struct SymbolicLog {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
-    pub(crate) reads: BTreeMap<Address, Vec<SymWord>>,
-    pub(crate) writes: BTreeMap<Address, Vec<SymWord>>,
+    pub(crate) reads: HashMap<Address, Vec<SymWord>>,
+    pub(crate) writes: HashMap<Address, Vec<SymWord>>,
 }
 
 impl AccessRecord {
@@ -1000,13 +1000,13 @@ impl StorageWrite {
 pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
-    pub(crate) current_transaction_created_accounts: BTreeSet<Address>,
+    pub(crate) current_transaction_created_accounts: HashSet<Address>,
     pub(crate) balances: BTreeMap<Address, SymWord>,
     pub(crate) code_cache: BTreeMap<Address, SymCode>,
-    pub(crate) nonces: BTreeMap<Address, u64>,
-    pub(crate) existing_accounts: BTreeSet<Address>,
-    pub(crate) destroyed_accounts: BTreeSet<Address>,
-    pub(crate) arbitrary_storage_accounts: BTreeSet<Address>,
+    pub(crate) nonces: HashMap<Address, u64>,
+    pub(crate) existing_accounts: HashSet<Address>,
+    pub(crate) destroyed_accounts: HashSet<Address>,
+    pub(crate) arbitrary_storage_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
     pub(crate) zero_init_symbolic_storage: bool,
     pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
@@ -1038,17 +1038,17 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
 pub(crate) struct SymbolicWorld {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
-    pub(crate) current_transaction_created_accounts: BTreeSet<Address>,
+    pub(crate) current_transaction_created_accounts: HashSet<Address>,
     pub(crate) balances: BTreeMap<Address, SymWord>,
     pub(crate) code_cache: BTreeMap<Address, SymCode>,
-    pub(crate) nonces: BTreeMap<Address, u64>,
-    pub(crate) existing_accounts: BTreeSet<Address>,
-    pub(crate) destroyed_accounts: BTreeSet<Address>,
-    pub(crate) arbitrary_storage_accounts: BTreeSet<Address>,
+    pub(crate) nonces: HashMap<Address, u64>,
+    pub(crate) existing_accounts: HashSet<Address>,
+    pub(crate) destroyed_accounts: HashSet<Address>,
+    pub(crate) arbitrary_storage_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
     pub(crate) zero_init_symbolic_storage: bool,
     pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
-    pub(crate) snapshots: BTreeMap<U256, SymbolicWorldSnapshot>,
+    pub(crate) snapshots: HashMap<U256, SymbolicWorldSnapshot>,
     pub(crate) next_snapshot_id: u64,
 }
 
@@ -1627,7 +1627,7 @@ pub(crate) struct SymbolicBlock {
     pub(crate) gaslimit: SymWord,
     pub(crate) basefee: SymWord,
     pub(crate) blob_basefee: SymWord,
-    pub(crate) block_hashes: BTreeMap<U256, SymWord>,
+    pub(crate) block_hashes: HashMap<U256, SymWord>,
     pub(crate) blob_hashes: Vec<B256>,
 }
 
@@ -1643,7 +1643,7 @@ impl Default for SymbolicBlock {
             gaslimit: SymWord::zero(),
             basefee: SymWord::zero(),
             blob_basefee: SymWord::zero(),
-            block_hashes: BTreeMap::new(),
+            block_hashes: HashMap::default(),
             blob_hashes: Vec::new(),
         }
     }
@@ -1693,7 +1693,7 @@ impl SymbolicBlock {
             gaslimit: SymWord::Concrete(U256::from(block.gas_limit())),
             basefee: SymWord::Concrete(U256::from(block.basefee())),
             blob_basefee: SymWord::Concrete(U256::from(block.blob_gasprice().unwrap_or_default())),
-            block_hashes: BTreeMap::new(),
+            block_hashes: HashMap::default(),
             blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
         }
     }
