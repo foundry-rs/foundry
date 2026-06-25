@@ -607,7 +607,7 @@ impl SymbolicExecutor {
             let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Prefix(selector),
+                ExpectedRevertData::prefix(selector),
                 None,
                 1,
             ));
@@ -620,7 +620,7 @@ impl SymbolicExecutor {
                 self.config.max_calldata_bytes as usize,
                 "symbolic vm.expectRevert",
             )?;
-            return Ok(self.set_expected_revert(state, ExpectedRevertData::Exact(data), None, 1));
+            return Ok(self.set_expected_revert(state, ExpectedRevertData::exact(data), None, 1));
         }
         if selector == expectRevert_3Call::SELECTOR {
             let reverter = read_abi_word_arg(&state.memory, args_offset, 0)?;
@@ -631,7 +631,7 @@ impl SymbolicExecutor {
             let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Prefix(selector),
+                ExpectedRevertData::prefix(selector),
                 Some(reverter),
                 1,
             ));
@@ -647,7 +647,7 @@ impl SymbolicExecutor {
             let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Exact(data),
+                ExpectedRevertData::exact(data),
                 Some(reverter),
                 1,
             ));
@@ -663,7 +663,7 @@ impl SymbolicExecutor {
                 read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Prefix(selector),
+                ExpectedRevertData::prefix(selector),
                 None,
                 count,
             ));
@@ -680,7 +680,7 @@ impl SymbolicExecutor {
                 read_abi_u64_arg(&state.memory, args_offset, 1, "symbolic vm.expectRevert")?;
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Exact(data),
+                ExpectedRevertData::exact(data),
                 None,
                 count,
             ));
@@ -703,7 +703,7 @@ impl SymbolicExecutor {
                 read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Prefix(selector),
+                ExpectedRevertData::prefix(selector),
                 Some(reverter),
                 count,
             ));
@@ -721,7 +721,7 @@ impl SymbolicExecutor {
                 read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectRevert")?;
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Exact(data),
+                ExpectedRevertData::exact(data),
                 Some(reverter),
                 count,
             ));
@@ -730,7 +730,7 @@ impl SymbolicExecutor {
             let selector = read_abi_bytes4_words_arg(&state.memory, args_offset, 0);
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Prefix(selector),
+                ExpectedRevertData::prefix(selector),
                 None,
                 1,
             ));
@@ -740,7 +740,7 @@ impl SymbolicExecutor {
             let reverter = read_abi_word_arg(&state.memory, args_offset, 1)?;
             return Ok(self.set_expected_revert(
                 state,
-                ExpectedRevertData::Prefix(selector),
+                ExpectedRevertData::prefix(selector),
                 Some(reverter),
                 1,
             ));

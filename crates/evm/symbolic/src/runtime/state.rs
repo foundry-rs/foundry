@@ -683,8 +683,20 @@ impl ExpectedRevert {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExpectedRevertData {
     Any,
-    Prefix(Vec<SymWord>),
-    Exact(Vec<SymWord>),
+    Prefix(Arc<[SymWord]>),
+    Exact(Arc<[SymWord]>),
+}
+
+impl ExpectedRevertData {
+    /// Builds a prefix revert expectation.
+    pub(crate) fn prefix(data: Vec<SymWord>) -> Self {
+        Self::Prefix(data.into())
+    }
+
+    /// Builds an exact revert expectation.
+    pub(crate) fn exact(data: Vec<SymWord>) -> Self {
+        Self::Exact(data.into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

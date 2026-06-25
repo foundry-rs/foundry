@@ -992,9 +992,9 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
         .map(|byte| SymWord::Concrete(U256::from(byte)))
         .collect();
     let data = if dyn_bool(partial_match)? {
-        ExpectedRevertData::Prefix(revert_data)
+        ExpectedRevertData::prefix(revert_data)
     } else {
-        ExpectedRevertData::Exact(revert_data)
+        ExpectedRevertData::exact(revert_data)
     };
     Ok(ExpectedRevert { data, reverter, remaining: 1 })
 }
