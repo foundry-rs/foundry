@@ -217,14 +217,19 @@ impl SymbolicExecutor {
                             stats: self.stats_with_paths(completed_paths + 1),
                         });
                     }
-                    if input.collect_success_input && success_input.is_none() {
-                        success_input = Some(self.materialize_stateless_input(
-                            state.root_calldata.as_ref().ok_or_else(|| {
-                                SymbolicError::Unsupported("missing root symbolic calldata")
-                            })?,
-                            input.function,
-                            &state,
-                        )?);
+                    if input.collect_success_input
+                        && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
+                    {
+                        success_input = Some((
+                            state.depth,
+                            self.materialize_stateless_input(
+                                state.root_calldata.as_ref().ok_or_else(|| {
+                                    SymbolicError::Unsupported("missing root symbolic calldata")
+                                })?,
+                                input.function,
+                                &state,
+                            )?,
+                        ));
                     }
                     completed_paths += 1;
                     break;
@@ -257,14 +262,19 @@ impl SymbolicExecutor {
                                 stats: self.stats_with_paths(completed_paths + 1),
                             });
                         }
-                        if input.collect_success_input && success_input.is_none() {
-                            success_input = Some(self.materialize_stateless_input(
-                                state.root_calldata.as_ref().ok_or_else(|| {
-                                    SymbolicError::Unsupported("missing root symbolic calldata")
-                                })?,
-                                input.function,
-                                &state,
-                            )?);
+                        if input.collect_success_input
+                            && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
+                        {
+                            success_input = Some((
+                                state.depth,
+                                self.materialize_stateless_input(
+                                    state.root_calldata.as_ref().ok_or_else(|| {
+                                        SymbolicError::Unsupported("missing root symbolic calldata")
+                                    })?,
+                                    input.function,
+                                    &state,
+                                )?,
+                            ));
                         }
                         completed_paths += 1;
                         normal_paths += 1;
@@ -321,7 +331,10 @@ impl SymbolicExecutor {
         }
 
         debug!(completed_paths, "symbolic execution safe");
-        Ok(SymbolicRunResult::Safe { stats: self.stats_with_paths(completed_paths), success_input })
+        Ok(SymbolicRunResult::Safe {
+            stats: self.stats_with_paths(completed_paths),
+            success_input: success_input.map(|(_, input)| input),
+        })
     }
 
     /// Runs the `materialize_stateless_counterexample` symbolic executor helper.

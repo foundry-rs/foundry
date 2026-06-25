@@ -1532,8 +1532,11 @@ forgetest_init!(symbolic_seed_corpus_persists_non_failing_fuzz_input, |prj, cmd|
         "SymbolicFuzzCorpusSeed.t.sol",
         r#"
 contract SymbolicFuzzCorpusSeed {
-    function testAcceptsMostValues(uint256 x) public pure {
-        if (x > 100) return;
+    uint256 constant MAGIC = 0xdeadbeef;
+
+    function testAcceptsMostValues(uint256 key) public pure {
+        if (key != MAGIC) return;
+        assert(key == MAGIC);
     }
 }
 "#,
@@ -1562,21 +1565,32 @@ contract SymbolicFuzzCorpusSeed {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     entries.sort_by_key(|entry| entry.path());
-    assert_eq!(entries.len(), 1);
-    let corpus: Value = serde_json::from_slice(&std::fs::read(entries[0].path()).unwrap()).unwrap();
-    assert_eq!(corpus.as_array().unwrap().len(), 1);
-    let calldata = corpus[0]["calldata"].as_str().expect("seed calldata");
     let expected_selector = &keccak256(b"testAcceptsMostValues(uint256)")[..4];
-    assert_eq!(&hex::decode(&calldata[2..10]).unwrap(), expected_selector);
-    assert_eq!(&calldata[10..], "0".repeat(64));
+    let expected_args = format!("{:064x}", 0xdeadbeefu64);
+    let mut found_symbolic_seed = false;
+    for entry in &entries {
+        let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+        assert_eq!(corpus.as_array().unwrap().len(), 1);
+        let calldata = corpus[0]["calldata"].as_str().expect("seed calldata");
+        assert_eq!(&hex::decode(&calldata[2..10]).unwrap(), expected_selector);
+        if calldata[10..] == expected_args {
+            found_symbolic_seed = true;
+        } else {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+    assert!(found_symbolic_seed);
 
     prj.add_test(
         "SymbolicFuzzCorpusSeed.t.sol",
         r#"
 contract SymbolicFuzzCorpusSeed {
-    function testAcceptsMostValues(uint256 x) public pure {
-        require(x != 0, "seed replayed");
-        if (x > 100) return;
+    uint256 constant MAGIC = 0xdeadbeef;
+
+    function testAcceptsMostValues(uint256 key) public pure {
+        require(key != MAGIC, "seed replayed");
+        if (key != MAGIC) return;
+        assert(key == MAGIC);
     }
 }
 "#,
@@ -1614,7 +1628,45 @@ contract SymbolicFuzzCorpusSeed {
         .stdout_lossy();
 
     assert!(stdout.contains("seed replayed"), "{stdout}");
-    assert!(stdout.contains("args=[0]"), "{stdout}");
+    assert!(stdout.contains("3735928559"), "{stdout}");
+});
+
+forgetest_init!(symbolic_seed_corpus_is_best_effort_for_symbolic_incomplete, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_seed_corpus_is_best_effort_for_symbolic_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFuzzCorpusBestEffort.t.sol",
+        r#"
+contract SymbolicFuzzCorpusBestEffort {
+    function testFuzz_symbolicHostile(uint256) public pure {
+        for (uint256 i; i < 10001; ++i) {}
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_symbolicHostile",
+            "--symbolic-seed-corpus",
+            "--fuzz-corpus-dir",
+            "fuzz_corpus",
+            "--fuzz-runs",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[PASS] testFuzz_symbolicHostile(uint256)"), "{stdout}");
 });
 
 forgetest_init!(symbolic_artifact_replay_uses_stored_fail_on_revert, |prj, cmd| {
