@@ -521,24 +521,26 @@ fn mutate_random_array_value(
     *elem = new_val;
 }
 
-/// Probability (out of 100) that a payable call carries a non-zero msg.value.
-const PAYABLE_VALUE_PROB: u32 = 15;
-
 /// Returns a proptest strategy for generating random msg.value for payable functions.
 ///
-/// Most calls (85%) carry no value. The remaining 15% delegate to [`UintStrategy`],
+/// Most calls carry no value. The configured non-zero percent delegates to [`UintStrategy`],
 /// which biases toward edge cases (around 0 / max) and dictionary fixtures, with
 /// random fallback. Over-budget values are clamped to sender balance at execute time.
-pub fn fuzz_msg_value() -> impl Strategy<Value = Option<U256>> {
-    proptest::prop_oneof![
-        100 - PAYABLE_VALUE_PROB => proptest::strategy::Just(None),
-        PAYABLE_VALUE_PROB       => UintStrategy::new(256, None).prop_map(Some),
-    ]
+pub fn fuzz_msg_value(payable_value_weight: u32) -> BoxedStrategy<Option<U256>> {
+    match payable_value_weight.min(100) {
+        0 => proptest::strategy::Just(None).boxed(),
+        100 => UintStrategy::new(256, None).prop_map(Some).boxed(),
+        payable_value_weight => proptest::prop_oneof![
+            100 - payable_value_weight => proptest::strategy::Just(None),
+            payable_value_weight       => UintStrategy::new(256, None).prop_map(Some),
+        ]
+        .boxed(),
+    }
 }
 
 /// Generates a msg.value for payable functions using `TestRunner`'s RNG (corpus mutation path).
 ///
-/// Mirrors [`fuzz_msg_value`] by sampling from [`UintStrategy`]. The 15% mutation gate is
+/// Mirrors [`fuzz_msg_value`] by sampling from [`UintStrategy`]. The configured mutation gate is
 /// applied at the call site in `corpus.rs`. Over-budget values are clamped to sender
 /// balance at execute time.
 pub fn generate_msg_value(test_runner: &mut TestRunner) -> U256 {
@@ -556,7 +558,22 @@ mod tests {
     };
     use alloy_primitives::B256;
     use foundry_common::abi::get_func;
+    use proptest::strategy::{Strategy, ValueTree};
     use std::collections::HashSet;
+
+    #[test]
+    fn payable_value_weight_controls_non_zero_msg_value() {
+        use super::fuzz_msg_value;
+
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = proptest::test_runner::TestRunner::new(cfg);
+
+        for _ in 0..32 {
+            assert!(fuzz_msg_value(0).new_tree(&mut runner).unwrap().current().is_none());
+            assert!(fuzz_msg_value(100).new_tree(&mut runner).unwrap().current().is_some());
+            assert!(fuzz_msg_value(250).new_tree(&mut runner).unwrap().current().is_some());
+        }
+    }
 
     #[test]
     fn can_fuzz_array() {

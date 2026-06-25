@@ -98,7 +98,7 @@ pub fn run_command(args: Forge) -> Result<()> {
                 outcome.ensure_ok(silent)
             }
         }
-        ForgeSubcommand::Script(cmd) => global.block_on(cmd.run_script()),
+        ForgeSubcommand::Script(cmd) => block_on_command(global, || cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {
                 global.block_on(watch::watch_coverage(cmd))
@@ -177,6 +177,16 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => cmd.run(),
     }
+}
+
+fn block_on_command<Fut>(
+    global: &foundry_cli::opts::GlobalArgs,
+    make_future: impl FnOnce() -> Fut,
+) -> Fut::Output
+where
+    Fut: std::future::Future,
+{
+    global.block_on(make_future())
 }
 
 /// Human-readable subcommand name (e.g. `"snapshot"`) for diagnostics.
