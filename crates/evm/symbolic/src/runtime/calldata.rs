@@ -51,7 +51,7 @@ impl SymCalldata {
                 Box::new(result),
             );
         }
-        Ok(SymWord::Expr(result))
+        Ok(SymWord::from_expr(result))
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic calldata helper result.
@@ -64,7 +64,7 @@ impl SymCalldata {
                 Box::new(result),
             );
         }
-        SymWord::Expr(result)
+        SymWord::from_expr(result)
     }
 }
 

@@ -229,7 +229,7 @@ impl SymMemory {
             .into_iter()
             .enumerate()
             .map(|(idx, source)| {
-                SymWord::Expr(Expr::Ite(
+                SymWord::from_expr(Expr::Ite(
                     Box::new(BoolExpr::cmp(
                         BoolExprOp::Ult,
                         Expr::Const(U256::from(idx)),
@@ -260,7 +260,7 @@ impl SymMemory {
                 );
             }
         }
-        if has_symbolic_match { SymWord::Expr(result) } else { base }
+        if has_symbolic_match { SymWord::from_expr(result) } else { base }
     }
 
     /// Implements the `base_byte` symbolic memory helper.
@@ -299,7 +299,7 @@ impl SymMemory {
                 Box::new(result),
             );
         }
-        SymWord::Expr(result)
+        SymWord::from_expr(result)
     }
 
     /// Implements the `size_word` symbolic memory helper.
@@ -312,10 +312,7 @@ impl SymMemory {
             );
             size = max_u256_expr(size, write_size);
         }
-        match size {
-            Expr::Const(value) => SymWord::Concrete(value),
-            size => SymWord::Expr(size),
-        }
+        SymWord::from_expr(size)
     }
 
     #[cfg(test)]
@@ -586,7 +583,7 @@ impl SymMemory {
         match guard {
             BoolExpr::Const(true) => return_data.byte(idx),
             BoolExpr::Const(false) => self.call_output_existing_byte(dest, idx),
-            guard => SymWord::Expr(Expr::Ite(
+            guard => SymWord::from_expr(Expr::Ite(
                 Box::new(guard),
                 Box::new(return_data.byte(idx).into_expr()),
                 Box::new(self.call_output_existing_byte(dest, idx).into_expr()),
@@ -676,7 +673,7 @@ pub(crate) fn symbolic_copy_size_byte(
     source: SymWord,
     existing: SymWord,
 ) -> SymWord {
-    SymWord::Expr(Expr::Ite(
+    SymWord::from_expr(Expr::Ite(
         Box::new(BoolExpr::cmp(BoolExprOp::Ult, Expr::Const(U256::from(idx)), size.clone())),
         Box::new(source.into_expr()),
         Box::new(existing.into_expr()),
@@ -824,7 +821,7 @@ impl SymCode {
                 Box::new(result),
             );
         }
-        SymWord::Expr(result)
+        SymWord::from_expr(result)
     }
 
     /// Returns the `concrete_bytes` symbolic memory helper result.
@@ -923,7 +920,7 @@ impl SymReturnData {
                 Box::new(result),
             );
         }
-        SymWord::Expr(result)
+        SymWord::from_expr(result)
     }
 
     /// Returns the `load_word` symbolic memory helper result.

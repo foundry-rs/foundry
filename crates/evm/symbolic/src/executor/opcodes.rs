@@ -70,12 +70,11 @@ impl SymbolicExecutor {
                         state.stack.push(SymWord::Concrete(addmod_word(a, b, n)))?;
                     }
                     (a, b, n) => {
-                        state.stack.push(
-                            match Expr::addmod(a.into_expr(), b.into_expr(), n.into_expr()) {
-                                Expr::Const(value) => SymWord::Concrete(value),
-                                expr => SymWord::Expr(expr),
-                            },
-                        )?;
+                        state.stack.push(SymWord::from_expr(Expr::addmod(
+                            a.into_expr(),
+                            b.into_expr(),
+                            n.into_expr(),
+                        )))?;
                     }
                 }
                 Ok(StepOutcome::Continue)
@@ -89,12 +88,11 @@ impl SymbolicExecutor {
                         state.stack.push(SymWord::Concrete(mulmod_word(a, b, n)))?;
                     }
                     (a, b, n) => {
-                        state.stack.push(
-                            match Expr::mulmod(a.into_expr(), b.into_expr(), n.into_expr()) {
-                                Expr::Const(value) => SymWord::Concrete(value),
-                                expr => SymWord::Expr(expr),
-                            },
-                        )?;
+                        state.stack.push(SymWord::from_expr(Expr::mulmod(
+                            a.into_expr(),
+                            b.into_expr(),
+                            n.into_expr(),
+                        )))?;
                     }
                 }
                 Ok(StepOutcome::Continue)
@@ -121,7 +119,7 @@ impl SymbolicExecutor {
                 let value = state.stack.pop()?;
                 state.stack.push(match value {
                     SymWord::Concrete(value) => SymWord::Concrete(!value),
-                    value => SymWord::Expr(Expr::Not(Box::new(value.into_expr()))),
+                    value => SymWord::from_expr(Expr::Not(Box::new(value.into_expr()))),
                 })?;
                 Ok(StepOutcome::Continue)
             }

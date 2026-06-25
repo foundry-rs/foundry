@@ -91,7 +91,7 @@ pub(crate) fn signextend_word(byte_index: U256, value: SymWord) -> SymWord {
             let sign_bit = U256::from(1) << bit_index;
             let mask = sign_bit - U256::from(1);
             let value = value.into_expr();
-            SymWord::Expr(Expr::Ite(
+            SymWord::from_expr(Expr::Ite(
                 Box::new(BoolExpr::eq(
                     Expr::op(ExprOp::And, value.clone(), Expr::Const(sign_bit)),
                     Expr::Const(U256::ZERO),
@@ -118,7 +118,7 @@ pub(crate) fn signextend_word_dynamic(byte_index: SymWord, value: SymWord) -> Sy
             Box::new(result),
         );
     }
-    SymWord::Expr(result)
+    SymWord::from_expr(result)
 }
 
 /// Returns the `byte_word` EVM semantics helper result.
@@ -245,9 +245,11 @@ pub(crate) fn sar(value: U256, shift: usize) -> U256 {
 pub(crate) fn shift_left(value: SymWord, bits: usize) -> SymWord {
     match value {
         SymWord::Concrete(value) => SymWord::Concrete(value << bits),
-        value => {
-            SymWord::Expr(Expr::op(ExprOp::Shl, value.into_expr(), Expr::Const(U256::from(bits))))
-        }
+        value => SymWord::from_expr(Expr::op(
+            ExprOp::Shl,
+            value.into_expr(),
+            Expr::Const(U256::from(bits)),
+        )),
     }
 }
 

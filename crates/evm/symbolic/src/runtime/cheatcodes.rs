@@ -518,13 +518,17 @@ pub(crate) fn push_hex_byte(out: &mut Vec<SymWord>, byte: SymWord) {
     let byte = low_byte(byte);
     let high = match byte.clone() {
         SymWord::Concrete(value) => SymWord::Concrete(U256::from(value.to::<u8>() >> 4)),
-        byte => SymWord::Expr(Expr::op(ExprOp::Shr, byte.into_expr(), Expr::Const(U256::from(4)))),
+        byte => {
+            SymWord::from_expr(Expr::op(ExprOp::Shr, byte.into_expr(), Expr::Const(U256::from(4))))
+        }
     };
     let low = match byte {
         SymWord::Concrete(value) => SymWord::Concrete(U256::from(value.to::<u8>() & 0x0f)),
-        byte => {
-            SymWord::Expr(Expr::op(ExprOp::And, byte.into_expr(), Expr::Const(U256::from(0x0f))))
-        }
+        byte => SymWord::from_expr(Expr::op(
+            ExprOp::And,
+            byte.into_expr(),
+            Expr::Const(U256::from(0x0f)),
+        )),
     };
     out.push(hex_nibble_ascii(high));
     out.push(hex_nibble_ascii(low));
@@ -540,7 +544,7 @@ pub(crate) fn hex_nibble_ascii(nibble: SymWord) -> SymWord {
         }
         nibble => {
             let nibble = nibble.into_expr();
-            SymWord::Expr(Expr::Ite(
+            SymWord::from_expr(Expr::Ite(
                 Box::new(BoolExpr::cmp(
                     BoolExprOp::Ult,
                     nibble.clone(),

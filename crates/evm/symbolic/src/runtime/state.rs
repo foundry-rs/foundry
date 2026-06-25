@@ -306,7 +306,7 @@ impl PathState {
         let b = self.stack.pop()?;
         self.stack.push(match (a, b) {
             (SymWord::Concrete(a), SymWord::Concrete(b)) => SymWord::Concrete(concrete(a, b)),
-            (a, b) => SymWord::Expr(Expr::op(op, a.into_expr(), b.into_expr())),
+            (a, b) => SymWord::from_expr(Expr::op(op, a.into_expr(), b.into_expr())),
         })?;
         Ok(StepOutcome::Continue)
     }
@@ -324,7 +324,7 @@ impl PathState {
             (a, b) => {
                 let a = a.into_expr();
                 let b = b.into_expr();
-                SymWord::Expr(Expr::Ite(
+                SymWord::from_expr(Expr::Ite(
                     Box::new(BoolExpr::eq(b.clone(), Expr::Const(U256::ZERO))),
                     Box::new(Expr::Const(U256::ZERO)),
                     Box::new(Expr::op(op, a, b)),
@@ -379,7 +379,9 @@ impl PathState {
                     ShiftKind::Shr => Expr::op(ExprOp::Shr, value.into_expr(), shift.into_expr()),
                     ShiftKind::Sar => Expr::op(ExprOp::Sar, value.into_expr(), shift.into_expr()),
                 };
-                expr_known_word(&expr).map(SymWord::Concrete).unwrap_or(SymWord::Expr(expr))
+                expr_known_word(&expr)
+                    .map(SymWord::Concrete)
+                    .unwrap_or_else(|| SymWord::from_expr(expr))
             }
         };
         self.stack.push(result)?;
@@ -394,7 +396,7 @@ impl PathState {
             match base {
                 SymWord::Concrete(base) => SymWord::Concrete(pow_mod(base, exponent)),
                 base if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) => {
-                    SymWord::Expr(exp_expr_for_concrete_exponent(
+                    SymWord::from_expr(exp_expr_for_concrete_exponent(
                         base.into_expr(),
                         exponent.to::<usize>(),
                     ))
@@ -421,7 +423,7 @@ impl PathState {
                     Box::new(expr),
                 );
             }
-            SymWord::Expr(expr)
+            SymWord::from_expr(expr)
         };
         self.stack.push(result)?;
         Ok(StepOutcome::Continue)
@@ -1264,7 +1266,7 @@ impl SymbolicWorld {
             );
         }
 
-        Ok(SymWord::Expr(result))
+        Ok(SymWord::from_expr(result))
     }
 
     /// Applies the `set_balance_word` symbolic state helper.
@@ -1520,7 +1522,7 @@ impl SymbolicWorld {
             );
         }
 
-        Ok(SymWord::Expr(result))
+        Ok(SymWord::from_expr(result))
     }
 
     /// Implements the `extcode_hash_word` symbolic state helper.
@@ -1551,7 +1553,7 @@ impl SymbolicWorld {
             );
         }
 
-        Ok(SymWord::Expr(result))
+        Ok(SymWord::from_expr(result))
     }
 
     /// Implements the `extcode_bytes_word` symbolic state helper.
@@ -1579,7 +1581,7 @@ impl SymbolicWorld {
                 code.read_bytes_offset(offset.clone(), size)
             };
             for (idx, byte) in bytes.into_iter().enumerate() {
-                result[idx] = SymWord::Expr(Expr::Ite(
+                result[idx] = SymWord::from_expr(Expr::Ite(
                     Box::new(BoolExpr::eq(expr.clone(), Expr::Const(address_word(address)))),
                     Box::new(byte.into_expr()),
                     Box::new(result[idx].clone().into_expr()),
@@ -1768,7 +1770,7 @@ impl SymbolicBlock {
             );
         }
 
-        Ok(SymWord::Expr(result))
+        Ok(SymWord::from_expr(result))
     }
 
     /// Applies the `set_blob_hashes` symbolic state helper.
