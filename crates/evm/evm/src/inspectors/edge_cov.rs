@@ -105,12 +105,10 @@ impl EdgeKey {
         jump_dest: U256,
         include_depth: bool,
     ) -> Self {
-        let depth = if include_depth {
+        if include_depth {
             debug_assert!(depth <= u32::MAX as usize);
-            Some(depth as u32)
-        } else {
-            None
-        };
+        }
+        let depth = include_depth.then_some(depth as u32);
         Self { address, depth, pc, jump_dest }
     }
 }
