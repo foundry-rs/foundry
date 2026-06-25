@@ -126,7 +126,6 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
-isolate-by-default = ["foundry-config/isolate-by-default"]
 optimism = [
     "dep:op-alloy-flz",
     "dep:op-alloy-consensus",

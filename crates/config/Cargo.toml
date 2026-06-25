@@ -58,6 +58,3 @@ snapbox.workspace = true
 similar-asserts.workspace = true
 figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true
-
-[features]
-isolate-by-default = []

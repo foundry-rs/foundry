@@ -1374,7 +1374,6 @@ Compiling 21 files with [..]
 });
 
 // Test preprocessed contracts with decode internal fns.
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(preprocess_contract_with_decode_internal, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
@@ -1418,9 +1417,9 @@ Ran 1 test for test/Counter.t.sol:CounterTest
 Traces:
   [..] CounterTest::test_Increment()
     ├─ [0] VM::deployCode("src/Counter.sol:Counter")
-    │   ├─ [96345] → new Counter@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   ├─ [96345] → new Counter@0xF62849F9A0B5Bf2913b396098F7c7019b51A820a
     │   │   └─ ← [Return] 481 bytes of code
-    │   └─ ← [Return] Counter: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
+    │   └─ ← [Return] Counter: [0xF62849F9A0B5Bf2913b396098F7c7019b51A820a]
     ├─ [..] Counter::setNumber(0)
     │   └─ ← [Stop]
     ├─ [..] Counter::increment()
