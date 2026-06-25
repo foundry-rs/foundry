@@ -398,14 +398,14 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                     .iter()
                     .cloned()
                     .map(|topic| SymbolicAbiValue::FixedBytes {
-                        bytes: word_bytes(topic),
+                        bytes: word_bytes(topic).into(),
                         size: 32,
                     })
                     .collect();
                 SymbolicAbiValue::Tuple {
                     elements: vec![
                         SymbolicAbiValue::Array { elements: topics },
-                        SymbolicAbiValue::Bytes { len: log.data_len, bytes: log.data.to_vec() },
+                        SymbolicAbiValue::Bytes { len: log.data_len, bytes: log.data },
                         SymbolicAbiValue::Address {
                             word: SymWord::Concrete(address_word(log.emitter)),
                         },
@@ -493,7 +493,7 @@ pub(crate) fn storage_slots_abi_array(slots: Vec<SymWord>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots
             .into_iter()
-            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: word_bytes(slot), size: 32 })
+            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: word_bytes(slot).into(), size: 32 })
             .collect(),
     }
 }

@@ -225,7 +225,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
             DynSolType::FixedBytes(size) => SymbolicAbiValue::FixedBytes {
                 bytes: (0..*size)
                     .map(|idx| self.fresh_byte(format!("{name}_{idx}"), false))
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .into(),
                 size: *size,
             },
             DynSolType::Address => {
@@ -242,7 +243,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     len: SymWord::Concrete(U256::from(len)),
                     bytes: (0..len)
                         .map(|idx| self.fresh_byte(format!("{name}_{idx}"), false))
-                        .collect(),
+                        .collect::<Vec<_>>()
+                        .into(),
                 }
             }
             DynSolType::String => {
@@ -250,7 +252,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 SymbolicAbiValue::String {
                     bytes: (0..len)
                         .map(|idx| self.fresh_byte(format!("{name}_{idx}"), true))
-                        .collect(),
+                        .collect::<Vec<_>>()
+                        .into(),
                 }
             }
             DynSolType::Array(inner) => {
@@ -311,7 +314,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
                         len: SymWord::Concrete(U256::from(len)),
                         bytes: (0..len as usize)
                             .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), false))
-                            .collect(),
+                            .collect::<Vec<_>>()
+                            .into(),
                     };
                     push_variant(&mut variants, (builder, value), limit)?;
                 }
@@ -328,7 +332,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     let value = SymbolicAbiValue::String {
                         bytes: (0..len as usize)
                             .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), true))
-                            .collect(),
+                            .collect::<Vec<_>>()
+                            .into(),
                     };
                     push_variant(&mut variants, (builder, value), limit)?;
                 }
@@ -622,10 +627,10 @@ pub(super) enum SymbolicAbiValue {
     Bool { word: SymWord },
     Uint { bits: usize, word: SymWord },
     Int { bits: usize, word: SymWord },
-    FixedBytes { bytes: Vec<SymWord>, size: usize },
+    FixedBytes { bytes: Arc<[SymWord]>, size: usize },
     Address { word: SymWord },
-    Bytes { len: SymWord, bytes: Vec<SymWord> },
-    String { bytes: Vec<SymWord> },
+    Bytes { len: SymWord, bytes: Arc<[SymWord]> },
+    String { bytes: Arc<[SymWord]> },
     Array { elements: Vec<Self> },
     FixedArray { elements: Vec<Self> },
     Tuple { elements: Vec<Self> },
@@ -674,7 +679,7 @@ impl SymbolicAbiValue {
             | Self::Int { word, .. }
             | Self::Address { word } => word_bytes(word.clone()),
             Self::FixedBytes { bytes, .. } => {
-                let mut out = bytes.clone();
+                let mut out = bytes.to_vec();
                 out.resize(32, SymWord::zero());
                 out
             }
