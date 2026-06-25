@@ -726,7 +726,7 @@ pub(crate) fn eval_expr(
         Expr::Var(var) => model.get(var).copied().unwrap_or_default(),
         Expr::GasLeft(_) => return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled")),
         Expr::Keccak(hash) => eval_keccak_expr(&hash.len, &hash.bytes, model)?,
-        Expr::Hash(hash) => model.get(&hash.name).copied().unwrap_or_default(),
+        Expr::Hash(hash) => model.get(hash.name.as_ref()).copied().unwrap_or_default(),
         Expr::Not(value) => !eval_expr(value, model)?,
         Expr::Op(op, left, right) => {
             let left = eval_expr(left, model)?;
@@ -975,27 +975,31 @@ pub(crate) enum Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct KeccakExpr {
-    pub(crate) name: String,
+    pub(crate) name: Arc<str>,
     pub(crate) len: Box<Expr>,
     pub(crate) bytes: Vec<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct HashExpr {
-    pub(crate) name: String,
+    pub(crate) name: Arc<str>,
     pub(crate) algorithm: &'static str,
     pub(crate) bytes: Vec<Expr>,
 }
 
 impl Expr {
     /// Builds a symbolic keccak expression.
-    pub(crate) fn keccak(name: String, len: Self, bytes: Vec<Self>) -> Self {
-        Self::Keccak(Box::new(KeccakExpr { name, len: Box::new(len), bytes }))
+    pub(crate) fn keccak(name: impl Into<Arc<str>>, len: Self, bytes: Vec<Self>) -> Self {
+        Self::Keccak(Box::new(KeccakExpr { name: name.into(), len: Box::new(len), bytes }))
     }
 
     /// Builds an opaque symbolic hash expression.
-    pub(crate) fn hash(name: String, algorithm: &'static str, bytes: Vec<Self>) -> Self {
-        Self::Hash(Box::new(HashExpr { name, algorithm, bytes }))
+    pub(crate) fn hash(
+        name: impl Into<Arc<str>>,
+        algorithm: &'static str,
+        bytes: Vec<Self>,
+    ) -> Self {
+        Self::Hash(Box::new(HashExpr { name: name.into(), algorithm, bytes }))
     }
 
     /// Visits this expression and all child expressions.
@@ -1158,10 +1162,10 @@ impl Expr {
                 vars.insert(var.clone());
             }
             Self::Keccak(hash) => {
-                vars.insert(hash.name.clone());
+                vars.insert(hash.name.to_string());
             }
             Self::Hash(hash) => {
-                vars.insert(hash.name.clone());
+                vars.insert(hash.name.to_string());
             }
             Self::Const(_)
             | Self::GasLeft(_)
@@ -1179,8 +1183,8 @@ impl Expr {
             Self::Const(value) => format!("(_ bv{value} 256)"),
             Self::Var(var) => var.clone(),
             Self::GasLeft(id) => format!("gasleft_{id}"),
-            Self::Keccak(hash) => hash.name.clone(),
-            Self::Hash(hash) => hash.name.clone(),
+            Self::Keccak(hash) => hash.name.to_string(),
+            Self::Hash(hash) => hash.name.to_string(),
             Self::Not(value) => format!("(bvnot {})", value.smt()),
             Self::Op(op, left, right) => format!("({} {} {})", op.smt(), left.smt(), right.smt()),
             Self::AddMod { left, right, modulus } => {

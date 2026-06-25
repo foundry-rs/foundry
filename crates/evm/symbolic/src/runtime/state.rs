@@ -1656,7 +1656,7 @@ fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
             vars.insert(var.clone());
         }
         Expr::Hash(hash) => {
-            vars.insert(hash.name.clone());
+            vars.insert(hash.name.to_string());
         }
         Expr::Const(_)
         | Expr::GasLeft(_)
