@@ -678,7 +678,7 @@ pub(crate) fn symbolic_copy_size_byte(
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SymCode {
-    bytes: Vec<SymWord>,
+    bytes: Arc<[SymWord]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -690,13 +690,19 @@ pub(crate) enum GuardedOpcode {
 
 impl SymCode {
     /// Converts symbolic bytes into code.
-    pub(crate) const fn from_symbolic_bytes(bytes: Vec<SymWord>) -> Self {
-        Self { bytes }
+    pub(crate) fn from_symbolic_bytes(bytes: Vec<SymWord>) -> Self {
+        Self { bytes: bytes.into() }
     }
 
     /// Implements the `concrete` symbolic memory helper.
     pub(crate) fn concrete(bytes: Vec<u8>) -> Self {
-        Self { bytes: bytes.into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect() }
+        Self {
+            bytes: bytes
+                .into_iter()
+                .map(|byte| SymWord::Concrete(U256::from(byte)))
+                .collect::<Vec<_>>()
+                .into(),
+        }
     }
 
     /// Converts values for the `from_memory_offset` symbolic memory helper.
@@ -720,12 +726,12 @@ impl SymCode {
     }
 
     /// Implements the `len` symbolic memory helper.
-    pub(crate) const fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.bytes.len()
     }
 
     /// Returns whether `is_empty` holds.
-    pub(crate) const fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
