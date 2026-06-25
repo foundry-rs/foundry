@@ -141,11 +141,12 @@ The artifact bundle exposes:
 
 ## Benchmark Structure
 
-- `forge_test` - Benchmarks `forge test` command across repos
+- `forge_test` - Benchmarks non-isolated `forge test` command across repos
 - `forge_build_no_cache` - Benchmarks `forge build` with clean cache
 - `forge_build_with_cache` - Benchmarks `forge build` with existing cache
-- `forge_fuzz_test` - Benchmarks `forge test` with only fuzz tests (tests with parameters)
+- `forge_fuzz_test` - Benchmarks non-isolated `forge test` with only fuzz tests (tests with parameters)
 - `forge_coverage` - Benchmarks `forge coverage --ir-minimum` command across repos
+- `forge_isolate_test` - Benchmarks isolated `forge test` command across repos
 
 ## Configuration
 
