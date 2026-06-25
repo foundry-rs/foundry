@@ -76,8 +76,8 @@ pub use result::InvariantFuzzTestResult;
 mod shrink;
 pub use shrink::{
     CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome, HandlerReplayOutcome,
-    SequenceShrink, ShrinkRun, ShrinkRunStats, check_sequence, check_sequence_value,
-    replay_handler_failure_sequence, shrink_sequence_by_removing,
+    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, ShrinkRunStats, check_sequence,
+    check_sequence_value, replay_handler_failure_sequence, shrink_sequence_by_removing,
 };
 
 /// Minimum number of logical runs assigned to each auto invariant worker at the default invariant

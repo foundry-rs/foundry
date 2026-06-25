@@ -18,7 +18,7 @@ use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use revm::context::Block;
-use std::cell::Cell;
+use std::{cell::Cell, collections::HashSet, hash::Hash};
 
 /// Shrinker for a call sequence failure.
 /// Iterates sequence call sequence top down and removes calls one by one.
@@ -157,6 +157,22 @@ impl ShrinkRun {
             self.stats.accepted += 1;
         }
         Some(accepted)
+    }
+}
+
+/// Shared key set for shrinkers that need to skip duplicate concrete replays.
+#[derive(Clone, Debug)]
+pub struct ShrinkCandidateKeys<K> {
+    seen: HashSet<K>,
+}
+
+impl<K: Eq + Hash> ShrinkCandidateKeys<K> {
+    pub fn new(initial: K) -> Self {
+        Self { seen: HashSet::from([initial]) }
+    }
+
+    pub fn insert(&mut self, key: K) -> bool {
+        self.seen.insert(key)
     }
 }
 
@@ -972,8 +988,8 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
 #[cfg(test)]
 mod tests {
     use super::{
-        SequenceShrink, ShrinkErrorPolicy, ShrinkRun, build_shrunk_sequence, run_shrink_loop,
-        shrink_sequence_by_removing,
+        SequenceShrink, ShrinkCandidateKeys, ShrinkErrorPolicy, ShrinkRun, build_shrunk_sequence,
+        run_shrink_loop, shrink_sequence_by_removing,
     };
     use crate::executors::EarlyExit;
     use alloy_primitives::{Address, Bytes, U256};
@@ -1039,6 +1055,16 @@ mod tests {
         let stats = run.finish();
         assert_eq!(stats.attempts, 2);
         assert_eq!(stats.accepted, 1);
+    }
+
+    #[test]
+    fn shrink_candidate_keys_skip_duplicates() {
+        let mut candidates = ShrinkCandidateKeys::new("initial");
+
+        assert!(!candidates.insert("initial"));
+        assert!(candidates.insert("first"));
+        assert!(!candidates.insert("first"));
+        assert!(candidates.insert("second"));
     }
 
     #[test]

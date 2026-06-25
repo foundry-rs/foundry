@@ -2,9 +2,10 @@ use crate::result::SymbolicCounterexampleCall;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Function as SolFunction, I256, U256};
-use foundry_evm::executors::invariant::{SequenceShrink, ShrinkRun, shrink_sequence_by_removing};
+use foundry_evm::executors::invariant::{
+    SequenceShrink, ShrinkCandidateKeys, ShrinkRun, shrink_sequence_by_removing,
+};
 use itertools::Itertools;
-use std::collections::HashSet;
 
 const MAX_SUBSET_CANDIDATES_PER_PASS: usize = 256;
 
@@ -104,7 +105,7 @@ pub(crate) fn minimize_sequence_counterexample(
 
 struct SequenceMinimizer<'a> {
     current_calls: Vec<SymbolicCounterexampleCall>,
-    tried_candidates: HashSet<Vec<ReplayCallKey>>,
+    tried_candidates: ShrinkCandidateKeys<Vec<ReplayCallKey>>,
     run: ShrinkRun,
     still_fails: &'a mut dyn FnMut(&[SymbolicCounterexampleCall]) -> bool,
 }
@@ -115,7 +116,7 @@ impl<'a> SequenceMinimizer<'a> {
         max_attempts: usize,
         still_fails: &'a mut dyn FnMut(&[SymbolicCounterexampleCall]) -> bool,
     ) -> Self {
-        let tried_candidates = HashSet::from([replay_sequence_key(&current_calls)]);
+        let tried_candidates = ShrinkCandidateKeys::new(replay_sequence_key(&current_calls));
         Self { current_calls, tried_candidates, run: ShrinkRun::new(max_attempts), still_fails }
     }
 
@@ -136,6 +137,7 @@ impl<'a> SequenceMinimizer<'a> {
         if !self.can_try() || candidate_calls == self.current_calls {
             return false;
         }
+
         if !self.tried_candidates.insert(replay_sequence_key(&candidate_calls)) {
             return false;
         }
@@ -165,9 +167,11 @@ impl<'a> SequenceMinimizer<'a> {
             || {},
             |shrinker| {
                 let candidate_calls = sequence_from_shrink(&base_calls, shrinker);
-                if candidate_calls == *current_calls
-                    || !tried_candidates.insert(replay_sequence_key(&candidate_calls))
-                {
+                if candidate_calls == *current_calls {
+                    return None;
+                }
+
+                if !tried_candidates.insert(replay_sequence_key(&candidate_calls)) {
                     return None;
                 }
 
@@ -303,7 +307,7 @@ pub(crate) fn minimize_single_call_counterexample(
     let mut current_args = original_args;
     let mut current_call = call_with_args(function, call, &current_args)?;
     let mut run = ShrinkRun::new(max_attempts);
-    let mut tried_calldata = HashSet::from([current_call.calldata.clone()]);
+    let mut tried_calldata = ShrinkCandidateKeys::new(current_call.calldata.clone());
 
     let mut try_args = |candidate_args: &[DynSolValue]| {
         if !run.can_try() {
@@ -312,9 +316,11 @@ pub(crate) fn minimize_single_call_counterexample(
         let Some(candidate_call) = call_with_args(function, call, candidate_args) else {
             return false;
         };
-        if candidate_call.calldata == current_call.calldata
-            || !tried_calldata.insert(candidate_call.calldata.clone())
-        {
+        if candidate_call.calldata == current_call.calldata {
+            return false;
+        }
+
+        if !tried_calldata.insert(candidate_call.calldata.clone()) {
             return false;
         }
 
@@ -1380,6 +1386,7 @@ fn accept_candidate(
 mod tests {
     use super::*;
     use alloy_json_abi::JsonAbi;
+    use std::collections::HashSet;
 
     const TEST_MAX_MINIMIZATION_ATTEMPTS: usize = 5000;
 
