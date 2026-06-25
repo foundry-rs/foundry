@@ -73,7 +73,7 @@ pub(crate) fn create2_address_word(
         }
         (salt, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
             let initcode_bytes =
-                initcode.bytes.iter().cloned().map(SymWord::into_expr).collect::<Vec<_>>();
+                initcode.bytes().iter().cloned().map(SymWord::into_expr).collect::<Vec<_>>();
             let word = symbolic_create2_address_word(
                 state,
                 format!("{creator:?}"),

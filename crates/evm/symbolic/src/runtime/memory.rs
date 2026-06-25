@@ -47,18 +47,18 @@ pub(crate) enum BoundedCopySize {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymMemory {
-    pub(crate) bytes: BTreeMap<usize, SymWord>,
-    pub(crate) byte_epochs: BTreeMap<usize, u64>,
-    pub(crate) symbolic_writes: Vec<SymbolicMemoryWrite>,
-    pub(crate) epoch: u64,
-    pub(crate) size: usize,
+    bytes: HashMap<usize, SymWord>,
+    byte_epochs: HashMap<usize, u64>,
+    symbolic_writes: Vec<SymbolicMemoryWrite>,
+    epoch: u64,
+    size: usize,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct SymbolicMemoryWrite {
-    pub(crate) epoch: u64,
-    pub(crate) offset: Expr,
-    pub(crate) bytes: Vec<SymWord>,
+    epoch: u64,
+    offset: Expr,
+    bytes: Vec<SymWord>,
 }
 
 /// Returns the `memory_size_after_access` symbolic memory helper result.
@@ -685,7 +685,7 @@ pub(crate) fn symbolic_copy_size_byte(
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SymCode {
-    pub(crate) bytes: Vec<SymWord>,
+    bytes: Vec<SymWord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -696,6 +696,11 @@ pub(crate) enum GuardedOpcode {
 }
 
 impl SymCode {
+    /// Converts symbolic bytes into code.
+    pub(crate) const fn from_symbolic_bytes(bytes: Vec<SymWord>) -> Self {
+        Self { bytes }
+    }
+
     /// Implements the `concrete` symbolic memory helper.
     pub(crate) fn concrete(bytes: Vec<u8>) -> Self {
         Self { bytes: bytes.into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect() }
@@ -703,7 +708,7 @@ impl SymCode {
 
     /// Converts values for the `from_memory_offset` symbolic memory helper.
     pub(crate) fn from_memory_offset(memory: &SymMemory, offset: SymWord, size: usize) -> Self {
-        Self { bytes: memory.read_bytes_offset(offset, size) }
+        Self::from_symbolic_bytes(memory.read_bytes_offset(offset, size))
     }
 
     /// Converts values for the `from_memory_symbolic_size` symbolic memory helper.
@@ -713,7 +718,12 @@ impl SymCode {
         size: SymWord,
         max_size: usize,
     ) -> Self {
-        Self { bytes: memory.read_bytes_symbolic_size(offset, size, max_size) }
+        Self::from_symbolic_bytes(memory.read_bytes_symbolic_size(offset, size, max_size))
+    }
+
+    /// Returns the symbolic code bytes.
+    pub(crate) fn bytes(&self) -> &[SymWord] {
+        &self.bytes
     }
 
     /// Implements the `len` symbolic memory helper.
@@ -826,14 +836,14 @@ impl SymCode {
 #[derive(Clone, Debug)]
 pub(crate) struct SymReturnData {
     pub(crate) len: usize,
-    pub(crate) len_word: SymWord,
-    pub(crate) bytes: BTreeMap<usize, SymWord>,
+    len_word: SymWord,
+    bytes: HashMap<usize, SymWord>,
 }
 
 impl Default for SymReturnData {
     /// Implements the `default` symbolic memory helper.
     fn default() -> Self {
-        Self { len: 0, len_word: SymWord::zero(), bytes: BTreeMap::new() }
+        Self { len: 0, len_word: SymWord::zero(), bytes: HashMap::default() }
     }
 }
 
@@ -943,6 +953,6 @@ impl SymReturnData {
                 "CREATE with symbolic runtime size not modeled",
             ));
         }
-        Ok(SymCode { bytes: (0..self.len).map(|offset| self.byte(offset)).collect() })
+        Ok(SymCode::from_symbolic_bytes((0..self.len).map(|offset| self.byte(offset)).collect()))
     }
 }

@@ -1445,7 +1445,7 @@ impl SymbolicExecutor {
                 self.config.max_dynamic_length as usize,
                 "symbolic vm.etch",
             )?;
-            state.world.install_code(target, SymCode { bytes: code });
+            state.world.install_code(target, SymCode::from_symbolic_bytes(code));
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
         if selector == selector!("getCode(string)")

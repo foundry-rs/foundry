@@ -1326,12 +1326,10 @@ fn symbolic_world_tracks_created_code_and_nonce_overlay() {
 /// Regression coverage for `symbolic_codecopy_preserves_symbolic_constructor_bytes`.
 fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
     let mut memory = SymMemory::default();
-    let initcode = SymCode {
-        bytes: vec![
-            SymWord::Concrete(U256::from(opcode::STOP)),
-            SymWord::Expr(Expr::Var("constructor_arg_byte".to_string())),
-        ],
-    };
+    let initcode = SymCode::from_symbolic_bytes(vec![
+        SymWord::Concrete(U256::from(opcode::STOP)),
+        SymWord::Expr(Expr::Var("constructor_arg_byte".to_string())),
+    ]);
 
     memory.copy_symbolic(0, initcode.read_bytes(0, 2));
 
@@ -1342,8 +1340,9 @@ fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
 #[test]
 /// Regression coverage for `symbolic_codecopy_accepts_symbolic_offsets`.
 fn symbolic_codecopy_accepts_symbolic_offsets() {
-    let code =
-        SymCode { bytes: (0u8..40).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect() };
+    let code = SymCode::from_symbolic_bytes(
+        (0u8..40).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect(),
+    );
     let mut memory = SymMemory::default();
 
     memory.copy_symbolic(
@@ -1477,13 +1476,11 @@ fn path_state_evaluates_compound_constrained_symbolic_word() {
 #[test]
 /// Regression coverage for `symbolic_push_data_reconstructs_symbolic_word`.
 fn symbolic_push_data_reconstructs_symbolic_word() {
-    let code = SymCode {
-        bytes: vec![
-            SymWord::Concrete(U256::from(opcode::PUSH2)),
-            SymWord::Expr(Expr::Var("immutable_hi".to_string())),
-            SymWord::Expr(Expr::Var("immutable_lo".to_string())),
-        ],
-    };
+    let code = SymCode::from_symbolic_bytes(vec![
+        SymWord::Concrete(U256::from(opcode::PUSH2)),
+        SymWord::Expr(Expr::Var("immutable_hi".to_string())),
+        SymWord::Expr(Expr::Var("immutable_lo".to_string())),
+    ]);
 
     let word = word_from_bytes(
         std::iter::repeat_with(SymWord::zero).take(30).chain(code.read_bytes(1, 2)),
