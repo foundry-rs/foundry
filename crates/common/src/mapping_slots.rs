@@ -2,10 +2,7 @@ use alloy_primitives::{
     B256, U256, keccak256,
     map::{AddressHashMap, B256HashMap},
 };
-use revm::{
-    bytecode::opcode,
-    interpreter::Interpreter,
-};
+use revm::{bytecode::opcode, interpreter::Interpreter};
 
 /// Recorded mapping slots.
 #[derive(Clone, Debug, Default)]
