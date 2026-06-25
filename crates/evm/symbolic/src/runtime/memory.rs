@@ -58,7 +58,7 @@ pub(crate) struct SymMemory {
 pub(crate) struct SymbolicMemoryWrite {
     epoch: u64,
     offset: Expr,
-    bytes: Vec<SymWord>,
+    bytes: Arc<[SymWord]>,
 }
 
 /// Returns the `memory_size_after_access` symbolic memory helper result.
@@ -141,7 +141,11 @@ impl SymMemory {
             return;
         }
         self.epoch = self.epoch.saturating_add(1);
-        self.symbolic_writes.push(SymbolicMemoryWrite { epoch: self.epoch, offset, bytes });
+        self.symbolic_writes.push(SymbolicMemoryWrite {
+            epoch: self.epoch,
+            offset,
+            bytes: bytes.into(),
+        });
     }
 
     /// Applies the `store_bytes_offset` symbolic memory helper.
