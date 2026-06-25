@@ -4,18 +4,22 @@ use super::*;
 pub(crate) struct SymCalldata {
     size: usize,
     size_word: SymWord,
-    bytes: Vec<SymWord>,
+    bytes: Arc<[SymWord]>,
 }
 
 impl SymCalldata {
     /// Constructs a new instance.
     pub(crate) fn new(bytes: Vec<SymWord>) -> Self {
-        Self { size_word: SymWord::Concrete(U256::from(bytes.len())), size: bytes.len(), bytes }
+        Self {
+            size_word: SymWord::Concrete(U256::from(bytes.len())),
+            size: bytes.len(),
+            bytes: bytes.into(),
+        }
     }
 
     /// Implements the `new_symbolic_size` symbolic calldata helper.
-    pub(crate) const fn new_symbolic_size(bytes: Vec<SymWord>, size_word: SymWord) -> Self {
-        Self { size: bytes.len(), size_word, bytes }
+    pub(crate) fn new_symbolic_size(bytes: Vec<SymWord>, size_word: SymWord) -> Self {
+        Self { size: bytes.len(), size_word, bytes: bytes.into() }
     }
 
     /// Returns the symbolic calldata size word.
