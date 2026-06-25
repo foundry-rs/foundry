@@ -80,7 +80,7 @@ const SYNC_DIR: &str = "sync";
 const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
 
 const SANCOV_EDGE_OFFSET: usize = usize::MAX / 2;
-const CACHED_DISK_CORPUS_MAX_LEN: usize = 64;
+const CACHED_DISK_CORPUS_MAX_LEN: usize = 128;
 
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
