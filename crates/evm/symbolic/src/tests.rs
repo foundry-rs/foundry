@@ -1544,7 +1544,7 @@ fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
     let second = keccak_word(bytes);
 
     assert_eq!(first, second);
-    assert!(matches!(first, SymWord::Expr(Expr::Keccak { .. })));
+    assert!(matches!(first, SymWord::Expr(Expr::Keccak(_))));
 }
 
 #[test]
@@ -1559,11 +1559,11 @@ fn symbolic_keccak_tracks_symbolic_length() {
 
     let word = keccak_word_with_len(bytes, len);
 
-    let SymWord::Expr(Expr::Keccak { len, bytes, .. }) = word else {
+    let SymWord::Expr(Expr::Keccak(hash)) = word else {
         panic!("expected symbolic keccak term");
     };
-    assert_eq!(*len, Expr::Var("len".to_string()));
-    assert_eq!(bytes.len(), 3);
+    assert_eq!(*hash.len, Expr::Var("len".to_string()));
+    assert_eq!(hash.bytes.len(), 3);
 }
 
 #[test]
@@ -1614,7 +1614,7 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 
     assert_eq!(sha.len, 32);
     assert_eq!(sha_word, sha_again_word);
-    assert!(matches!(sha_word, SymWord::Expr(Expr::Hash { algorithm: "sha256", .. })));
+    assert!(matches!(sha_word, SymWord::Expr(Expr::Hash(hash)) if hash.algorithm == "sha256"));
 
     let ecrecover = execute_symbolic_precompile(
         precompile_address(1),
@@ -2765,7 +2765,7 @@ fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
 /// Regression coverage for local hard arithmetic search avoiding unsupported hash symbols.
 fn hard_arithmetic_fallback_skips_symbolic_hashes() {
     let x = Expr::Var("x".to_string());
-    let hash = Expr::Hash { name: "hash".to_string(), algorithm: "sha256", bytes: vec![x.clone()] };
+    let hash = Expr::hash("hash".to_string(), "sha256", vec![x.clone()]);
     let constraints =
         vec![BoolExpr::eq(Expr::op(ExprOp::Mul, x, hash), Expr::Const(U256::from(1)))];
 

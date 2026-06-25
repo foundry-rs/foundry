@@ -15,11 +15,7 @@ pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
 /// Returns the `expr_contains_hard_arith` solver helper result.
 pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
     match expr {
-        Expr::Const(_)
-        | Expr::Var(_)
-        | Expr::GasLeft(_)
-        | Expr::Keccak { .. }
-        | Expr::Hash { .. } => false,
+        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => false,
         Expr::Not(value) => expr_contains_hard_arith(value),
         Expr::Op(ExprOp::Mul, left, right) => expr_contains_var(left) && expr_contains_var(right),
         Expr::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
@@ -42,9 +38,10 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
 /// Returns whether the expression contains symbolic hash variables that local search should avoid.
 pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
     match expr {
-        Expr::Hash { .. } => true,
-        Expr::Keccak { len, bytes, .. } => {
-            expr_contains_symbolic_hash(len) || bytes.iter().any(expr_contains_symbolic_hash)
+        Expr::Hash(_) => true,
+        Expr::Keccak(hash) => {
+            expr_contains_symbolic_hash(&hash.len)
+                || hash.bytes.iter().any(expr_contains_symbolic_hash)
         }
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => false,
         Expr::Not(value) => expr_contains_symbolic_hash(value),
@@ -80,7 +77,7 @@ pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
 pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
     match expr {
         Expr::Const(_) => false,
-        Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => true,
+        Expr::Var(_) | Expr::Keccak(_) | Expr::Hash(_) => true,
         Expr::GasLeft(_) => false,
         Expr::Not(value) => expr_contains_var(value),
         Expr::Op(_, left, right) => expr_contains_var(left) || expr_contains_var(right),
@@ -316,13 +313,13 @@ pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut BTreeSet<St
 /// Collects assignable variables from an expression, recursing into recomputable hashes.
 pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
     match expr {
-        Expr::Const(_) | Expr::GasLeft(_) | Expr::Hash { .. } => {}
+        Expr::Const(_) | Expr::GasLeft(_) | Expr::Hash(_) => {}
         Expr::Var(var) => {
             vars.insert(var.clone());
         }
-        Expr::Keccak { len, bytes, .. } => {
-            collect_expr_fallback_vars(len, vars);
-            for byte in bytes {
+        Expr::Keccak(hash) => {
+            collect_expr_fallback_vars(&hash.len, vars);
+            for byte in &hash.bytes {
                 collect_expr_fallback_vars(byte, vars);
             }
         }
@@ -432,7 +429,7 @@ pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut BTreeSet<U256>
         Expr::Const(value) => {
             constants.insert(*value);
         }
-        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => {}
+        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => {}
         Expr::Not(value) => collect_expr_constants(value, constants),
         Expr::Op(_, left, right) => {
             collect_expr_constants(left, constants);

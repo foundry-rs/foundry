@@ -678,14 +678,16 @@ fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
 fn cache_key_expr(expr: Expr) -> Expr {
     match expr {
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => expr,
-        Expr::Keccak { name, len, bytes } => Expr::Keccak {
-            name,
-            len: Box::new(cache_key_expr(*len)),
-            bytes: bytes.into_iter().map(cache_key_expr).collect(),
-        },
-        Expr::Hash { name, algorithm, bytes } => {
-            Expr::Hash { name, algorithm, bytes: bytes.into_iter().map(cache_key_expr).collect() }
-        }
+        Expr::Keccak(hash) => Expr::keccak(
+            hash.name,
+            cache_key_expr(*hash.len),
+            hash.bytes.into_iter().map(cache_key_expr).collect(),
+        ),
+        Expr::Hash(hash) => Expr::hash(
+            hash.name,
+            hash.algorithm,
+            hash.bytes.into_iter().map(cache_key_expr).collect(),
+        ),
         Expr::Not(value) => Expr::Not(Box::new(cache_key_expr(*value))),
         Expr::Op(op, left, right) => {
             let left = cache_key_expr(*left);

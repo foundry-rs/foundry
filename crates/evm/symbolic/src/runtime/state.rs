@@ -204,7 +204,7 @@ impl PathState {
         let constraint_bound = self.constraint_upper_bound_usize(expr);
         let structural_bound = match expr {
             Expr::Const(value) => u256_to_usize(*value),
-            Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
+            Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => None,
             Expr::Not(_) => None,
             Expr::AddMod { modulus, .. } | Expr::MulMod { modulus, .. } => {
                 match expr_const_value(modulus) {
@@ -1654,12 +1654,15 @@ fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
     match expr {
         Expr::Const(_) => {}
         Expr::GasLeft(_) => {}
-        Expr::Var(var) | Expr::Hash { name: var, .. } => {
+        Expr::Var(var) => {
             vars.insert(var.clone());
         }
-        Expr::Keccak { len, bytes, .. } => {
-            collect_eval_vars(len, vars);
-            for byte in bytes {
+        Expr::Hash(hash) => {
+            vars.insert(hash.name.clone());
+        }
+        Expr::Keccak(hash) => {
+            collect_eval_vars(&hash.len, vars);
+            for byte in &hash.bytes {
                 collect_eval_vars(byte, vars);
             }
         }

@@ -169,11 +169,7 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
     }
 
     match expr {
-        Expr::Const(_)
-        | Expr::Var(_)
-        | Expr::GasLeft(_)
-        | Expr::Keccak { .. }
-        | Expr::Hash { .. } => expr,
+        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => expr,
         Expr::Not(value) => Expr::Not(Box::new(normalize_expr_for_solver(*value))),
         Expr::Op(op, left, right) => {
             let left = normalize_expr_for_solver(*left);
@@ -401,10 +397,10 @@ pub(crate) fn bool_from_word_expr(expr: &Expr) -> Option<BoolExpr> {
 pub(crate) fn expr_contains_udiv(expr: &Expr) -> bool {
     match expr {
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => false,
-        Expr::Keccak { len, bytes, .. } => {
-            expr_contains_udiv(len) || bytes.iter().any(expr_contains_udiv)
+        Expr::Keccak(hash) => {
+            expr_contains_udiv(&hash.len) || hash.bytes.iter().any(expr_contains_udiv)
         }
-        Expr::Hash { bytes, .. } => bytes.iter().any(expr_contains_udiv),
+        Expr::Hash(hash) => hash.bytes.iter().any(expr_contains_udiv),
         Expr::Not(value) => expr_contains_udiv(value),
         Expr::Op(op, left, right) => {
             matches!(op, ExprOp::UDiv) || expr_contains_udiv(left) || expr_contains_udiv(right)
@@ -563,8 +559,8 @@ impl ConstraintContext {
             Expr::Const(_)
             | Expr::Var(_)
             | Expr::GasLeft(_)
-            | Expr::Keccak { .. }
-            | Expr::Hash { .. }
+            | Expr::Keccak(_)
+            | Expr::Hash(_)
             | Expr::Not(_) => expr_unsigned_bits(expr),
             Expr::Op(ExprOp::And, left, right) => match (left.as_ref(), right.as_ref()) {
                 (expr, Expr::Const(mask)) | (Expr::Const(mask), expr) => {

@@ -25,11 +25,11 @@ pub(crate) fn keccak_word_with_len(bytes: Vec<SymWord>, len: SymWord) -> SymWord
 
     let len = len.into_expr();
     let exprs = bytes.into_iter().map(SymWord::into_expr).collect::<Vec<_>>();
-    SymWord::Expr(Expr::Keccak {
-        name: stable_symbol("keccak", format!("{len:?}:{exprs:?}")),
-        len: Box::new(len),
-        bytes: exprs,
-    })
+    SymWord::from_expr(Expr::keccak(
+        stable_symbol("keccak", format!("{len:?}:{exprs:?}")),
+        len,
+        exprs,
+    ))
 }
 
 /// Returns the `symbolic_hash_word_with_len` symbolic expression helper result.
@@ -41,11 +41,11 @@ pub(crate) fn symbolic_hash_word_with_len(
     let len = len.into_expr();
     let exprs = bytes.into_iter().map(SymWord::into_expr).collect::<Vec<_>>();
     let identity = std::iter::once(len.clone()).chain(exprs.clone()).collect::<Vec<_>>();
-    SymWord::Expr(Expr::Hash {
-        name: stable_symbol(algorithm, format!("{len:?}:{exprs:?}")),
+    SymWord::from_expr(Expr::hash(
+        stable_symbol(algorithm, format!("{len:?}:{exprs:?}")),
         algorithm,
-        bytes: identity,
-    })
+        identity,
+    ))
 }
 
 /// Implements the `create2_address_word` symbolic expression helper.
@@ -211,7 +211,7 @@ pub(crate) fn storage_select(
     match condition {
         BoolExpr::Const(true) => write_value,
         BoolExpr::Const(false) => base,
-        condition => SymWord::Expr(Expr::Ite(
+        condition => SymWord::from_expr(Expr::Ite(
             Box::new(condition),
             Box::new(write_value.into_expr()),
             Box::new(base.into_expr()),
@@ -242,19 +242,21 @@ pub(crate) fn storage_key_eq(read_key: SymWord, write_key: SymWord) -> BoolExpr 
 
 /// Returns the root Solidity storage slot for a mapping-style keccak key.
 pub(crate) fn storage_mapping_root_slot(key: &Expr) -> Option<U256> {
-    let Expr::Keccak { len, bytes, .. } = key else { return None };
-    if !matches!(len.as_ref(), Expr::Const(value) if *value == U256::from(64)) || bytes.len() < 64 {
+    let Expr::Keccak(hash) = key else { return None };
+    if !matches!(hash.len.as_ref(), Expr::Const(value) if *value == U256::from(64))
+        || hash.bytes.len() < 64
+    {
         return None;
     }
 
-    let slot = word_from_bytes(bytes[32..64].iter().cloned().map(|expr| match expr {
+    let slot = word_from_bytes(hash.bytes[32..64].iter().cloned().map(|expr| match expr {
         Expr::Const(value) => SymWord::Concrete(value),
-        expr => SymWord::Expr(expr),
+        expr => SymWord::from_expr(expr),
     }))
     .into_expr();
     match slot {
         Expr::Const(slot) => Some(slot),
-        Expr::Keccak { .. } => storage_mapping_root_slot(&slot),
+        Expr::Keccak(_) => storage_mapping_root_slot(&slot),
         _ => None,
     }
 }
@@ -262,7 +264,7 @@ pub(crate) fn storage_mapping_root_slot(key: &Expr) -> Option<U256> {
 /// Implements the `storage_layout_key` symbolic expression helper.
 pub(crate) fn storage_layout_key(key: &Expr) -> Option<(Expr, Expr)> {
     match key {
-        Expr::Keccak { .. } => Some((key.clone(), Expr::Const(U256::ZERO))),
+        Expr::Keccak(_) => Some((key.clone(), Expr::Const(U256::ZERO))),
         Expr::Op(ExprOp::Add, left, right) => {
             if let Some((base, offset)) = storage_layout_key(left)
                 && !expr_contains_keccak(right)
@@ -295,7 +297,7 @@ pub(crate) fn sym_add(left: SymWord, right: SymWord) -> SymWord {
         (SymWord::Concrete(left), SymWord::Concrete(right)) => {
             SymWord::Concrete(left.wrapping_add(right))
         }
-        (left, right) => SymWord::Expr(expr_add(left.into_expr(), right.into_expr())),
+        (left, right) => SymWord::from_expr(expr_add(left.into_expr(), right.into_expr())),
     }
 }
 
@@ -305,7 +307,9 @@ pub(crate) fn sym_sub(left: SymWord, right: SymWord) -> SymWord {
         (SymWord::Concrete(left), SymWord::Concrete(right)) => {
             SymWord::Concrete(left.wrapping_sub(right))
         }
-        (left, right) => SymWord::Expr(Expr::op(ExprOp::Sub, left.into_expr(), right.into_expr())),
+        (left, right) => {
+            SymWord::from_expr(Expr::op(ExprOp::Sub, left.into_expr(), right.into_expr()))
+        }
     }
 }
 
@@ -335,8 +339,8 @@ fn u256_from_u512(value: U512) -> U256 {
 /// Returns the `expr_contains_keccak` symbolic expression helper result.
 pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
     match expr {
-        Expr::Keccak { .. } => true,
-        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Hash { .. } => false,
+        Expr::Keccak(_) => true,
+        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Hash(_) => false,
         Expr::Not(value) => expr_contains_keccak(value),
         Expr::Op(_, left, right) => expr_contains_keccak(left) || expr_contains_keccak(right),
         Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
@@ -356,10 +360,10 @@ pub(crate) fn expr_contains_gasleft(expr: &Expr) -> bool {
         Expr::Const(_) => false,
         Expr::Var(_) => false,
         Expr::GasLeft(_) => true,
-        Expr::Keccak { len, bytes, .. } => {
-            expr_contains_gasleft(len) || bytes.iter().any(expr_contains_gasleft)
+        Expr::Keccak(hash) => {
+            expr_contains_gasleft(&hash.len) || hash.bytes.iter().any(expr_contains_gasleft)
         }
-        Expr::Hash { bytes, .. } => bytes.iter().any(expr_contains_gasleft),
+        Expr::Hash(hash) => hash.bytes.iter().any(expr_contains_gasleft),
         Expr::Not(value) => expr_contains_gasleft(value),
         Expr::Op(_, left, right) => expr_contains_gasleft(left) || expr_contains_gasleft(right),
         Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
@@ -432,8 +436,8 @@ pub(crate) fn expr_nonzero_forces_const(
         Expr::Const(_)
         | Expr::Var(_)
         | Expr::GasLeft(_)
-        | Expr::Keccak { .. }
-        | Expr::Hash { .. }
+        | Expr::Keccak(_)
+        | Expr::Hash(_)
         | Expr::Not(_) => None,
         Expr::Ite(cond, then_expr, else_expr) => {
             if expr_const_value(then_expr).is_some_and(|value| !value.is_zero())
@@ -497,7 +501,7 @@ pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, ma
 pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
     match expr {
         Expr::Const(value) => Some(*value),
-        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
+        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => None,
         Expr::Not(value) => Some(!expr_const_value(value)?),
         Expr::Op(op, left, right) => {
             Some(eval_expr_op(*op, expr_const_value(left)?, expr_const_value(right)?))
@@ -599,7 +603,7 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymWord>) -> SymWo
     }
 
     if let Some(expr) = word_from_extracted_bytes(&bytes) {
-        return SymWord::Expr(expr);
+        return SymWord::from_expr(expr);
     }
 
     let mut expr = Expr::Const(U256::ZERO);
@@ -613,7 +617,7 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymWord>) -> SymWo
         };
         expr = Expr::op(ExprOp::Or, expr, byte);
     }
-    SymWord::Expr(expr)
+    SymWord::from_expr(expr)
 }
 
 /// Returns the `word_from_extracted_bytes` symbolic expression helper result.
@@ -673,9 +677,11 @@ pub(crate) fn strip_low_byte_mask(expr: &Expr) -> Option<&Expr> {
 pub(crate) fn low_byte(word: SymWord) -> SymWord {
     match word {
         SymWord::Concrete(word) => SymWord::Concrete(U256::from(word.to::<u8>())),
-        word => {
-            SymWord::Expr(Expr::op(ExprOp::And, word.into_expr(), Expr::Const(U256::from(0xff))))
-        }
+        word => SymWord::from_expr(Expr::op(
+            ExprOp::And,
+            word.into_expr(),
+            Expr::Const(U256::from(0xff)),
+        )),
     }
 }
 
@@ -756,8 +762,8 @@ pub(crate) fn eval_expr(
         Expr::Const(value) => *value,
         Expr::Var(var) => model.get(var).copied().unwrap_or_default(),
         Expr::GasLeft(_) => return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled")),
-        Expr::Keccak { len, bytes, .. } => eval_keccak_expr(len, bytes, model)?,
-        Expr::Hash { name, .. } => model.get(name).copied().unwrap_or_default(),
+        Expr::Keccak(hash) => eval_keccak_expr(&hash.len, &hash.bytes, model)?,
+        Expr::Hash(hash) => model.get(&hash.name).copied().unwrap_or_default(),
         Expr::Not(value) => !eval_expr(value, model)?,
         Expr::Op(op, left, right) => {
             let left = eval_expr(left, model)?;
@@ -898,6 +904,14 @@ impl SymWord {
         Self::Concrete(U256::ZERO)
     }
 
+    /// Converts an expression into a symbolic word, preserving the concrete fast path.
+    pub(crate) fn from_expr(expr: Expr) -> Self {
+        match expr {
+            Expr::Const(value) => Self::Concrete(value),
+            expr => Self::Expr(expr),
+        }
+    }
+
     /// Returns whether this word depends on the opaque `GAS` / `gasleft()` value.
     pub(crate) fn contains_gasleft(&self) -> bool {
         match self {
@@ -987,8 +1001,8 @@ pub(crate) enum Expr {
     Const(U256),
     Var(String),
     GasLeft(usize),
-    Keccak { name: String, len: Box<Self>, bytes: Vec<Self> },
-    Hash { name: String, algorithm: &'static str, bytes: Vec<Self> },
+    Keccak(Box<KeccakExpr>),
+    Hash(Box<HashExpr>),
     Not(Box<Self>),
     Op(ExprOp, Box<Self>, Box<Self>),
     AddMod { left: Box<Self>, right: Box<Self>, modulus: Box<Self> },
@@ -996,7 +1010,31 @@ pub(crate) enum Expr {
     Ite(Box<BoolExpr>, Box<Self>, Box<Self>),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct KeccakExpr {
+    pub(crate) name: String,
+    pub(crate) len: Box<Expr>,
+    pub(crate) bytes: Vec<Expr>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct HashExpr {
+    pub(crate) name: String,
+    pub(crate) algorithm: &'static str,
+    pub(crate) bytes: Vec<Expr>,
+}
+
 impl Expr {
+    /// Builds a symbolic keccak expression.
+    pub(crate) fn keccak(name: String, len: Self, bytes: Vec<Self>) -> Self {
+        Self::Keccak(Box::new(KeccakExpr { name, len: Box::new(len), bytes }))
+    }
+
+    /// Builds an opaque symbolic hash expression.
+    pub(crate) fn hash(name: String, algorithm: &'static str, bytes: Vec<Self>) -> Self {
+        Self::Hash(Box::new(HashExpr { name, algorithm, bytes }))
+    }
+
     /// Implements the `op` symbolic expression helper.
     pub(crate) fn op(op: ExprOp, left: Self, right: Self) -> Self {
         if let (Self::Const(left), Self::Const(right)) = (&left, &right) {
@@ -1124,8 +1162,11 @@ impl Expr {
             Self::Var(var) => {
                 vars.insert(var.clone());
             }
-            Self::Keccak { name, .. } | Self::Hash { name, .. } => {
-                vars.insert(name.clone());
+            Self::Keccak(hash) => {
+                vars.insert(hash.name.clone());
+            }
+            Self::Hash(hash) => {
+                vars.insert(hash.name.clone());
             }
             Self::Not(value) => value.collect_vars(vars),
             Self::Op(_, left, right) => {
@@ -1151,7 +1192,8 @@ impl Expr {
             Self::Const(value) => format!("(_ bv{value} 256)"),
             Self::Var(var) => var.clone(),
             Self::GasLeft(id) => format!("gasleft_{id}"),
-            Self::Keccak { name, .. } | Self::Hash { name, .. } => name.clone(),
+            Self::Keccak(hash) => hash.name.clone(),
+            Self::Hash(hash) => hash.name.clone(),
             Self::Not(value) => format!("(bvnot {})", value.smt()),
             Self::Op(op, left, right) => format!("({} {} {})", op.smt(), left.smt(), right.smt()),
             Self::AddMod { left, right, modulus } => {
@@ -1249,29 +1291,25 @@ impl BoolExpr {
                 }
                 Self::Eq(Expr::Const(*left), right.clone())
             }
-            (
-                Expr::Keccak { len: left_len, bytes: left_bytes, .. },
-                Expr::Keccak { len: right_len, bytes: right_bytes, .. },
-            ) if left_bytes.len() == right_bytes.len() => {
-                let mut conditions = vec![Self::eq((**left_len).clone(), (**right_len).clone())];
+            (Expr::Keccak(left), Expr::Keccak(right)) if left.bytes.len() == right.bytes.len() => {
+                let mut conditions = vec![Self::eq((*left.len).clone(), (*right.len).clone())];
                 conditions.extend(
-                    left_bytes
+                    left.bytes
                         .iter()
                         .cloned()
-                        .zip(right_bytes.iter().cloned())
+                        .zip(right.bytes.iter().cloned())
                         .map(|(left, right)| Self::eq(left, right)),
                 );
                 Self::and(conditions)
             }
-            (
-                Expr::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
-                Expr::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
-            ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
+            (Expr::Hash(left), Expr::Hash(right))
+                if left.algorithm == right.algorithm && left.bytes.len() == right.bytes.len() =>
+            {
                 Self::and(
-                    left_bytes
+                    left.bytes
                         .iter()
                         .cloned()
-                        .zip(right_bytes.iter().cloned())
+                        .zip(right.bytes.iter().cloned())
                         .map(|(left, right)| Self::eq(left, right))
                         .collect(),
                 )
