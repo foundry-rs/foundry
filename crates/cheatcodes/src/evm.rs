@@ -463,10 +463,10 @@ impl Cheatcode for resetGasMeteringCall {
 impl Cheatcode for lastCallGasCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
-        let Some(last_frame_gas) = &state.gas_metering.last_frame_gas else {
+        let Some(last_call_gas) = &state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        Ok(last_frame_gas.abi_encode())
+        Ok(last_call_gas.abi_encode())
     }
 }
 
@@ -848,24 +848,24 @@ impl Cheatcode for snapshotValue_1Call {
 impl Cheatcode for snapshotGasLastCall_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name } = self;
-        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_frame_gas.gasTotalUsed)
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_call_gas.gasTotalUsed)
     }
 }
 
 impl Cheatcode for snapshotGasLastCall_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name, group } = self;
-        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
         inner_last_gas_snapshot(
             ccx,
             Some(group.clone()),
             Some(name.clone()),
-            last_frame_gas.gasTotalUsed,
+            last_call_gas.gasTotalUsed,
         )
     }
 }

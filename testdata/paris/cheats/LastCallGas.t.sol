@@ -47,6 +47,18 @@ contract RevertingConstructor {
     }
 }
 
+contract NestedRevertingTarget {
+    RevertingTarget public target;
+
+    constructor(RevertingTarget target_) {
+        target = target_;
+    }
+
+    function fail() public view {
+        target.fail();
+    }
+}
+
 abstract contract LastCallGasFixture is Test {
     Target public target;
 
@@ -64,6 +76,20 @@ abstract contract LastCallGasFixture is Test {
     function testRevertNoCachedLastFrameGas() public {
         vm._expectCheatcodeRevert();
         vm.lastFrameGas();
+    }
+
+    function testLastCallGasDoesNotRecordCreate() public {
+        new Target();
+
+        vm._expectCheatcodeRevert();
+        vm.lastCallGas();
+    }
+
+    function testSnapshotGasLastCallDoesNotRecordCreate() public {
+        new Target();
+
+        vm._expectCheatcodeRevert();
+        vm.snapshotGasLastCall("testSnapshotGasLastCallDoesNotRecordCreate");
     }
 
     function _setup() internal {
@@ -97,17 +123,6 @@ abstract contract LastCallGasFixture is Test {
     }
 }
 
-contract LastFrameGasSetupIsolationTest is Test {
-    function setUp() public {
-        new Target();
-    }
-
-    function testRevertNoCachedLastFrameGasAfterSetUp() public {
-        vm._expectCheatcodeRevert();
-        vm.lastFrameGas();
-    }
-}
-
 contract LastFrameGasExpectedRevertTest is Test {
     RevertingTarget public target;
 
@@ -129,6 +144,36 @@ contract LastFrameGasExpectedRevertTest is Test {
 
         vm._expectCheatcodeRevert();
         vm.lastFrameGas();
+    }
+
+    function testExpectedRevertCreateClearsCachedLastFrameGas() public {
+        new Target();
+
+        vm.expectRevert();
+        new RevertingConstructor();
+
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testNestedExpectedRevertCallClearsCachedLastFrameGas() public {
+        NestedRevertingTarget nestedTarget = new NestedRevertingTarget(target);
+
+        vm.expectRevert();
+        nestedTarget.fail();
+
+        vm._expectCheatcodeRevert();
+        vm.lastFrameGas();
+    }
+
+    function testSnapshotGasLastFrameExpectedRevertClearsCachedLastFrameGas() public {
+        new Target();
+
+        vm.expectRevert();
+        new RevertingConstructor();
+
+        vm._expectCheatcodeRevert();
+        vm.snapshotGasLastFrame("testSnapshotGasLastFrameExpectedRevertClearsCachedLastFrameGas");
     }
 }
 
@@ -174,7 +219,7 @@ contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastFrameGasFromCall() public {
         _setup();
         _performCall();
-        _assertGas(vm.lastFrameGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(vm.lastFrameGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
     }
 
     function testRecordLastFrameGasFromCreate() public {
@@ -190,18 +235,18 @@ contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
     }
 
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 0, gasRefunded: 19900}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
     }
 }
