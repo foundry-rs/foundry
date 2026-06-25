@@ -231,8 +231,8 @@ pub(crate) struct CampaignCorpusEntry {
 /// Campaign-local corpus candidate exchanged between invariant workers.
 #[derive(Debug, Clone)]
 pub(crate) struct SharedCorpusEntry {
-    tx_seq: Arc<[BasicTxDetails]>,
-    cmp_seq: Arc<[Vec<CmpOperands>]>,
+    tx_seq: Vec<BasicTxDetails>,
+    cmp_seq: Vec<Vec<CmpOperands>>,
     dedupe_by_coverage: bool,
 }
 
@@ -242,15 +242,11 @@ impl SharedCorpusEntry {
         cmp_seq: Vec<Vec<CmpOperands>>,
         dedupe_by_coverage: bool,
     ) -> Self {
-        Self { tx_seq: tx_seq.into(), cmp_seq: cmp_seq.into(), dedupe_by_coverage }
+        Self { tx_seq, cmp_seq, dedupe_by_coverage }
     }
 
     fn to_corpus_entry(&self, uuid: Uuid) -> CorpusEntry {
-        CorpusEntry::new_with_cmp(
-            self.tx_seq.as_ref().to_vec(),
-            self.cmp_seq.as_ref().to_vec(),
-            uuid,
-        )
+        CorpusEntry::new_with_cmp(self.tx_seq.clone(), self.cmp_seq.clone(), uuid)
     }
 }
 
@@ -1827,8 +1823,8 @@ impl WorkerCorpus {
 
             let mut executor = executor.clone();
             if let Some(corpus_entry) = self.try_import_sequence(
-                entry.tx_seq.as_ref(),
-                Some(entry.cmp_seq.as_ref()),
+                &entry.tx_seq,
+                Some(&entry.cmp_seq),
                 &mut executor,
                 target,
                 Uuid::new_v4(),
