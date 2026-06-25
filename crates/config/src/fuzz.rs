@@ -121,9 +121,6 @@ pub struct FuzzCorpusConfig {
     pub corpus_dir: Option<PathBuf>,
     // Whether corpus to use gzip file compression and decompression.
     pub corpus_gzip: bool,
-    // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
-    // Mutations will be performed at least `corpus_min_mutations` times.
-    pub corpus_min_mutations: usize,
     // Number of corpus that won't be evicted from memory.
     pub corpus_min_size: usize,
     /// Whether to collect and display edge coverage metrics.
@@ -221,7 +218,6 @@ impl Default for FuzzCorpusConfig {
         Self {
             corpus_dir: None,
             corpus_gzip: true,
-            corpus_min_mutations: 5,
             corpus_min_size: 0,
             show_edge_coverage: false,
             evm_edge_coverage_collision_free: true,
