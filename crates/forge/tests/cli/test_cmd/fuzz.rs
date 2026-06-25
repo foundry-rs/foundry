@@ -50,23 +50,12 @@ fn write_corpus_entry(corpus: &Path, name: &str, calldata: &str) {
     std::fs::write(corpus.join(name), corpus_entry(calldata)).unwrap();
 }
 
-fn regular_file_count(root: &Path) -> usize {
-    if !root.exists() {
-        return 0;
-    }
-    std::fs::read_dir(root)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .map(|path| {
-            if path.is_dir() {
-                regular_file_count(&path)
-            } else if path.is_file() {
-                1
-            } else {
-                0
-            }
+fn has_regular_file(root: &Path) -> bool {
+    root.exists()
+        && std::fs::read_dir(root).unwrap().any(|entry| {
+            let path = entry.unwrap().path();
+            path.is_file() || (path.is_dir() && has_regular_file(&path))
         })
-        .sum()
 }
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
@@ -318,17 +307,6 @@ contract ForgeFuzzJunitFailureTest {
 });
 
 forgetest_init!(forge_fuzz_rejects_watch, |prj, cmd| {
-    prj.add_test(
-        "ForgeFuzzWatchTest.t.sol",
-        r#"
-contract ForgeFuzzWatchTest {
-    function testFuzz_value(uint256 value) public pure {
-        value;
-    }
-}
-   "#,
-    );
-
     let run = cmd.forge_fuse().args(["fuzz", "run", "--watch"]).assert_failure();
     let stderr = String::from_utf8(run.get_output().stderr.clone()).unwrap();
     assert!(stderr.contains("`--watch` is not supported for `forge fuzz run`"), "{stderr}");
@@ -877,25 +855,12 @@ forgetest_init!(forge_fuzz_corpus_subcommands_dedup_worker_entries, |prj, cmd| {
 });
 
 forgetest_init!(forge_fuzz_rejects_machine, |prj, cmd| {
-    let corpus = prj.root().join("corpus");
-    std::fs::create_dir_all(&corpus).unwrap();
-    let calldata = "0x12345678";
-    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000001-1.json", calldata);
-    write_corpus_entry(&corpus, "00000000-0000-0000-0000-000000000002-2.json", calldata);
-
     for args in [
         vec!["--machine", "fuzz", "run"],
         vec!["--machine", "fuzz", "replay"],
         vec!["--machine", "fuzz", "show", "corpus"],
         vec!["--machine", "fuzz", "cmin", "corpus", "--corpus-out", "cmin"],
-        vec![
-            "--machine",
-            "fuzz",
-            "tmin",
-            "corpus/00000000-0000-0000-0000-000000000001-1.json",
-            "--corpus-out",
-            "min-machine.json",
-        ],
+        vec!["--machine", "fuzz", "tmin", "corpus/entry.json", "--corpus-out", "min-machine.json"],
     ] {
         let result = cmd.forge_fuse().args(args).assert_failure();
         let output: Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
@@ -1026,7 +991,7 @@ contract ForgeFuzzZeroReplayTest is Test {
         .assert_success();
     let stdout = String::from_utf8(all_assume_showmap.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("(replay: 0 entries, 0 files, 1 skipped)"), "{stdout}");
-    assert_eq!(regular_file_count(&prj.root().join("assume-showmap")), 0);
+    assert!(!has_regular_file(&prj.root().join("assume-showmap")));
 
     let malformed_corpus = prj.root().join("malformed-corpus");
     std::fs::create_dir_all(&malformed_corpus).unwrap();

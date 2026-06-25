@@ -238,30 +238,14 @@ contract ShowmapCounterTest is Test {
 });
 
 forgetest_init!(showmap_replay_rejects_path_component_names, |prj, cmd| {
-    prj.initialize_default_contracts();
-    prj.update_config(|config| {
-        config.invariant.runs = 5;
-        config.invariant.depth = 5;
-        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
-    });
     prj.add_test(
         "ShowmapCounter.t.sol",
         r#"
-import {Counter} from "../src/Counter.sol";
-
 contract ShowmapCounterTest {
-    Counter public counter;
-
-    function setUp() public {
-        counter = new Counter();
-    }
-
     function invariant_counter_called() public view {}
 }
    "#,
     );
-
-    cmd.args(["test", "--mc", "ShowmapCounterTest"]).assert_success();
 
     for args in [
         vec![
