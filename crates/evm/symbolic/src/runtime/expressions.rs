@@ -5,7 +5,8 @@ pub(crate) type SymbolicVars = BTreeSet<Arc<str>>;
 
 /// Computes the `keccak_word` symbolic expression helper result.
 pub(crate) fn keccak_word(bytes: Vec<SymWord>) -> SymWord {
-    keccak_word_with_len(bytes.clone(), SymWord::Concrete(U256::from(bytes.len())))
+    let len = bytes.len();
+    keccak_word_with_len(bytes, SymWord::Concrete(U256::from(len)))
 }
 
 /// Computes the `keccak_word_with_len` symbolic expression helper result.
@@ -43,12 +44,11 @@ pub(crate) fn symbolic_hash_word_with_len(
 ) -> SymWord {
     let len = len.into_expr();
     let exprs = bytes.into_iter().map(SymWord::into_expr).collect::<Vec<_>>();
-    let identity = std::iter::once(len.clone()).chain(exprs.clone()).collect::<Vec<_>>();
-    SymWord::from_expr(Expr::hash(
-        stable_symbol(algorithm, format!("{len:?}:{exprs:?}")),
-        algorithm,
-        identity,
-    ))
+    let name = stable_symbol(algorithm, format!("{len:?}:{exprs:?}"));
+    let mut identity = Vec::with_capacity(exprs.len() + 1);
+    identity.push(len);
+    identity.extend(exprs);
+    SymWord::from_expr(Expr::hash(name, algorithm, identity))
 }
 
 /// Implements the `create2_address_word` symbolic expression helper.
