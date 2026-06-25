@@ -699,7 +699,7 @@ pub(crate) struct ExpectedCall {
     pub(crate) value: Option<U256>,
     pub(crate) gas: Option<u64>,
     pub(crate) min_gas: Option<u64>,
-    pub(crate) data: Vec<SymWord>,
+    pub(crate) data: Arc<[SymWord]>,
     pub(crate) expected: u64,
     pub(crate) observed: u64,
     pub(crate) exact: bool,
@@ -759,7 +759,7 @@ impl ExpectedCall {
 pub(crate) struct CallMock {
     pub(crate) callee: SymWord,
     pub(crate) value: Option<U256>,
-    pub(crate) data: Vec<SymWord>,
+    pub(crate) data: Arc<[SymWord]>,
     pub(crate) returns: Vec<SymReturnData>,
     pub(crate) reverts: bool,
     pub(crate) calls: usize,
@@ -792,7 +792,7 @@ pub(crate) struct CallMockOutcome {
 pub(crate) struct FunctionMock {
     pub(crate) callee: SymWord,
     pub(crate) target: Address,
-    pub(crate) data: Vec<SymWord>,
+    pub(crate) data: Arc<[SymWord]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
