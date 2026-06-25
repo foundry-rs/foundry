@@ -1,4 +1,8 @@
-use super::{install, test::TestArgs, watch::WatchArgs};
+use super::{
+    install,
+    test::{TestArgs, TestExecutionOptions},
+    watch::WatchArgs,
+};
 use crate::coverage::{
     BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
     DebugReporter, ItemAnchor, LcovReporter,
@@ -307,8 +311,17 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
-        let outcome =
-            self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
+        let outcome = self
+            .test
+            .run_tests(
+                project_root,
+                config,
+                evm_opts,
+                output,
+                &filter,
+                TestExecutionOptions::coverage(),
+            )
+            .await?;
 
         let known_contracts = outcome.known_contracts.as_ref().unwrap().clone();
 

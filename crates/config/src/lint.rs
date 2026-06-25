@@ -37,7 +37,7 @@ impl Default for LinterConfig {
     fn default() -> Self {
         Self {
             lint_on_build: true,
-            severity: vec![Severity::High, Severity::Med, Severity::Low],
+            severity: Vec::new(),
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
             lint_specific: LintSpecificConfig::default(),

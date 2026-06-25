@@ -1,6 +1,6 @@
 use alloy_primitives::{
     Address, U256,
-    map::{DefaultHashBuilder, HashMap},
+    map::{DefaultHashBuilder, Entry, HashMap},
 };
 use core::{
     fmt,
@@ -120,14 +120,16 @@ pub struct EdgeIndexMap {
 }
 
 impl EdgeIndexMap {
+    #[inline]
     pub fn edge_index(&mut self, edge: EdgeKey) -> usize {
-        if let Some(index) = self.edge_indices.get(&edge) {
-            *index
-        } else {
-            let index = self.next_index;
-            self.next_index += 1;
-            self.edge_indices.insert(edge, index);
-            index
+        match self.edge_indices.entry(edge) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let index = self.next_index;
+                self.next_index += 1;
+                entry.insert(index);
+                index
+            }
         }
     }
 

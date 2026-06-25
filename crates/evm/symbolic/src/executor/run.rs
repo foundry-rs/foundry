@@ -15,12 +15,40 @@ impl SymbolicExecutor {
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
     pub(super) fn defer_incomplete(&mut self, reason: &'static str) {
-        self.deferred_incomplete.get_or_insert(reason);
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::Unsupported(reason));
+    }
+
+    /// Defers a solver-unknown result while continuing with decidable sibling paths.
+    pub(super) fn defer_solver_unknown(&mut self) {
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
+    }
+
+    /// Checks branch feasibility, recording solver-unknown as an incomplete proof path.
+    pub(super) fn branch_is_sat_or_defer(
+        &mut self,
+        constraints: &[BoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        match self.solver.is_sat_branch(constraints) {
+            Ok(feasible) => Ok(feasible),
+            Err(SymbolicError::SolverUnknown) => {
+                self.defer_solver_unknown();
+                Ok(false)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// Returns and clears any deferred incomplete reason.
-    const fn take_deferred_incomplete(&mut self) -> Option<&'static str> {
-        self.deferred_incomplete.take()
+    fn take_deferred_incomplete(&mut self) -> Option<(SymbolicStopReason, String)> {
+        match self.deferred_incomplete.take()? {
+            DeferredIncomplete::Unsupported(reason) => Some((
+                SymbolicStopReason::Stuck,
+                format!("unsupported symbolic execution feature: {reason}"),
+            )),
+            DeferredIncomplete::SolverUnknown => {
+                Some((SymbolicStopReason::Timeout, "solver returned unknown".to_string()))
+            }
+        }
     }
 
     /// Returns staged solver portfolio diagnostics collected by this executor.
@@ -265,10 +293,10 @@ impl SymbolicExecutor {
             });
         }
 
-        if let Some(reason) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.take_deferred_incomplete() {
             return Ok(SymbolicRunResult::Incomplete {
-                kind: SymbolicStopReason::Stuck,
-                reason: format!("unsupported symbolic execution feature: {reason}"),
+                kind,
+                reason,
                 stats: self.stats_with_paths(completed_paths),
             });
         }
@@ -477,10 +505,10 @@ impl SymbolicExecutor {
             });
         }
 
-        if let Some(reason) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.take_deferred_incomplete() {
             return Ok(SymbolicInvariantRunResult::Incomplete {
-                kind: SymbolicStopReason::Stuck,
-                reason: format!("unsupported symbolic execution feature: {reason}"),
+                kind,
+                reason,
                 stats: self.stats_with_paths(completed_paths),
             });
         }
