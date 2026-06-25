@@ -391,12 +391,6 @@ pub struct SymbolicArtifactReplayConfig {
     pub path: PathBuf,
 }
 
-impl SymbolicArtifactReplayConfig {
-    pub const fn is_replay(&self) -> bool {
-        true
-    }
-}
-
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
@@ -801,8 +795,7 @@ pub fn symbolic_entrypoints_enabled(
 ) -> bool {
     symbolic_enabled
         || symbolic_artifact_replay.is_some_and(|artifact| {
-            artifact.is_replay()
-                && artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
+            artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
         })
 }
 
