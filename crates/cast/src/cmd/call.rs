@@ -440,13 +440,18 @@ impl CallArgs {
             let value = tx.value().unwrap_or_default();
             let input = tx.input().cloned().unwrap_or_default();
             let tx_kind = tx.kind().expect("set by builder");
+
+            // Apply a user-provided `--gas-limit` to the executor. `build_test_env` propagates the
+            // executor's gas limit to the executed call/deploy, so setting it here is what takes
+            // effect; writing it onto the tx env directly would be overwritten. When no limit is
+            // given, the executor keeps the block gas limit (`u64::MAX`) set above.
+            if let Some(gas_limit) = tx.gas_limit() {
+                executor.set_gas_limit(gas_limit);
+            }
+
             let env_tx = executor.tx_env_mut();
 
             // Set transaction options with --trace
-            if let Some(gas_limit) = tx.gas_limit() {
-                env_tx.set_gas_limit(gas_limit);
-            }
-
             if let Some(gas_price) = tx.gas_price() {
                 env_tx.set_gas_price(gas_price);
             }
@@ -588,7 +593,7 @@ impl CallArgs {
             params,
             config.eth_rpc_headers.as_deref(),
             jwt.as_deref(),
-        );
+        )?;
 
         sh_println!("{}", curl_cmd)?;
         Ok(())

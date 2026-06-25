@@ -59,6 +59,24 @@ contract Dummy {
 }
 "#;
 
+const DEFAULT_INFO_LINTS_IMPORT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract UnusedSymbol {}
+"#;
+
+const DEFAULT_INFO_LINTS: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+
+contract DefaultInfoLints {
+    function BAD_CASE() public {}
+}
+"#;
+
 const COUNTER_A: &str = r#"
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
@@ -248,8 +266,33 @@ note[mixed-case-function]: function names should use mixedCase
             ..Default::default()
         };
     });
-    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
 nothing to lint
+
+"#]]);
+});
+
+forgetest!(default_lint_severity_includes_info, |prj, cmd| {
+    prj.add_source("DefaultInfoLintsImport", DEFAULT_INFO_LINTS_IMPORT);
+    prj.add_source("DefaultInfoLints", DEFAULT_INFO_LINTS);
+
+    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+note[mixed-case-function]: function names should use mixedCase
+  [FILE]:8:14
+  │
+8 │     function BAD_CASE() public {}
+  │              ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[unused-import]: unused imports should be removed
+  [FILE]:5:10
+  │
+5 │ import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+  │          ━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/unused-import
+
 
 "#]]);
 });

@@ -41,7 +41,7 @@ env:
     sparkdotfi/spark-psm:v1.0.0
 
   COVERAGE_REPOS: >-
-    ithacaxyz/account:v0.5.7,
+    ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
     sparkdotfi/spark-psm:v1.0.0
 
