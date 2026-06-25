@@ -270,34 +270,19 @@ fn sequence_from_shrink(
     calls: &[SymbolicCounterexampleCall],
     shrinker: &SequenceShrink,
 ) -> Vec<SymbolicCounterexampleCall> {
-    let mut candidate = Vec::new();
-    let mut accumulated_warp = U256::ZERO;
-    let mut accumulated_roll = U256::ZERO;
-
-    for (idx, call) in calls.iter().enumerate() {
-        if shrinker.contains(idx) {
-            let mut kept = call.clone();
-            if !accumulated_warp.is_zero() {
-                kept.warp = add_optional_u256(Some(accumulated_warp), kept.warp);
+    shrinker.apply_with_accumulated_delay(
+        calls,
+        |call| (call.warp, call.roll),
+        |mut call, warp, roll| {
+            if !warp.is_zero() {
+                call.warp = Some(warp);
             }
-            if !accumulated_roll.is_zero() {
-                kept.roll = add_optional_u256(Some(accumulated_roll), kept.roll);
+            if !roll.is_zero() {
+                call.roll = Some(roll);
             }
-            candidate.push(kept);
-            accumulated_warp = U256::ZERO;
-            accumulated_roll = U256::ZERO;
-        } else {
-            accumulated_warp += call.warp.unwrap_or_default();
-            accumulated_roll += call.roll.unwrap_or_default();
-        }
-    }
-
-    candidate
-}
-
-fn add_optional_u256(left: Option<U256>, right: Option<U256>) -> Option<U256> {
-    let sum = left.unwrap_or_default() + right.unwrap_or_default();
-    (!sum.is_zero()).then_some(sum)
+            call
+        },
+    )
 }
 
 /// Minimizes a stateless symbolic counterexample with ABI-valid candidates only.

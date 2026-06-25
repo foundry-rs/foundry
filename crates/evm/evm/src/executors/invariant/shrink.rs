@@ -50,6 +50,40 @@ impl SequenceShrink {
         self.included_calls.count()
     }
 
+    pub fn apply<T: Clone>(&self, calls: &[T]) -> Vec<T> {
+        self.current().map(|idx| calls[idx].clone()).collect()
+    }
+
+    pub fn apply_with_accumulated_delay<T, D, A>(
+        &self,
+        calls: &[T],
+        mut delay: D,
+        mut apply_delay: A,
+    ) -> Vec<T>
+    where
+        T: Clone,
+        D: FnMut(&T) -> (Option<U256>, Option<U256>),
+        A: FnMut(T, U256, U256) -> T,
+    {
+        let mut result = Vec::new();
+        let mut accumulated_warp = U256::ZERO;
+        let mut accumulated_roll = U256::ZERO;
+
+        for (idx, call) in calls.iter().enumerate() {
+            let (warp, roll) = delay(call);
+            accumulated_warp += warp.unwrap_or(U256::ZERO);
+            accumulated_roll += roll.unwrap_or(U256::ZERO);
+
+            if self.contains(idx) {
+                result.push(apply_delay(call.clone(), accumulated_warp, accumulated_roll));
+                accumulated_warp = U256::ZERO;
+                accumulated_roll = U256::ZERO;
+            }
+        }
+
+        result
+    }
+
     fn remove(&mut self, call_idx: usize) {
         self.included_calls.clear(call_idx);
     }
@@ -199,8 +233,7 @@ pub(crate) fn reset_shrink_progress(
 }
 
 /// Applies accumulated warp/roll to a call, returning a modified copy.
-fn apply_warp_roll(call: &BasicTxDetails, warp: U256, roll: U256) -> BasicTxDetails {
-    let mut result = call.clone();
+fn apply_warp_roll(mut result: BasicTxDetails, warp: U256, roll: U256) -> BasicTxDetails {
     if warp > U256::ZERO {
         result.warp = Some(warp);
     }
@@ -246,25 +279,10 @@ fn build_shrunk_sequence(
     accumulate_warp_roll: bool,
 ) -> Vec<BasicTxDetails> {
     if !accumulate_warp_roll {
-        return shrinker.current().map(|idx| calls[idx].clone()).collect();
+        return shrinker.apply(calls);
     }
 
-    let mut result = Vec::new();
-    let mut accumulated_warp = U256::ZERO;
-    let mut accumulated_roll = U256::ZERO;
-
-    for (idx, call) in calls.iter().enumerate() {
-        accumulated_warp += call.warp.unwrap_or(U256::ZERO);
-        accumulated_roll += call.roll.unwrap_or(U256::ZERO);
-
-        if shrinker.contains(idx) {
-            result.push(apply_warp_roll(call, accumulated_warp, accumulated_roll));
-            accumulated_warp = U256::ZERO;
-            accumulated_roll = U256::ZERO;
-        }
-    }
-
-    result
+    shrinker.apply_with_accumulated_delay(calls, |call| (call.warp, call.roll), apply_warp_roll)
 }
 
 /// Shared sequence shrinker. Tries to drop each call; `predicate` decides whether the candidate
@@ -494,7 +512,7 @@ where
         }
         seq_iter.next();
 
-        let executed = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
+        let executed = apply_warp_roll(tx.clone(), accumulated_warp, accumulated_roll);
         let call_result = execute_tx(executor, &executed)?;
 
         match on_call(idx, call_result)? {
@@ -923,7 +941,8 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
         if seq_iter.peek() == Some(&&idx) {
             seq_iter.next();
 
-            let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
+            let tx_with_accumulated =
+                apply_warp_roll(tx.clone(), accumulated_warp, accumulated_roll);
             let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
 
             if !call_result.reverted {
