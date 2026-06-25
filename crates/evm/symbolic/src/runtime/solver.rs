@@ -680,11 +680,15 @@ fn cache_key_expr(expr: Expr) -> Expr {
         Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => expr,
         Expr::Keccak(hash) => {
             let (name, len, bytes) = (*hash).into_parts();
-            Expr::keccak(name, cache_key_expr(len), bytes.into_iter().map(cache_key_expr).collect())
+            Expr::keccak(
+                name,
+                cache_key_expr(len),
+                bytes.iter().cloned().map(cache_key_expr).collect(),
+            )
         }
         Expr::Hash(hash) => {
             let (name, algorithm, bytes) = (*hash).into_parts();
-            Expr::hash(name, algorithm, bytes.into_iter().map(cache_key_expr).collect())
+            Expr::hash(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
         }
         Expr::Not(value) => Expr::not(cache_key_expr(*value)),
         Expr::Op(op, left, right) => {

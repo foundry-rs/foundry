@@ -986,14 +986,14 @@ pub(crate) enum Expr {
 pub(crate) struct KeccakExpr {
     name: Arc<str>,
     len: Box<Expr>,
-    bytes: Vec<Expr>,
+    bytes: Arc<[Expr]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct HashExpr {
     name: Arc<str>,
     algorithm: &'static str,
-    bytes: Vec<Expr>,
+    bytes: Arc<[Expr]>,
 }
 
 impl KeccakExpr {
@@ -1008,7 +1008,7 @@ impl KeccakExpr {
     }
 
     /// Consumes this symbolic keccak expression into its parts.
-    pub(crate) fn into_parts(self) -> (Arc<str>, Expr, Vec<Expr>) {
+    pub(crate) fn into_parts(self) -> (Arc<str>, Expr, Arc<[Expr]>) {
         let Self { name, len, bytes } = self;
         (name, *len, bytes)
     }
@@ -1027,7 +1027,7 @@ impl HashExpr {
     }
 
     /// Consumes this opaque symbolic hash expression into its parts.
-    pub(crate) fn into_parts(self) -> (Arc<str>, &'static str, Vec<Expr>) {
+    pub(crate) fn into_parts(self) -> (Arc<str>, &'static str, Arc<[Expr]>) {
         let Self { name, algorithm, bytes } = self;
         (name, algorithm, bytes)
     }
@@ -1041,7 +1041,11 @@ impl Expr {
 
     /// Builds a symbolic keccak expression.
     pub(crate) fn keccak(name: impl Into<Arc<str>>, len: Self, bytes: Vec<Self>) -> Self {
-        Self::Keccak(Box::new(KeccakExpr { name: name.into(), len: Box::new(len), bytes }))
+        Self::Keccak(Box::new(KeccakExpr {
+            name: name.into(),
+            len: Box::new(len),
+            bytes: bytes.into(),
+        }))
     }
 
     /// Builds an opaque symbolic hash expression.
@@ -1050,7 +1054,7 @@ impl Expr {
         algorithm: &'static str,
         bytes: Vec<Self>,
     ) -> Self {
-        Self::Hash(Box::new(HashExpr { name: name.into(), algorithm, bytes }))
+        Self::Hash(Box::new(HashExpr { name: name.into(), algorithm, bytes: bytes.into() }))
     }
 
     /// Builds a conditional expression.
@@ -1084,12 +1088,12 @@ impl Expr {
             Self::Const(_) | Self::Var(_) | Self::GasLeft(_) => {}
             Self::Keccak(hash) => {
                 hash.len.visit(visitor);
-                for byte in &hash.bytes {
+                for byte in hash.bytes.iter() {
                     byte.visit(visitor);
                 }
             }
             Self::Hash(hash) => {
-                for byte in &hash.bytes {
+                for byte in hash.bytes.iter() {
                     byte.visit(visitor);
                 }
             }
