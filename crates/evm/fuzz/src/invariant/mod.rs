@@ -20,6 +20,10 @@ pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_core::utils::{StateChangeset, get_function};
 
+type DynamicTargetCacheKey = (Address, B256);
+type DynamicTargetArtifactMatchCache =
+    Rc<RefCell<HashMap<DynamicTargetCacheKey, Option<CachedTargetContract>>>>;
+
 /// Returns true if the function returns `int256`, indicating optimization mode.
 /// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
 pub fn is_optimization_invariant(func: &Function) -> bool {
@@ -36,12 +40,17 @@ pub struct FuzzRunIdentifiedContracts {
     pub targets: Rc<RefCell<TargetedContracts>>,
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
+    artifact_matches: DynamicTargetArtifactMatchCache,
 }
 
 impl FuzzRunIdentifiedContracts {
     /// Creates a new `FuzzRunIdentifiedContracts` instance.
     pub fn new(targets: TargetedContracts, is_updatable: bool) -> Self {
-        Self { targets: Rc::new(RefCell::new(targets)), is_updatable }
+        Self {
+            targets: Rc::new(RefCell::new(targets)),
+            is_updatable,
+            artifact_matches: Rc::new(RefCell::new(HashMap::default())),
+        }
     }
 
     /// Borrows the current targeted contracts.
@@ -63,7 +72,6 @@ impl FuzzRunIdentifiedContracts {
             return Ok(());
         }
 
-        let mut targets = self.targets.borrow_mut();
         for (address, account) in state_changeset {
             if setup_contracts.contains_key(address) {
                 continue;
@@ -77,24 +85,54 @@ impl FuzzRunIdentifiedContracts {
             if code.is_empty() {
                 continue;
             }
-            let Some((artifact, contract_data)) =
-                project_contracts.find_by_deployed_code(code.original_byte_slice())
-            else {
-                continue;
-            };
-            let Some(functions) =
-                artifact_filters.get_targeted_functions(artifact, &contract_data.abi)?
+            let code_hash = code.hash_slow();
+            let code = code.original_byte_slice();
+            let Some(contract) = self.target_contract_for_code(
+                *address,
+                code_hash,
+                code,
+                project_contracts,
+                artifact_filters,
+            )?
             else {
                 continue;
             };
             created_contracts.push(*address);
-            let mut contract =
-                TargetedContract::new(artifact.name.clone(), contract_data.abi.clone());
-            contract.targeted_functions = functions;
-            contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
-            targets.insert(*address, contract);
+            self.targets.borrow_mut().insert(*address, contract.into_targeted_contract());
         }
         Ok(())
+    }
+
+    fn target_contract_for_code(
+        &self,
+        address: Address,
+        code_hash: B256,
+        code: &[u8],
+        project_contracts: &ContractsByArtifact,
+        artifact_filters: &ArtifactFilters,
+    ) -> eyre::Result<Option<CachedTargetContract>> {
+        let cache_key = (address, code_hash);
+        if let Some(cached_match) = self.artifact_matches.borrow().get(&cache_key) {
+            return Ok(cached_match.clone());
+        }
+
+        let cached_match = if let Some((artifact, contract_data)) =
+            project_contracts.find_by_deployed_code(code)
+        {
+            artifact_filters.get_targeted_functions(artifact, &contract_data.abi)?.map(
+                |targeted_functions| CachedTargetContract {
+                    identifier: artifact.name.clone(),
+                    abi: contract_data.abi.clone(),
+                    targeted_functions,
+                    storage_layout: contract_data.storage_layout.as_ref().map(Arc::clone),
+                    event_lookup: Arc::new(TargetedContractEvents::new(&contract_data.abi)),
+                },
+            )
+        } else {
+            None
+        };
+        self.artifact_matches.borrow_mut().insert(cache_key, cached_match.clone());
+        Ok(cached_match)
     }
 
     /// Clears targeted contracts created during an invariant run.
@@ -104,6 +142,28 @@ impl FuzzRunIdentifiedContracts {
             for addr in &created_contracts {
                 targets.remove(addr);
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedTargetContract {
+    identifier: String,
+    abi: JsonAbi,
+    targeted_functions: Vec<Function>,
+    storage_layout: Option<Arc<StorageLayout>>,
+    event_lookup: Arc<TargetedContractEvents>,
+}
+
+impl CachedTargetContract {
+    fn into_targeted_contract(self) -> TargetedContract {
+        TargetedContract {
+            identifier: self.identifier,
+            abi: self.abi,
+            targeted_functions: self.targeted_functions,
+            excluded_functions: Vec::new(),
+            storage_layout: self.storage_layout,
+            event_lookup: self.event_lookup,
         }
     }
 }
@@ -516,7 +576,14 @@ impl fmt::Display for InvariantSettings {
 mod tests {
     use super::*;
     use crate::CallDetails;
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{Bytes, U256};
+    use foundry_compilers::{
+        ArtifactId,
+        artifacts::{
+            BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
+        },
+    };
+    use revm::{bytecode::Bytecode, state::Account};
 
     fn targeted_contracts_with_function(target: Address, function: Function) -> TargetedContracts {
         let mut abi = JsonAbi::new();
@@ -535,6 +602,42 @@ mod tests {
         }
     }
 
+    fn artifact_id(name: &str) -> ArtifactId {
+        ArtifactId {
+            path: format!("{name}.json").into(),
+            name: name.to_string(),
+            source: format!("{name}.sol").into(),
+            version: "0.8.30".parse().unwrap(),
+            build_id: "test".to_string(),
+            profile: "test".to_string(),
+        }
+    }
+
+    fn project_contracts_with_runtime_code(name: &str, code: Bytes) -> ContractsByArtifact {
+        let deployed_bytecode = CompactDeployedBytecode {
+            bytecode: Some(CompactBytecode {
+                object: BytecodeObject::Bytecode(code),
+                source_map: None,
+                link_references: Default::default(),
+            }),
+            immutable_references: Default::default(),
+        };
+        let artifact = CompactContractBytecode {
+            abi: Some(JsonAbi::new()),
+            bytecode: None,
+            deployed_bytecode: Some(deployed_bytecode),
+        };
+        ContractsByArtifact::new([(artifact_id(name), artifact)])
+    }
+
+    fn touched_account_with_code(code: Bytes) -> Account {
+        let mut account = Account::default();
+        account.info.balance = U256::ZERO;
+        account.info.code = Some(Bytecode::new_raw(code));
+        account.mark_touch();
+        account
+    }
+
     #[test]
     fn targeted_contracts_short_calldata_is_not_replayable_or_decodable() {
         let target = Address::from([0x42; 20]);
@@ -544,5 +647,65 @@ mod tests {
         assert!(!targets.can_replay(&tx));
         assert!(targets.fuzzed_artifacts(&tx).1.is_none());
         assert!(targets.fuzzed_metric_key(&tx).is_none());
+    }
+
+    #[test]
+    fn collect_created_contracts_caches_deployed_code_matches() {
+        let existing = Address::from([0x42; 20]);
+        let created = Address::from([0x43; 20]);
+        let setup = Address::from([0x44; 20]);
+        let untouched = Address::from([0x45; 20]);
+        let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
+        let project_contracts =
+            project_contracts_with_runtime_code("DynamicTarget", runtime_code.clone());
+        let mut targets = TargetedContracts::new();
+        for address in [existing, setup, untouched] {
+            targets.inner.insert(
+                address,
+                TargetedContract::new("AlreadyTargeted".to_string(), JsonAbi::new()),
+            );
+        }
+        let identified = FuzzRunIdentifiedContracts::new(targets, true);
+
+        let mut state_changeset = StateChangeset::default();
+        state_changeset.insert(existing, touched_account_with_code(runtime_code.clone()));
+        state_changeset.insert(setup, touched_account_with_code(runtime_code.clone()));
+        state_changeset.insert(untouched, Account::default());
+        state_changeset.insert(created, touched_account_with_code(runtime_code));
+        let mut created_contracts = Vec::new();
+        let setup_contracts =
+            ContractsByAddress::from([(setup, ("Setup".to_string(), JsonAbi::new()))]);
+
+        identified
+            .collect_created_contracts(
+                &state_changeset,
+                &project_contracts,
+                &setup_contracts,
+                &ArtifactFilters::default(),
+                &mut created_contracts,
+            )
+            .unwrap();
+
+        created_contracts.sort_unstable();
+        assert_eq!(created_contracts, vec![existing, created]);
+        let targets = identified.targets();
+        assert_eq!(targets[&existing].identifier, "DynamicTarget");
+        assert_eq!(targets[&created].identifier, "DynamicTarget");
+        assert_eq!(targets[&setup].identifier, "AlreadyTargeted");
+        assert_eq!(targets[&untouched].identifier, "AlreadyTargeted");
+        drop(targets);
+
+        identified
+            .collect_created_contracts(
+                &state_changeset,
+                &Default::default(),
+                &setup_contracts,
+                &ArtifactFilters::default(),
+                &mut created_contracts,
+            )
+            .unwrap();
+
+        created_contracts.sort_unstable();
+        assert_eq!(created_contracts, vec![existing, existing, created, created]);
     }
 }
