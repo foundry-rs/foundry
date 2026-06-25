@@ -45,13 +45,6 @@ use std::{
 use thiserror::Error;
 use tracing::{debug, trace, trace_span, warn};
 
-macro_rules! selector {
-    ($signature:literal) => {{
-        let hash = keccak256($signature);
-        [hash[0], hash[1], hash[2], hash[3]]
-    }};
-}
-
 mod consts;
 pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
 pub(crate) use consts::*;
@@ -76,6 +69,38 @@ pub fn symbolic_solver_portfolio_availability_warning(config: &SymbolicConfig) -
 fn selector_for(signature: &str) -> [u8; 4] {
     let hash = keccak256(signature);
     [hash[0], hash[1], hash[2], hash[3]]
+}
+
+const STATIC_SELECTOR_SIGNATURES: [&str; 17] = [
+    "createAddress(string)",
+    "createBool(string)",
+    "createBytes(string)",
+    "createBytes(uint256,string)",
+    "createBytes32(string)",
+    "createBytes4(string)",
+    "createCalldata(string)",
+    "createInt(uint256,string)",
+    "createInt256(string)",
+    "createString(string)",
+    "createString(uint256,string)",
+    "createUint(uint256,string)",
+    "createUint256(string)",
+    "enableSymbolicStorage(address)",
+    "setArbitraryStorage(address)",
+    "snapshotState()",
+    "snapshotStorage(address)",
+];
+
+/// Returns a cached literal selector for static symbolic cheatcode signatures.
+fn static_selector_for(signature: &'static str) -> [u8; 4] {
+    static SELECTORS: std::sync::LazyLock<[(&str, [u8; 4]); 17]> = std::sync::LazyLock::new(|| {
+        STATIC_SELECTOR_SIGNATURES.map(|signature| (signature, selector_for(signature)))
+    });
+
+    SELECTORS
+        .iter()
+        .find_map(|(known, selector)| (*known == signature).then_some(*selector))
+        .expect("static selector signature must be registered")
 }
 
 /// Outcome of a symbolic test execution.
