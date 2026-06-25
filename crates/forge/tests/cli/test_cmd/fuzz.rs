@@ -468,7 +468,10 @@ contract ForgeFuzzInvariantFailOnRevertReplayTest is Test {
         ])
         .assert_failure();
     let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("failed during replay: handler "), "{stdout}");
+    assert!(
+        stdout.contains("failed during replay: invariant `invariant_ok` failed on handler "),
+        "{stdout}"
+    );
 
     let showmap = cmd
         .forge_fuse()

@@ -2369,6 +2369,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     invariant_replay: InvariantReplayOptions {
                         check_interval: invariant_config.check_interval,
                         call_after_invariant,
+                        is_optimization,
                     },
                     dynamic: Some(&dynamic),
                 },
