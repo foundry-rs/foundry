@@ -9,8 +9,8 @@ pub(crate) fn product_monotonic_unsat(constraints: &[BoolExpr]) -> bool {
 
 /// Returns whether normalized monotonic product facts make constraints unsatisfiable.
 pub(crate) fn product_monotonic_unsat_normalized(constraints: &[BoolExpr]) -> bool {
-    let mut less_than = BTreeSet::new();
-    let mut positive = BTreeSet::new();
+    let mut less_than = HashSet::default();
+    let mut positive = HashSet::default();
     for constraint in constraints {
         collect_order_facts(constraint, &mut less_than, &mut positive);
     }
@@ -25,8 +25,8 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[BoolExpr]) -> bo
 /// Collects simple unsigned ordering facts from normalized constraints.
 pub(crate) fn collect_order_facts(
     expr: &BoolExpr,
-    less_than: &mut BTreeSet<(Expr, Expr)>,
-    positive: &mut BTreeSet<Expr>,
+    less_than: &mut HashSet<(Expr, Expr)>,
+    positive: &mut HashSet<Expr>,
 ) {
     match expr {
         BoolExpr::And(values) => {
@@ -65,8 +65,8 @@ pub(crate) fn product_less_than_known(
     left_b: &Expr,
     right_a: &Expr,
     right_b: &Expr,
-    less_than: &BTreeSet<(Expr, Expr)>,
-    positive: &BTreeSet<Expr>,
+    less_than: &HashSet<(Expr, Expr)>,
+    positive: &HashSet<Expr>,
 ) -> bool {
     product_less_than_known_ordered(left_a, left_b, right_a, right_b, less_than, positive)
         || product_less_than_known_ordered(left_b, left_a, right_a, right_b, less_than, positive)
@@ -80,8 +80,8 @@ pub(crate) fn product_less_than_known_ordered(
     left_b: &Expr,
     right_a: &Expr,
     right_b: &Expr,
-    less_than: &BTreeSet<(Expr, Expr)>,
-    positive: &BTreeSet<Expr>,
+    less_than: &HashSet<(Expr, Expr)>,
+    positive: &HashSet<Expr>,
 ) -> bool {
     positive.contains(left_a)
         && positive.contains(left_b)
