@@ -124,7 +124,7 @@ impl FromStr for InvariantDepthMode {
 }
 
 /// Contains for invariant testing
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvariantConfig {
     /// The number of runs that must execute for each invariant test group.
     pub runs: u32,
@@ -182,34 +182,6 @@ pub struct InvariantConfig {
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
 }
-
-impl PartialEq for InvariantConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.runs == other.runs
-            && self.depth == other.depth
-            && self.min_depth == other.min_depth
-            && self.depth_mode == other.depth_mode
-            && self.workers == other.workers
-            && self.fail_on_revert == other.fail_on_revert
-            && self.call_override == other.call_override
-            && self.dictionary == other.dictionary
-            && self.shrink_run_limit == other.shrink_run_limit
-            && self.max_assume_rejects == other.max_assume_rejects
-            && self.gas_report_samples == other.gas_report_samples
-            && self.corpus == other.corpus
-            && self.corpus_random_sequence_weight_configured
-                == other.corpus_random_sequence_weight_configured
-            && self.failure_persist_dir == other.failure_persist_dir
-            && self.show_metrics == other.show_metrics
-            && self.timeout == other.timeout
-            && self.show_solidity == other.show_solidity
-            && self.max_time_delay == other.max_time_delay
-            && self.max_block_delay == other.max_block_delay
-            && self.check_interval == other.check_interval
-    }
-}
-
-impl Eq for InvariantConfig {}
 
 impl Default for InvariantConfig {
     fn default() -> Self {

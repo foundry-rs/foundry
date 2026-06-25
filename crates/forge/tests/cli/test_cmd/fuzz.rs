@@ -266,6 +266,7 @@ Encountered 1 failing test in test/ForgeFuzzReplayFailure.t.sol:ForgeFuzzReplayF
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1323,6 +1324,7 @@ Encountered 1 failing test in test/Fuzz.t.sol:FuzzTest
 Encountered a total of 1 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1893,6 +1895,7 @@ Ran 1 test for test/RandomFuzzTest.t.sol:RandomFuzzTest
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 

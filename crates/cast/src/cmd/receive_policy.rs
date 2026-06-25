@@ -193,6 +193,12 @@ async fn set(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
+    // Reject authorities that can never satisfy `ReceivePolicyGuard.claim()` before doing
+    // anything else; `--force` only suppresses the softer originator-recovery warning below.
+    if let Some(message) = invalid_recovery_authority_message(recovery_authority) {
+        eyre::bail!("{message}");
+    }
+
     let warning = if force {
         None
     } else {
@@ -473,6 +479,32 @@ async fn recovery_warning(
         blocked.len(),
         blocked.iter().map(Address::to_string).collect::<Vec<_>>().join(", ")
     )))
+}
+
+/// Returns an error message when `recovery_authority` could never pass
+/// `ReceivePolicyGuard.claim()` and would leave held receipts unclaimable.
+///
+/// `address(0)` is the originator-recovery sentinel and a receiver's own address is valid
+/// (receiver recovery), so those pass. Virtual and TIP-20 addresses are always rejected. Fixed
+/// system precompiles are rejected conservatively against the full known list (a superset of the
+/// registry's spec-aware check), since a not-yet-active precompile is never a sound authority and
+/// becomes unclaimable once it activates.
+fn invalid_recovery_authority_message(recovery_authority: Address) -> Option<String> {
+    if recovery_authority == Address::ZERO {
+        return None;
+    }
+    if recovery_authority.is_virtual() {
+        return Some("recovery authority cannot be a TIP-1022 virtual address".to_string());
+    }
+    if recovery_authority.is_tip20() {
+        return Some("recovery authority cannot be a TIP-20 token address".to_string());
+    }
+    if TEMPO_PRECOMPILE_ADDRESSES.contains(&recovery_authority) {
+        return Some(format!(
+            "recovery authority cannot be a fixed Tempo system precompile: {recovery_authority}"
+        ));
+    }
+    None
 }
 
 fn decode_claim_receipt(receipt: &Bytes) -> Result<IReceivePolicyGuard::ClaimReceiptV1> {
@@ -798,6 +830,38 @@ mod tests {
         assert_eq!(payload["recovery_mode"], "originator");
         assert_eq!(payload["recipient_is_virtual"], true);
         assert_eq!(payload["claim_target"], Value::Null);
+    }
+
+    #[test]
+    fn rejects_unclaimable_recovery_authorities() {
+        // Originator recovery and a plain EOA authority are valid.
+        assert_eq!(invalid_recovery_authority_message(Address::ZERO), None);
+        assert_eq!(
+            invalid_recovery_authority_message(address!(
+                "1111111111111111111111111111111111111111"
+            )),
+            None
+        );
+
+        // Every fixed Tempo system precompile is unclaimable.
+        for authority in TEMPO_PRECOMPILE_ADDRESSES {
+            let err = invalid_recovery_authority_message(*authority).unwrap();
+            assert!(err.contains("fixed Tempo system precompile"));
+        }
+
+        // TIP-20 token and TIP-1022 virtual addresses are unclaimable too.
+        let err = invalid_recovery_authority_message(address!(
+            "20c0000000000000000000000000000000000001"
+        ))
+        .unwrap();
+        assert!(err.contains("TIP-20 token address"));
+
+        let virtual_address = Address::new_virtual(
+            MasterId::from([0x12, 0x34, 0x56, 0x78]),
+            UserTag::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]),
+        );
+        let err = invalid_recovery_authority_message(virtual_address).unwrap();
+        assert!(err.contains("TIP-1022 virtual address"));
     }
 
     #[test]
