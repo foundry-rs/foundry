@@ -3,9 +3,9 @@ use crate::{
     multi_runner::ShowmapConfig,
     result::TestOutcome,
 };
-use alloy_dyn_abi::JsonAbiExt;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::Selector;
+use alloy_primitives::{Address, B256, Function as SolFunction, I256, Selector, U256};
 use clap::{Parser, Subcommand, ValueEnum, ValueHint};
 use eyre::{Context, Result, bail};
 use foundry_cli::opts::{BuildOpts, EvmArgs, GlobalArgs};
@@ -373,9 +373,10 @@ impl FuzzTminArgs {
                 self.input.display()
             );
         }
+        let decoder = CorpusDecoder::load();
         let mut ctx =
             MinimizeContext::new(&session, evm_edge_indices, &original, self.max_attempts);
-        minimize_sequence(&mut ctx, &mut sequence)?;
+        minimize_sequence(&mut ctx, &mut sequence, &decoder)?;
 
         let write_result = if is_gzip_path(&self.out) {
             fs::write_json_gzip_file_create_new(&self.out, &sequence)
@@ -474,20 +475,13 @@ impl CorpusDecoder {
 
     fn decode(&self, tx: &BasicTxDetails) -> Option<DecodedCall> {
         let calldata = tx.call_details.calldata.as_ref();
-        if calldata.len() < 4 {
-            return None;
-        }
+        let function = self.unique_decodable_function(calldata)?;
+        let decoded_args = function.abi_decode_input(&calldata[4..]).ok()?;
+        let args = format_tokens_raw(&decoded_args).collect::<Vec<_>>();
 
         let selector = Selector::from_slice(&calldata[..4]);
         self.functions.get(&selector).and_then(|functions| {
-            let mut matches = functions.iter().filter_map(|indexed| {
-                let decoded_args = indexed.function.abi_decode_input(&calldata[4..]).ok()?;
-                Some((indexed, format_tokens_raw(&decoded_args).collect::<Vec<_>>()))
-            });
-            let (indexed, args) = matches.next()?;
-            if matches.next().is_some() {
-                return None;
-            }
+            let indexed = functions.iter().find(|indexed| &indexed.function == function)?;
             let signature = indexed.function.signature();
             Some(DecodedCall {
                 call: format!(
@@ -501,6 +495,26 @@ impl CorpusDecoder {
                 args,
             })
         })
+    }
+
+    fn unique_decodable_function(&self, calldata: &[u8]) -> Option<&Function> {
+        if calldata.len() < 4 {
+            return None;
+        }
+
+        let selector = Selector::from_slice(&calldata[..4]);
+        let mut unique = None;
+        for function in self.functions.get(&selector)?.iter().filter_map(|indexed| {
+            indexed.function.abi_decode_input(&calldata[4..]).ok()?;
+            Some(&indexed.function)
+        }) {
+            match unique {
+                Some(existing) if existing == function => {}
+                Some(_) => return None,
+                None => unique = Some(function),
+            }
+        }
+        unique
     }
 }
 
@@ -680,6 +694,7 @@ impl<'a> MinimizeContext<'a> {
 fn minimize_sequence(
     ctx: &mut MinimizeContext<'_>,
     sequence: &mut Vec<BasicTxDetails>,
+    decoder: &CorpusDecoder,
 ) -> Result<()> {
     // Drop individual txs, mutating in place and rolling back rejected removals so
     // each attempt only clones the sequence once (inside `MinimizeContext::accepts`).
@@ -705,10 +720,12 @@ fn minimize_sequence(
         idx += 1;
     }
 
-    // Simplify calldata words.
+    // Simplify ABI calldata values.
     let mut tx_idx = 0;
     while tx_idx < sequence.len() && !ctx.at_budget() {
-        for calldata in calldata_candidates(sequence[tx_idx].call_details.calldata.as_ref()) {
+        for calldata in
+            abi_calldata_candidates(sequence[tx_idx].call_details.calldata.as_ref(), decoder)
+        {
             if ctx.at_budget() {
                 break;
             }
@@ -747,37 +764,158 @@ fn cleanup_metadata(tx: &mut BasicTxDetails) {
     }
 }
 
-fn calldata_candidates(calldata: &[u8]) -> Vec<Vec<u8>> {
-    if calldata.len() <= 4 {
+fn abi_calldata_candidates(calldata: &[u8], decoder: &CorpusDecoder) -> Vec<Vec<u8>> {
+    let Some(function) = decoder.unique_decodable_function(calldata) else {
         return Vec::new();
-    }
+    };
+    let Ok(args) = function.abi_decode_input(&calldata[4..]) else {
+        return Vec::new();
+    };
+
     let mut candidates = Vec::new();
-    let mut offset = 4;
-    while offset + 32 <= calldata.len() {
-        for replacement in calldata_word_replacements() {
-            if calldata[offset..offset + 32] == replacement {
+    let mut seen = std::collections::HashSet::new();
+    for arg_idx in 0..args.len() {
+        for value in value_candidates(&args[arg_idx]) {
+            let mut candidate_args = args.clone();
+            candidate_args[arg_idx] = value;
+            let Ok(encoded) = function.abi_encode_input(&candidate_args) else {
                 continue;
+            };
+            if encoded.as_slice() != calldata && seen.insert(encoded.clone()) {
+                candidates.push(encoded);
             }
-            let mut candidate = calldata.to_vec();
-            candidate[offset..offset + 32].copy_from_slice(&replacement);
-            candidates.push(candidate);
         }
-        offset += 32;
     }
     candidates
 }
 
-const fn calldata_word_replacements() -> [[u8; 32]; 3] {
-    let zero = [0u8; 32];
-    let mut one = [0u8; 32];
-    one[31] = 1;
-    let minus_one = [0xffu8; 32];
-    [zero, one, minus_one]
+fn value_candidates(value: &DynSolValue) -> Vec<DynSolValue> {
+    let mut candidates = Vec::new();
+    push_scalar_value_candidates(value, &mut candidates);
+    push_compound_value_candidates(value, &mut candidates);
+    candidates.into_iter().filter(|candidate| candidate != value).collect()
+}
+
+fn push_scalar_value_candidates(value: &DynSolValue, candidates: &mut Vec<DynSolValue>) {
+    match value {
+        DynSolValue::Bool(_) => candidates.push(DynSolValue::Bool(false)),
+        DynSolValue::Uint(_, bits) => {
+            candidates.push(DynSolValue::Uint(U256::ZERO, *bits));
+            candidates.push(DynSolValue::Uint(U256::from(1), *bits));
+        }
+        DynSolValue::Int(_, bits) => {
+            candidates.push(DynSolValue::Int(I256::ZERO, *bits));
+            candidates.push(DynSolValue::Int(I256::from_raw(U256::from(1)), *bits));
+            candidates.push(DynSolValue::Int(I256::MINUS_ONE, *bits));
+        }
+        DynSolValue::Address(_) => candidates.push(DynSolValue::Address(Address::ZERO)),
+        DynSolValue::FixedBytes(_, size) => {
+            candidates.push(DynSolValue::FixedBytes(B256::ZERO, *size));
+        }
+        DynSolValue::Function(_) => candidates.push(DynSolValue::Function(SolFunction::ZERO)),
+        DynSolValue::Bytes(bytes) => {
+            candidates.push(DynSolValue::Bytes(Vec::new()));
+            if bytes.len() > 1 {
+                candidates.push(DynSolValue::Bytes(bytes[..bytes.len() / 2].to_vec()));
+            }
+        }
+        DynSolValue::String(string) => {
+            candidates.push(DynSolValue::String(String::new()));
+            if string.len() > 1 {
+                let mut half = string.len() / 2;
+                while half > 0 && !string.is_char_boundary(half) {
+                    half -= 1;
+                }
+                candidates.push(DynSolValue::String(string[..half].to_string()));
+            }
+        }
+        DynSolValue::Array(_)
+        | DynSolValue::FixedArray(_)
+        | DynSolValue::Tuple(_)
+        | DynSolValue::CustomStruct { .. } => {}
+    }
+}
+
+fn push_compound_value_candidates(value: &DynSolValue, candidates: &mut Vec<DynSolValue>) {
+    match value {
+        DynSolValue::Array(values) => {
+            candidates.push(DynSolValue::Array(Vec::new()));
+            if values.len() > 1 {
+                candidates.push(DynSolValue::Array(values[..values.len() / 2].to_vec()));
+            }
+            push_child_value_candidates(values, candidates, |values| {
+                DynSolValue::Array(values.to_vec())
+            });
+        }
+        DynSolValue::FixedArray(values) => {
+            push_child_value_candidates(values, candidates, |values| {
+                DynSolValue::FixedArray(values.to_vec())
+            });
+        }
+        DynSolValue::Tuple(values) => {
+            push_child_value_candidates(values, candidates, |values| {
+                DynSolValue::Tuple(values.to_vec())
+            });
+        }
+        DynSolValue::CustomStruct { name, prop_names, tuple } => {
+            push_child_value_candidates(tuple, candidates, |values| DynSolValue::CustomStruct {
+                name: name.clone(),
+                prop_names: prop_names.clone(),
+                tuple: values.to_vec(),
+            });
+        }
+        DynSolValue::Bool(_)
+        | DynSolValue::Uint(_, _)
+        | DynSolValue::Int(_, _)
+        | DynSolValue::Address(_)
+        | DynSolValue::FixedBytes(_, _)
+        | DynSolValue::Function(_)
+        | DynSolValue::Bytes(_)
+        | DynSolValue::String(_) => {}
+    }
+}
+
+fn push_child_value_candidates(
+    values: &[DynSolValue],
+    candidates: &mut Vec<DynSolValue>,
+    rebuild: impl Fn(&[DynSolValue]) -> DynSolValue,
+) {
+    for idx in 0..values.len() {
+        for child in value_candidates(&values[idx]) {
+            let mut values = values.to_vec();
+            values[idx] = child;
+            candidates.push(rebuild(&values));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn decoder_with_functions(functions: Vec<Function>) -> CorpusDecoder {
+        let mut abi = JsonAbi::new();
+        for function in functions {
+            abi.functions.entry(function.name.clone()).or_default().push(function);
+        }
+
+        let mut decoder = CorpusDecoder::default();
+        for function in abi.functions().cloned() {
+            decoder
+                .functions
+                .entry(function.selector())
+                .or_default()
+                .push(IndexedFunction { contract: "Target".to_string(), function });
+        }
+        decoder
+    }
+
+    fn candidate_args(function: &Function, candidates: Vec<Vec<u8>>) -> Vec<Vec<DynSolValue>> {
+        candidates
+            .into_iter()
+            .map(|calldata| function.abi_decode_input(&calldata[4..]).unwrap())
+            .collect()
+    }
 
     #[test]
     fn minimizers_accept_replay_test_args() {
@@ -810,5 +948,99 @@ mod tests {
             "min.json",
         ])
         .unwrap();
+    }
+
+    #[test]
+    fn abi_calldata_candidates_shrink_dynamic_values() {
+        let function = Function::parse("target(bytes,string,uint256[])").unwrap();
+        let decoder = decoder_with_functions(vec![function.clone()]);
+        let calldata = function
+            .abi_encode_input(&[
+                DynSolValue::Bytes(vec![1, 2, 3, 4]),
+                DynSolValue::String("abcdef".to_string()),
+                DynSolValue::Array(vec![
+                    DynSolValue::Uint(U256::from(10), 256),
+                    DynSolValue::Uint(U256::from(11), 256),
+                    DynSolValue::Uint(U256::from(12), 256),
+                    DynSolValue::Uint(U256::from(13), 256),
+                ]),
+            ])
+            .unwrap();
+
+        let candidates = candidate_args(&function, abi_calldata_candidates(&calldata, &decoder));
+
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Bytes(Vec::new())));
+        assert!(candidates.iter().any(|args| args[0] == DynSolValue::Bytes(vec![1, 2])));
+        assert!(candidates.iter().any(|args| args[1] == DynSolValue::String(String::new())));
+        assert!(candidates.iter().any(|args| args[1] == DynSolValue::String("abc".to_string())));
+        assert!(candidates.iter().any(|args| args[2] == DynSolValue::Array(Vec::new())));
+        assert!(candidates.iter().any(|args| {
+            args[2]
+                == DynSolValue::Array(vec![
+                    DynSolValue::Uint(U256::from(10), 256),
+                    DynSolValue::Uint(U256::from(11), 256),
+                ])
+        }));
+    }
+
+    #[test]
+    fn abi_calldata_candidates_simplify_tuple_children() {
+        let function = Function::parse("target((uint256,bool,address))").unwrap();
+        let decoder = decoder_with_functions(vec![function.clone()]);
+        let calldata = function
+            .abi_encode_input(&[DynSolValue::Tuple(vec![
+                DynSolValue::Uint(U256::from(42), 256),
+                DynSolValue::Bool(true),
+                DynSolValue::Address(Address::from([0x11; 20])),
+            ])])
+            .unwrap();
+
+        let candidates = candidate_args(&function, abi_calldata_candidates(&calldata, &decoder));
+
+        assert!(candidates.iter().any(|args| {
+            args[0]
+                == DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::ZERO, 256),
+                    DynSolValue::Bool(true),
+                    DynSolValue::Address(Address::from([0x11; 20])),
+                ])
+        }));
+        assert!(candidates.iter().any(|args| {
+            args[0]
+                == DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::from(42), 256),
+                    DynSolValue::Bool(false),
+                    DynSolValue::Address(Address::from([0x11; 20])),
+                ])
+        }));
+        assert!(candidates.iter().any(|args| {
+            args[0]
+                == DynSolValue::Tuple(vec![
+                    DynSolValue::Uint(U256::from(42), 256),
+                    DynSolValue::Bool(true),
+                    DynSolValue::Address(Address::ZERO),
+                ])
+        }));
+    }
+
+    #[test]
+    fn abi_calldata_candidates_skip_ambiguous_or_undecodable_calldata() {
+        let function = Function::parse("target(uint256)").unwrap();
+        let duplicate = decoder_with_functions(vec![function.clone(), function.clone()]);
+        let calldata =
+            function.abi_encode_input(&[DynSolValue::Uint(U256::from(42), 256)]).unwrap();
+
+        assert!(!abi_calldata_candidates(&calldata, &duplicate).is_empty());
+
+        let other = Function::parse("other(uint256)").unwrap();
+        let mut ambiguous = CorpusDecoder::default();
+        ambiguous.functions.entry(function.selector()).or_default().extend([
+            IndexedFunction { contract: "Target".to_string(), function: function.clone() },
+            IndexedFunction { contract: "Other".to_string(), function: other },
+        ]);
+        assert!(abi_calldata_candidates(&calldata, &ambiguous).is_empty());
+
+        let decoder = decoder_with_functions(vec![function]);
+        assert!(abi_calldata_candidates(&calldata[..calldata.len() - 1], &decoder).is_empty());
     }
 }

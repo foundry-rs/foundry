@@ -1,5 +1,6 @@
-use alloy_json_abi::JsonAbi;
-use alloy_primitives::{U256, hex};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_json_abi::{Function, JsonAbi};
+use alloy_primitives::{Address, U256, hex};
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
@@ -33,6 +34,17 @@ fn artifact_abi(root: &Path, artifact: &str) -> JsonAbi {
 fn calldata_for(abi: &JsonAbi, function_name: &str, arg: u64) -> String {
     let function = abi.functions().find(|function| function.name == function_name).unwrap();
     format!("0x{}{:064x}", hex::encode(function.selector()), arg)
+}
+
+fn calldata_for_args(function: &Function, args: &[DynSolValue]) -> String {
+    format!("0x{}", hex::encode(function.abi_encode_input(args).unwrap()))
+}
+
+fn output_calldata(root: &Path, path: &str) -> Vec<u8> {
+    let corpus = std::fs::read_to_string(root.join(path)).unwrap();
+    let corpus: Value = serde_json::from_str(&corpus).unwrap();
+    let calldata = corpus.as_array().unwrap()[0]["calldata"].as_str().unwrap();
+    hex::decode(calldata.trim_start_matches("0x")).unwrap()
 }
 
 fn corpus_entry(calldata: &str) -> String {
@@ -560,6 +572,148 @@ contract ForgeFuzzTminReasonTest {
 
     let min = std::fs::read_to_string(prj.root().join("min-reason.json")).unwrap();
     assert!(min.contains(&calldata_two), "{min}");
+});
+
+forgetest_init!(forge_fuzz_tmin_minimizes_abi_calldata_values, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzTminAbi.t.sol",
+        r#"
+contract ForgeFuzzTminAbiTest {
+    struct Inner {
+        uint256 value;
+        bool flag;
+        address owner;
+    }
+
+    function testFuzz_bytes(bytes calldata data) external pure {
+        if (data.length >= 2 && data[0] == 0x42 && data[1] == 0x43) revert("bytes");
+    }
+
+    function testFuzz_array(uint256[] calldata values) external pure {
+        if (values.length >= 2 && values[0] == 7 && values[1] == 8) revert("array");
+    }
+
+    function testFuzz_struct(Inner calldata inner) external pure {
+        if (inner.flag && inner.owner == address(0x1111111111111111111111111111111111111111)) {
+            revert("struct");
+        }
+    }
+}
+   "#,
+    );
+    cmd.args(["build", "-q"]).assert_success();
+
+    let abi = artifact_abi(prj.root(), "out/ForgeFuzzTminAbi.t.sol/ForgeFuzzTminAbiTest.json");
+    let function = |name: &str| abi.functions().find(|function| function.name == name).unwrap();
+    let bytes_function = function("testFuzz_bytes");
+    let array_function = function("testFuzz_array");
+    let struct_function = function("testFuzz_struct");
+
+    let corpus = prj.root().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    write_corpus_entry(
+        &corpus,
+        "bytes.json",
+        &calldata_for_args(bytes_function, &[DynSolValue::Bytes(vec![0x42, 0x43, 0x44, 0x45])]),
+    );
+    write_corpus_entry(
+        &corpus,
+        "array.json",
+        &calldata_for_args(
+            array_function,
+            &[DynSolValue::Array(vec![
+                DynSolValue::Uint(U256::from(7), 256),
+                DynSolValue::Uint(U256::from(8), 256),
+                DynSolValue::Uint(U256::from(9), 256),
+                DynSolValue::Uint(U256::from(10), 256),
+            ])],
+        ),
+    );
+    write_corpus_entry(
+        &corpus,
+        "struct.json",
+        &calldata_for_args(
+            struct_function,
+            &[DynSolValue::Tuple(vec![
+                DynSolValue::Uint(U256::from(42), 256),
+                DynSolValue::Bool(true),
+                DynSolValue::Address(Address::from([0x11; 20])),
+            ])],
+        ),
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminAbiTest",
+            "--mt",
+            "testFuzz_bytes",
+            "corpus/bytes.json",
+            "--corpus-out",
+            "min-bytes.json",
+        ])
+        .assert_success();
+    let decoded = bytes_function
+        .abi_decode_input(&output_calldata(prj.root(), "min-bytes.json")[4..])
+        .unwrap();
+    assert_eq!(decoded[0], DynSolValue::Bytes(vec![0x42, 0x43]));
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminAbiTest",
+            "--mt",
+            "testFuzz_array",
+            "corpus/array.json",
+            "--corpus-out",
+            "min-array.json",
+        ])
+        .assert_success();
+    let decoded = array_function
+        .abi_decode_input(&output_calldata(prj.root(), "min-array.json")[4..])
+        .unwrap();
+    let original_array = DynSolValue::Array(vec![
+        DynSolValue::Uint(U256::from(7), 256),
+        DynSolValue::Uint(U256::from(8), 256),
+        DynSolValue::Uint(U256::from(9), 256),
+        DynSolValue::Uint(U256::from(10), 256),
+    ]);
+    assert_ne!(decoded[0], original_array);
+    assert!(matches!(
+        &decoded[0],
+        DynSolValue::Array(values)
+            if values.len() <= 4
+                && values[0] == DynSolValue::Uint(U256::from(7), 256)
+                && values[1] == DynSolValue::Uint(U256::from(8), 256)
+    ));
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "tmin",
+            "--mc",
+            "ForgeFuzzTminAbiTest",
+            "--mt",
+            "testFuzz_struct",
+            "corpus/struct.json",
+            "--corpus-out",
+            "min-struct.json",
+        ])
+        .assert_success();
+    let decoded = struct_function
+        .abi_decode_input(&output_calldata(prj.root(), "min-struct.json")[4..])
+        .unwrap();
+    assert!(matches!(
+        &decoded[0],
+        DynSolValue::CustomStruct { tuple, .. }
+            if tuple[0] == DynSolValue::Uint(U256::from(1), 256)
+                && tuple[1] == DynSolValue::Bool(true)
+                && tuple[2] == DynSolValue::Address(Address::from([0x11; 20]))
+    ));
 });
 
 forgetest_init!(forge_fuzz_replay_invariant_fail_on_revert, |prj, cmd| {
