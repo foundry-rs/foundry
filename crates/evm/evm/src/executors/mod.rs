@@ -25,12 +25,12 @@ use foundry_evm_core::{
     },
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER, MONAD_CHEATCODE_ADDRESS,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
     evm::{
-        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult,
-        MonadEvmNetwork, SpecFor, TxEnvFor,
+        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor,
+        TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -49,7 +49,6 @@ use revm::{
 };
 use sancov::SancovGuard;
 use std::{
-    any::TypeId,
     borrow::Cow,
     sync::{
         Arc,
@@ -147,12 +146,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             },
         );
 
-        if TypeId::of::<FEN>() == TypeId::of::<MonadEvmNetwork>() {
+        for &address in FEN::EXTRA_CHEATCODE_ADDRESSES {
             backend.insert_account_info(
-                MONAD_CHEATCODE_ADDRESS,
+                address,
                 revm::state::AccountInfo {
                     code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
-                    code_hash: keccak256(MONAD_CHEATCODE_ADDRESS),
+                    code_hash: keccak256(address),
                     ..Default::default()
                 },
             );

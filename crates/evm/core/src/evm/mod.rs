@@ -4,6 +4,7 @@ use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
+    constants::MONAD_CHEATCODE_ADDRESS,
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
@@ -61,6 +62,13 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
             ReceiptResponse: FoundryReceiptResponse,
         >;
     type EvmFactory: FoundryEvmFactory<Tx: FromRecoveredTx<<Self::Network as Network>::TxEnvelope>>;
+
+    /// Additional network-specific cheatcode contract addresses.
+    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
+
+    fn is_extra_cheatcode_address(address: Address) -> bool {
+        Self::EXTRA_CHEATCODE_ADDRESSES.contains(&address)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -82,6 +90,8 @@ pub struct MonadEvmNetwork;
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
     type EvmFactory = MonadEvmFactory;
+
+    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
