@@ -246,10 +246,6 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_SECONDS", value_name = "SECONDS")]
     pub invariant_corpus_sync_seconds: Option<u32>,
 
-    /// Maximum corpus entries imported by one worker during one sync.
-    #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_SYNC_MAX_IMPORTS", value_name = "ENTRIES")]
-    pub invariant_corpus_sync_max_imports: Option<usize>,
-
     /// Run only the fuzz case at the given 1-based run index.
     #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
     pub fuzz_run: Option<u32>,
@@ -2350,10 +2346,6 @@ impl Provider for TestArgs {
         if let Some(seconds) = self.invariant_corpus_sync_seconds {
             invariant_corpus_sync_dict.insert("plateau_seconds".to_string(), seconds.into());
         }
-        if let Some(max_imports) = self.invariant_corpus_sync_max_imports {
-            invariant_corpus_sync_dict
-                .insert("max_imports_per_sync".to_string(), max_imports.into());
-        }
         if !invariant_corpus_sync_dict.is_empty() {
             invariant_dict.insert("corpus_sync".to_string(), invariant_corpus_sync_dict.into());
         }
@@ -2905,12 +2897,9 @@ mod tests {
             "plateau",
             "--invariant-corpus-sync-seconds",
             "60",
-            "--invariant-corpus-sync-max-imports",
-            "7",
         ]);
         assert_eq!(args.invariant_corpus_sync, Some(InvariantCorpusSyncMode::Plateau));
         assert_eq!(args.invariant_corpus_sync_seconds, Some(60));
-        assert_eq!(args.invariant_corpus_sync_max_imports, Some(7));
 
         let figment = figment::Figment::from(&args);
         assert_eq!(
@@ -2920,10 +2909,6 @@ mod tests {
         assert_eq!(
             figment.extract_inner::<u32>("invariant.corpus_sync.plateau_seconds").unwrap(),
             60
-        );
-        assert_eq!(
-            figment.extract_inner::<usize>("invariant.corpus_sync.max_imports_per_sync").unwrap(),
-            7
         );
     }
 

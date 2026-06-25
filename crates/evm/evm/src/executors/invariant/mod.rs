@@ -1485,11 +1485,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             return Ok(());
         }
 
-        let (entries, newest_epoch) = corpus_exchange.import_since(
-            meta.worker_id,
-            sync_state.last_seen_epoch(),
-            meta.sync_config.max_imports_per_sync,
-        );
+        let (entries, newest_epoch) =
+            corpus_exchange.import_since(meta.worker_id, sync_state.last_seen_epoch());
         sync_state.set_last_seen_epoch(newest_epoch);
         if entries.is_empty() {
             return Ok(());

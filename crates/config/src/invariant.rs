@@ -155,17 +155,11 @@ pub struct InvariantCorpusSyncConfig {
     pub mode: InvariantCorpusSyncMode,
     /// Number of seconds without new coverage before a plateau sync is attempted.
     pub plateau_seconds: u32,
-    /// Maximum candidate entries imported by one worker during a single sync.
-    pub max_imports_per_sync: usize,
 }
 
 impl Default for InvariantCorpusSyncConfig {
     fn default() -> Self {
-        Self {
-            mode: InvariantCorpusSyncMode::Plateau,
-            plateau_seconds: 30 * 60,
-            max_imports_per_sync: 64,
-        }
+        Self { mode: InvariantCorpusSyncMode::Plateau, plateau_seconds: 30 * 60 }
     }
 }
 

@@ -39,12 +39,7 @@ impl InvariantCorpusExchange {
         &self,
         worker_id: u32,
         last_seen_epoch: u64,
-        limit: usize,
     ) -> (Vec<SharedCorpusEntry>, u64) {
-        if limit == 0 {
-            return (Vec::new(), last_seen_epoch);
-        }
-
         let exchange_entries = self.entries.lock().expect("invariant corpus exchange poisoned");
         let mut entries = Vec::new();
         let mut newest_epoch = last_seen_epoch;
@@ -55,9 +50,6 @@ impl InvariantCorpusExchange {
             }
 
             entries.push(entry.entry.clone());
-            if entries.len() == limit {
-                break;
-            }
         }
         (entries, newest_epoch)
     }
@@ -129,12 +121,8 @@ mod tests {
         exchange.publish(1, vec![entry(1)]);
         exchange.publish(2, vec![entry(2)]);
 
-        let (first, epoch) = exchange.import_since(0, 0, 1);
-        assert_eq!(first.len(), 1);
-        assert_eq!(epoch, 1);
-
-        let (second, epoch) = exchange.import_since(0, epoch, 8);
-        assert_eq!(second.len(), 1);
+        let (entries, epoch) = exchange.import_since(0, 0);
+        assert_eq!(entries.len(), 2);
         assert_eq!(epoch, 2);
     }
 
@@ -142,7 +130,7 @@ mod tests {
     fn exchange_does_not_import_own_entries() {
         let exchange = InvariantCorpusExchange::new();
         exchange.publish(0, vec![entry(1)]);
-        let (entries, epoch) = exchange.import_since(0, 0, 8);
+        let (entries, epoch) = exchange.import_since(0, 0);
         assert!(entries.is_empty());
         assert_eq!(epoch, 1);
     }
@@ -152,12 +140,12 @@ mod tests {
         let exchange = InvariantCorpusExchange::new();
         exchange.publish(0, vec![entry(1), entry(2)]);
 
-        let (entries, epoch) = exchange.import_since(0, 0, 8);
+        let (entries, epoch) = exchange.import_since(0, 0);
         assert!(entries.is_empty());
         assert_eq!(epoch, 2);
 
         exchange.publish(1, vec![entry(3)]);
-        let (entries, epoch) = exchange.import_since(0, epoch, 8);
+        let (entries, epoch) = exchange.import_since(0, epoch);
         assert_eq!(entries.len(), 1);
         assert_eq!(epoch, 3);
     }
@@ -169,7 +157,6 @@ mod tests {
         let config = InvariantCorpusSyncConfig {
             mode: InvariantCorpusSyncMode::Plateau,
             plateau_seconds: 60,
-            max_imports_per_sync: 8,
             ..Default::default()
         };
 
@@ -187,7 +174,6 @@ mod tests {
         let config = InvariantCorpusSyncConfig {
             mode: InvariantCorpusSyncMode::Plateau,
             plateau_seconds: 60,
-            max_imports_per_sync: 8,
             ..Default::default()
         };
 
