@@ -165,6 +165,9 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     opts: &ShowmapOpts,
 ) -> Result<ShowmapStats> {
     let entries = read_corpus_tree(corpus_dir)?;
+    if opts.emit_files && entries.is_empty() {
+        return Err(eyre::eyre!("corpus directory not found: {}", corpus_dir.display()));
+    }
 
     let approach_dir = opts.out_dir.join(&opts.approach);
     if opts.emit_files {

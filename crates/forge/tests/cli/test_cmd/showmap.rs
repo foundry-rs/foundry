@@ -272,3 +272,31 @@ contract ShowmapCounterTest {
         assert!(stderr.contains("expected a single file-name component"), "{stderr}");
     }
 });
+
+forgetest_init!(showmap_replay_rejects_empty_corpus_dir, |prj, cmd| {
+    prj.add_test(
+        "ShowmapCounter.t.sol",
+        r#"
+contract ShowmapCounterTest {
+    function testFuzz_value(uint256 value) public pure {
+        value;
+    }
+}
+   "#,
+    );
+    std::fs::create_dir_all(prj.root().join("empty_corpus")).unwrap();
+
+    let result = cmd
+        .args([
+            "test",
+            "--mc",
+            "ShowmapCounterTest",
+            "--showmap-out",
+            "showmap_out",
+            "--showmap-corpus-dir",
+            "empty_corpus",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(result.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("corpus directory not found: empty_corpus"), "{stdout}");
+});
