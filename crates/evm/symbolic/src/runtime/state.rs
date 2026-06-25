@@ -1651,54 +1651,22 @@ impl Default for SymbolicBlock {
 
 /// Collects the symbolic variables needed to concretely evaluate an expression.
 fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
-    match expr {
-        Expr::Const(_) => {}
-        Expr::GasLeft(_) => {}
+    expr.visit(&mut |expr| match expr {
         Expr::Var(var) => {
             vars.insert(var.clone());
         }
         Expr::Hash(hash) => {
             vars.insert(hash.name.clone());
         }
-        Expr::Keccak(hash) => {
-            collect_eval_vars(&hash.len, vars);
-            for byte in &hash.bytes {
-                collect_eval_vars(byte, vars);
-            }
-        }
-        Expr::Not(value) => collect_eval_vars(value, vars),
-        Expr::Op(_, left, right) => {
-            collect_eval_vars(left, vars);
-            collect_eval_vars(right, vars);
-        }
-        Expr::AddMod { left, right, modulus } | Expr::MulMod { left, right, modulus } => {
-            collect_eval_vars(left, vars);
-            collect_eval_vars(right, vars);
-            collect_eval_vars(modulus, vars);
-        }
-        Expr::Ite(condition, left, right) => {
-            collect_eval_bool_vars(condition, vars);
-            collect_eval_vars(left, vars);
-            collect_eval_vars(right, vars);
-        }
-    }
-}
-
-/// Collects the symbolic variables needed to concretely evaluate a boolean expression.
-fn collect_eval_bool_vars(expr: &BoolExpr, vars: &mut BTreeSet<String>) {
-    match expr {
-        BoolExpr::Const(_) => {}
-        BoolExpr::Not(value) => collect_eval_bool_vars(value, vars),
-        BoolExpr::And(values) => {
-            for value in values {
-                collect_eval_bool_vars(value, vars);
-            }
-        }
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            collect_eval_vars(left, vars);
-            collect_eval_vars(right, vars);
-        }
-    }
+        Expr::Const(_)
+        | Expr::GasLeft(_)
+        | Expr::Keccak(_)
+        | Expr::Not(_)
+        | Expr::Op(_, _, _)
+        | Expr::AddMod { .. }
+        | Expr::MulMod { .. }
+        | Expr::Ite(_, _, _) => {}
+    });
 }
 
 impl SymbolicBlock {

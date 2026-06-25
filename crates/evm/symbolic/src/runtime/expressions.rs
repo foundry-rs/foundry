@@ -1035,6 +1035,40 @@ impl Expr {
         Self::Hash(Box::new(HashExpr { name, algorithm, bytes }))
     }
 
+    /// Visits this expression and all child expressions.
+    pub(crate) fn visit(&self, visitor: &mut impl FnMut(&Self)) {
+        visitor(self);
+        match self {
+            Self::Const(_) | Self::Var(_) | Self::GasLeft(_) => {}
+            Self::Keccak(hash) => {
+                hash.len.visit(visitor);
+                for byte in &hash.bytes {
+                    byte.visit(visitor);
+                }
+            }
+            Self::Hash(hash) => {
+                for byte in &hash.bytes {
+                    byte.visit(visitor);
+                }
+            }
+            Self::Not(value) => value.visit(visitor),
+            Self::Op(_, left, right) => {
+                left.visit(visitor);
+                right.visit(visitor);
+            }
+            Self::AddMod { left, right, modulus } | Self::MulMod { left, right, modulus } => {
+                left.visit(visitor);
+                right.visit(visitor);
+                modulus.visit(visitor);
+            }
+            Self::Ite(cond, left, right) => {
+                cond.visit_exprs(visitor);
+                left.visit(visitor);
+                right.visit(visitor);
+            }
+        }
+    }
+
     /// Implements the `op` symbolic expression helper.
     pub(crate) fn op(op: ExprOp, left: Self, right: Self) -> Self {
         if let (Self::Const(left), Self::Const(right)) = (&left, &right) {
@@ -1156,9 +1190,7 @@ impl Expr {
 
     /// Implements the `collect_vars` symbolic expression helper.
     pub(crate) fn collect_vars(&self, vars: &mut BTreeSet<String>) {
-        match self {
-            Self::Const(_) => {}
-            Self::GasLeft(_) => {}
+        self.visit(&mut |expr| match expr {
             Self::Var(var) => {
                 vars.insert(var.clone());
             }
@@ -1168,22 +1200,14 @@ impl Expr {
             Self::Hash(hash) => {
                 vars.insert(hash.name.clone());
             }
-            Self::Not(value) => value.collect_vars(vars),
-            Self::Op(_, left, right) => {
-                left.collect_vars(vars);
-                right.collect_vars(vars);
-            }
-            Self::AddMod { left, right, modulus } | Self::MulMod { left, right, modulus } => {
-                left.collect_vars(vars);
-                right.collect_vars(vars);
-                modulus.collect_vars(vars);
-            }
-            Self::Ite(cond, left, right) => {
-                cond.collect_vars(vars);
-                left.collect_vars(vars);
-                right.collect_vars(vars);
-            }
-        }
+            Self::Const(_)
+            | Self::GasLeft(_)
+            | Self::Not(_)
+            | Self::Op(_, _, _)
+            | Self::AddMod { .. }
+            | Self::MulMod { .. }
+            | Self::Ite(_, _, _) => {}
+        });
     }
 
     /// Implements the `smt` symbolic expression helper.
@@ -1272,6 +1296,37 @@ pub(crate) enum BoolExpr {
 }
 
 impl BoolExpr {
+    /// Visits this boolean expression and all child boolean expressions.
+    pub(crate) fn visit(&self, visitor: &mut impl FnMut(&Self)) {
+        visitor(self);
+        match self {
+            Self::Const(_) | Self::Eq(_, _) | Self::Cmp(_, _, _) => {}
+            Self::Not(value) => value.visit(visitor),
+            Self::And(values) => {
+                for value in values {
+                    value.visit(visitor);
+                }
+            }
+        }
+    }
+
+    /// Visits all word expressions contained in this boolean expression.
+    pub(crate) fn visit_exprs(&self, visitor: &mut impl FnMut(&Expr)) {
+        match self {
+            Self::Const(_) => {}
+            Self::Not(value) => value.visit_exprs(visitor),
+            Self::And(values) => {
+                for value in values {
+                    value.visit_exprs(visitor);
+                }
+            }
+            Self::Eq(left, right) | Self::Cmp(_, left, right) => {
+                left.visit(visitor);
+                right.visit(visitor);
+            }
+        }
+    }
+
     /// Implements the `eq` symbolic expression helper.
     pub(crate) fn eq(left: Expr, right: Expr) -> Self {
         if left == right {
@@ -1414,19 +1469,13 @@ impl BoolExpr {
 
     /// Implements the `collect_vars` symbolic expression helper.
     pub(crate) fn collect_vars(&self, vars: &mut BTreeSet<String>) {
-        match self {
-            Self::Const(_) => {}
-            Self::Not(value) => value.collect_vars(vars),
-            Self::And(values) => {
-                for value in values {
-                    value.collect_vars(vars);
-                }
-            }
+        self.visit(&mut |expr| match expr {
             Self::Eq(left, right) | Self::Cmp(_, left, right) => {
                 left.collect_vars(vars);
                 right.collect_vars(vars);
             }
-        }
+            Self::Const(_) | Self::Not(_) | Self::And(_) => {}
+        });
     }
 
     /// Implements the `smt` symbolic expression helper.
