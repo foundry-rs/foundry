@@ -3029,10 +3029,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         func.name,
                     );
                 }
-                if stats.corpus_entries == 0
-                    && stats.unreadable_entries > 0
-                    && stats.unreadable_entries == stats.skipped_entries
-                {
+                if stats.unreadable_entries > 0 {
                     self.result.single_fail(Some(format!(
                         "failed to read {} corpus entries from {}",
                         stats.unreadable_entries,
