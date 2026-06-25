@@ -239,36 +239,69 @@ contract ForgeFuzzReplayFailureTest {
 
     cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayFailureTest", "-q"]).assert_failure();
 
-    cmd.forge_fuse()
+    let replay = cmd
+        .forge_fuse()
         .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayFailureTest", "-vvv"])
-        .assert_failure()
+        .assert_failure();
+    let stdout = String::from_utf8(replay.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("[FAIL: EvmError: Revert; counterexample: calldata=0x")
+            && stdout.contains("args=[200]] testFuzz_reverts(uint256) (runs: 0,"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
+    assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
+});
+
+forgetest_init!(forge_fuzz_replay_does_not_fuzz_after_assume_reject, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
+    prj.add_test(
+        "ForgeFuzzReplayAssumeReject.t.sol",
+        r#"
+contract ForgeFuzzReplayAssumeRejectTest {
+    function testFuzz_reverts(uint256 value) public pure {
+        require(value > 200);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["fuzz", "run", "--mc", "ForgeFuzzReplayAssumeRejectTest", "-q"]).assert_failure();
+
+    prj.add_test(
+        "ForgeFuzzReplayAssumeReject.t.sol",
+        r#"
+interface Vm {
+    function assume(bool) external;
+}
+
+contract ForgeFuzzReplayAssumeRejectTest {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testFuzz_reverts(uint256 value) public {
+        vm.assume(value != 200);
+        require(false, "fresh unrelated failure");
+    }
+}
+   "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["fuzz", "replay", "--mc", "ForgeFuzzReplayAssumeRejectTest"])
+        .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-Ran 2 tests for test/ForgeFuzzReplayFailure.t.sol:ForgeFuzzReplayFailureTest
-[FAIL: EvmError: Revert; counterexample: calldata=0x[..] args=[200]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
-Traces:
-  [[..]] ForgeFuzzReplayFailureTest::testFuzz_reverts(200)
-    └─ ← [Revert] EvmError: Revert
+Ran 1 test for test/ForgeFuzzReplayAssumeReject.t.sol:ForgeFuzzReplayAssumeRejectTest
+[SKIP: persisted fuzz failure rejected by `vm.assume`] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 
-Backtrace:
-  at ForgeFuzzReplayFailureTest.testFuzz_reverts
-
-[SKIP: not runnable in replay mode] test_unit() ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 1 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 1 skipped (2 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/ForgeFuzzReplayFailure.t.sol:ForgeFuzzReplayFailureTest
-[FAIL: EvmError: Revert; counterexample: calldata=0x[..] args=[200]] testFuzz_reverts(uint256) (runs: 0, [AVG_GAS])
-
-Encountered a total of 1 failing tests, 0 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 1 failed test
-Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
-
-[SEED] (use `--fuzz-seed` to reproduce)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 
 "#]]);
 });

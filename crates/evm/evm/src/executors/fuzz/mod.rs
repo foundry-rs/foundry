@@ -261,6 +261,101 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         Ok(self.aggregate_results(workers, func, &shared_state))
     }
 
+    /// Replays the persisted single-call counterexample exactly once.
+    ///
+    /// Unlike [`Self::fuzz`], this never falls through to generated inputs if the persisted
+    /// calldata now succeeds or is rejected by `vm.assume`.
+    pub fn replay_persisted_failure(
+        &mut self,
+        func: &Function,
+        address: Address,
+        rd: &RevertDecoder,
+    ) -> Result<FuzzTestResult> {
+        let Some(failure) = self.persisted_failure.as_ref() else {
+            return Ok(FuzzTestResult {
+                skipped: true,
+                reason: Some("no persisted fuzz failure to replay".to_string()),
+                ..Default::default()
+            });
+        };
+
+        let seed = failure.fuzz.seed.or(self.config.seed);
+        if let Some(cheats) = self.executor_f.inspector_mut().cheatcodes.as_mut()
+            && let Some(seed) = seed
+        {
+            let run = failure.fuzz.run.unwrap_or(1);
+            let worker = failure.fuzz.worker.unwrap_or(0) as usize;
+            cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
+        }
+
+        let calldata = failure.calldata.clone();
+        let mut call =
+            self.executor_f.call_raw(self.sender, address, calldata.clone(), U256::ZERO)?;
+        if call.result.as_ref() == MAGIC_ASSUME {
+            return Ok(FuzzTestResult {
+                skipped: true,
+                reason: Some("persisted fuzz failure rejected by `vm.assume`".to_string()),
+                ..Default::default()
+            });
+        }
+
+        let (breakpoints, deprecated_cheatcodes) =
+            call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
+                (cheats.breakpoints.clone(), cheats.deprecated.clone())
+            });
+        let success = if !self.config.fail_on_revert
+            && call
+                .reverter
+                .is_some_and(|reverter| reverter != address && reverter != CHEATCODE_ADDRESS)
+        {
+            true
+        } else {
+            self.executor_f.is_raw_call_mut_success(address, &mut call, false)
+        };
+
+        let mut result = FuzzTestResult {
+            success,
+            labels: call.labels.clone(),
+            traces: call.traces.clone(),
+            debug_bytecodes: call.debug_bytecodes.clone(),
+            breakpoints: Some(breakpoints),
+            deprecated_cheatcodes,
+            ..Default::default()
+        };
+
+        if success {
+            result.first_case = FuzzCase { gas: call.gas_used, stipend: call.stipend };
+            result.gas_by_case.push((call.gas_used, call.stipend));
+            result.line_coverage = call.line_coverage;
+            result.logs = call.logs;
+            result.gas_report_traces.extend(call.traces.into_iter().map(|trace| trace.arena));
+        } else {
+            let reason = if call.reverter == Some(CHEATCODE_ADDRESS) {
+                SkipReason::decode(&call.result)
+                    .map(|reason| reason.to_string())
+                    .or_else(|| rd.maybe_decode(&call.result, call.exit_reason))
+            } else {
+                rd.maybe_decode(&call.result, call.exit_reason)
+            };
+            result.reason = reason;
+            let args = calldata
+                .get(4..)
+                .map_or_else(Vec::new, |data| func.abi_decode_input(data).unwrap_or_default());
+            result.counterexample = Some(CounterExample::Single(
+                BaseCounterExample::from_fuzz_call(calldata, args, call.traces).with_fuzz_metadata(
+                    FuzzRunMetadata::new(
+                        seed,
+                        failure.fuzz.run,
+                        Some(failure.fuzz.worker.unwrap_or(0)),
+                    ),
+                ),
+            ));
+            result.logs = call.logs;
+        }
+
+        Ok(result)
+    }
+
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
     /// or a `CounterExampleOutcome`
     fn single_fuzz(

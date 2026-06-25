@@ -3081,8 +3081,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 self.result.fuzz_result(result);
                 return self.result;
             }
-
-            fuzz_config.runs = 1;
             fuzz_config.corpus.corpus_dir = None;
         }
 
@@ -3107,6 +3105,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Run fuzz test.
         let mut fuzzed_executor =
             FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
+        if self.cr.mcr.tcfg.fuzz_failure_replay {
+            let result = match fuzzed_executor.replay_persisted_failure(
+                func,
+                self.address,
+                &self.cr.mcr.revert_decoder,
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    self.result.fuzz_setup_fail(e);
+                    return self.result;
+                }
+            };
+            self.result.fuzz_result(result);
+            return self.result;
+        }
         let result = match fuzzed_executor.fuzz(
             func,
             &self.setup.fuzz_fixtures,
