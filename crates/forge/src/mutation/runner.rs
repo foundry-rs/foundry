@@ -25,7 +25,8 @@ use foundry_config::Config;
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, SpecFor, TempoEvmNetwork,
+        TxEnvFor,
     },
     opts::EvmOpts,
 };
@@ -631,6 +632,14 @@ fn compile_and_test(
 ) -> Result<bool> {
     if evm_opts.networks.is_tempo() {
         compile_and_test_inner::<TempoEvmNetwork>(
+            config,
+            evm_opts,
+            filter_args,
+            selected_sources_relative,
+            isolate,
+        )
+    } else if evm_opts.networks.is_monad() {
+        compile_and_test_inner::<MonadEvmNetwork>(
             config,
             evm_opts,
             filter_args,
