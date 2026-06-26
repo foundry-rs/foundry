@@ -2760,9 +2760,9 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "yices-smt2");
-    assert_eq!(command.args, vec!["--bvconst-in-decimal"]);
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "yices-smt2");
+    assert_eq!(command.args(), &["--bvconst-in-decimal".to_string()]);
+    assert!(!command.smt_timeout());
 
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "cvc5-int".to_string(),
@@ -2771,9 +2771,9 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "cvc5");
-    assert!(command.args.contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "cvc5");
+    assert!(command.args().contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
+    assert!(!command.smt_timeout());
 
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "bitwuzla-abs".to_string(),
@@ -2782,9 +2782,9 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "bitwuzla");
-    assert_eq!(command.args, vec!["--produce-models", "--abstraction"]);
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "bitwuzla");
+    assert_eq!(command.args(), &["--produce-models".to_string(), "--abstraction".to_string()]);
+    assert!(!command.smt_timeout());
 }
 
 #[test]
@@ -2800,9 +2800,9 @@ fn solver_command_overrides_solver_name() {
     let command = &commands[0];
 
     assert_eq!(commands.len(), 1);
-    assert_eq!(command.program, "custom-solver");
-    assert_eq!(command.args, vec!["--flag", "two words"]);
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "custom-solver");
+    assert_eq!(command.args(), &["--flag".to_string(), "two words".to_string()]);
+    assert!(!command.smt_timeout());
 }
 
 #[test]
@@ -2847,9 +2847,9 @@ fn custom_solver_names_remain_z3_compatible() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "/opt/solvers/z3-nightly");
-    assert_eq!(command.args, vec!["-in", "-smt2"]);
-    assert!(command.smt_timeout);
+    assert_eq!(command.program(), "/opt/solvers/z3-nightly");
+    assert_eq!(command.args(), &["-in".to_string(), "-smt2".to_string()]);
+    assert!(command.smt_timeout());
 }
 
 #[test]
@@ -2868,14 +2868,14 @@ fn solver_portfolio_resolves_parallel_commands() {
     .unwrap();
 
     assert_eq!(commands.len(), 3);
-    assert_eq!(commands[0].program, "z3");
-    assert_eq!(commands[0].args, vec!["-in", "-smt2"]);
-    assert!(commands[0].smt_timeout);
-    assert_eq!(commands[1].program, "cvc5");
-    assert!(commands[1].args.contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
-    assert_eq!(commands[2].program, "custom-wrapper");
-    assert_eq!(commands[2].args, vec!["--stdin"]);
-    assert!(!commands[2].smt_timeout);
+    assert_eq!(commands[0].program(), "z3");
+    assert_eq!(commands[0].args(), &["-in".to_string(), "-smt2".to_string()]);
+    assert!(commands[0].smt_timeout());
+    assert_eq!(commands[1].program(), "cvc5");
+    assert!(commands[1].args().contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
+    assert_eq!(commands[2].program(), "custom-wrapper");
+    assert_eq!(commands[2].args(), &["--stdin".to_string()]);
+    assert!(!commands[2].smt_timeout());
 }
 
 #[test]

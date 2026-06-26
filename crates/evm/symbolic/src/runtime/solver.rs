@@ -124,10 +124,10 @@ pub(crate) trait SymbolicSolver {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SolverCommand {
-    pub(crate) program: String,
-    pub(crate) args: Vec<String>,
-    pub(crate) display: String,
-    pub(crate) smt_timeout: bool,
+    program: String,
+    args: Vec<String>,
+    display: String,
+    smt_timeout: bool,
 }
 
 impl SolverCommand {
@@ -144,15 +144,30 @@ impl SolverCommand {
             .join(" ");
         Ok(Self { program, args, display, smt_timeout })
     }
+
+    #[cfg(test)]
+    pub(crate) fn program(&self) -> &str {
+        &self.program
+    }
+
+    #[cfg(test)]
+    pub(crate) fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn smt_timeout(&self) -> bool {
+        self.smt_timeout
+    }
 }
 
 pub(crate) struct SmtLibSubprocessSolver {
-    pub(crate) commands: Result<Vec<SolverCommand>, SolverConfigError>,
-    pub(crate) timeout: Option<u32>,
-    pub(crate) max_queries: usize,
-    pub(crate) queries: usize,
+    commands: Result<Vec<SolverCommand>, SolverConfigError>,
+    timeout: Option<u32>,
+    max_queries: usize,
+    queries: usize,
     query_observer: Option<QueryObserver>,
-    pub(crate) dump_smt: bool,
+    dump_smt: bool,
     portfolio_scheduler: PortfolioScheduler,
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
