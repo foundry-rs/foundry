@@ -1,11 +1,9 @@
 use super::*;
 
-/// Returns whether `is_known_cheatcode` holds.
 pub(crate) fn is_known_cheatcode(address: Address) -> bool {
     address == CHEATCODE_ADDRESS || address == SYMBOLIC_VM_COMPAT_ADDRESS
 }
 
-/// Returns whether `is_console` holds.
 pub(crate) fn is_console(address: Address) -> bool {
     address == HARDHAT_CONSOLE_ADDRESS
 }
@@ -36,7 +34,6 @@ pub(crate) fn precompile_address(number: u8) -> Address {
     Address::from(bytes)
 }
 
-/// Returns whether `is_supported_precompile` holds.
 pub(crate) fn is_supported_precompile(address: Address, spec_id: SpecId) -> bool {
     precompile_number_for_spec(address, spec_id).is_some()
 }

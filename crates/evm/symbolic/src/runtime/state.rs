@@ -31,7 +31,6 @@ pub(crate) struct PathState {
 }
 
 impl PathState {
-    /// Constructs a new instance.
     pub(crate) fn new(
         address: Address,
         caller: Address,
@@ -599,7 +598,6 @@ impl PathState {
         }
     }
 
-    /// Returns whether `expectations_satisfied` holds.
     pub(crate) fn expectations_satisfied(&self) -> bool {
         self.expected_revert.is_none()
             && self.expected_emit.as_ref().is_none_or(ExpectedEmit::is_satisfied)
@@ -675,12 +673,10 @@ pub(crate) enum ExpectedRevertData {
 }
 
 impl ExpectedRevertData {
-    /// Builds a prefix revert expectation.
     pub(crate) fn prefix(data: Vec<SymWord>) -> Self {
         Self::Prefix(data.into())
     }
 
-    /// Builds an exact revert expectation.
     pub(crate) fn exact(data: Vec<SymWord>) -> Self {
         Self::Exact(data.into())
     }
@@ -721,7 +717,6 @@ impl ExpectedCall {
             && self.gas_matches(gas, value)?)
     }
 
-    /// Returns whether `gas_matches` holds.
     pub(crate) fn gas_matches(
         &self,
         gas: &SymWord,
@@ -746,7 +741,6 @@ impl ExpectedCall {
         true
     }
 
-    /// Returns whether `is_satisfied` holds.
     pub(crate) const fn is_satisfied(&self) -> bool {
         if self.exact { self.observed == self.expected } else { self.observed >= self.expected }
     }
@@ -799,7 +793,6 @@ pub(crate) struct ExpectedEmit {
 }
 
 impl ExpectedEmit {
-    /// Returns whether `is_satisfied` holds.
     pub(crate) const fn is_satisfied(&self) -> bool {
         self.template.is_none() && self.remaining == 0
     }
@@ -894,7 +887,6 @@ pub(crate) struct CallFrame {
 }
 
 impl CallFrame {
-    /// Constructs a new instance.
     pub(crate) fn new(
         address: Address,
         code_address: Address,
@@ -980,7 +972,6 @@ pub(crate) struct StorageWrite {
 }
 
 impl StorageWrite {
-    /// Constructs a new instance.
     pub(crate) const fn new(address: Address, key: SymWord, value: SymWord) -> Self {
         Self { address, key, value }
     }
@@ -1296,7 +1287,6 @@ impl SymbolicWorld {
         Ok(())
     }
 
-    /// Returns whether `has_code_or_nonce` holds.
     pub(crate) fn has_code_or_nonce<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,

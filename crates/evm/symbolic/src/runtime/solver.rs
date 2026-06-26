@@ -168,7 +168,6 @@ pub(crate) struct SmtLibSubprocessSolver {
 }
 
 impl SmtLibSubprocessSolver {
-    /// Constructs a new instance.
     pub(crate) fn new(
         commands: Result<Vec<SolverCommand>, SolverConfigError>,
         timeout: Option<u32>,
@@ -267,7 +266,6 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    /// Returns whether `is_sat` holds.
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
         self.is_sat_inner(constraints, false)
     }

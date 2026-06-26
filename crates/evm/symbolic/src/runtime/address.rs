@@ -200,12 +200,10 @@ pub(crate) fn extracted_byte_expr(expr: &Expr, index: usize) -> Expr {
     )
 }
 
-/// Returns whether `is_address_mask` holds.
 pub(crate) fn is_address_mask(expr: &Expr) -> bool {
     expr.as_const() == Some((U256::from(1) << 160) - U256::from(1))
 }
 
-/// Returns whether `is_shift_96` holds.
 pub(crate) fn is_shift_96(expr: &Expr) -> bool {
     expr.as_const() == Some(U256::from(96))
 }

@@ -629,12 +629,10 @@ pub(crate) enum GuardedOpcode {
 }
 
 impl SymCode {
-    /// Converts symbolic bytes into code.
     pub(crate) fn from_symbolic_bytes(bytes: Vec<SymWord>) -> Self {
         Self::from_shared_bytes(bytes.into())
     }
 
-    /// Converts shared symbolic bytes into code.
     pub(crate) const fn from_shared_bytes(bytes: Arc<[SymWord]>) -> Self {
         Self { bytes }
     }
@@ -662,7 +660,6 @@ impl SymCode {
         Self::from_symbolic_bytes(memory.read_bytes_symbolic_size(offset, size, max_size))
     }
 
-    /// Returns the symbolic code bytes.
     pub(crate) fn bytes(&self) -> &[SymWord] {
         &self.bytes
     }
@@ -671,7 +668,6 @@ impl SymCode {
         self.bytes.len()
     }
 
-    /// Returns whether `is_empty` holds.
     pub(crate) fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -808,7 +804,6 @@ impl SymReturnData {
         self.len_word.clone()
     }
 
-    /// Returns the concrete backing byte length.
     pub(crate) fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -817,7 +812,6 @@ impl SymReturnData {
         self.len_word.clone_expr()
     }
 
-    /// Returns whether `has_symbolic_len` holds.
     pub(crate) fn has_symbolic_len(&self) -> bool {
         self.len_word.as_const().is_none()
     }

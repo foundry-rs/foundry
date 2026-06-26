@@ -274,12 +274,10 @@ pub(crate) fn ensure_jumpdest(
     if jumpdests.contains(&dest) { Ok(()) } else { Err(SymbolicError::InvalidJump(dest)) }
 }
 
-/// Returns whether `is_assertion_revert` holds.
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
     is_assert_panic(data) || is_revert_assertion_failure(data)
 }
 
-/// Returns whether `is_assert_panic` holds.
 pub(crate) fn is_assert_panic(data: &[u8]) -> bool {
     data.len() >= ABI_SELECTOR_PLUS_WORD_LEN
         && data.starts_with(&PANIC_SELECTOR)
@@ -287,7 +285,6 @@ pub(crate) fn is_assert_panic(data: &[u8]) -> bool {
             .is_some_and(|code| code == ASSERT_PANIC_CODE)
 }
 
-/// Returns whether `is_revert_assertion_failure` holds.
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
     if data.len() < ERROR_DATA_MIN_LEN || !data.starts_with(&ERROR_SELECTOR) {
         return false;

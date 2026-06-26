@@ -8,12 +8,10 @@ pub(crate) struct SymCalldata {
 }
 
 impl SymCalldata {
-    /// Constructs a new instance.
     pub(crate) fn new(bytes: Vec<SymWord>) -> Self {
         Self::from_shared(bytes.into())
     }
 
-    /// Constructs a new instance from shared bytes.
     pub(crate) fn from_shared(bytes: Arc<[SymWord]>) -> Self {
         Self { size_word: SymWord::constant(U256::from(bytes.len())), size: bytes.len(), bytes }
     }
@@ -22,7 +20,6 @@ impl SymCalldata {
         Self { size: bytes.len(), size_word, bytes: bytes.into() }
     }
 
-    /// Returns the symbolic calldata size word.
     pub(crate) fn size_word(&self) -> SymWord {
         self.size_word.clone()
     }

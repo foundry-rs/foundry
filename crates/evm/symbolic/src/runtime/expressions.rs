@@ -484,7 +484,6 @@ fn expr_nonzero_forces_const_inner(
     }
 }
 
-/// Returns whether `masked_expr_matches` holds.
 fn masked_expr_matches(candidate: &ExprInner, target: &Expr) -> Option<U256> {
     match candidate {
         ExprInner::Op(ExprOp::And, left, right) if left == target => right.eval_const(),
@@ -682,12 +681,10 @@ impl SymWord {
         Self::constant(U256::ZERO)
     }
 
-    /// Builds a concrete symbolic word.
     pub(crate) fn constant(value: U256) -> Self {
         Self(Expr::constant(value))
     }
 
-    /// Returns the concrete value of this word.
     pub(crate) fn as_const(&self) -> Option<U256> {
         self.0.as_const()
     }
@@ -699,17 +696,14 @@ impl SymWord {
         self.0.eval(model)
     }
 
-    /// Returns this word expression.
     pub(crate) const fn as_expr(&self) -> &Expr {
         &self.0
     }
 
-    /// Clones this word expression.
     pub(crate) fn clone_expr(&self) -> Expr {
         self.0.clone()
     }
 
-    /// Builds a symbolic word from an expression.
     pub(crate) const fn expr(expr: Expr) -> Self {
         Self(expr)
     }
@@ -889,7 +883,6 @@ impl Expr {
         Self(Arc::new(expr))
     }
 
-    /// Returns this expression's inner representation.
     pub(super) fn as_inner(&self) -> &ExprInner {
         self.0.as_ref()
     }
@@ -927,12 +920,10 @@ impl Expr {
         Arc::unwrap_or_clone(self.0)
     }
 
-    /// Builds a concrete expression.
     pub(crate) fn constant(value: U256) -> Self {
         Self::from_inner(ExprInner::Const(value))
     }
 
-    /// Returns this expression's concrete value.
     pub(crate) fn as_const(&self) -> Option<U256> {
         match self.as_inner() {
             ExprInner::Const(value) => Some(*value),
@@ -1047,7 +1038,6 @@ impl Expr {
         Self::from_inner(ExprInner::Hash(HashExpr { name, algorithm, bytes: bytes.into() }))
     }
 
-    /// Builds a conditional expression.
     pub(crate) fn ite(cond: BoolExpr, then_expr: Self, else_expr: Self) -> Self {
         match cond.as_const() {
             Some(true) => then_expr,
@@ -1062,7 +1052,6 @@ impl Expr {
         }
     }
 
-    /// Adds a concrete value to an expression.
     pub(crate) fn add_const(expr: Self, value: U256) -> Self {
         if value.is_zero() {
             return expr;
@@ -1073,7 +1062,6 @@ impl Expr {
         }
     }
 
-    /// Builds a bitwise-not expression.
     pub(crate) fn not(value: Self) -> Self {
         match value.into_inner() {
             ExprInner::Const(value) => Self::constant(!value),
@@ -1603,7 +1591,6 @@ impl BoolExpr {
         }
     }
 
-    /// Builds equality between a symbolic word and a concrete value.
     pub(crate) fn eq_word_const(word: &SymWord, value: U256) -> Self {
         if let Some(word) = word.as_const() {
             Self::constant(word == value)
@@ -1612,12 +1599,10 @@ impl BoolExpr {
         }
     }
 
-    /// Builds equality between a symbolic word and an owned expression.
     pub(crate) fn eq_word_expr(word: &SymWord, expr: Expr) -> Self {
         Self::eq(word.as_expr().clone(), expr)
     }
 
-    /// Builds equality between borrowed symbolic words.
     pub(crate) fn eq_words(left: &SymWord, right: &SymWord) -> Self {
         Self::eq(left.as_expr().clone(), right.as_expr().clone())
     }
@@ -1701,7 +1686,6 @@ impl BoolExpr {
         Self::from_inner(BoolExprInner::Cmp(op, left, right))
     }
 
-    /// Builds comparison between a symbolic word and a concrete value.
     pub(crate) fn cmp_word_const(op: BoolExprOp, word: &SymWord, value: U256) -> Self {
         if let Some(word) = word.as_const() {
             Self::constant(op.eval(word, value))
@@ -1710,7 +1694,6 @@ impl BoolExpr {
         }
     }
 
-    /// Builds comparison between a symbolic word and an owned expression.
     pub(crate) fn cmp_word_expr(op: BoolExprOp, word: &SymWord, expr: Expr) -> Self {
         Self::cmp(op, word.as_expr().clone(), expr)
     }
