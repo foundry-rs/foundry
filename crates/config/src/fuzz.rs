@@ -181,8 +181,10 @@ impl FuzzCorpusConfig {
     /// EVM comparison operands are only useful for coverage-guided fuzzing, so they are derived
     /// from corpus mode. Disabled when sancov edge coverage is active because sancov replaces EVM
     /// bytecode coverage as the guidance signal.
-    pub const fn collect_evm_cmp_log(&self) -> bool {
-        !self.sancov_edges && self.corpus_dir.is_some()
+    pub fn collect_evm_cmp_log(&self) -> bool {
+        !self.sancov_edges
+            && self.corpus_dir.is_some()
+            && self.mutation_weights.effective().mutation_weight_cmp > 0
     }
 
     /// Whether EVM edge coverage should use collision-free dense IDs.
