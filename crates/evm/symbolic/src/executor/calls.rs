@@ -257,13 +257,15 @@ impl SymbolicExecutor {
         callee: Address,
         calldata: &[SymExpr],
     ) -> Result<bool, SymbolicError> {
-        let function_mocks = state.function_mocks.clone();
-        for mock in function_mocks.iter().rev() {
-            if mock.calldata_len() != calldata.len() {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) =
-                mock.match_condition(callee, calldata, "symbolic vm.mockFunction calldata")?
+            let Some(condition) = state.function_mocks[idx].match_condition(
+                callee,
+                calldata,
+                "symbolic vm.mockFunction calldata",
+            )?
             else {
                 continue;
             };
@@ -278,12 +280,15 @@ impl SymbolicExecutor {
             }
         }
 
-        for mock in function_mocks.iter().rev() {
-            if mock.calldata_len() != 4 {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) =
-                mock.match_condition(callee, calldata, "symbolic vm.mockFunction selector")?
+            let Some(condition) = state.function_mocks[idx].match_condition(
+                callee,
+                calldata,
+                "symbolic vm.mockFunction selector",
+            )?
             else {
                 continue;
             };
@@ -313,10 +318,14 @@ impl SymbolicExecutor {
             return Ok(true);
         }
         for idx in 0..state.expected_calls.len() {
-            let expected = state.expected_calls[idx].clone();
-            if let Some(constraints) = self
-                .expected_call_match_constraints(state, &expected, callee, value, gas, calldata)?
-            {
+            if let Some(constraints) = self.expected_call_match_constraints(
+                state,
+                &state.expected_calls[idx],
+                callee,
+                value,
+                gas,
+                calldata,
+            )? {
                 state.constraints = constraints;
                 return Ok(state.expected_calls[idx].observe());
             }
@@ -337,10 +346,14 @@ impl SymbolicExecutor {
         gas: &SymExpr,
         calldata: &[SymExpr],
     ) -> Result<bool, SymbolicError> {
-        let expected_calls = state.expected_calls.clone();
-        for expected in expected_calls {
-            let Some(condition) =
-                self.expected_call_match_condition(&expected, callee, value, gas, calldata)?
+        for idx in 0..state.expected_calls.len() {
+            let Some(condition) = self.expected_call_match_condition(
+                &state.expected_calls[idx],
+                callee,
+                value,
+                gas,
+                calldata,
+            )?
             else {
                 continue;
             };
@@ -355,15 +368,19 @@ impl SymbolicExecutor {
             }
         }
 
-        let mut mocks = state.call_mocks.iter().cloned().enumerate().collect::<Vec<_>>();
-        mocks.sort_by_key(|(idx, mock)| {
-            let (len, has_value) = mock.specificity();
+        let mut mocks = (0..state.call_mocks.len()).collect::<Vec<_>>();
+        mocks.sort_by_key(|idx| {
+            let (len, has_value) = state.call_mocks[*idx].specificity();
             (std::cmp::Reverse(len), std::cmp::Reverse(has_value), *idx)
         });
 
-        for (_, mock) in mocks {
-            let Some(condition) =
-                self.call_mock_match_condition(&mock, code_address, value, calldata)?
+        for idx in mocks {
+            let Some(condition) = self.call_mock_match_condition(
+                &state.call_mocks[idx],
+                code_address,
+                value,
+                calldata,
+            )?
             else {
                 continue;
             };
@@ -393,13 +410,17 @@ impl SymbolicExecutor {
         }
         let mut best = None;
         for idx in 0..state.call_mocks.len() {
-            let mock = state.call_mocks[idx].clone();
-            let Some(constraints) =
-                self.call_mock_match_constraints(state, &mock, callee, value, calldata)?
+            let Some(constraints) = self.call_mock_match_constraints(
+                state,
+                &state.call_mocks[idx],
+                callee,
+                value,
+                calldata,
+            )?
             else {
                 continue;
             };
-            let specificity = mock.specificity();
+            let specificity = state.call_mocks[idx].specificity();
             if best.as_ref().is_none_or(
                 |(_, best_specificity, _): &(usize, (usize, bool), Vec<SymBoolExpr>)| {
                     specificity > *best_specificity
@@ -459,32 +480,38 @@ impl SymbolicExecutor {
         callee: Address,
         calldata: &[SymExpr],
     ) -> Result<Option<Address>, SymbolicError> {
-        for mock in state.function_mocks.iter().rev().cloned() {
-            if mock.calldata_len() != calldata.len() {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) =
-                mock.match_condition(callee, calldata, "symbolic vm.mockFunction calldata")?
+            let Some(condition) = state.function_mocks[idx].match_condition(
+                callee,
+                calldata,
+                "symbolic vm.mockFunction calldata",
+            )?
             else {
                 continue;
             };
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 state.constraints = constraints;
-                return Ok(Some(mock.target()));
+                return Ok(Some(state.function_mocks[idx].target()));
             }
         }
-        for mock in state.function_mocks.iter().rev().cloned() {
-            if mock.calldata_len() != 4 {
+        for idx in (0..state.function_mocks.len()).rev() {
+            if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) =
-                mock.match_condition(callee, calldata, "symbolic vm.mockFunction selector")?
+            let Some(condition) = state.function_mocks[idx].match_condition(
+                callee,
+                calldata,
+                "symbolic vm.mockFunction selector",
+            )?
             else {
                 continue;
             };
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 state.constraints = constraints;
-                return Ok(Some(mock.target()));
+                return Ok(Some(state.function_mocks[idx].target()));
             }
         }
         Ok(None)

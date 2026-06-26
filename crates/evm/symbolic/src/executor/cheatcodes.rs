@@ -305,8 +305,9 @@ impl SymbolicExecutor {
         let bytecode = runtime.read_concrete("symbolic expected create bytecode")?;
         let mut mismatch_constraints = None;
         for idx in 0..state.expected_creates.len() {
-            let expected = state.expected_creates[idx].clone();
-            let Some(condition) = expected.match_condition(deployer, kind, &bytecode) else {
+            let Some(condition) =
+                state.expected_creates[idx].match_condition(deployer, kind, &bytecode)
+            else {
                 continue;
             };
             let (match_constraints, match_sat) =
