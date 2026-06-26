@@ -438,8 +438,8 @@ fn expr_nonzero_forces_const_inner(
         | ExprInner::Hash(_)
         | ExprInner::Not(_) => None,
         ExprInner::Ite(cond, then_expr, else_expr) => {
-            if expr_const_value(then_expr).is_some_and(|value| !value.is_zero())
-                && expr_const_value(else_expr).is_some_and(|value| value.is_zero())
+            if then_expr.eval_const().is_some_and(|value| !value.is_zero())
+                && else_expr.eval_const().is_some_and(|value| value.is_zero())
             {
                 bool_forces_expr_const_with_context(cond, target, context)
             } else {
@@ -447,25 +447,25 @@ fn expr_nonzero_forces_const_inner(
             }
         }
         ExprInner::Op(ExprOp::Or, left, right) => {
-            if expr_const_value(left).is_some_and(|value| value.is_zero()) {
+            if left.eval_const().is_some_and(|value| value.is_zero()) {
                 return expr_nonzero_forces_const(right, target, context);
             }
-            if expr_const_value(right).is_some_and(|value| value.is_zero()) {
+            if right.eval_const().is_some_and(|value| value.is_zero()) {
                 return expr_nonzero_forces_const(left, target, context);
             }
             None
         }
         ExprInner::Op(ExprOp::And, left, right) => {
-            if expr_const_value(left).is_some_and(|value| !value.is_zero()) {
+            if left.eval_const().is_some_and(|value| !value.is_zero()) {
                 return expr_nonzero_forces_const(right, target, context);
             }
-            if expr_const_value(right).is_some_and(|value| !value.is_zero()) {
+            if right.eval_const().is_some_and(|value| !value.is_zero()) {
                 return expr_nonzero_forces_const(left, target, context);
             }
             None
         }
         ExprInner::Op(ExprOp::Shl | ExprOp::Shr, value, shift)
-            if expr_const_value(shift).is_some_and(|shift| shift.is_zero()) =>
+            if shift.eval_const().is_some_and(|shift| shift.is_zero()) =>
         {
             expr_nonzero_forces_const(value, target, context)
         }
@@ -477,8 +477,8 @@ fn expr_nonzero_forces_const_inner(
 /// Returns whether `masked_expr_matches` holds.
 fn masked_expr_matches(candidate: &ExprInner, target: &Expr) -> Option<U256> {
     match candidate {
-        ExprInner::Op(ExprOp::And, left, right) if left == target => expr_const_value(right),
-        ExprInner::Op(ExprOp::And, left, right) if right == target => expr_const_value(left),
+        ExprInner::Op(ExprOp::And, left, right) if left == target => right.eval_const(),
+        ExprInner::Op(ExprOp::And, left, right) if right == target => left.eval_const(),
         _ => None,
     }
 }
@@ -492,63 +492,6 @@ pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, ma
         BoolExprRef::And(values) => context_forces_masked_expr(values, target, mask),
         _ => false,
     })
-}
-
-pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
-    match expr.as_inner() {
-        ExprInner::Const(value) => Some(*value),
-        ExprInner::Var(_) | ExprInner::GasLeft(_) | ExprInner::Keccak(_) | ExprInner::Hash(_) => {
-            None
-        }
-        ExprInner::Not(value) => Some(!expr_const_value(value)?),
-        ExprInner::Op(op, left, right) => {
-            Some(eval_expr_op(*op, expr_const_value(left)?, expr_const_value(right)?))
-        }
-        ExprInner::AddMod(expr) => Some(addmod_word(
-            expr_const_value(expr.left())?,
-            expr_const_value(expr.right())?,
-            expr_const_value(expr.modulus())?,
-        )),
-        ExprInner::MulMod(expr) => Some(mulmod_word(
-            expr_const_value(expr.left())?,
-            expr_const_value(expr.right())?,
-            expr_const_value(expr.modulus())?,
-        )),
-        ExprInner::Ite(cond, then_expr, else_expr) => {
-            if bool_const_value(cond)? {
-                expr_const_value(then_expr)
-            } else {
-                expr_const_value(else_expr)
-            }
-        }
-    }
-}
-
-pub(crate) fn bool_const_value(expr: &BoolExpr) -> Option<bool> {
-    match expr.as_inner() {
-        BoolExprRef::Const(value) => Some(value),
-        BoolExprRef::Not(value) => Some(!bool_const_value(value)?),
-        BoolExprRef::And(values) => {
-            let mut all_true = true;
-            for value in values {
-                all_true &= bool_const_value(value)?;
-            }
-            Some(all_true)
-        }
-        BoolExprRef::Eq(left, right) => Some(expr_const_value(left)? == expr_const_value(right)?),
-        BoolExprRef::Cmp(op, left, right) => {
-            let left = expr_const_value(left)?;
-            let right = expr_const_value(right)?;
-            Some(match op {
-                BoolExprOp::Ult => left < right,
-                BoolExprOp::Ugt => left > right,
-                BoolExprOp::Ule => left <= right,
-                BoolExprOp::Uge => left >= right,
-                BoolExprOp::Slt => slt(left, right),
-                BoolExprOp::Sgt => slt(right, left),
-            })
-        }
-    }
 }
 
 pub(crate) fn bool_contains_keccak(expr: &BoolExpr) -> bool {
@@ -661,23 +604,6 @@ pub(crate) fn low_byte(word: SymWord) -> SymWord {
     SymWord::expr(Expr::op(ExprOp::And, word.into_expr(), Expr::constant(U256::from(0xff))))
 }
 
-pub(crate) fn model_word(
-    word: &SymWord,
-    model: &(impl SymbolicModelLookup + ?Sized),
-) -> Result<U256, SymbolicError> {
-    if let Some(value) = word.as_const() {
-        return Ok(value);
-    }
-    eval_expr(word.as_expr(), model)
-}
-
-pub(crate) fn model_bytes(
-    bytes: &[SymWord],
-    model: &(impl SymbolicModelLookup + ?Sized),
-) -> Result<Vec<u8>, SymbolicError> {
-    bytes.iter().map(|byte| Ok(model_word(byte, model)?.to::<u8>())).collect()
-}
-
 pub(crate) fn concrete_bytes(
     bytes: &[SymWord],
     reason: &'static str,
@@ -728,149 +654,6 @@ pub(crate) fn function_mock_match_condition(
     Ok(Some(BoolExpr::and(vec![address_match_condition(&mock.callee, callee), data_condition])))
 }
 
-pub(crate) fn eval_expr(
-    expr: &Expr,
-    model: &(impl SymbolicModelLookup + ?Sized),
-) -> Result<U256, SymbolicError> {
-    Ok(match expr.as_inner() {
-        ExprInner::Const(value) => *value,
-        ExprInner::Var(var) => model.value(*var).unwrap_or_default(),
-        ExprInner::GasLeft(_) => {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
-        ExprInner::Keccak(hash) => eval_keccak_expr(&hash.len, &hash.bytes, model)?,
-        ExprInner::Hash(hash) => model.value(hash.name).unwrap_or_default(),
-        ExprInner::Not(value) => !eval_expr(value, model)?,
-        ExprInner::Op(op, left, right) => {
-            let left = eval_expr(left, model)?;
-            let right = eval_expr(right, model)?;
-            eval_expr_op(*op, left, right)
-        }
-        ExprInner::AddMod(expr) => addmod_word(
-            eval_expr(expr.left(), model)?,
-            eval_expr(expr.right(), model)?,
-            eval_expr(expr.modulus(), model)?,
-        ),
-        ExprInner::MulMod(expr) => mulmod_word(
-            eval_expr(expr.left(), model)?,
-            eval_expr(expr.right(), model)?,
-            eval_expr(expr.modulus(), model)?,
-        ),
-        ExprInner::Ite(cond, then_expr, else_expr) => {
-            if eval_bool_expr(cond, model)? {
-                eval_expr(then_expr, model)?
-            } else {
-                eval_expr(else_expr, model)?
-            }
-        }
-    })
-}
-
-/// Returns the concrete keccak value implied by a solver model.
-pub(crate) fn eval_keccak_expr(
-    len: &Expr,
-    bytes: &[Expr],
-    model: &(impl SymbolicModelLookup + ?Sized),
-) -> Result<U256, SymbolicError> {
-    let len = eval_expr(len, model)?;
-    if len > U256::from(bytes.len()) {
-        return Err(SymbolicError::Solver(
-            "solver model uses an invalid keccak length".to_string(),
-        ));
-    }
-
-    let mut input = Vec::with_capacity(len.to::<usize>());
-    for byte in bytes.iter().take(len.to::<usize>()) {
-        input.push((eval_expr(byte, model)? & U256::from(0xff)).to::<u8>());
-    }
-
-    Ok(U256::from_be_bytes(keccak256(input).0))
-}
-
-pub(crate) fn eval_expr_op(op: ExprOp, left: U256, right: U256) -> U256 {
-    match op {
-        ExprOp::Add => left.wrapping_add(right),
-        ExprOp::Sub => left.wrapping_sub(right),
-        ExprOp::Mul => left.wrapping_mul(right),
-        ExprOp::UDiv => {
-            if right.is_zero() {
-                U256::ZERO
-            } else {
-                left / right
-            }
-        }
-        ExprOp::URem => {
-            if right.is_zero() {
-                U256::ZERO
-            } else {
-                left % right
-            }
-        }
-        ExprOp::SDiv => sdiv(left, right),
-        ExprOp::SRem => smod(left, right),
-        ExprOp::And => left & right,
-        ExprOp::Or => left | right,
-        ExprOp::Xor => left ^ right,
-        ExprOp::Shl => {
-            if right >= U256::from(256) {
-                U256::ZERO
-            } else {
-                left << right.to::<usize>()
-            }
-        }
-        ExprOp::Shr => {
-            if right >= U256::from(256) {
-                U256::ZERO
-            } else {
-                left >> right.to::<usize>()
-            }
-        }
-        ExprOp::Sar => {
-            if right >= U256::from(256) {
-                sar(left, 256)
-            } else {
-                sar(left, right.to::<usize>())
-            }
-        }
-    }
-}
-
-pub(crate) fn eval_bool_expr(
-    expr: &BoolExpr,
-    model: &(impl SymbolicModelLookup + ?Sized),
-) -> Result<bool, SymbolicError> {
-    Ok(match expr.as_inner() {
-        BoolExprRef::Const(value) => value,
-        BoolExprRef::Not(value) => !eval_bool_expr(value, model)?,
-        BoolExprRef::And(values) => {
-            for value in values {
-                if !eval_bool_expr(value, model)? {
-                    return Ok(false);
-                }
-            }
-            true
-        }
-        BoolExprRef::Eq(left, right) => eval_expr(left, model)? == eval_expr(right, model)?,
-        BoolExprRef::Cmp(op, left, right) => {
-            let left = eval_expr(left, model)?;
-            let right = eval_expr(right, model)?;
-            eval_bool_cmp(op, left, right)
-        }
-    })
-}
-
-/// Returns the concrete comparison result for a boolean expression.
-pub(crate) fn eval_bool_cmp(op: BoolExprOp, left: U256, right: U256) -> bool {
-    match op {
-        BoolExprOp::Ult => left < right,
-        BoolExprOp::Ugt => left > right,
-        BoolExprOp::Ule => left <= right,
-        BoolExprOp::Uge => left >= right,
-        BoolExprOp::Slt => slt(left, right),
-        BoolExprOp::Sgt => slt(right, left),
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct SymWord(Expr);
 
@@ -887,6 +670,13 @@ impl SymWord {
     /// Returns the concrete value of this word.
     pub(crate) fn as_const(&self) -> Option<U256> {
         self.0.as_const()
+    }
+
+    pub(crate) fn eval<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        model: &M,
+    ) -> Result<U256, SymbolicError> {
+        self.0.eval(model)
     }
 
     /// Returns this word expression.
@@ -968,6 +758,16 @@ impl SymWord {
             return Err(SymbolicError::Unsupported(reason));
         }
         Ok(value.to::<usize>())
+    }
+}
+
+pub(crate) trait SymWordSliceExt {
+    fn eval<M: SymbolicModelLookup + ?Sized>(&self, model: &M) -> Result<Vec<u8>, SymbolicError>;
+}
+
+impl SymWordSliceExt for [SymWord] {
+    fn eval<M: SymbolicModelLookup + ?Sized>(&self, model: &M) -> Result<Vec<u8>, SymbolicError> {
+        self.iter().map(|byte| Ok(byte.eval(model)?.to::<u8>())).collect()
     }
 }
 
@@ -1120,6 +920,85 @@ impl Expr {
         }
     }
 
+    pub(crate) fn eval_const(&self) -> Option<U256> {
+        match self.as_inner() {
+            ExprInner::Const(value) => Some(*value),
+            ExprInner::Var(_)
+            | ExprInner::GasLeft(_)
+            | ExprInner::Keccak(_)
+            | ExprInner::Hash(_) => None,
+            ExprInner::Not(value) => Some(!value.eval_const()?),
+            ExprInner::Op(op, left, right) => {
+                Some(op.eval(left.eval_const()?, right.eval_const()?))
+            }
+            ExprInner::AddMod(expr) => Some(addmod_word(
+                expr.left().eval_const()?,
+                expr.right().eval_const()?,
+                expr.modulus().eval_const()?,
+            )),
+            ExprInner::MulMod(expr) => Some(mulmod_word(
+                expr.left().eval_const()?,
+                expr.right().eval_const()?,
+                expr.modulus().eval_const()?,
+            )),
+            ExprInner::Ite(cond, then_expr, else_expr) => {
+                if cond.eval_const()? {
+                    then_expr.eval_const()
+                } else {
+                    else_expr.eval_const()
+                }
+            }
+        }
+    }
+
+    pub(crate) fn eval<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        model: &M,
+    ) -> Result<U256, SymbolicError> {
+        Ok(match self.as_inner() {
+            ExprInner::Const(value) => *value,
+            ExprInner::Var(var) => model.value(*var).unwrap_or_default(),
+            ExprInner::GasLeft(_) => {
+                return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+            }
+            ExprInner::Keccak(hash) => {
+                let len = hash.len.eval(model)?;
+                if len > U256::from(hash.bytes.len()) {
+                    return Err(SymbolicError::Solver(
+                        "solver model uses an invalid keccak length".to_string(),
+                    ));
+                }
+
+                let mut input = Vec::with_capacity(len.to::<usize>());
+                for byte in hash.bytes.iter().take(len.to::<usize>()) {
+                    input.push((byte.eval(model)? & U256::from(0xff)).to::<u8>());
+                }
+
+                U256::from_be_bytes(keccak256(input).0)
+            }
+            ExprInner::Hash(hash) => model.value(hash.name).unwrap_or_default(),
+            ExprInner::Not(value) => !value.eval(model)?,
+            ExprInner::Op(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
+            ExprInner::AddMod(expr) => addmod_word(
+                expr.left().eval(model)?,
+                expr.right().eval(model)?,
+                expr.modulus().eval(model)?,
+            ),
+            ExprInner::MulMod(expr) => mulmod_word(
+                expr.left().eval(model)?,
+                expr.right().eval(model)?,
+                expr.modulus().eval(model)?,
+            ),
+            ExprInner::Ite(cond, then_expr, else_expr) => {
+                if cond.eval(model)? {
+                    then_expr.eval(model)?
+                } else {
+                    else_expr.eval(model)?
+                }
+            }
+        })
+    }
+
     pub(crate) fn var(name: impl AsRef<str>) -> Self {
         Self::var_symbol(Symbol::intern(name))
     }
@@ -1219,7 +1098,7 @@ impl Expr {
 
     pub(crate) fn op(op: ExprOp, left: Self, right: Self) -> Self {
         if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
-            return Self::constant(eval_expr_op(op, left, right));
+            return Self::constant(op.eval(left, right));
         }
 
         match (op, left.as_inner(), right.as_inner()) {
@@ -1473,6 +1352,54 @@ impl ExprOp {
             Self::Sar => "bvashr",
         }
     }
+
+    pub(crate) fn eval(self, left: U256, right: U256) -> U256 {
+        match self {
+            Self::Add => left.wrapping_add(right),
+            Self::Sub => left.wrapping_sub(right),
+            Self::Mul => left.wrapping_mul(right),
+            Self::UDiv => {
+                if right.is_zero() {
+                    U256::ZERO
+                } else {
+                    left / right
+                }
+            }
+            Self::URem => {
+                if right.is_zero() {
+                    U256::ZERO
+                } else {
+                    left % right
+                }
+            }
+            Self::SDiv => sdiv(left, right),
+            Self::SRem => smod(left, right),
+            Self::And => left & right,
+            Self::Or => left | right,
+            Self::Xor => left ^ right,
+            Self::Shl => {
+                if right >= U256::from(256) {
+                    U256::ZERO
+                } else {
+                    left << right.to::<usize>()
+                }
+            }
+            Self::Shr => {
+                if right >= U256::from(256) {
+                    U256::ZERO
+                } else {
+                    left >> right.to::<usize>()
+                }
+            }
+            Self::Sar => {
+                if right >= U256::from(256) {
+                    sar(left, 256)
+                } else {
+                    sar(left, right.to::<usize>())
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1560,6 +1487,44 @@ impl BoolExpr {
                 BoolExprInner::Cmp(op, left, right) => BoolExprOwned::Cmp(op, left, right),
             },
         }
+    }
+
+    pub(crate) fn eval_const(&self) -> Option<bool> {
+        match self.as_inner() {
+            BoolExprRef::Const(value) => Some(value),
+            BoolExprRef::Not(value) => Some(!value.eval_const()?),
+            BoolExprRef::And(values) => {
+                let mut all_true = true;
+                for value in values {
+                    all_true &= value.eval_const()?;
+                }
+                Some(all_true)
+            }
+            BoolExprRef::Eq(left, right) => Some(left.eval_const()? == right.eval_const()?),
+            BoolExprRef::Cmp(op, left, right) => {
+                Some(op.eval(left.eval_const()?, right.eval_const()?))
+            }
+        }
+    }
+
+    pub(crate) fn eval<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        model: &M,
+    ) -> Result<bool, SymbolicError> {
+        Ok(match self.as_inner() {
+            BoolExprRef::Const(value) => value,
+            BoolExprRef::Not(value) => !value.eval(model)?,
+            BoolExprRef::And(values) => {
+                for value in values {
+                    if !value.eval(model)? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            BoolExprRef::Eq(left, right) => left.eval(model)? == right.eval(model)?,
+            BoolExprRef::Cmp(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
+        })
     }
 
     /// Visits this boolean expression and all child boolean expressions.
@@ -1706,7 +1671,7 @@ impl BoolExpr {
             return Self::Const(matches!(op, BoolExprOp::Ule | BoolExprOp::Uge));
         }
         if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
-            return Self::Const(eval_bool_cmp(op, left, right));
+            return Self::Const(op.eval(left, right));
         }
         match (op, left.as_inner(), right.as_inner()) {
             (BoolExprOp::Ugt, ExprInner::Const(value), _) if value.is_zero() => {
@@ -1741,7 +1706,7 @@ impl BoolExpr {
     /// Builds comparison between a symbolic word and a concrete value.
     pub(crate) fn cmp_word_const(op: BoolExprOp, word: &SymWord, value: U256) -> Self {
         if let Some(word) = word.as_const() {
-            Self::Const(eval_bool_cmp(op, word, value))
+            Self::Const(op.eval(word, value))
         } else {
             Self::cmp(op, word.as_expr().clone(), Expr::constant(value))
         }
@@ -1831,6 +1796,17 @@ impl BoolExprOp {
             Self::Sgt => "bvsgt",
         }
     }
+
+    pub(crate) fn eval(self, left: U256, right: U256) -> bool {
+        match self {
+            Self::Ult => left < right,
+            Self::Ugt => left > right,
+            Self::Ule => left <= right,
+            Self::Uge => left >= right,
+            Self::Slt => slt(left, right),
+            Self::Sgt => slt(right, left),
+        }
+    }
 }
 
 pub(crate) fn u256_to_usize(value: U256) -> Option<usize> {
@@ -1850,25 +1826,27 @@ pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &Expr) -> Optio
             bound
         }
         BoolExprRef::Eq(left, right) => match (left == expr, right == expr) {
-            (true, _) => expr_const_value(right).and_then(u256_to_usize),
-            (_, true) => expr_const_value(left).and_then(u256_to_usize),
+            (true, _) => right.eval_const().and_then(u256_to_usize),
+            (_, true) => left.eval_const().and_then(u256_to_usize),
             _ => None,
         },
         BoolExprRef::Cmp(op, left, right) => {
             if left == expr {
                 match op {
-                    BoolExprOp::Ult => expr_const_value(right)
+                    BoolExprOp::Ult => right
+                        .eval_const()
                         .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                         .and_then(u256_to_usize),
-                    BoolExprOp::Ule => expr_const_value(right).and_then(u256_to_usize),
+                    BoolExprOp::Ule => right.eval_const().and_then(u256_to_usize),
                     _ => None,
                 }
             } else if right == expr {
                 match op {
-                    BoolExprOp::Ugt => expr_const_value(left)
+                    BoolExprOp::Ugt => left
+                        .eval_const()
                         .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                         .and_then(u256_to_usize),
-                    BoolExprOp::Uge => expr_const_value(left).and_then(u256_to_usize),
+                    BoolExprOp::Uge => left.eval_const().and_then(u256_to_usize),
                     _ => None,
                 }
             } else {

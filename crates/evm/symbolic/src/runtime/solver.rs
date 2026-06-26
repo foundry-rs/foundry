@@ -746,7 +746,7 @@ fn model_satisfies_constraints(
     model: &(impl SymbolicModelLookup + ?Sized),
     constraints: &[BoolExpr],
 ) -> bool {
-    constraints.iter().all(|constraint| eval_bool_expr(constraint, model).unwrap_or(false))
+    constraints.iter().all(|constraint| constraint.eval(model).unwrap_or(false))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1630,7 +1630,7 @@ pub(crate) fn parse_and_validate_model(
     constraints: &[BoolExpr],
 ) -> Result<SymbolicModel, SymbolicError> {
     let model = parse_model(output)?;
-    if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false)) {
+    if constraints.iter().all(|constraint| constraint.eval(&model).unwrap_or(false)) {
         Ok(model)
     } else {
         let reason = if constraints.iter().any(bool_contains_keccak) {

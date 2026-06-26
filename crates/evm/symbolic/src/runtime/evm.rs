@@ -25,7 +25,7 @@ pub(crate) fn exp_expr_for_concrete_exponent(base: Expr, exponent: usize) -> Exp
     for _ in 0..exponent {
         expr = Expr::op(ExprOp::Mul, expr, base.clone());
     }
-    expr_const_value(&expr).map(Expr::constant).unwrap_or(expr)
+    expr.eval_const().map(Expr::constant).unwrap_or(expr)
 }
 
 pub(crate) fn slt(left: U256, right: U256) -> bool {

@@ -125,7 +125,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
                 expr_binary_byte_term(left, right, index, ExprOp::Xor, |byte| byte == 0, |_| false)
             }
             ExprOp::Shl => {
-                let shift = expr_const_value(right)?;
+                let shift = right.eval_const()?;
                 if shift >= U256::from(256) {
                     return Some(Expr::constant(U256::ZERO));
                 }
@@ -141,7 +141,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
                 }
             }
             ExprOp::Shr => {
-                let shift = expr_const_value(right)?;
+                let shift = right.eval_const()?;
                 if shift >= U256::from(256) {
                     return Some(Expr::constant(U256::ZERO));
                 }

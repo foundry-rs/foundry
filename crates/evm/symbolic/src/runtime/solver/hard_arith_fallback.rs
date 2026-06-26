@@ -246,7 +246,7 @@ pub(crate) fn fallback_model_satisfies_all_constraints(
     constraints: &[BoolExpr],
     model: &(impl SymbolicModelLookup + ?Sized),
 ) -> bool {
-    constraints.iter().all(|constraint| eval_bool_expr(constraint, model).unwrap_or(false))
+    constraints.iter().all(|constraint| constraint.eval(model).unwrap_or(false))
 }
 
 /// Checks constraints that depend only on already-assigned fallback variables.
@@ -259,7 +259,7 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
     constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
         !vars.is_subset(searched_vars)
             || !vars.iter().all(|var| model.contains_name(*var))
-            || eval_bool_expr(constraint, model).unwrap_or(false)
+            || constraint.eval(model).unwrap_or(false)
     })
 }
 
@@ -360,8 +360,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<Symb
     for candidate in candidates {
         let mut model = SymbolicModel::default();
         model.insert(var, candidate);
-        if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false))
-        {
+        if constraints.iter().all(|constraint| constraint.eval(&model).unwrap_or(false)) {
             return Some(model);
         }
     }

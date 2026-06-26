@@ -163,7 +163,7 @@ impl PathState {
     }
 
     pub(crate) fn constrained_expr_value(&self, expr: &Expr) -> Option<U256> {
-        if let Some(value) = expr_const_value(expr) {
+        if let Some(value) = expr.eval_const() {
             return Some(value);
         }
         if let Some(value) = expr_known_word(expr) {
@@ -181,11 +181,11 @@ impl PathState {
             model.insert(var, value);
         }
 
-        eval_expr(expr, &model).ok()
+        expr.eval(&model).ok()
     }
 
     pub(crate) fn expr_upper_bound_usize(&self, expr: &Expr) -> Option<usize> {
-        if let Some(value) = expr_const_value(expr) {
+        if let Some(value) = expr.eval_const() {
             return u256_to_usize(value);
         }
         if let Some(value) = expr_known_word(expr) {
@@ -202,7 +202,7 @@ impl PathState {
             ExprInner::Not(_) => None,
             ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
                 let modulus = expr.modulus();
-                match expr_const_value(modulus) {
+                match modulus.eval_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => u256_to_usize(modulus - U256::from(1)),
                     None => {
@@ -222,19 +222,20 @@ impl PathState {
                     .checked_mul(self.expr_upper_bound_usize(right)?),
                 ExprOp::UDiv => {
                     let left = self.expr_upper_bound_usize(left)?;
-                    match expr_const_value(right)? {
+                    match right.eval_const()? {
                         divisor if divisor.is_zero() => Some(0),
                         divisor => Some(left / u256_to_usize(divisor)?),
                     }
                 }
-                ExprOp::URem => match expr_const_value(right) {
+                ExprOp::URem => match right.eval_const() {
                     Some(divisor) if divisor.is_zero() => Some(0),
                     Some(divisor) => u256_to_usize(divisor - U256::from(1)),
                     None => self.expr_upper_bound_usize(left),
                 },
-                ExprOp::And => expr_const_value(right)
+                ExprOp::And => right
+                    .eval_const()
                     .and_then(u256_to_usize)
-                    .or_else(|| expr_const_value(left).and_then(u256_to_usize))
+                    .or_else(|| left.eval_const().and_then(u256_to_usize))
                     .map(|mask| {
                         self.expr_upper_bound_usize(left)
                             .or_else(|| self.expr_upper_bound_usize(right))
@@ -242,7 +243,7 @@ impl PathState {
                     }),
                 ExprOp::Shr => {
                     let left = self.expr_upper_bound_usize(left)?;
-                    let shift = u256_to_usize(expr_const_value(right)?)?;
+                    let shift = u256_to_usize(right.eval_const()?)?;
                     Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
                 }
                 ExprOp::Sub
