@@ -691,7 +691,12 @@ pub(crate) enum GuardedOpcode {
 impl SymCode {
     /// Converts symbolic bytes into code.
     pub(crate) fn from_symbolic_bytes(bytes: Vec<SymWord>) -> Self {
-        Self { bytes: bytes.into() }
+        Self::from_shared_bytes(bytes.into())
+    }
+
+    /// Converts shared symbolic bytes into code.
+    pub(crate) const fn from_shared_bytes(bytes: Arc<[SymWord]>) -> Self {
+        Self { bytes }
     }
 
     /// Implements the `concrete` symbolic memory helper.
@@ -835,13 +840,13 @@ impl SymCode {
 #[derive(Clone, Debug)]
 pub(crate) struct SymReturnData {
     len_word: SymWord,
-    bytes: Vec<SymWord>,
+    bytes: Arc<[SymWord]>,
 }
 
 impl Default for SymReturnData {
     /// Implements the `default` symbolic memory helper.
     fn default() -> Self {
-        Self { len_word: SymWord::zero(), bytes: Vec::new() }
+        Self { len_word: SymWord::zero(), bytes: Vec::new().into() }
     }
 }
 
@@ -862,15 +867,12 @@ impl SymReturnData {
     /// Converts values for the `from_symbolic_bytes` symbolic memory helper.
     pub(crate) fn from_symbolic_bytes(bytes: Vec<SymWord>) -> Self {
         let len = bytes.len();
-        Self { len_word: SymWord::Concrete(U256::from(len)), bytes }
+        Self { len_word: SymWord::Concrete(U256::from(len)), bytes: bytes.into() }
     }
 
     /// Converts values for the `from_symbolic_bytes_with_len` symbolic memory helper.
-    pub(crate) const fn from_symbolic_bytes_with_len(
-        bytes: Vec<SymWord>,
-        len_word: SymWord,
-    ) -> Self {
-        Self { len_word, bytes }
+    pub(crate) fn from_symbolic_bytes_with_len(bytes: Vec<SymWord>, len_word: SymWord) -> Self {
+        Self { len_word, bytes: bytes.into() }
     }
 
     /// Implements the `len_word` symbolic memory helper.
@@ -879,7 +881,7 @@ impl SymReturnData {
     }
 
     /// Returns the concrete backing byte length.
-    pub(crate) const fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.bytes.len()
     }
 
@@ -938,7 +940,7 @@ impl SymReturnData {
     /// Returns the `read_concrete` symbolic memory helper result.
     pub(crate) fn read_concrete(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
         let mut out = Vec::with_capacity(self.len());
-        for byte in &self.bytes {
+        for byte in self.bytes.iter() {
             match byte {
                 SymWord::Concrete(value) => out.push(value.to::<u8>()),
                 SymWord::Expr(_) => return Err(SymbolicError::Unsupported(reason)),
@@ -954,6 +956,6 @@ impl SymReturnData {
                 "CREATE with symbolic runtime size not modeled",
             ));
         }
-        Ok(SymCode::from_symbolic_bytes(self.bytes.clone()))
+        Ok(SymCode::from_shared_bytes(self.bytes.clone()))
     }
 }
