@@ -691,25 +691,25 @@ impl SymCode {
     pub(crate) fn guarded_opcode(&self, pc: usize) -> Result<GuardedOpcode, SymbolicError> {
         match self.bytes.get(pc) {
             None => Ok(GuardedOpcode::End),
-            Some(byte) if byte.as_const().is_some() => {
-                Ok(GuardedOpcode::Concrete(byte.as_const().expect("checked concrete").to::<u8>()))
-            }
-            Some(byte) => {
-                if let SymExprKind::Ite(condition, then_expr, else_expr) = byte.kind()
-                    && else_expr.as_const().is_some_and(|value| value.is_zero())
-                {
-                    match then_expr.as_const() {
-                        Some(value) if value.is_zero() => Ok(GuardedOpcode::Concrete(0)),
-                        Some(value) => Ok(GuardedOpcode::SymbolicSize {
-                            condition: condition.clone(),
-                            opcode: value.to::<u8>(),
-                        }),
-                        None => Err(SymbolicError::Unsupported("symbolic bytecode opcode")),
+            Some(byte) => match byte.as_const() {
+                Some(value) => Ok(GuardedOpcode::Concrete(value.to::<u8>())),
+                None => {
+                    if let SymExprKind::Ite(condition, then_expr, else_expr) = byte.kind()
+                        && else_expr.as_const().is_some_and(|value| value.is_zero())
+                    {
+                        match then_expr.as_const() {
+                            Some(value) if value.is_zero() => Ok(GuardedOpcode::Concrete(0)),
+                            Some(value) => Ok(GuardedOpcode::SymbolicSize {
+                                condition: condition.clone(),
+                                opcode: value.to::<u8>(),
+                            }),
+                            None => Err(SymbolicError::Unsupported("symbolic bytecode opcode")),
+                        }
+                    } else {
+                        Err(SymbolicError::Unsupported("symbolic bytecode opcode"))
                     }
-                } else {
-                    Err(SymbolicError::Unsupported("symbolic bytecode opcode"))
                 }
-            }
+            },
         }
     }
 
