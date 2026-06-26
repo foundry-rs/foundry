@@ -216,7 +216,7 @@ impl PathState {
     }
 
     pub(crate) fn constrained_expr_value(&self, expr: &SymExpr) -> Option<U256> {
-        if let Some(value) = expr.eval_const() {
+        if let Some(value) = expr.eval() {
             return Some(value);
         }
         if let Some(value) = expr.known_word() {
@@ -234,11 +234,11 @@ impl PathState {
             model.insert(var, value);
         }
 
-        expr.eval(&model).ok()
+        expr.eval_model(&model).ok()
     }
 
     pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
-        if let Some(value) = expr.eval_const() {
+        if let Some(value) = expr.eval() {
             return usize::try_from(value).ok();
         }
         if let Some(value) = expr.known_word() {
@@ -254,7 +254,7 @@ impl PathState {
             | SymExprKind::Hash { .. } => None,
             SymExprKind::Not(_) => None,
             SymExprKind::AddMod { modulus, .. } | SymExprKind::MulMod { modulus, .. } => {
-                match modulus.eval_const() {
+                match modulus.eval() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
                     None => {
@@ -274,20 +274,20 @@ impl PathState {
                     .checked_mul(self.expr_upper_bound_usize(right)?),
                 SymExprOp::UDiv => {
                     let left = self.expr_upper_bound_usize(left)?;
-                    match right.eval_const()? {
+                    match right.eval()? {
                         divisor if divisor.is_zero() => Some(0),
                         divisor => Some(left / usize::try_from(divisor).ok()?),
                     }
                 }
-                SymExprOp::URem => match right.eval_const() {
+                SymExprOp::URem => match right.eval() {
                     Some(divisor) if divisor.is_zero() => Some(0),
                     Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
                     None => self.expr_upper_bound_usize(left),
                 },
                 SymExprOp::And => right
-                    .eval_const()
+                    .eval()
                     .and_then(|value| usize::try_from(value).ok())
-                    .or_else(|| left.eval_const().and_then(|value| usize::try_from(value).ok()))
+                    .or_else(|| left.eval().and_then(|value| usize::try_from(value).ok()))
                     .map(|mask| {
                         self.expr_upper_bound_usize(left)
                             .or_else(|| self.expr_upper_bound_usize(right))
@@ -295,7 +295,7 @@ impl PathState {
                     }),
                 SymExprOp::Shr => {
                     let left = self.expr_upper_bound_usize(left)?;
-                    let shift = usize::try_from(right.eval_const()?).ok()?;
+                    let shift = usize::try_from(right.eval()?).ok()?;
                     Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
                 }
                 SymExprOp::Sub

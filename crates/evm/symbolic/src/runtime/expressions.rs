@@ -318,8 +318,8 @@ pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
 
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {
     match candidate {
-        SymExprKind::Op(SymExprOp::And, left, right) if left == target => right.eval_const(),
-        SymExprKind::Op(SymExprOp::And, left, right) if right == target => left.eval_const(),
+        SymExprKind::Op(SymExprOp::And, left, right) if left == target => right.eval(),
+        SymExprKind::Op(SymExprOp::And, left, right) if right == target => left.eval(),
         _ => None,
     }
 }
@@ -475,12 +475,18 @@ pub(crate) fn calldata_prefix_condition(
 }
 
 pub(crate) trait SymExprSliceExt {
-    fn eval<M: SymbolicModelLookup + ?Sized>(&self, model: &M) -> Result<Vec<u8>, SymbolicError>;
+    fn eval_model<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        model: &M,
+    ) -> Result<Vec<u8>, SymbolicError>;
 }
 
 impl SymExprSliceExt for [SymExpr] {
-    fn eval<M: SymbolicModelLookup + ?Sized>(&self, model: &M) -> Result<Vec<u8>, SymbolicError> {
-        self.iter().map(|byte| Ok(byte.eval(model)?.to::<u8>())).collect()
+    fn eval_model<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        model: &M,
+    ) -> Result<Vec<u8>, SymbolicError> {
+        self.iter().map(|byte| Ok(byte.eval_model(model)?.to::<u8>())).collect()
     }
 }
 
@@ -582,34 +588,32 @@ impl SymExpr {
         }
     }
 
-    pub(crate) fn eval_const(&self) -> Option<U256> {
+    pub(crate) fn eval(&self) -> Option<U256> {
         match self.kind() {
             SymExprKind::Const(value) => Some(*value),
             SymExprKind::Var(_)
             | SymExprKind::GasLeft(_)
             | SymExprKind::Keccak { .. }
             | SymExprKind::Hash { .. } => None,
-            SymExprKind::Not(value) => Some(!value.eval_const()?),
-            SymExprKind::Op(op, left, right) => {
-                Some(op.eval(left.eval_const()?, right.eval_const()?))
-            }
+            SymExprKind::Not(value) => Some(!value.eval()?),
+            SymExprKind::Op(op, left, right) => Some(op.eval(left.eval()?, right.eval()?)),
             SymExprKind::AddMod { left, right, modulus } => {
-                Some(addmod_word(left.eval_const()?, right.eval_const()?, modulus.eval_const()?))
+                Some(addmod_word(left.eval()?, right.eval()?, modulus.eval()?))
             }
             SymExprKind::MulMod { left, right, modulus } => {
-                Some(mulmod_word(left.eval_const()?, right.eval_const()?, modulus.eval_const()?))
+                Some(mulmod_word(left.eval()?, right.eval()?, modulus.eval()?))
             }
             SymExprKind::Ite(cond, then_expr, else_expr) => {
-                if cond.eval_const()? {
-                    then_expr.eval_const()
+                if cond.eval()? {
+                    then_expr.eval()
                 } else {
-                    else_expr.eval_const()
+                    else_expr.eval()
                 }
             }
         }
     }
 
-    pub(crate) fn eval<M: SymbolicModelLookup + ?Sized>(
+    pub(crate) fn eval_model<M: SymbolicModelLookup + ?Sized>(
         &self,
         model: &M,
     ) -> Result<U256, SymbolicError> {
@@ -620,7 +624,7 @@ impl SymExpr {
                 return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
             }
             SymExprKind::Keccak { len, bytes, .. } => {
-                let len = len.eval(model)?;
+                let len = len.eval_model(model)?;
                 let Ok(len) = usize::try_from(len) else {
                     return Err(SymbolicError::Solver(
                         "solver model uses an invalid keccak length".to_string(),
@@ -634,25 +638,31 @@ impl SymExpr {
 
                 let mut input = Vec::with_capacity(len);
                 for byte in bytes.iter().take(len) {
-                    input.push((byte.eval(model)? & U256::from(0xff)).to::<u8>());
+                    input.push((byte.eval_model(model)? & U256::from(0xff)).to::<u8>());
                 }
 
                 U256::from_be_bytes(keccak256(input).0)
             }
             SymExprKind::Hash { name, .. } => model.value(*name).unwrap_or_default(),
-            SymExprKind::Not(value) => !value.eval(model)?,
-            SymExprKind::Op(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
-            SymExprKind::AddMod { left, right, modulus } => {
-                addmod_word(left.eval(model)?, right.eval(model)?, modulus.eval(model)?)
+            SymExprKind::Not(value) => !value.eval_model(model)?,
+            SymExprKind::Op(op, left, right) => {
+                op.eval(left.eval_model(model)?, right.eval_model(model)?)
             }
-            SymExprKind::MulMod { left, right, modulus } => {
-                mulmod_word(left.eval(model)?, right.eval(model)?, modulus.eval(model)?)
-            }
+            SymExprKind::AddMod { left, right, modulus } => addmod_word(
+                left.eval_model(model)?,
+                right.eval_model(model)?,
+                modulus.eval_model(model)?,
+            ),
+            SymExprKind::MulMod { left, right, modulus } => mulmod_word(
+                left.eval_model(model)?,
+                right.eval_model(model)?,
+                modulus.eval_model(model)?,
+            ),
             SymExprKind::Ite(cond, then_expr, else_expr) => {
-                if cond.eval(model)? {
-                    then_expr.eval(model)?
+                if cond.eval_model(model)? {
+                    then_expr.eval_model(model)?
                 } else {
-                    else_expr.eval(model)?
+                    else_expr.eval_model(model)?
                 }
             }
         })
@@ -884,7 +894,7 @@ impl SymExpr {
                     |_| false,
                 ),
                 SymExprOp::Shl => {
-                    let shift = right.eval_const()?;
+                    let shift = right.eval()?;
                     if shift >= U256::from(256) {
                         return Some(Self::constant(U256::ZERO));
                     }
@@ -900,7 +910,7 @@ impl SymExpr {
                     }
                 }
                 SymExprOp::Shr => {
-                    let shift = right.eval_const()?;
+                    let shift = right.eval()?;
                     if shift >= U256::from(256) {
                         return Some(Self::constant(U256::ZERO));
                     }
@@ -989,8 +999,8 @@ impl SymExpr {
             | SymExprKind::Hash { .. }
             | SymExprKind::Not(_) => None,
             SymExprKind::Ite(cond, then_expr, else_expr) => {
-                if then_expr.eval_const().is_some_and(|value| !value.is_zero())
-                    && else_expr.eval_const().is_some_and(|value| value.is_zero())
+                if then_expr.eval().is_some_and(|value| !value.is_zero())
+                    && else_expr.eval().is_some_and(|value| value.is_zero())
                 {
                     cond.forces_expr_const_with_context(target, context)
                 } else {
@@ -998,25 +1008,25 @@ impl SymExpr {
                 }
             }
             SymExprKind::Op(SymExprOp::Or, left, right) => {
-                if left.eval_const().is_some_and(|value| value.is_zero()) {
+                if left.eval().is_some_and(|value| value.is_zero()) {
                     return right.nonzero_forces_const(target, context);
                 }
-                if right.eval_const().is_some_and(|value| value.is_zero()) {
+                if right.eval().is_some_and(|value| value.is_zero()) {
                     return left.nonzero_forces_const(target, context);
                 }
                 None
             }
             SymExprKind::Op(SymExprOp::And, left, right) => {
-                if left.eval_const().is_some_and(|value| !value.is_zero()) {
+                if left.eval().is_some_and(|value| !value.is_zero()) {
                     return right.nonzero_forces_const(target, context);
                 }
-                if right.eval_const().is_some_and(|value| !value.is_zero()) {
+                if right.eval().is_some_and(|value| !value.is_zero()) {
                     return left.nonzero_forces_const(target, context);
                 }
                 None
             }
             SymExprKind::Op(SymExprOp::Shl | SymExprOp::Shr, value, shift)
-                if shift.eval_const().is_some_and(|shift| shift.is_zero()) =>
+                if shift.eval().is_some_and(|shift| shift.is_zero()) =>
             {
                 value.nonzero_forces_const(target, context)
             }
@@ -1528,21 +1538,19 @@ impl SymBoolExpr {
         }
     }
 
-    pub(crate) fn eval_const(&self) -> Option<bool> {
+    pub(crate) fn eval(&self) -> Option<bool> {
         match self.kind() {
             SymBoolExprKind::Const(value) => Some(*value),
-            SymBoolExprKind::Not(value) => Some(!value.eval_const()?),
+            SymBoolExprKind::Not(value) => Some(!value.eval()?),
             SymBoolExprKind::And(values) => {
                 let mut all_true = true;
                 for value in values.iter() {
-                    all_true &= value.eval_const()?;
+                    all_true &= value.eval()?;
                 }
                 Some(all_true)
             }
-            SymBoolExprKind::Eq(left, right) => Some(left.eval_const()? == right.eval_const()?),
-            SymBoolExprKind::Cmp(op, left, right) => {
-                Some(op.eval(left.eval_const()?, right.eval_const()?))
-            }
+            SymBoolExprKind::Eq(left, right) => Some(left.eval()? == right.eval()?),
+            SymBoolExprKind::Cmp(op, left, right) => Some(op.eval(left.eval()?, right.eval()?)),
         }
     }
 
@@ -1621,30 +1629,30 @@ impl SymBoolExpr {
                 bound
             }
             SymBoolExprKind::Eq(left, right) => match (left == expr, right == expr) {
-                (true, _) => right.eval_const().and_then(|value| usize::try_from(value).ok()),
-                (_, true) => left.eval_const().and_then(|value| usize::try_from(value).ok()),
+                (true, _) => right.eval().and_then(|value| usize::try_from(value).ok()),
+                (_, true) => left.eval().and_then(|value| usize::try_from(value).ok()),
                 _ => None,
             },
             SymBoolExprKind::Cmp(op, left, right) => {
                 if left == expr {
                     match *op {
                         SymBoolExprOp::Ult => right
-                            .eval_const()
+                            .eval()
                             .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                             .and_then(|value| usize::try_from(value).ok()),
                         SymBoolExprOp::Ule => {
-                            right.eval_const().and_then(|value| usize::try_from(value).ok())
+                            right.eval().and_then(|value| usize::try_from(value).ok())
                         }
                         _ => None,
                     }
                 } else if right == expr {
                     match *op {
                         SymBoolExprOp::Ugt => left
-                            .eval_const()
+                            .eval()
                             .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                             .and_then(|value| usize::try_from(value).ok()),
                         SymBoolExprOp::Uge => {
-                            left.eval_const().and_then(|value| usize::try_from(value).ok())
+                            left.eval().and_then(|value| usize::try_from(value).ok())
                         }
                         _ => None,
                     }
@@ -1655,23 +1663,27 @@ impl SymBoolExpr {
         }
     }
 
-    pub(crate) fn eval<M: SymbolicModelLookup + ?Sized>(
+    pub(crate) fn eval_model<M: SymbolicModelLookup + ?Sized>(
         &self,
         model: &M,
     ) -> Result<bool, SymbolicError> {
         Ok(match self.kind() {
             SymBoolExprKind::Const(value) => *value,
-            SymBoolExprKind::Not(value) => !value.eval(model)?,
+            SymBoolExprKind::Not(value) => !value.eval_model(model)?,
             SymBoolExprKind::And(values) => {
                 for value in values.iter() {
-                    if !value.eval(model)? {
+                    if !value.eval_model(model)? {
                         return Ok(false);
                     }
                 }
                 true
             }
-            SymBoolExprKind::Eq(left, right) => left.eval(model)? == right.eval(model)?,
-            SymBoolExprKind::Cmp(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
+            SymBoolExprKind::Eq(left, right) => {
+                left.eval_model(model)? == right.eval_model(model)?
+            }
+            SymBoolExprKind::Cmp(op, left, right) => {
+                op.eval(left.eval_model(model)?, right.eval_model(model)?)
+            }
         })
     }
 

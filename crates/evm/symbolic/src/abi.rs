@@ -692,31 +692,35 @@ impl SymbolicAbiValue {
         model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<DynSolValue, SymbolicError> {
         Ok(match self {
-            Self::Bool { word } => DynSolValue::Bool(!word.eval(model)?.is_zero()),
+            Self::Bool { word } => DynSolValue::Bool(!word.eval_model(model)?.is_zero()),
             Self::Uint { bits, word } => {
-                DynSolValue::Uint(mask_bits(word.eval(model)?, *bits), *bits)
+                DynSolValue::Uint(mask_bits(word.eval_model(model)?, *bits), *bits)
             }
-            Self::Int { bits, word } => DynSolValue::Int(I256::from_raw(word.eval(model)?), *bits),
+            Self::Int { bits, word } => {
+                DynSolValue::Int(I256::from_raw(word.eval_model(model)?), *bits)
+            }
             Self::FixedBytes { bytes, size } => {
                 let mut word = [0u8; 32];
                 for (idx, byte) in bytes.iter().enumerate() {
-                    word[idx] = byte.eval(model)?.to::<u8>();
+                    word[idx] = byte.eval_model(model)?.to::<u8>();
                 }
                 DynSolValue::FixedBytes(B256::from(word), *size)
             }
-            Self::Address { word } => DynSolValue::Address(word_to_address(word.eval(model)?)),
+            Self::Address { word } => {
+                DynSolValue::Address(word_to_address(word.eval_model(model)?))
+            }
             Self::Bytes { len, bytes } => {
-                let len = len.eval(model)?;
+                let len = len.eval_model(model)?;
                 let len = usize::try_from(len)
                     .ok()
                     .filter(|len| *len <= bytes.len())
                     .ok_or_else(|| SymbolicError::Solver("invalid symbolic bytes length".into()))?;
-                let mut bytes = bytes.eval(model)?;
+                let mut bytes = bytes.eval_model(model)?;
                 bytes.truncate(len);
                 DynSolValue::Bytes(bytes)
             }
             Self::String { bytes } => {
-                let bytes = bytes.eval(model)?;
+                let bytes = bytes.eval_model(model)?;
                 let value = String::from_utf8(bytes).map_err(|err| {
                     SymbolicError::Solver(format!("invalid symbolic string model: {err}"))
                 })?;

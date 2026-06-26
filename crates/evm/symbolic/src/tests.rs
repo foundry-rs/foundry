@@ -139,7 +139,7 @@ fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
 
     let result = state.stack.pop().unwrap();
     assert_eq!(
-        result.eval(&BTreeMap::from([("base".to_string(), U256::from(2))])).unwrap(),
+        result.eval_model(&BTreeMap::from([("base".to_string(), U256::from(2))])).unwrap(),
         U256::from(65536)
     );
 }
@@ -160,7 +160,7 @@ fn exp_helper_expands_bounded_symbolic_exponent() {
 
     let result = state.stack.pop().unwrap();
     assert_eq!(
-        result.eval(&BTreeMap::from([("exponent".to_string(), U256::from(5))])).unwrap(),
+        result.eval_model(&BTreeMap::from([("exponent".to_string(), U256::from(5))])).unwrap(),
         U256::from(243)
     );
 }
@@ -174,11 +174,11 @@ fn shift_helpers_accept_symbolic_amounts() {
     let shifted = shl.stack.pop().unwrap();
 
     assert_eq!(
-        shifted.eval(&BTreeMap::from([("shift".to_string(), U256::from(5))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(5))])).unwrap(),
         U256::from(32)
     );
     assert_eq!(
-        shifted.eval(&BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
         U256::ZERO
     );
 
@@ -189,11 +189,11 @@ fn shift_helpers_accept_symbolic_amounts() {
     let shifted = shr.stack.pop().unwrap();
 
     assert_eq!(
-        shifted.eval(&BTreeMap::from([("shift".to_string(), U256::from(255))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(255))])).unwrap(),
         U256::from(1)
     );
     assert_eq!(
-        shifted.eval(&BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
         U256::ZERO
     );
 
@@ -204,7 +204,7 @@ fn shift_helpers_accept_symbolic_amounts() {
     let shifted = sar.stack.pop().unwrap();
 
     assert_eq!(
-        shifted.eval(&BTreeMap::from([("shift".to_string(), U256::from(300))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(300))])).unwrap(),
         U256::MAX
     );
 }
@@ -245,10 +245,10 @@ fn symbolic_byte_extracts_with_symbolic_index() {
     let byte = byte_word_dynamic(SymExpr::var("index"), SymExpr::constant(word));
 
     let in_range = BTreeMap::from([("index".to_string(), U256::from(9))]);
-    assert_eq!(byte.eval(&in_range).unwrap(), U256::from(9));
+    assert_eq!(byte.eval_model(&in_range).unwrap(), U256::from(9));
 
     let out_of_range = BTreeMap::from([("index".to_string(), U256::from(32))]);
-    assert_eq!(byte.eval(&out_of_range).unwrap(), U256::ZERO);
+    assert_eq!(byte.eval_model(&out_of_range).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -257,10 +257,10 @@ fn symbolic_signextend_accepts_symbolic_index() {
     let extended = signextend_word_dynamic(SymExpr::var("index"), value);
 
     let zero_index = BTreeMap::from([("index".to_string(), U256::ZERO)]);
-    assert_eq!(extended.eval(&zero_index).unwrap(), U256::MAX - U256::from(0x7f));
+    assert_eq!(extended.eval_model(&zero_index).unwrap(), U256::MAX - U256::from(0x7f));
 
     let one_index = BTreeMap::from([("index".to_string(), U256::from(1))]);
-    assert_eq!(extended.eval(&one_index).unwrap(), U256::from(0x80));
+    assert_eq!(extended.eval_model(&one_index).unwrap(), U256::from(0x80));
 }
 
 #[test]
@@ -407,11 +407,11 @@ fn calldata_load_accepts_symbolic_offsets() {
     let expected = word_from_bytes((1u8..33).map(|idx| SymExpr::constant(U256::from(idx + 1))));
 
     assert_eq!(
-        loaded.eval(&BTreeMap::from([("offset".to_string(), U256::from(1))])).unwrap(),
-        expected.eval(&BTreeMap::new()).unwrap()
+        loaded.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(1))])).unwrap(),
+        expected.eval_model(&BTreeMap::new()).unwrap()
     );
     assert_eq!(
-        loaded.eval(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
+        loaded.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
         U256::ZERO
     );
 }
@@ -434,11 +434,11 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
     let calldata = bounded_size.calldata(input);
     let model = BTreeMap::from([("size".to_string(), U256::from(2))]);
 
-    assert_eq!(calldata.size_word().eval(&model).unwrap(), U256::from(2));
-    assert_eq!(calldata.byte(0).eval(&model).unwrap(), U256::from(0xaa));
-    assert_eq!(calldata.byte(1).eval(&model).unwrap(), U256::from(0xbb));
-    assert_eq!(calldata.byte(2).eval(&model).unwrap(), U256::ZERO);
-    assert_eq!(calldata.byte(3).eval(&model).unwrap(), U256::ZERO);
+    assert_eq!(calldata.size_word().eval_model(&model).unwrap(), U256::from(2));
+    assert_eq!(calldata.byte(0).eval_model(&model).unwrap(), U256::from(0xaa));
+    assert_eq!(calldata.byte(1).eval_model(&model).unwrap(), U256::from(0xbb));
+    assert_eq!(calldata.byte(2).eval_model(&model).unwrap(), U256::ZERO);
+    assert_eq!(calldata.byte(3).eval_model(&model).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -458,7 +458,7 @@ fn memory_copies_unaligned_symbolic_calldata_bytes() {
     ]);
     let mut expected = [0u8; 32];
     expected[1..4].copy_from_slice(&[1, 2, 3]);
-    assert_eq!(word.eval(&model).unwrap(), U256::from_be_bytes(expected));
+    assert_eq!(word.eval_model(&model).unwrap(), U256::from_be_bytes(expected));
 }
 
 #[test]
@@ -473,11 +473,11 @@ fn memory_copies_symbolic_calldata_offset() {
     let mut expected = [0u8; 32];
     expected[..2].copy_from_slice(&[4, 5]);
     assert_eq!(
-        word.eval(&BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
         U256::from_be_bytes(expected)
     );
     assert_eq!(
-        word.eval(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
         U256::ZERO
     );
 }
@@ -500,10 +500,10 @@ fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -517,10 +517,10 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
     );
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -532,10 +532,10 @@ fn memory_reads_symbolic_size_with_zero_guarded_tail() {
         memory.read_bytes_symbolic_size(SymExpr::constant(U256::from(32)), SymExpr::var("size"), 4);
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(bytes.eval(&size_two).unwrap(), vec![1, 2, 0, 0]);
+    assert_eq!(bytes.eval_model(&size_two).unwrap(), vec![1, 2, 0, 0]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(bytes.eval(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(bytes.eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -554,10 +554,10 @@ fn memory_copies_symbolic_memory_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -579,7 +579,7 @@ fn memory_copies_symbolic_size_to_symbolic_dest() {
         ("dest".to_string(), U256::from(0x80)),
         ("size".to_string(), U256::from(2)),
     ]);
-    assert_eq!(memory.read_bytes(0x80, 4).eval(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 }
 
 #[test]
@@ -599,10 +599,10 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -611,10 +611,10 @@ fn returndata_reads_symbolic_offset() {
     let bytes = return_data.read_bytes_offset(SymExpr::var("offset"), 2);
 
     let offset_one = BTreeMap::from([("offset".to_string(), U256::from(1))]);
-    assert_eq!(bytes.eval(&offset_one).unwrap(), vec![2, 3]);
+    assert_eq!(bytes.eval_model(&offset_one).unwrap(), vec![2, 3]);
 
     let offset_four = BTreeMap::from([("offset".to_string(), U256::from(4))]);
-    assert_eq!(bytes.eval(&offset_four).unwrap(), vec![0, 0]);
+    assert_eq!(bytes.eval_model(&offset_four).unwrap(), vec![0, 0]);
 }
 
 #[test]
@@ -630,9 +630,9 @@ fn memory_return_data_accepts_symbolic_size() {
         .unwrap();
 
     let len_two = BTreeMap::from([("len".to_string(), U256::from(2))]);
-    assert_eq!(return_data.len_word().eval(&len_two).unwrap(), U256::from(2));
-    assert_eq!(return_data.byte(0).eval(&len_two).unwrap(), U256::from(1));
-    assert_eq!(return_data.byte(2).eval(&len_two).unwrap(), U256::ZERO);
+    assert_eq!(return_data.len_word().eval_model(&len_two).unwrap(), U256::from(2));
+    assert_eq!(return_data.byte(0).eval_model(&len_two).unwrap(), U256::from(1));
+    assert_eq!(return_data.byte(2).eval_model(&len_two).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -653,10 +653,10 @@ fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
         .unwrap();
 
     let len_two = BTreeMap::from([("len".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&len_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&len_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let len_four = BTreeMap::from([("len".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&len_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&len_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -680,7 +680,10 @@ fn memory_round_trips_symbolic_words_as_bytes() {
     memory.store_word(7, value.clone());
 
     let model = BTreeMap::from([("word".to_string(), U256::from(0x1234))]);
-    assert_eq!(memory.load_word(7).unwrap().eval(&model).unwrap(), value.eval(&model).unwrap());
+    assert_eq!(
+        memory.load_word(7).unwrap().eval_model(&model).unwrap(),
+        value.eval_model(&model).unwrap()
+    );
 }
 
 #[test]
@@ -695,13 +698,13 @@ fn memory_load_accepts_symbolic_offsets() {
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 
     let out_of_range = BTreeMap::from([
         ("offset".to_string(), U256::from(39)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&out_of_range).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&out_of_range).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -716,13 +719,13 @@ fn memory_store_word_accepts_symbolic_offsets() {
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&matching).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&matching).unwrap(), U256::from(0x1234));
 
     let non_matching = BTreeMap::from([
         ("offset".to_string(), U256::from(100)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&non_matching).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&non_matching).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -739,13 +742,13 @@ fn memory_size_tracks_concrete_and_symbolic_extents() {
         ("offset".to_string(), U256::from(9)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(size.eval(&below_concrete).unwrap(), U256::from(64));
+    assert_eq!(size.eval_model(&below_concrete).unwrap(), U256::from(64));
 
     let above_concrete = BTreeMap::from([
         ("offset".to_string(), U256::from(70)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(size.eval(&above_concrete).unwrap(), U256::from(128));
+    assert_eq!(size.eval_model(&above_concrete).unwrap(), U256::from(128));
 }
 
 #[test]
@@ -760,7 +763,7 @@ fn memory_concrete_write_overrides_older_symbolic_write() {
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&model).unwrap(), U256::from(0x55));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x55));
 }
 
 #[test]
@@ -776,7 +779,7 @@ fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
         ("read_offset".to_string(), U256::from(5)),
         ("byte".to_string(), U256::from(0xab)),
     ]);
-    assert_eq!(loaded.eval(&model).unwrap(), U256::from(0x55));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x55));
 }
 
 #[test]
@@ -790,13 +793,13 @@ fn memory_store_byte_accepts_symbolic_offsets() {
         ("offset".to_string(), U256::from(0x80)),
         ("byte".to_string(), U256::from(0xab)),
     ]);
-    assert_eq!(loaded.eval(&matching).unwrap(), U256::from(0xab));
+    assert_eq!(loaded.eval_model(&matching).unwrap(), U256::from(0xab));
 
     let non_matching = BTreeMap::from([
         ("offset".to_string(), U256::from(0x81)),
         ("byte".to_string(), U256::from(0xab)),
     ]);
-    assert_eq!(loaded.eval(&non_matching).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&non_matching).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -811,13 +814,13 @@ fn memory_read_bytes_accepts_symbolic_offsets() {
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 
     let out_of_range = BTreeMap::from([
         ("offset".to_string(), U256::from(39)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&out_of_range).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&out_of_range).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -833,7 +836,7 @@ fn memory_return_data_accepts_symbolic_offsets() {
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 }
 
 #[test]
@@ -849,7 +852,7 @@ fn memory_copy_accepts_symbolic_source_offsets() {
         ("src".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 }
 
 #[test]
@@ -867,13 +870,13 @@ fn memory_copy_accepts_symbolic_destination_offsets() {
         ("dest".to_string(), U256::from(64)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&matching).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&matching).unwrap(), U256::from(0x1234));
 
     let non_matching = BTreeMap::from([
         ("dest".to_string(), U256::from(96)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&non_matching).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&non_matching).unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -890,7 +893,7 @@ fn memory_call_output_accepts_symbolic_destination_offsets() {
         ("dest".to_string(), U256::from(64)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(loaded.eval(&model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 }
 
 #[test]
@@ -908,10 +911,10 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_bytes(0, 4).eval(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -932,7 +935,7 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
         ("dest".to_string(), U256::from(0x80)),
         ("size".to_string(), U256::from(2)),
     ]);
-    assert_eq!(memory.read_bytes(0x80, 4).eval(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 }
 
 #[test]
@@ -952,7 +955,7 @@ fn memory_call_output_accepts_symbolic_destination_and_return_len() {
         ("dest".to_string(), U256::from(0x80)),
         ("len".to_string(), U256::from(2)),
     ]);
-    assert_eq!(memory.read_bytes(0x80, 4).eval(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 }
 
 #[test]
@@ -1110,7 +1113,7 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let encoded = (0..return_data.len())
         .map(|idx| return_data.byte(idx))
         .collect::<Vec<_>>()
-        .eval(&BTreeMap::from([
+        .eval_model(&BTreeMap::from([
             ("topic".to_string(), U256::from(0xabcd)),
             ("byte".to_string(), U256::from(0xef)),
         ]))
@@ -1137,7 +1140,7 @@ fn abi_bytes_encoding_accepts_symbolic_length() {
     let length = word_from_bytes(encoded[..32].iter().cloned());
 
     assert_eq!(
-        length.eval(&BTreeMap::from([("len".to_string(), U256::from(2))])).unwrap(),
+        length.eval_model(&BTreeMap::from([("len".to_string(), U256::from(2))])).unwrap(),
         U256::from(2)
     );
 }
@@ -1235,11 +1238,11 @@ fn symbolic_codecopy_accepts_symbolic_offsets() {
     let mut expected = [0u8; 32];
     expected[..2].copy_from_slice(&[4, 5]);
     assert_eq!(
-        word.eval(&BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
         U256::from_be_bytes(expected)
     );
     assert_eq!(
-        word.eval(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
         U256::ZERO
     );
 }
@@ -1261,7 +1264,7 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
         ("offset".to_string(), U256::from(7)),
         ("arg".to_string(), U256::from(0x2a)),
     ]);
-    assert_eq!(word.eval(&model).unwrap(), U256::from_be_bytes(expected));
+    assert_eq!(word.eval_model(&model).unwrap(), U256::from_be_bytes(expected));
 }
 
 #[test]
@@ -1430,7 +1433,7 @@ fn sym_expr_eval_computes_symbolic_keccak_from_model() {
     let expected = U256::from_be_bytes(keccak256(input).0);
     let model = BTreeMap::from([("owner".to_string(), address_word(owner))]);
 
-    assert_eq!(word.eval(&model).unwrap(), expected);
+    assert_eq!(word.eval_model(&model).unwrap(), expected);
 }
 
 #[test]
@@ -1690,7 +1693,7 @@ fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
     let condition = storage_key_eq(balance_key, allowance_key);
 
     assert_eq!(condition, SymBoolExpr::constant(false));
-    assert!(!condition.eval(&model).unwrap());
+    assert!(!condition.eval_model(&model).unwrap());
 }
 
 #[test]
@@ -1889,7 +1892,7 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
 
     let model = fallback_single_var_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
@@ -2009,13 +2012,13 @@ fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
             SymExpr::constant(U256::from(2)),
             SymExpr::constant(U256::MAX)
         )
-        .eval(&model)
+        .eval_model(&model)
         .unwrap(),
         U256::from(2)
     );
     assert_eq!(
         SymExpr::mulmod(SymExpr::var("a"), SymExpr::var("a"), SymExpr::constant(U256::MAX))
-            .eval(&model)
+            .eval_model(&model)
             .unwrap(),
         U256::ZERO
     );
@@ -2074,8 +2077,8 @@ fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
         let model =
             BTreeMap::from([("numerator".to_string(), num), ("denominator".to_string(), den)]);
         assert_eq!(
-            original.eval(&model).unwrap(),
-            normalized.eval(&model).unwrap(),
+            original.eval_model(&model).unwrap(),
+            normalized.eval_model(&model).unwrap(),
             "num={num} den={den}"
         );
     }
@@ -2102,8 +2105,8 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
         let model =
             BTreeMap::from([("numerator".to_string(), num), ("denominator".to_string(), den)]);
         assert_eq!(
-            original.eval(&model).unwrap(),
-            normalized.eval(&model).unwrap(),
+            original.eval_model(&model).unwrap(),
+            normalized.eval_model(&model).unwrap(),
             "num={num} den={den}"
         );
     }
@@ -2204,7 +2207,7 @@ fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
 
     for value in [U256::ZERO, U256::from(1), U256::from(1000)] {
         let model = BTreeMap::from([("a".to_string(), value)]);
-        assert!(!guard_is_false.eval(&model).unwrap());
+        assert!(!guard_is_false.eval_model(&model).unwrap());
     }
 }
 
@@ -2229,7 +2232,7 @@ fn solver_normalizes_guarded_self_division_guard() {
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
-        assert!(!original.eval(&model).unwrap());
+        assert!(!original.eval_model(&model).unwrap());
     }
 }
 
@@ -2256,7 +2259,10 @@ fn solver_normalizes_guarded_self_division_word() {
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
-        assert_eq!(checked_quotient.eval(&model).unwrap(), normalized.eval(&model).unwrap());
+        assert_eq!(
+            checked_quotient.eval_model(&model).unwrap(),
+            normalized.eval_model(&model).unwrap()
+        );
     }
 }
 
@@ -2273,7 +2279,7 @@ fn solver_does_not_invert_guarded_zero_self_division() {
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
-        assert_eq!(mirrored.eval(&model).unwrap(), normalized.eval(&model).unwrap());
+        assert_eq!(mirrored.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
     }
 }
 
@@ -2331,7 +2337,7 @@ fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
     );
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
-    assert!(guard_is_zero.eval(&model).unwrap());
+    assert!(guard_is_zero.eval_model(&model).unwrap());
 }
 
 #[test]
@@ -2344,8 +2350,8 @@ fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
     assert_ne!(normalized, SymBoolExpr::constant(false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(2))]);
-    assert!(original.eval(&model).unwrap());
-    assert_eq!(original.eval(&model).unwrap(), normalized.eval(&model).unwrap());
+    assert!(original.eval_model(&model).unwrap());
+    assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
 }
 
 #[test]
@@ -2362,8 +2368,8 @@ fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
     assert!(!matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
-    assert!(original.eval(&model).unwrap());
-    assert!(normalized.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(original.eval_model(&model).unwrap());
+    assert!(normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
@@ -2404,8 +2410,8 @@ fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
     assert_ne!(normalized, SymBoolExpr::constant(false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(1))]);
-    assert!(original.eval(&model).unwrap());
-    assert_eq!(original.eval(&model).unwrap(), normalized.eval(&model).unwrap());
+    assert!(original.eval_model(&model).unwrap());
+    assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
 }
 
 #[test]
@@ -2461,7 +2467,7 @@ fn solver_does_not_prune_wrapping_product_inequality() {
         ("art".to_string(), U256::MAX - U256::from(1)),
         ("rate".to_string(), U256::MAX - U256::from(1)),
     ]);
-    assert!(constraints.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
@@ -2497,7 +2503,7 @@ fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
@@ -2521,7 +2527,7 @@ fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
@@ -2537,7 +2543,7 @@ fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     assert_eq!(model.get(&Symbol::intern("a")), Some(&U256::MAX));
 }
 
@@ -2559,7 +2565,7 @@ fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
 
     let Some(model) = hard_arith_fallback_model(&constraints) else { return };
 
-    assert!(constraints.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
@@ -2810,7 +2816,7 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let normalized = normalize_constraints_for_solver(&constraints);
     let model = hard_arith_fallback_model(&normalized).unwrap();
 
-    assert!(normalized.iter().all(|constraint| constraint.eval(&model).unwrap()));
+    assert!(normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     assert!(solver.is_sat(&constraints).unwrap());
     assert!(solver.is_sat(&constraints).unwrap());
 
@@ -2839,7 +2845,7 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
     ];
 
     let first = solver.model(&constraints).unwrap();
-    assert!(constraints.iter().all(|constraint| constraint.eval(&first).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&first).unwrap()));
     let second = solver.model(&constraints).unwrap();
     assert_eq!(first, second);
     assert!(solver.is_sat(&constraints).unwrap());
