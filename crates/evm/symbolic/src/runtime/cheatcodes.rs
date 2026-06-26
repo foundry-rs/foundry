@@ -4,7 +4,6 @@ use foundry_common::wallet::private_key_from_u256;
 
 use super::*;
 
-/// Implements the `foundry_cheatcode_min_input_size` cheatcode runtime helper.
 pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Option<usize> {
     match selector {
         recordLogsCall::SELECTOR
@@ -261,7 +260,6 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
     }
 }
 
-/// Returns the `symbolic_vm_cheatcode_min_input_size` cheatcode runtime helper result.
 pub(crate) fn symbolic_vm_cheatcode_min_input_size(selector: [u8; 4]) -> Option<usize> {
     let selectors = symbolic_vm_selectors();
     if selector_in(
@@ -310,22 +308,18 @@ pub(crate) fn symbolic_vm_cheatcode_min_input_size(selector: [u8; 4]) -> Option<
     None
 }
 
-/// Returns the `abi_static_input_size` cheatcode runtime helper result.
 pub(crate) const fn abi_static_input_size(words: usize) -> usize {
     4 + words * 32
 }
 
-/// Returns the `selector_in` cheatcode runtime helper result.
 pub(crate) fn selector_in(selector: [u8; 4], selectors: &[[u8; 4]]) -> bool {
     selectors.contains(&selector)
 }
 
-/// Returns the `abi_bytes_return` cheatcode runtime helper result.
 pub(crate) fn abi_bytes_return(bytes: Vec<SymWord>) -> SymReturnData {
     abi_bytes_return_with_len(SymWord::constant(U256::from(bytes.len())), bytes)
 }
 
-/// Returns the `abi_bytes_return_with_len` cheatcode runtime helper result.
 pub(crate) fn abi_bytes_return_with_len(len: SymWord, bytes: Vec<SymWord>) -> SymReturnData {
     let mut out = word_bytes(SymWord::constant(U256::from(32)));
     out.extend(word_bytes(len));
@@ -334,19 +328,16 @@ pub(crate) fn abi_bytes_return_with_len(len: SymWord, bytes: Vec<SymWord>) -> Sy
     SymReturnData::from_symbolic_bytes(out)
 }
 
-/// Returns the `abi_concrete_bytes_return` cheatcode runtime helper result.
 pub(crate) fn abi_concrete_bytes_return(bytes: impl IntoIterator<Item = u8>) -> SymReturnData {
     abi_bytes_return(bytes.into_iter().map(|byte| SymWord::constant(U256::from(byte))).collect())
 }
 
-/// Returns the `abi_concrete_value_return` cheatcode runtime helper result.
 pub(crate) fn abi_concrete_value_return(value: DynSolValue) -> SymReturnData {
     SymReturnData::from_symbolic_bytes(
         value.abi_encode().into_iter().map(|byte| SymWord::constant(U256::from(byte))).collect(),
     )
 }
 
-/// Implements the `recorded_logs_return_data` cheatcode runtime helper.
 pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData {
     let value = SymbolicAbiValue::Array {
         elements: logs
@@ -376,7 +367,6 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
     SymReturnData::from_symbolic_bytes(encode_sequence(std::iter::once(&value)))
 }
 
-/// Implements the `recorded_logs_json_return_data` cheatcode runtime helper.
 pub(crate) fn recorded_logs_json_return_data(
     logs: Vec<SymbolicLog>,
 ) -> Result<SymReturnData, SymbolicError> {
@@ -422,7 +412,6 @@ pub(crate) fn recorded_logs_json_return_data(
     Ok(abi_bytes_return(bytes))
 }
 
-/// Implements the `accesses_return_data` cheatcode runtime helper.
 pub(crate) fn accesses_return_data(
     record: Option<&AccessRecord>,
     target: Address,
@@ -433,7 +422,6 @@ pub(crate) fn accesses_return_data(
     SymReturnData::from_symbolic_bytes(encode_sequence(values.iter()))
 }
 
-/// Implements the `complete_cheatcode_call` cheatcode runtime helper.
 pub(crate) fn complete_cheatcode_call(
     state: &mut PathState,
     out_offset: SymWord,
@@ -447,7 +435,6 @@ pub(crate) fn complete_cheatcode_call(
     Ok(())
 }
 
-/// Implements the `storage_slots_abi_array` cheatcode runtime helper.
 pub(crate) fn storage_slots_abi_array(slots: Vec<SymWord>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots
@@ -457,19 +444,16 @@ pub(crate) fn storage_slots_abi_array(slots: Vec<SymWord>) -> SymbolicAbiValue {
     }
 }
 
-/// Applies the `push_ascii` cheatcode runtime helper.
 pub(crate) fn push_ascii(out: &mut Vec<SymWord>, value: &str) {
     out.extend(value.bytes().map(|byte| SymWord::constant(U256::from(byte))));
 }
 
-/// Applies the `push_hex_word` cheatcode runtime helper.
 pub(crate) fn push_hex_word(out: &mut Vec<SymWord>, word: SymWord) {
     for byte in word_bytes(word) {
         push_hex_byte(out, byte);
     }
 }
 
-/// Applies the `push_hex_byte` cheatcode runtime helper.
 pub(crate) fn push_hex_byte(out: &mut Vec<SymWord>, byte: SymWord) {
     let byte = low_byte(byte);
     let high = if let Some(value) = byte.as_const() {
@@ -490,7 +474,6 @@ pub(crate) fn push_hex_byte(out: &mut Vec<SymWord>, byte: SymWord) {
     out.push(hex_nibble_ascii(low));
 }
 
-/// Implements the `hex_nibble_ascii` cheatcode runtime helper.
 pub(crate) fn hex_nibble_ascii(nibble: SymWord) -> SymWord {
     let nibble = low_byte(nibble);
     if let Some(value) = nibble.as_const() {
@@ -507,7 +490,6 @@ pub(crate) fn hex_nibble_ascii(nibble: SymWord) -> SymWord {
     }
 }
 
-/// Returns the `read_abi_word_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_word_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -516,7 +498,6 @@ pub(crate) fn read_abi_word_arg(
     memory.load_word(args_offset + index * 32)
 }
 
-/// Returns the `read_abi_concrete_word_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_concrete_word_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -526,7 +507,6 @@ pub(crate) fn read_abi_concrete_word_arg(
     read_abi_word_arg(memory, args_offset, index)?.into_concrete(reason)
 }
 
-/// Returns the `read_abi_constrained_word_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_constrained_word_arg(
     state: &PathState,
     args_offset: usize,
@@ -537,7 +517,6 @@ pub(crate) fn read_abi_constrained_word_arg(
     state.expect_constrained_word(word, reason)
 }
 
-/// Returns the `read_abi_constrained_address_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_constrained_address_arg(
     state: &PathState,
     args_offset: usize,
@@ -547,7 +526,6 @@ pub(crate) fn read_abi_constrained_address_arg(
     Ok(word_to_address(read_abi_constrained_word_arg(state, args_offset, index, reason)?))
 }
 
-/// Returns the `read_abi_address_or_symbolic_slot_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_address_or_symbolic_slot_arg(
     state: &mut PathState,
     args_offset: usize,
@@ -557,7 +535,6 @@ pub(crate) fn read_abi_address_or_symbolic_slot_arg(
     Ok(state.address_or_symbolic_slot(word))
 }
 
-/// Returns the `read_abi_address_word_or_symbolic_slot_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_address_word_or_symbolic_slot_arg(
     state: &mut PathState,
     args_offset: usize,
@@ -568,7 +545,6 @@ pub(crate) fn read_abi_address_word_or_symbolic_slot_arg(
     Ok((address, word))
 }
 
-/// Returns the `read_abi_address_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_address_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -578,7 +554,6 @@ pub(crate) fn read_abi_address_arg(
     Ok(word_to_address(read_abi_concrete_word_arg(memory, args_offset, index, reason)?))
 }
 
-/// Returns the `read_abi_bool_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_bool_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -588,7 +563,6 @@ pub(crate) fn read_abi_bool_arg(
     Ok(!read_abi_concrete_word_arg(memory, args_offset, index, reason)?.is_zero())
 }
 
-/// Returns the `read_abi_u64_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_u64_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -602,7 +576,6 @@ pub(crate) fn read_abi_u64_arg(
     Ok(value.to())
 }
 
-/// Returns the `read_abi_u32_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_u32_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -616,7 +589,6 @@ pub(crate) fn read_abi_u32_arg(
     Ok(value.to())
 }
 
-/// Returns the `read_abi_bytes4_words_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_bytes4_words_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -625,7 +597,6 @@ pub(crate) fn read_abi_bytes4_words_arg(
     memory.read_bytes(args_offset + index * 32, 4)
 }
 
-/// Returns the `read_abi_dynamic_bytes_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_dynamic_bytes_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -637,7 +608,6 @@ pub(crate) fn read_abi_dynamic_bytes_arg(
     memory.read_concrete(args_offset + offset + 32, len)
 }
 
-/// Returns the `read_abi_symbolic_dynamic_bytes_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_symbolic_dynamic_bytes_arg(
     state: &PathState,
     args_offset: usize,
@@ -657,7 +627,6 @@ pub(crate) fn read_abi_symbolic_dynamic_bytes_arg(
     Ok(state.memory.read_bytes(data_offset, len))
 }
 
-/// Returns the `read_abi_dynamic_return_data_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_dynamic_return_data_arg(
     state: &PathState,
     args_offset: usize,
@@ -674,7 +643,6 @@ pub(crate) fn read_abi_dynamic_return_data_arg(
     )?))
 }
 
-/// Returns the `read_abi_symbolic_dynamic_bytes_array_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_symbolic_dynamic_bytes_array_arg(
     state: &PathState,
     args_offset: usize,
@@ -727,7 +695,6 @@ pub(crate) fn read_abi_symbolic_dynamic_bytes_array_arg(
     Ok(values)
 }
 
-/// Returns the `read_abi_string_arg` cheatcode runtime helper result.
 pub(crate) fn read_abi_string_arg(
     memory: &SymMemory,
     args_offset: usize,
@@ -738,7 +705,6 @@ pub(crate) fn read_abi_string_arg(
         .map_err(|_| SymbolicError::Unsupported(reason))
 }
 
-/// Implements the `expected_revert_match_condition` cheatcode runtime helper.
 pub(crate) fn expected_revert_match_condition(
     expected: &ExpectedRevert,
     reverter: Address,
@@ -779,7 +745,6 @@ pub(crate) fn expected_revert_match_condition(
     Some(BoolExpr::and(conditions))
 }
 
-/// Returns the `decode_cheatcode_args` cheatcode runtime helper result.
 pub(crate) fn decode_cheatcode_args(
     state: &PathState,
     in_offset: usize,
@@ -796,7 +761,6 @@ pub(crate) fn decode_cheatcode_args(
     Ok(values)
 }
 
-/// Returns the `selector_has_string_reason` cheatcode runtime helper result.
 pub(crate) const fn selector_has_string_reason(selector: [u8; 4]) -> bool {
     matches!(
         selector,
@@ -819,7 +783,6 @@ pub(crate) const fn selector_has_string_reason(selector: [u8; 4]) -> bool {
     )
 }
 
-/// Implements the `array_assertion_element_type` cheatcode runtime helper.
 pub(crate) const fn array_assertion_element_type(
     selector: [u8; 4],
 ) -> Result<DynSolType, SymbolicError> {
@@ -856,7 +819,6 @@ pub(crate) const fn array_assertion_element_type(
     }
 }
 
-/// Returns the `dyn_string` cheatcode runtime helper result.
 pub(crate) fn dyn_string(value: &DynSolValue) -> Result<String, SymbolicError> {
     match value {
         DynSolValue::String(value) => Ok(value.clone()),
@@ -864,7 +826,6 @@ pub(crate) fn dyn_string(value: &DynSolValue) -> Result<String, SymbolicError> {
     }
 }
 
-/// Returns the `dyn_bytes` cheatcode runtime helper result.
 pub(crate) fn dyn_bytes(value: &DynSolValue) -> Result<Vec<u8>, SymbolicError> {
     match value {
         DynSolValue::Bytes(value) => Ok(value.clone()),
@@ -872,7 +833,6 @@ pub(crate) fn dyn_bytes(value: &DynSolValue) -> Result<Vec<u8>, SymbolicError> {
     }
 }
 
-/// Returns the `dyn_bool` cheatcode runtime helper result.
 pub(crate) const fn dyn_bool(value: &DynSolValue) -> Result<bool, SymbolicError> {
     match value {
         DynSolValue::Bool(value) => Ok(*value),
@@ -880,7 +840,6 @@ pub(crate) const fn dyn_bool(value: &DynSolValue) -> Result<bool, SymbolicError>
     }
 }
 
-/// Returns the `dyn_address` cheatcode runtime helper result.
 pub(crate) const fn dyn_address(value: &DynSolValue) -> Result<Address, SymbolicError> {
     match value {
         DynSolValue::Address(value) => Ok(*value),
@@ -888,7 +847,6 @@ pub(crate) const fn dyn_address(value: &DynSolValue) -> Result<Address, Symbolic
     }
 }
 
-/// Returns the `dyn_potential_revert` cheatcode runtime helper result.
 pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert, SymbolicError> {
     let DynSolValue::Tuple(values) = value else {
         return Err(SymbolicError::Unsupported("symbolic vm.assumeNoRevert decode"));
@@ -911,7 +869,6 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
     Ok(ExpectedRevert { data, reverter, remaining: 1 })
 }
 
-/// Returns the `dyn_potential_reverts` cheatcode runtime helper result.
 pub(crate) fn dyn_potential_reverts(
     value: &DynSolValue,
 ) -> Result<Vec<ExpectedRevert>, SymbolicError> {
@@ -921,7 +878,6 @@ pub(crate) fn dyn_potential_reverts(
     values.iter().map(dyn_potential_revert).collect()
 }
 
-/// Returns the `dyn_address_array` cheatcode runtime helper result.
 pub(crate) fn dyn_address_array(value: &DynSolValue) -> Result<Vec<Address>, SymbolicError> {
     let DynSolValue::Array(values) = value else {
         return Err(SymbolicError::Unsupported("symbolic cheatcode ABI decode"));
@@ -929,7 +885,6 @@ pub(crate) fn dyn_address_array(value: &DynSolValue) -> Result<Vec<Address>, Sym
     values.iter().map(dyn_address).collect()
 }
 
-/// Returns the `dyn_bytes32_array` cheatcode runtime helper result.
 pub(crate) fn dyn_bytes32_array(value: &DynSolValue) -> Result<Vec<B256>, SymbolicError> {
     let DynSolValue::Array(values) = value else {
         return Err(SymbolicError::Unsupported("symbolic cheatcode ABI decode"));
@@ -943,7 +898,6 @@ pub(crate) fn dyn_bytes32_array(value: &DynSolValue) -> Result<Vec<B256>, Symbol
         .collect()
 }
 
-/// Returns the `dyn_string_array` cheatcode runtime helper result.
 pub(crate) fn dyn_string_array(value: &DynSolValue) -> Result<Vec<String>, SymbolicError> {
     let DynSolValue::Array(values) = value else {
         return Err(SymbolicError::Unsupported("symbolic cheatcode ABI decode"));
@@ -951,7 +905,6 @@ pub(crate) fn dyn_string_array(value: &DynSolValue) -> Result<Vec<String>, Symbo
     values.iter().map(dyn_string).collect()
 }
 
-/// Returns the `parse_env_array` cheatcode runtime helper result.
 pub(crate) fn parse_env_array<F>(
     value: &str,
     delimiter: &str,
@@ -966,47 +919,38 @@ where
     value.split(delimiter).map(&mut parser).collect::<Result<Vec<_>, _>>().map(DynSolValue::Array)
 }
 
-/// Returns the `parse_env_bool_value` cheatcode runtime helper result.
 pub(crate) fn parse_env_bool_value(value: &str) -> Result<DynSolValue, SymbolicError> {
     Ok(DynSolValue::Bool(parse_env_bool(value)?))
 }
 
-/// Returns the `parse_env_uint_value` cheatcode runtime helper result.
 pub(crate) fn parse_env_uint_value(value: &str) -> Result<DynSolValue, SymbolicError> {
     Ok(DynSolValue::Uint(parse_env_uint(value)?, 256))
 }
 
-/// Returns the `parse_env_int_value` cheatcode runtime helper result.
 pub(crate) fn parse_env_int_value(value: &str) -> Result<DynSolValue, SymbolicError> {
     Ok(DynSolValue::Int(I256::from_raw(parse_env_int(value)?), 256))
 }
 
-/// Returns the `parse_env_address_value` cheatcode runtime helper result.
 pub(crate) fn parse_env_address_value(value: &str) -> Result<DynSolValue, SymbolicError> {
     Ok(DynSolValue::Address(parse_env_address(value)?))
 }
 
-/// Returns the `parse_env_bytes32_value` cheatcode runtime helper result.
 pub(crate) fn parse_env_bytes32_value(value: &str) -> Result<DynSolValue, SymbolicError> {
     Ok(DynSolValue::FixedBytes(B256::from(parse_env_bytes32(value)?.to_be_bytes::<32>()), 32))
 }
 
-/// Returns the `parse_env_string_value` cheatcode runtime helper result.
 pub(crate) fn parse_env_string_value(value: &str) -> Result<DynSolValue, SymbolicError> {
     Ok(DynSolValue::String(value.to_string()))
 }
 
-/// Returns the `parse_env_bytes_value` cheatcode runtime helper result.
 pub(crate) fn parse_env_bytes_value(value: &str) -> Result<DynSolValue, SymbolicError> {
     Ok(DynSolValue::Bytes(parse_env_bytes(value)?))
 }
 
-/// Returns the `parse_env_uint` cheatcode runtime helper result.
 pub(crate) fn parse_env_uint(value: &str) -> Result<U256, SymbolicError> {
     value.parse::<U256>().map_err(|_| SymbolicError::Unsupported("symbolic env uint parse"))
 }
 
-/// Returns the `parse_env_int` cheatcode runtime helper result.
 pub(crate) fn parse_env_int(value: &str) -> Result<U256, SymbolicError> {
     if let Some(value) = value.strip_prefix('-') {
         let magnitude = parse_env_uint(value)?;
@@ -1016,7 +960,6 @@ pub(crate) fn parse_env_int(value: &str) -> Result<U256, SymbolicError> {
     }
 }
 
-/// Returns the `parse_env_bool` cheatcode runtime helper result.
 pub(crate) fn parse_env_bool(value: &str) -> Result<bool, SymbolicError> {
     match value {
         "true" | "1" | "TRUE" | "True" => Ok(true),
@@ -1025,13 +968,11 @@ pub(crate) fn parse_env_bool(value: &str) -> Result<bool, SymbolicError> {
     }
 }
 
-/// Returns the `parse_env_bytes` cheatcode runtime helper result.
 pub(crate) fn parse_env_bytes(value: &str) -> Result<Vec<u8>, SymbolicError> {
     let value = value.strip_prefix("0x").unwrap_or(value);
     hex::decode(value).map_err(|_| SymbolicError::Unsupported("symbolic env bytes parse"))
 }
 
-/// Returns the `parse_env_bytes32` cheatcode runtime helper result.
 pub(crate) fn parse_env_bytes32(value: &str) -> Result<U256, SymbolicError> {
     let bytes = parse_env_bytes(value)?;
     if bytes.len() != 32 {
@@ -1040,23 +981,19 @@ pub(crate) fn parse_env_bytes32(value: &str) -> Result<U256, SymbolicError> {
     Ok(U256::from_be_slice(&bytes))
 }
 
-/// Returns the `parse_env_address` cheatcode runtime helper result.
 pub(crate) fn parse_env_address(value: &str) -> Result<Address, SymbolicError> {
     value.parse::<Address>().map_err(|_| SymbolicError::Unsupported("symbolic env address parse"))
 }
 
-/// Implements the `private_key_signer` cheatcode runtime helper.
 pub(crate) fn private_key_signer(private_key: U256) -> Result<PrivateKeySigner, SymbolicError> {
     private_key_from_u256(private_key)
         .map_err(|_| SymbolicError::Unsupported("symbolic private key parse"))
 }
 
-/// Implements the `private_key_address` cheatcode runtime helper.
 pub(crate) fn private_key_address(private_key: U256) -> Result<Address, SymbolicError> {
     Ok(private_key_signer(private_key)?.address())
 }
 
-/// Implements the `sign_hash_words` cheatcode runtime helper.
 pub(crate) fn sign_hash_words(
     private_key: U256,
     digest: U256,
@@ -1073,7 +1010,6 @@ pub(crate) fn sign_hash_words(
     ])
 }
 
-/// Implements the `sign_compact_hash_words` cheatcode runtime helper.
 pub(crate) fn sign_compact_hash_words(
     private_key: U256,
     digest: U256,
@@ -1087,7 +1023,6 @@ pub(crate) fn sign_compact_hash_words(
     Ok(vec![SymWord::constant(sig.r()), SymWord::constant(sig.s() | y_parity)])
 }
 
-/// Computes the `derive_private_key` cheatcode runtime helper result.
 pub(crate) fn derive_private_key<W: Wordlist>(
     mnemonic: &str,
     path: &str,
@@ -1097,7 +1032,6 @@ pub(crate) fn derive_private_key<W: Wordlist>(
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.deriveKey"))
 }
 
-/// Computes the `derive_private_key_with_language` cheatcode runtime helper result.
 pub(crate) fn derive_private_key_with_language(
     mnemonic: &str,
     path: &str,
@@ -1108,7 +1042,6 @@ pub(crate) fn derive_private_key_with_language(
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.deriveKey language"))
 }
 
-/// Implements the `artifact_json_path` cheatcode runtime helper.
 pub(crate) fn artifact_json_path(path: &str) -> PathBuf {
     if path.ends_with(".json") {
         return PathBuf::from(path);
@@ -1154,7 +1087,6 @@ pub(crate) fn artifact_json_fallback_paths(path: &str) -> Vec<PathBuf> {
     vec![PathBuf::from("out").join(file_name).join(format!("{contract}.json"))]
 }
 
-/// Implements the `artifact_code` cheatcode runtime helper.
 pub(crate) fn artifact_code(path: &str, deployed: bool) -> Result<Vec<u8>, SymbolicError> {
     let mut data = None;
     for path in std::iter::once(artifact_json_path(path)).chain(artifact_json_fallback_paths(path))

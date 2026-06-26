@@ -1,7 +1,6 @@
 use super::*;
 
 impl SymbolicExecutor {
-    /// Implements the `create` symbolic executor helper.
     pub(super) fn create<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -207,7 +206,6 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
-    /// Computes the `execute_external_call` symbolic executor helper result.
     pub(super) fn execute_external_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,

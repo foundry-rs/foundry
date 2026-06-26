@@ -103,7 +103,6 @@ pub enum SymbolicError {
 }
 
 impl SymbolicError {
-    /// Implements the `stop_reason` symbolic runtime helper.
     pub(super) const fn stop_reason(&self) -> SymbolicStopReason {
         match self {
             Self::Unsupported(_)
@@ -126,7 +125,6 @@ impl SymbolicError {
 }
 
 impl fmt::Display for SymbolicRunResult {
-    /// Implements the `fmt` symbolic runtime helper.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Safe(stats) => write!(f, "safe after {} paths", stats.paths),

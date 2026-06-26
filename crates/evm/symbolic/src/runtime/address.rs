@@ -1,6 +1,5 @@
 use super::*;
 
-/// Returns the `mask_bits` address normalization helper result.
 pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
     if bits >= 256 {
         value
@@ -10,17 +9,14 @@ pub(crate) fn mask_bits(value: U256, bits: usize) -> U256 {
     }
 }
 
-/// Returns the `address_word` address normalization helper result.
 pub(crate) fn address_word(address: Address) -> U256 {
     U256::from_be_bytes(address.into_word().0)
 }
 
-/// Returns the `word_to_address` address normalization helper result.
 pub(crate) fn word_to_address(value: U256) -> Address {
     Address::from_word(value.to_be_bytes::<32>().into())
 }
 
-/// Implements the `representative_symbolic_address` address normalization helper.
 pub(crate) fn representative_symbolic_address(word: &SymWord) -> Address {
     let digest = keccak256(symbolic_address_key(word));
     let mut bytes = [0u8; 20];
@@ -29,7 +25,6 @@ pub(crate) fn representative_symbolic_address(word: &SymWord) -> Address {
     Address::from(bytes)
 }
 
-/// Returns the `symbolic_address_key` address normalization helper result.
 pub(crate) fn symbolic_address_key(word: &SymWord) -> String {
     if let Some(value) = word.as_const() {
         format!("concrete-address:{:?}", word_to_address(value))
@@ -42,7 +37,6 @@ pub(crate) fn symbolic_address_key(word: &SymWord) -> String {
     }
 }
 
-/// Returns the `address_match_condition` address normalization helper result.
 pub(crate) fn address_match_condition(word: &SymWord, address: Address) -> BoolExpr {
     if let Some(word) = word.as_const() {
         return BoolExpr::Const(word == address_word(address));
@@ -61,7 +55,6 @@ pub(crate) fn address_match_condition(word: &SymWord, address: Address) -> BoolE
     )
 }
 
-/// Returns the `symbolic_address_equivalent` address normalization helper result.
 pub(crate) fn symbolic_address_equivalent(candidate: &SymWord, alias: &SymWord) -> bool {
     match (candidate.as_const(), alias.as_const()) {
         (Some(left), Some(right)) => word_to_address(left) == word_to_address(right),
@@ -70,7 +63,6 @@ pub(crate) fn symbolic_address_equivalent(candidate: &SymWord, alias: &SymWord) 
     }
 }
 
-/// Returns the `address_expr_equivalent` address normalization helper result.
 pub(crate) fn address_expr_equivalent(candidate: &Expr, alias: &Expr) -> bool {
     if candidate == alias {
         return true;
@@ -97,12 +89,10 @@ pub(crate) fn address_expr_equivalent(candidate: &Expr, alias: &Expr) -> bool {
     }
 }
 
-/// Returns the `address_byte_terms` address normalization helper result.
 pub(crate) fn address_byte_terms(expr: &Expr) -> Option<Vec<Expr>> {
     (12..32).map(|index| expr_byte_term(expr, index)).collect()
 }
 
-/// Returns the `expr_byte_term` address normalization helper result.
 pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
     debug_assert!(index < 32);
 
@@ -179,7 +169,6 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
     }
 }
 
-/// Returns the `expr_binary_byte_term` address normalization helper result.
 pub(crate) fn expr_binary_byte_term(
     left: &Expr,
     right: &Expr,
@@ -199,12 +188,10 @@ pub(crate) fn expr_binary_byte_term(
     }
 }
 
-/// Returns the `expr_byte_const` address normalization helper result.
 pub(crate) fn expr_byte_const(expr: &Expr) -> Option<u8> {
     expr.as_const().map(|value| value.to::<u8>())
 }
 
-/// Implements the `extracted_byte_expr` address normalization helper.
 pub(crate) fn extracted_byte_expr(expr: &Expr, index: usize) -> Expr {
     Expr::op(
         ExprOp::And,
@@ -223,7 +210,6 @@ pub(crate) fn is_shift_96(expr: &Expr) -> bool {
     expr.as_const() == Some(U256::from(96))
 }
 
-/// Implements the `stable_symbol` address normalization helper.
 pub(crate) fn stable_symbol(prefix: &'static str, input: impl AsRef<[u8]>) -> String {
     let digest = keccak256(input.as_ref());
     let mut symbol = String::with_capacity(prefix.len() + 17);

@@ -18,7 +18,6 @@ impl SymCalldata {
         Self { size_word: SymWord::constant(U256::from(bytes.len())), size: bytes.len(), bytes }
     }
 
-    /// Implements the `new_symbolic_size` symbolic calldata helper.
     pub(crate) fn new_symbolic_size(bytes: Vec<SymWord>, size_word: SymWord) -> Self {
         Self { size: bytes.len(), size_word, bytes: bytes.into() }
     }
@@ -28,7 +27,6 @@ impl SymCalldata {
         self.size_word.clone()
     }
 
-    /// Returns the `load_word` symbolic calldata helper result.
     pub(crate) fn load_word(&self, offset: SymWord) -> Result<SymWord, SymbolicError> {
         if let Some(offset) = offset.as_const() {
             if offset > U256::from(usize::MAX) {
@@ -40,17 +38,14 @@ impl SymCalldata {
         }
     }
 
-    /// Implements the `load` symbolic calldata helper.
     pub(crate) fn load(&self, offset: usize) -> Result<SymWord, SymbolicError> {
         Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
-    /// Implements the `byte` symbolic calldata helper.
     pub(crate) fn byte(&self, offset: usize) -> SymWord {
         self.bytes.get(offset).cloned().unwrap_or_else(SymWord::zero)
     }
 
-    /// Returns the `load_dynamic` symbolic calldata helper result.
     pub(crate) fn load_dynamic(&self, offset: &Expr) -> Result<SymWord, SymbolicError> {
         let mut result = Expr::constant(U256::ZERO);
         for candidate in (0..self.size).rev() {
@@ -63,7 +58,6 @@ impl SymCalldata {
         Ok(SymWord::expr(result))
     }
 
-    /// Returns the `byte_dynamic_with_delta` symbolic calldata helper result.
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
         let mut result = Expr::constant(U256::ZERO);
         for candidate in (delta..self.size).rev() {
@@ -77,7 +71,6 @@ impl SymCalldata {
     }
 }
 
-/// Implements the `call_input_from_memory` symbolic calldata helper.
 pub(crate) fn call_input_from_memory(
     memory: &SymMemory,
     offset: SymWord,
@@ -91,7 +84,6 @@ pub(crate) fn call_input_from_memory(
     }
 }
 
-/// Implements the `bounded_copy_size_word` symbolic calldata helper.
 pub(crate) fn bounded_copy_size_word(size: &BoundedCopySize) -> SymWord {
     match size {
         BoundedCopySize::Concrete(size) => SymWord::constant(U256::from(*size)),
@@ -99,7 +91,6 @@ pub(crate) fn bounded_copy_size_word(size: &BoundedCopySize) -> SymWord {
     }
 }
 
-/// Implements the `bounded_copy_size_parts` symbolic calldata helper.
 pub(crate) fn bounded_copy_size_parts(size: &BoundedCopySize) -> (SymWord, usize, bool) {
     match size {
         BoundedCopySize::Concrete(size) => (SymWord::constant(U256::from(*size)), *size, false),
@@ -107,7 +98,6 @@ pub(crate) fn bounded_copy_size_parts(size: &BoundedCopySize) -> (SymWord, usize
     }
 }
 
-/// Implements the `calldata_from_call_input` symbolic calldata helper.
 pub(crate) fn calldata_from_call_input(input: Vec<SymWord>, size: &BoundedCopySize) -> SymCalldata {
     match size {
         BoundedCopySize::Concrete(_) => SymCalldata::new(input),

@@ -1,13 +1,11 @@
 use super::*;
 
-/// Returns the `failed_slot` EVM semantics helper result.
 pub(crate) fn failed_slot() -> U256 {
     let mut bytes = [0u8; 32];
     bytes[..6].copy_from_slice(b"failed");
     U256::from_be_bytes(bytes)
 }
 
-/// Computes the `pow_mod` EVM semantics helper result.
 pub(crate) fn pow_mod(base: U256, exponent: U256) -> U256 {
     let mut result = U256::from(1);
     let mut base = base;
@@ -22,7 +20,6 @@ pub(crate) fn pow_mod(base: U256, exponent: U256) -> U256 {
     result
 }
 
-/// Computes the `exp_expr_for_concrete_exponent` EVM semantics helper result.
 pub(crate) fn exp_expr_for_concrete_exponent(base: Expr, exponent: usize) -> Expr {
     let mut expr = Expr::constant(U256::from(1));
     for _ in 0..exponent {
@@ -31,7 +28,6 @@ pub(crate) fn exp_expr_for_concrete_exponent(base: Expr, exponent: usize) -> Exp
     expr_const_value(&expr).map(Expr::constant).unwrap_or(expr)
 }
 
-/// Implements the `slt` EVM semantics helper.
 pub(crate) fn slt(left: U256, right: U256) -> bool {
     let left_negative = (left >> 255) == U256::from(1);
     let right_negative = (right >> 255) == U256::from(1);
@@ -42,12 +38,10 @@ pub(crate) fn slt(left: U256, right: U256) -> bool {
     }
 }
 
-/// Implements the `signed_abs` EVM semantics helper.
 pub(crate) fn signed_abs(value: U256) -> U256 {
     if (value >> 255) == U256::from(1) { (!value).wrapping_add(U256::from(1)) } else { value }
 }
 
-/// Implements the `sdiv` EVM semantics helper.
 pub(crate) fn sdiv(left: U256, right: U256) -> U256 {
     if right.is_zero() {
         return U256::ZERO;
@@ -58,7 +52,6 @@ pub(crate) fn sdiv(left: U256, right: U256) -> U256 {
     if left_negative ^ right_negative { (!quotient).wrapping_add(U256::from(1)) } else { quotient }
 }
 
-/// Implements the `smod` EVM semantics helper.
 pub(crate) fn smod(left: U256, right: U256) -> U256 {
     if right.is_zero() {
         return U256::ZERO;
@@ -68,7 +61,6 @@ pub(crate) fn smod(left: U256, right: U256) -> U256 {
     if left_negative { (!remainder).wrapping_add(U256::from(1)) } else { remainder }
 }
 
-/// Implements the `signextend` EVM semantics helper.
 pub(crate) fn signextend(byte_index: U256, value: U256) -> U256 {
     if byte_index >= U256::from(32) {
         return value;
@@ -79,7 +71,6 @@ pub(crate) fn signextend(byte_index: U256, value: U256) -> U256 {
     if value & sign_bit == U256::ZERO { value & mask } else { value | !mask }
 }
 
-/// Implements the `signextend_word` EVM semantics helper.
 pub(crate) fn signextend_word(byte_index: U256, value: SymWord) -> SymWord {
     if byte_index >= U256::from(32) {
         return value;
@@ -101,7 +92,6 @@ pub(crate) fn signextend_word(byte_index: U256, value: SymWord) -> SymWord {
     ))
 }
 
-/// Implements the `signextend_word_dynamic` EVM semantics helper.
 pub(crate) fn signextend_word_dynamic(byte_index: SymWord, value: SymWord) -> SymWord {
     if let Some(byte_index) = byte_index.as_const() {
         return signextend_word(byte_index, value);
@@ -119,7 +109,6 @@ pub(crate) fn signextend_word_dynamic(byte_index: SymWord, value: SymWord) -> Sy
     SymWord::expr(result)
 }
 
-/// Returns the `byte_word` EVM semantics helper result.
 pub(crate) fn byte_word(index: U256, word: SymWord) -> SymWord {
     if index >= U256::from(32) {
         return SymWord::zero();
@@ -132,7 +121,6 @@ pub(crate) fn byte_word(index: U256, word: SymWord) -> SymWord {
     }
 }
 
-/// Returns the `byte_word_dynamic` EVM semantics helper result.
 pub(crate) fn byte_word_dynamic(index: SymWord, word: SymWord) -> SymWord {
     if let Some(index) = index.as_const() {
         return byte_word(index, word);
@@ -176,7 +164,6 @@ pub(crate) fn byte_expr(index: usize, expr: &Expr) -> SymWord {
     ))
 }
 
-/// Returns the `expr_known_byte` EVM semantics helper result.
 pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
     debug_assert!(index < 32);
     match expr.as_inner() {
@@ -235,7 +222,6 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
     }
 }
 
-/// Returns the `expr_known_word` EVM semantics helper result.
 pub(crate) fn expr_known_word(expr: &Expr) -> Option<U256> {
     let mut bytes = [0u8; 32];
     for (idx, byte) in bytes.iter_mut().enumerate() {
@@ -244,7 +230,6 @@ pub(crate) fn expr_known_word(expr: &Expr) -> Option<U256> {
     Some(U256::from_be_bytes(bytes))
 }
 
-/// Implements the `sar` EVM semantics helper.
 pub(crate) fn sar(value: U256, shift: usize) -> U256 {
     if shift >= 256 {
         if (value >> 255) == U256::from(1) { U256::MAX } else { U256::ZERO }
@@ -257,7 +242,6 @@ pub(crate) fn sar(value: U256, shift: usize) -> U256 {
     }
 }
 
-/// Computes the `shift_left` EVM semantics helper result.
 pub(crate) fn shift_left(value: SymWord, bits: usize) -> SymWord {
     if let Some(value) = value.as_const() {
         SymWord::constant(value << bits)
@@ -266,7 +250,6 @@ pub(crate) fn shift_left(value: SymWord, bits: usize) -> SymWord {
     }
 }
 
-/// Computes the `analyze_jumpdests` EVM semantics helper result.
 pub(crate) fn analyze_jumpdests(code: &SymCode) -> HashSet<usize> {
     let mut jumpdests = HashSet::default();
     let mut pc = 0;
@@ -284,7 +267,6 @@ pub(crate) fn analyze_jumpdests(code: &SymCode) -> HashSet<usize> {
     jumpdests
 }
 
-/// Computes the `ensure_jumpdest` EVM semantics helper result.
 pub(crate) fn ensure_jumpdest(
     dest: usize,
     jumpdests: &HashSet<usize>,
@@ -338,13 +320,11 @@ pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
         .is_ok_and(|message| message.contains(ASSERTION_FAILED_PREFIX))
 }
 
-/// Returns the `abi_word_usize` EVM semantics helper result.
 pub(crate) fn abi_word_usize(word: &[u8]) -> Option<usize> {
     let value = abi_word(word)?;
     if value > U256::from(usize::MAX) { None } else { Some(value.to::<usize>()) }
 }
 
-/// Returns the `abi_word` EVM semantics helper result.
 pub(crate) const fn abi_word(word: &[u8]) -> Option<U256> {
     if word.len() != 32 {
         return None;

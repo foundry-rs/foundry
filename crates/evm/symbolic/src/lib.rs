@@ -68,7 +68,6 @@ pub fn symbolic_solver_portfolio_availability_warning(config: &SymbolicConfig) -
     runtime::solver_portfolio_availability_warning(config)
 }
 
-/// Returns the `selector_for` symbolic public API helper result.
 fn selector_for(signature: &str) -> [u8; 4] {
     let hash = keccak256(signature);
     [hash[0], hash[1], hash[2], hash[3]]

@@ -2,7 +2,6 @@ use super::*;
 
 impl SymbolicExecutor {
     #[expect(clippy::too_many_arguments)]
-    /// Runs the `step` symbolic executor helper.
     pub(super) fn step<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -733,7 +732,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `assume_returndata_copy_in_bounds` symbolic executor helper.
     pub(super) fn assume_returndata_copy_in_bounds(
         &mut self,
         state: &mut PathState,
@@ -760,7 +758,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `return_or_revert` symbolic executor helper.
     pub(super) fn return_or_revert(
         &mut self,
         state: &mut PathState,
@@ -799,7 +796,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Runs the `classify_revert` symbolic executor helper.
     pub(super) fn classify_revert(
         &self,
         state: &PathState,

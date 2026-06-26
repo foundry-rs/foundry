@@ -54,13 +54,11 @@ pub(crate) fn intern_symbol(name: impl AsRef<str>) -> Arc<str> {
     interner.intern(name.as_ref())
 }
 
-/// Computes the `keccak_word` symbolic expression helper result.
 pub(crate) fn keccak_word(bytes: Vec<SymWord>) -> SymWord {
     let len = bytes.len();
     keccak_word_with_len(bytes, SymWord::constant(U256::from(len)))
 }
 
-/// Computes the `keccak_word_with_len` symbolic expression helper result.
 pub(crate) fn keccak_word_with_len(bytes: Vec<SymWord>, len: SymWord) -> SymWord {
     if bytes.iter().all(|byte| byte.as_const().is_some())
         && let Some(len) = len.as_const()
@@ -80,7 +78,6 @@ pub(crate) fn keccak_word_with_len(bytes: Vec<SymWord>, len: SymWord) -> SymWord
     SymWord::expr(Expr::keccak(stable_symbol("keccak", format!("{len:?}:{exprs:?}")), len, exprs))
 }
 
-/// Returns the `symbolic_hash_word_with_len` symbolic expression helper result.
 pub(crate) fn symbolic_hash_word_with_len(
     algorithm: &'static str,
     bytes: Vec<SymWord>,
@@ -95,7 +92,6 @@ pub(crate) fn symbolic_hash_word_with_len(
     SymWord::expr(Expr::hash(name, algorithm, identity))
 }
 
-/// Implements the `create2_address_word` symbolic expression helper.
 pub(crate) fn create2_address_word(
     state: &mut PathState,
     creator: Address,
@@ -134,7 +130,6 @@ pub(crate) fn create2_address_word(
     }
 }
 
-/// Computes the `compute_create2_address_word` symbolic expression helper result.
 pub(crate) fn compute_create2_address_word(
     state: &mut PathState,
     deployer: SymWord,
@@ -171,7 +166,6 @@ pub(crate) fn compute_create2_address_word(
     ))
 }
 
-/// Computes the `compute_create_address_word` symbolic expression helper result.
 pub(crate) fn compute_create_address_word(
     state: &mut PathState,
     deployer: SymWord,
@@ -193,7 +187,6 @@ pub(crate) fn compute_create_address_word(
     Ok(symbolic_create_address_word(state, deployer_identity, nonce.into_expr()))
 }
 
-/// Returns the `symbolic_create_address_word` symbolic expression helper result.
 pub(crate) fn symbolic_create_address_word(
     state: &mut PathState,
     creator_identity: String,
@@ -207,7 +200,6 @@ pub(crate) fn symbolic_create_address_word(
     word
 }
 
-/// Returns the `symbolic_create2_address_word` symbolic expression helper result.
 pub(crate) fn symbolic_create2_address_word(
     state: &mut PathState,
     creator_identity: String,
@@ -222,7 +214,6 @@ pub(crate) fn symbolic_create2_address_word(
     word
 }
 
-/// Returns the `read_storage_writes` symbolic expression helper result.
 pub(crate) fn read_storage_writes(
     writes: &[StorageWrite],
     address: Address,
@@ -236,7 +227,6 @@ pub(crate) fn read_storage_writes(
     value
 }
 
-/// Implements the `storage_select` symbolic expression helper.
 pub(crate) fn storage_select(
     read_key: SymWord,
     write_key: SymWord,
@@ -254,7 +244,6 @@ pub(crate) fn storage_select(
     }
 }
 
-/// Implements the `storage_key_eq` symbolic expression helper.
 pub(crate) fn storage_key_eq(read_key: SymWord, write_key: SymWord) -> BoolExpr {
     let read_key = read_key.into_expr();
     let write_key = write_key.into_expr();
@@ -290,7 +279,6 @@ pub(crate) fn storage_mapping_root_slot(key: &Expr) -> Option<U256> {
     }
 }
 
-/// Implements the `storage_layout_key` symbolic expression helper.
 pub(crate) fn storage_layout_key(key: &Expr) -> Option<(Expr, Expr)> {
     match key.as_inner() {
         ExprInner::Keccak(_) => Some((key.clone(), Expr::constant(U256::ZERO))),
@@ -311,7 +299,6 @@ pub(crate) fn storage_layout_key(key: &Expr) -> Option<(Expr, Expr)> {
     }
 }
 
-/// Returns the `expr_add` symbolic expression helper result.
 pub(crate) fn expr_add(left: Expr, right: Expr) -> Expr {
     if let (Some(left_value), Some(right_value)) = (left.as_const(), right.as_const()) {
         return Expr::constant(left_value.wrapping_add(right_value));
@@ -323,7 +310,6 @@ pub(crate) fn expr_add(left: Expr, right: Expr) -> Expr {
     }
 }
 
-/// Implements the `sym_add` symbolic expression helper.
 pub(crate) fn sym_add(left: SymWord, right: SymWord) -> SymWord {
     if let (Some(left_value), Some(right_value)) = (left.as_const(), right.as_const()) {
         return SymWord::constant(left_value.wrapping_add(right_value));
@@ -331,7 +317,6 @@ pub(crate) fn sym_add(left: SymWord, right: SymWord) -> SymWord {
     SymWord::expr(expr_add(left.into_expr(), right.into_expr()))
 }
 
-/// Implements the `sym_sub` symbolic expression helper.
 pub(crate) fn sym_sub(left: SymWord, right: SymWord) -> SymWord {
     if let (Some(left_value), Some(right_value)) = (left.as_const(), right.as_const()) {
         return SymWord::constant(left_value.wrapping_sub(right_value));
@@ -349,7 +334,6 @@ pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
     left.mul_mod(right, modulus)
 }
 
-/// Returns the `expr_contains_keccak` symbolic expression helper result.
 pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
     let mut contains = false;
     expr.visit(&mut |expr| contains |= matches!(expr.as_inner(), ExprInner::Keccak(_)));
@@ -363,7 +347,6 @@ pub(crate) fn expr_contains_gasleft(expr: &Expr) -> bool {
     contains
 }
 
-/// Returns the `bool_forces_expr_const_with_context` symbolic expression helper result.
 pub(crate) fn bool_forces_expr_const_with_context(
     condition: &BoolExpr,
     expr: &Expr,
@@ -397,7 +380,6 @@ pub(crate) fn bool_forces_expr_const_with_context(
     }
 }
 
-/// Returns the `expr_equality_forces_const` symbolic expression helper result.
 pub(crate) fn expr_equality_forces_const(
     candidate: &Expr,
     value: U256,
@@ -423,7 +405,6 @@ fn expr_equality_forces_const_inner(
     Some(value)
 }
 
-/// Returns the `expr_nonzero_forces_const` symbolic expression helper result.
 pub(crate) fn expr_nonzero_forces_const(
     expr: &Expr,
     target: &Expr,
@@ -490,7 +471,6 @@ fn masked_expr_matches(candidate: &ExprInner, target: &Expr) -> Option<U256> {
     }
 }
 
-/// Implements the `context_forces_masked_expr` symbolic expression helper.
 pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, mask: U256) -> bool {
     context.iter().any(|condition| match condition {
         BoolExpr::Eq(left, right) => {
@@ -502,7 +482,6 @@ pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, ma
     })
 }
 
-/// Returns the `expr_const_value` symbolic expression helper result.
 pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
     match expr.as_inner() {
         ExprInner::Const(value) => Some(*value),
@@ -533,7 +512,6 @@ pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
     }
 }
 
-/// Returns the `bool_const_value` symbolic expression helper result.
 pub(crate) fn bool_const_value(expr: &BoolExpr) -> Option<bool> {
     match expr {
         BoolExpr::Const(value) => Some(*value),
@@ -561,7 +539,6 @@ pub(crate) fn bool_const_value(expr: &BoolExpr) -> Option<bool> {
     }
 }
 
-/// Returns the `bool_contains_keccak` symbolic expression helper result.
 pub(crate) fn bool_contains_keccak(expr: &BoolExpr) -> bool {
     let mut contains = false;
     expr.visit_exprs(&mut |expr| contains |= matches!(expr.as_inner(), ExprInner::Keccak(_)));
@@ -575,7 +552,6 @@ pub(crate) fn bool_contains_gasleft(expr: &BoolExpr) -> bool {
     contains
 }
 
-/// Returns the `word_bytes` symbolic expression helper result.
 pub(crate) fn word_bytes(word: SymWord) -> Vec<SymWord> {
     if let Some(word) = word.as_const() {
         return word
@@ -588,7 +564,6 @@ pub(crate) fn word_bytes(word: SymWord) -> Vec<SymWord> {
     (0..32).map(|idx| byte_expr(idx, &expr)).collect()
 }
 
-/// Returns the `word_from_bytes` symbolic expression helper result.
 pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymWord>) -> SymWord {
     let bytes = bytes.into_iter().collect::<Vec<_>>();
     if bytes.iter().all(|byte| byte.as_const().is_some()) {
@@ -617,7 +592,6 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymWord>) -> SymWo
     SymWord::expr(expr)
 }
 
-/// Returns the `word_from_extracted_bytes` symbolic expression helper result.
 pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<Expr> {
     if bytes.len() < 32 {
         return None;
@@ -645,7 +619,6 @@ pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<Expr> {
     Some(source)
 }
 
-/// Implements the `extracted_byte_source` symbolic expression helper.
 pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<Expr> {
     let expr = byte.as_expr();
     let expr = strip_low_byte_mask(expr)?;
@@ -657,7 +630,6 @@ pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<Expr
     (shift == U256::from((31 - index) * 8)).then(|| source.clone())
 }
 
-/// Implements the `strip_low_byte_mask` symbolic expression helper.
 pub(crate) fn strip_low_byte_mask(expr: &Expr) -> Option<&Expr> {
     match expr.as_inner() {
         ExprInner::Op(ExprOp::And, left, right) if right.as_const() == Some(U256::from(0xff)) => {
@@ -670,7 +642,6 @@ pub(crate) fn strip_low_byte_mask(expr: &Expr) -> Option<&Expr> {
     }
 }
 
-/// Returns the `low_byte` symbolic expression helper result.
 pub(crate) fn low_byte(word: SymWord) -> SymWord {
     if let Some(word) = word.as_const() {
         return SymWord::constant(U256::from(word.to::<u8>()));
@@ -678,7 +649,6 @@ pub(crate) fn low_byte(word: SymWord) -> SymWord {
     SymWord::expr(Expr::op(ExprOp::And, word.into_expr(), Expr::constant(U256::from(0xff))))
 }
 
-/// Returns the `model_word` symbolic expression helper result.
 pub(crate) fn model_word(
     word: &SymWord,
     model: &(impl SymbolicModelLookup + ?Sized),
@@ -689,7 +659,6 @@ pub(crate) fn model_word(
     eval_expr(word.as_expr(), model)
 }
 
-/// Returns the `model_bytes` symbolic expression helper result.
 pub(crate) fn model_bytes(
     bytes: &[SymWord],
     model: &(impl SymbolicModelLookup + ?Sized),
@@ -697,7 +666,6 @@ pub(crate) fn model_bytes(
     bytes.iter().map(|byte| Ok(model_word(byte, model)?.to::<u8>())).collect()
 }
 
-/// Returns the `concrete_bytes` symbolic expression helper result.
 pub(crate) fn concrete_bytes(
     bytes: &[SymWord],
     reason: &'static str,
@@ -711,7 +679,6 @@ pub(crate) fn concrete_bytes(
         .collect()
 }
 
-/// Implements the `calldata_prefix_condition` symbolic expression helper.
 pub(crate) fn calldata_prefix_condition(
     calldata: &[SymWord],
     prefix: &[SymWord],
@@ -737,7 +704,6 @@ pub(crate) fn calldata_prefix_condition(
     Ok(Some(BoolExpr::and(conditions)))
 }
 
-/// Implements the `function_mock_match_condition` symbolic expression helper.
 pub(crate) fn function_mock_match_condition(
     mock: &FunctionMock,
     callee: Address,
@@ -750,7 +716,6 @@ pub(crate) fn function_mock_match_condition(
     Ok(Some(BoolExpr::and(vec![address_match_condition(&mock.callee, callee), data_condition])))
 }
 
-/// Returns the `eval_expr` symbolic expression helper result.
 pub(crate) fn eval_expr(
     expr: &Expr,
     model: &(impl SymbolicModelLookup + ?Sized),
@@ -810,7 +775,6 @@ pub(crate) fn eval_keccak_expr(
     Ok(U256::from_be_bytes(keccak256(input).0))
 }
 
-/// Returns the `eval_expr_op` symbolic expression helper result.
 pub(crate) fn eval_expr_op(op: ExprOp, left: U256, right: U256) -> U256 {
     match op {
         ExprOp::Add => left.wrapping_add(right),
@@ -859,7 +823,6 @@ pub(crate) fn eval_expr_op(op: ExprOp, left: U256, right: U256) -> U256 {
     }
 }
 
-/// Returns the `eval_bool_expr` symbolic expression helper result.
 pub(crate) fn eval_bool_expr(
     expr: &BoolExpr,
     model: &(impl SymbolicModelLookup + ?Sized),
@@ -900,7 +863,6 @@ pub(crate) fn eval_bool_cmp(op: BoolExprOp, left: U256, right: U256) -> bool {
 pub(crate) struct SymWord(Expr);
 
 impl SymWord {
-    /// Implements the `zero` symbolic expression helper.
     pub(crate) fn zero() -> Self {
         Self::constant(U256::ZERO)
     }
@@ -940,12 +902,10 @@ impl SymWord {
         matches!(self.0.as_inner(), ExprInner::GasLeft(_))
     }
 
-    /// Implements the `into_expr` symbolic expression helper.
     pub(crate) fn into_expr(self) -> Expr {
         self.0
     }
 
-    /// Converts values for the `from_bool` symbolic expression helper.
     pub(crate) fn from_bool(value: BoolExpr) -> Self {
         match value {
             BoolExpr::Const(value) => Self::constant(U256::from(value)),
@@ -957,12 +917,10 @@ impl SymWord {
         }
     }
 
-    /// Implements the `truth` symbolic expression helper.
     pub(crate) fn truth(&self) -> Option<bool> {
         self.as_const().map(|value| !value.is_zero())
     }
 
-    /// Implements the `into_zero_bool` symbolic expression helper.
     pub(crate) fn into_zero_bool(self) -> BoolExpr {
         if let Some(value) = self.as_const() {
             return BoolExpr::Const(value.is_zero());
@@ -984,17 +942,14 @@ impl SymWord {
         }
     }
 
-    /// Implements the `nonzero_bool` symbolic expression helper.
     pub(crate) fn nonzero_bool(self) -> BoolExpr {
         self.into_zero_bool().not()
     }
 
-    /// Implements the `into_concrete` symbolic expression helper.
     pub(crate) fn into_concrete(self, reason: &'static str) -> Result<U256, SymbolicError> {
         self.as_const().ok_or(SymbolicError::Unsupported(reason))
     }
 
-    /// Implements the `into_usize` symbolic expression helper.
     pub(crate) fn into_usize(self, reason: &'static str) -> Result<usize, SymbolicError> {
         let value = self.into_concrete(reason)?;
         if value > U256::from(usize::MAX) {
@@ -1260,7 +1215,6 @@ impl Expr {
         }
     }
 
-    /// Implements the `op` symbolic expression helper.
     pub(crate) fn op(op: ExprOp, left: Self, right: Self) -> Self {
         if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
             return Self::constant(eval_expr_op(op, left, right));
@@ -1379,7 +1333,6 @@ impl Expr {
         }
     }
 
-    /// Implements the `collect_vars` symbolic expression helper.
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         self.visit(&mut |expr| match expr.as_inner() {
             ExprInner::Var(var) => {
@@ -1401,7 +1354,6 @@ impl Expr {
         });
     }
 
-    /// Implements the `smt` symbolic expression helper.
     #[cfg(test)]
     pub(crate) fn smt(&self) -> String {
         let mut smt = String::new();
@@ -1502,7 +1454,6 @@ pub(crate) enum ExprOp {
 }
 
 impl ExprOp {
-    /// Implements the `smt` symbolic expression helper.
     pub(crate) const fn smt(self) -> &'static str {
         match self {
             Self::Add => "bvadd",
@@ -1563,7 +1514,6 @@ impl BoolExpr {
         }
     }
 
-    /// Implements the `eq` symbolic expression helper.
     pub(crate) fn eq(left: Expr, right: Expr) -> Self {
         if left == right {
             return Self::Const(true);
@@ -1630,7 +1580,6 @@ impl BoolExpr {
         Self::eq(left.as_expr().clone(), right.as_expr().clone())
     }
 
-    /// Implements the `and` symbolic expression helper.
     pub(crate) fn and(values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {
@@ -1650,7 +1599,6 @@ impl BoolExpr {
         }
     }
 
-    /// Implements the `or` symbolic expression helper.
     pub(crate) fn or(values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {
@@ -1669,7 +1617,6 @@ impl BoolExpr {
         }
     }
 
-    /// Implements the `cmp` symbolic expression helper.
     pub(crate) fn cmp(op: BoolExprOp, left: Expr, right: Expr) -> Self {
         if left == right {
             return Self::Const(matches!(op, BoolExprOp::Ule | BoolExprOp::Uge));
@@ -1721,7 +1668,6 @@ impl BoolExpr {
         Self::cmp(op, word.as_expr().clone(), expr)
     }
 
-    /// Implements the `not` symbolic expression helper.
     pub(crate) fn not(self) -> Self {
         match self {
             Self::Const(value) => Self::Const(!value),
@@ -1731,7 +1677,6 @@ impl BoolExpr {
         }
     }
 
-    /// Implements the `collect_vars` symbolic expression helper.
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         self.visit(&mut |expr| match expr {
             Self::Eq(left, right) | Self::Cmp(_, left, right) => {
@@ -1742,7 +1687,6 @@ impl BoolExpr {
         });
     }
 
-    /// Implements the `smt` symbolic expression helper.
     pub(crate) fn smt(&self) -> String {
         let mut smt = String::new();
         self.write_smt(&mut smt);
@@ -1794,7 +1738,6 @@ pub(crate) enum BoolExprOp {
 }
 
 impl BoolExprOp {
-    /// Implements the `smt` symbolic expression helper.
     pub(crate) const fn smt(self) -> &'static str {
         match self {
             Self::Ult => "bvult",
@@ -1807,12 +1750,10 @@ impl BoolExprOp {
     }
 }
 
-/// Returns the `u256_to_usize` symbolic expression helper result.
 pub(crate) fn u256_to_usize(value: U256) -> Option<usize> {
     if value > U256::from(usize::MAX) { None } else { Some(value.to::<usize>()) }
 }
 
-/// Returns the `bool_upper_bound_usize` symbolic expression helper result.
 pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &Expr) -> Option<usize> {
     match condition {
         BoolExpr::Const(_) | BoolExpr::Not(_) => None,

@@ -24,7 +24,6 @@ impl SymbolicCalldata {
         Ok(Self::variants(function, config)?.remove(0))
     }
 
-    /// Returns the `variants` symbolic ABI helper result.
     pub(super) fn variants(
         function: &Function,
         config: &SymbolicConfig,
@@ -32,7 +31,6 @@ impl SymbolicCalldata {
         Self::variants_with_prefix(function, config, "calldata")
     }
 
-    /// Returns the `selector_only` symbolic ABI helper result.
     pub(super) fn selector_only(function: &Function) -> Result<Self, SymbolicError> {
         if !function.inputs.is_empty() {
             return Err(SymbolicError::UnsupportedAbi(format!(
@@ -49,7 +47,6 @@ impl SymbolicCalldata {
         Ok(Self { bytes: bytes.into(), inputs: Vec::new(), constraints: Vec::new() })
     }
 
-    /// Implements the `variants_with_prefix` symbolic ABI helper.
     pub(super) fn variants_with_prefix(
         function: &Function,
         config: &SymbolicConfig,
@@ -103,19 +100,16 @@ impl SymbolicCalldata {
             .collect()
     }
 
-    /// Implements the `load` symbolic ABI helper.
     #[cfg(test)]
     pub(super) fn load(&self, offset: usize) -> Result<SymWord, SymbolicError> {
         Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
-    /// Implements the `byte` symbolic ABI helper.
     #[cfg(test)]
     pub(super) fn byte(&self, offset: usize) -> SymWord {
         self.bytes.get(offset).cloned().unwrap_or_else(SymWord::zero)
     }
 
-    /// Implements the `call_data` symbolic ABI helper.
     pub(super) fn call_data(&self) -> SymCalldata {
         SymCalldata::from_shared(self.bytes.clone())
     }
@@ -142,7 +136,6 @@ impl SymbolicCalldata {
         &self.inputs
     }
 
-    /// Returns the `model_to_args` symbolic ABI helper result.
     pub(super) fn model_to_args(
         &self,
         model: &(impl SymbolicModelLookup + ?Sized),
@@ -163,7 +156,6 @@ impl SymbolicInput {
         &self.value
     }
 
-    /// Returns the `variants` symbolic ABI helper result.
     pub(super) fn variants<'a>(
         builder: SymbolicAbiBuilder<'a>,
         prefix: &str,
@@ -195,7 +187,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Self { config, constraints: Vec::new(), positional_dynamic_index: 0 }
     }
 
-    /// Implements the `value` symbolic ABI helper.
     pub(super) fn value(
         &mut self,
         name: String,
@@ -294,7 +285,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         })
     }
 
-    /// Returns the `value_variants` symbolic ABI helper result.
     pub(super) fn value_variants(
         self,
         name: String,
@@ -389,7 +379,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         })
     }
 
-    /// Returns the `array_elements_variants` symbolic ABI helper result.
     pub(super) fn array_elements_variants(
         self,
         name: &str,
@@ -417,7 +406,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(variants)
     }
 
-    /// Returns the `tuple_elements_variants` symbolic ABI helper result.
     pub(super) fn tuple_elements_variants(
         self,
         name: &str,
@@ -444,12 +432,10 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(variants)
     }
 
-    /// Implements the `fresh_word` symbolic ABI helper.
     pub(super) fn fresh_word(&self, name: String) -> SymWord {
         SymWord::expr(Expr::var(name))
     }
 
-    /// Implements the `fresh_byte` symbolic ABI helper.
     pub(super) fn fresh_byte(&mut self, name: String, printable: bool) -> SymWord {
         let word = self.fresh_word(name);
         self.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(256)));
@@ -468,7 +454,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         word
     }
 
-    /// Implements the `next_dynamic_length` symbolic ABI helper.
     pub(super) fn next_dynamic_length(
         &mut self,
         name: &str,
@@ -481,7 +466,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         )? as usize)
     }
 
-    /// Returns the `next_dynamic_length_options` symbolic ABI helper result.
     pub(super) fn next_dynamic_length_options(
         &mut self,
         name: &str,
@@ -522,7 +506,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(lengths)
     }
 
-    /// Implements the `constrain_uint` symbolic ABI helper.
     pub(super) fn constrain_uint(&mut self, word: &SymWord, bits: usize) {
         if bits < 256 {
             self.constraints.push(BoolExpr::cmp_word_const(
@@ -533,7 +516,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
         }
     }
 
-    /// Implements the `constrain_int` symbolic ABI helper.
     pub(super) fn constrain_int(&mut self, word: &SymWord, bits: usize) {
         if bits < 256 {
             let byte_index = U256::from(bits / 8 - 1);
@@ -582,7 +564,6 @@ pub(super) enum DynamicKind {
 }
 
 impl DynamicKind {
-    /// Returns the `name` symbolic ABI helper result.
     pub(super) const fn name(self) -> &'static str {
         match self {
             Self::Array => "array",
@@ -591,7 +572,6 @@ impl DynamicKind {
         }
     }
 
-    /// Returns the `default_lengths` symbolic ABI helper result.
     pub(super) fn default_lengths(self, config: &SymbolicConfig) -> Option<&[u32]> {
         match self {
             Self::Array if !config.default_array_lengths.is_empty() => {
@@ -605,7 +585,6 @@ impl DynamicKind {
     }
 }
 
-/// Returns the `first_dynamic_length` symbolic ABI helper result.
 pub(super) fn first_dynamic_length(lengths: &[u32], field: &str) -> Result<u32, SymbolicError> {
     lengths
         .first()
@@ -613,7 +592,6 @@ pub(super) fn first_dynamic_length(lengths: &[u32], field: &str) -> Result<u32, 
         .ok_or_else(|| SymbolicError::UnsupportedAbi(format!("{field} must not be empty")))
 }
 
-/// Returns the `child_aliases` symbolic ABI helper result.
 pub(super) fn child_aliases(aliases: &[String], idx: usize) -> Vec<String> {
     aliases.iter().map(|alias| format!("{alias}_{idx}")).collect()
 }
@@ -648,7 +626,6 @@ impl SymbolicAbiValue {
         }
     }
 
-    /// Implements the `head_size` symbolic ABI helper.
     pub(super) fn head_size(&self) -> usize {
         if self.is_dynamic() {
             32
@@ -667,7 +644,6 @@ impl SymbolicAbiValue {
         }
     }
 
-    /// Implements the `encode_static` symbolic ABI helper.
     pub(super) fn encode_static(&self) -> Vec<SymWord> {
         match self {
             Self::Bool { word }
@@ -688,7 +664,6 @@ impl SymbolicAbiValue {
         }
     }
 
-    /// Implements the `encode_dynamic_body` symbolic ABI helper.
     pub(super) fn encode_dynamic_body(&self) -> Vec<SymWord> {
         match self {
             Self::Bytes { len, bytes } => encode_packed_bytes_with_len(len.clone(), bytes),
@@ -711,7 +686,6 @@ impl SymbolicAbiValue {
         }
     }
 
-    /// Returns the `model_value` symbolic ABI helper result.
     pub(super) fn model_value(
         &self,
         model: &(impl SymbolicModelLookup + ?Sized),
@@ -772,7 +746,6 @@ impl SymbolicAbiValue {
     }
 }
 
-/// Implements the `encode_sequence` symbolic ABI helper.
 pub(super) fn encode_sequence<'a>(
     values: impl IntoIterator<Item = &'a SymbolicAbiValue>,
 ) -> Vec<SymWord> {
@@ -794,7 +767,6 @@ pub(super) fn encode_sequence<'a>(
     head
 }
 
-/// Implements the `encode_packed_bytes_with_len` symbolic ABI helper.
 pub(super) fn encode_packed_bytes_with_len(len: SymWord, bytes: &[SymWord]) -> Vec<SymWord> {
     let mut out = word_bytes(len);
     out.extend(bytes.iter().cloned());

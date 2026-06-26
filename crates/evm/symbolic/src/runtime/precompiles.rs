@@ -10,7 +10,6 @@ pub(crate) fn is_console(address: Address) -> bool {
     address == HARDHAT_CONSOLE_ADDRESS
 }
 
-/// Returns the `precompile_number` precompile helper result.
 pub(crate) fn precompile_number(address: Address) -> Option<u8> {
     let bytes = address.as_slice();
     if bytes[..PRECOMPILE_ADDRESS_LEADING_ZEROS].iter().any(|byte| *byte != 0) {
@@ -22,7 +21,6 @@ pub(crate) fn precompile_number(address: Address) -> Option<u8> {
     }
 }
 
-/// Returns the `precompile_number` helper result for the active EVM spec.
 pub(crate) fn precompile_number_for_spec(address: Address, spec_id: SpecId) -> Option<u8> {
     match precompile_number(address)? {
         5..=8 if spec_id < SpecId::BYZANTIUM => None,
@@ -32,7 +30,6 @@ pub(crate) fn precompile_number_for_spec(address: Address, spec_id: SpecId) -> O
     }
 }
 
-/// Returns the `precompile_address` precompile helper result.
 pub(crate) fn precompile_address(number: u8) -> Address {
     let mut bytes = [0u8; 20];
     bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS] = number;
@@ -44,7 +41,6 @@ pub(crate) fn is_supported_precompile(address: Address, spec_id: SpecId) -> bool
     precompile_number_for_spec(address, spec_id).is_some()
 }
 
-/// Computes the `execute_precompile` precompile helper result.
 pub(crate) fn execute_precompile(
     address: Address,
     input: &[u8],
@@ -75,7 +71,6 @@ pub(crate) fn execute_precompile(
     }
 }
 
-/// Computes the `execute_symbolic_precompile` precompile helper result.
 pub(crate) fn execute_symbolic_precompile(
     address: Address,
     input: Vec<SymWord>,
@@ -193,7 +188,6 @@ fn input_has_symbolic_bytes(input: &[SymWord], input_len: usize) -> bool {
     input.iter().take(input_len).any(|byte| byte.as_const().is_none())
 }
 
-/// Returns the `symbolic_modexp_precompile` precompile helper result.
 pub(crate) fn symbolic_modexp_precompile(
     input: Vec<SymWord>,
     input_len: SymWord,
@@ -212,7 +206,6 @@ pub(crate) fn symbolic_modexp_precompile(
     Ok(Some(symbolic_fixed_len_precompile_output("modexp", input, input_len, modulus_len)))
 }
 
-/// Returns the `concrete_precompile_word_at` precompile helper result.
 pub(crate) fn concrete_precompile_word_at(
     input: &[SymWord],
     offset: usize,
@@ -232,7 +225,6 @@ pub(crate) fn concrete_precompile_word_at(
     Ok(U256::from_be_bytes(bytes))
 }
 
-/// Returns the `symbolic_fixed_len_precompile_output` precompile helper result.
 pub(crate) fn symbolic_fixed_len_precompile_output(
     algorithm: &'static str,
     input: Vec<SymWord>,

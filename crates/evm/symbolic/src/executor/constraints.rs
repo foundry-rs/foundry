@@ -1,7 +1,6 @@
 use super::*;
 
 impl SymbolicExecutor {
-    /// Runs the `handle_assume` symbolic executor helper.
     pub(super) fn handle_assume(
         &mut self,
         state: &mut PathState,
@@ -11,7 +10,6 @@ impl SymbolicExecutor {
         self.assume_condition(state, cond.nonzero_bool())
     }
 
-    /// Runs the `handle_skip` symbolic executor helper.
     pub(super) fn handle_skip(
         &mut self,
         state: &mut PathState,
@@ -21,7 +19,6 @@ impl SymbolicExecutor {
         self.assume_condition(state, cond.nonzero_bool().not())
     }
 
-    /// Implements the `assume_condition` symbolic executor helper.
     pub(super) fn assume_condition(
         &mut self,
         state: &mut PathState,
@@ -44,7 +41,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `solver_upper_bound_usize` symbolic executor helper.
     pub(super) fn solver_upper_bound_usize(
         &mut self,
         state: &PathState,
@@ -76,7 +72,6 @@ impl SymbolicExecutor {
         Ok(low)
     }
 
-    /// Implements the `assume_word_at_least` symbolic executor helper.
     pub(super) fn assume_word_at_least(
         &mut self,
         state: &mut PathState,
@@ -110,7 +105,6 @@ impl SymbolicExecutor {
         if bits <= U256::from(256) { Ok(()) } else { Err(SymbolicError::Unsupported(context)) }
     }
 
-    /// Runs the `handle_bound_uint` symbolic executor helper.
     pub(super) fn handle_bound_uint(
         &mut self,
         state: &mut PathState,
@@ -162,7 +156,6 @@ impl SymbolicExecutor {
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
 
-    /// Runs the `handle_bound_int` symbolic executor helper.
     pub(super) fn handle_bound_int(
         &mut self,
         state: &mut PathState,

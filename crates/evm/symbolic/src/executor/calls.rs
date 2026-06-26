@@ -1,7 +1,6 @@
 use super::*;
 
 impl SymbolicExecutor {
-    /// Implements the `call` symbolic executor helper.
     pub(super) fn call(
         &mut self,
         executor: &Executor<impl FoundryEvmNetwork>,
@@ -166,7 +165,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `branch_symbolic_call_value_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_call_value_if_needed(
         &mut self,
         state: &mut PathState,
@@ -250,7 +248,6 @@ impl SymbolicExecutor {
         Ok(false)
     }
 
-    /// Implements the `branch_symbolic_function_mock_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_function_mock_if_needed(
         &mut self,
         state: &mut PathState,
@@ -312,7 +309,6 @@ impl SymbolicExecutor {
         Ok(false)
     }
 
-    /// Applies the `observe_expected_call` symbolic executor helper.
     pub(super) fn observe_expected_call(
         &mut self,
         state: &mut PathState,
@@ -337,7 +333,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `branch_symbolic_call_match_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_call_match_if_needed(
         &mut self,
         state: &mut PathState,
@@ -393,7 +388,6 @@ impl SymbolicExecutor {
         Ok(false)
     }
 
-    /// Implements the `take_call_mock` symbolic executor helper.
     pub(super) fn take_call_mock(
         &mut self,
         state: &mut PathState,
@@ -428,7 +422,6 @@ impl SymbolicExecutor {
         Ok(Some(state.call_mocks[idx].next_outcome()))
     }
 
-    /// Implements the `branch_symbolic_match_condition_if_needed` symbolic executor helper.
     pub(super) fn branch_symbolic_match_condition_if_needed(
         &mut self,
         state: &mut PathState,
@@ -467,7 +460,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `function_mock_target` symbolic executor helper.
     pub(super) fn function_mock_target(
         &mut self,
         state: &mut PathState,
@@ -513,7 +505,6 @@ impl SymbolicExecutor {
         Ok(None)
     }
 
-    /// Implements the `expected_call_match_constraints` symbolic executor helper.
     pub(super) fn expected_call_match_constraints(
         &mut self,
         state: &PathState,
@@ -531,7 +522,6 @@ impl SymbolicExecutor {
         self.constraints_for_condition(state, condition)
     }
 
-    /// Implements the `call_mock_match_constraints` symbolic executor helper.
     pub(super) fn call_mock_match_constraints(
         &mut self,
         state: &PathState,
@@ -546,7 +536,6 @@ impl SymbolicExecutor {
         self.constraints_for_condition(state, condition)
     }
 
-    /// Implements the `expected_call_match_condition` symbolic executor helper.
     pub(super) fn expected_call_match_condition(
         &self,
         expected: &ExpectedCall,
@@ -569,7 +558,6 @@ impl SymbolicExecutor {
         ])))
     }
 
-    /// Implements the `call_mock_match_condition` symbolic executor helper.
     pub(super) fn call_mock_match_condition(
         &self,
         mock: &CallMock,
@@ -618,7 +606,6 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    /// Implements the `assume_no_revert_rejects` symbolic executor helper.
     pub(super) fn assume_no_revert_rejects(
         &mut self,
         state: &mut PathState,
@@ -655,7 +642,6 @@ impl SymbolicExecutor {
         Ok(true)
     }
 
-    /// Implements the `constraints_for_condition` symbolic executor helper.
     pub(super) fn constraints_for_condition(
         &mut self,
         state: &PathState,
@@ -665,7 +651,6 @@ impl SymbolicExecutor {
         Ok(sat.then_some(constraints))
     }
 
-    /// Implements the `constraints_with_condition` symbolic executor helper.
     pub(super) fn constraints_with_condition(
         &mut self,
         state: &PathState,
@@ -686,7 +671,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `take_loop_jump` symbolic executor helper.
     pub(super) fn take_loop_jump(
         &self,
         state: &mut PathState,
@@ -707,7 +691,6 @@ impl SymbolicExecutor {
         true
     }
 
-    /// Runs the `handle_log` symbolic executor helper.
     pub(super) fn handle_log(
         &mut self,
         state: &mut PathState,
@@ -795,7 +778,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `call_concrete_target` symbolic executor helper.
     pub(super) fn call_concrete_target<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1179,7 +1161,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the KZG point-evaluation precompile call helper.
     fn execute_kzg_precompile_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1302,7 +1283,6 @@ impl SymbolicExecutor {
         Ok(())
     }
 
-    /// Implements the `prepare_value_transfer` symbolic executor helper.
     pub(super) fn prepare_value_transfer<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1371,7 +1351,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Implements the `prepare_create_value_transfer` symbolic executor helper.
     pub(super) fn prepare_create_value_transfer<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1429,7 +1408,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `call_symbolic_target` symbolic executor helper.
     pub(super) fn call_symbolic_target<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,

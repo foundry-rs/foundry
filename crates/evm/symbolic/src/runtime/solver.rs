@@ -209,7 +209,6 @@ impl SmtLibSubprocessSolver {
 }
 
 impl SymbolicSolver for SmtLibSubprocessSolver {
-    /// Implements the `stats` solver helper.
     fn stats(&self) -> SymbolicStats {
         SymbolicStats {
             paths: 0,
@@ -249,7 +248,6 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.heuristic_witnesses
     }
 
-    /// Validates the `check_available` solver helper.
     fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
         let mut errors = Vec::new();
@@ -279,7 +277,6 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.is_sat_inner(constraints, true)
     }
 
-    /// Implements the `model` solver helper.
     fn model(&mut self, constraints: &[BoolExpr]) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
         if constraints.iter().any(bool_contains_gasleft) {
@@ -380,7 +377,6 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 }
 
 impl SmtLibSubprocessSolver {
-    /// Implements the `is_sat` solver helper.
     fn is_sat_inner(
         &mut self,
         constraints: &[BoolExpr],
@@ -488,7 +484,6 @@ impl SmtLibSubprocessSolver {
         }
     }
 
-    /// Validates the `reserve_query` solver helper.
     pub(crate) const fn reserve_query(&self) -> Result<(), SymbolicError> {
         if self.queries >= self.max_queries {
             return Err(SymbolicError::SolverQueryLimit(self.max_queries));
@@ -1660,7 +1655,6 @@ pub(crate) fn validate_solver_model_output(
     parse_and_validate_model(output, constraints).map(|_| ())
 }
 
-/// Returns the `parse_model` solver helper result.
 pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> {
     let mut values = SymbolicModel::default();
     let mut tokens = output

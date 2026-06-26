@@ -13,7 +13,6 @@ fn sorted_access_record_addresses(record: &AccessRecord) -> Vec<Address> {
 }
 
 impl SymbolicExecutor {
-    /// Runs the `handle_assertion` symbolic executor helper.
     pub(super) fn handle_assertion(
         &mut self,
         state: &mut PathState,
@@ -41,7 +40,6 @@ impl SymbolicExecutor {
         Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
-    /// Applies the `set_expected_revert` symbolic executor helper.
     pub(super) fn set_expected_revert(
         &mut self,
         state: &mut PathState,
@@ -54,7 +52,6 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    /// Applies the `set_expected_emit` symbolic executor helper.
     pub(super) fn set_expected_emit(
         &mut self,
         state: &mut PathState,
@@ -68,7 +65,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Applies the `set_expected_call` symbolic executor helper.
     pub(super) fn set_expected_call(
         &mut self,
         state: &mut PathState,
@@ -93,7 +89,6 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    /// Applies the `set_expected_create` symbolic executor helper.
     pub(super) fn set_expected_create(
         &mut self,
         state: &mut PathState,
@@ -106,7 +101,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Implements the `deploy_code_cheatcode_if_needed` symbolic executor helper.
     pub(super) fn deploy_code_cheatcode_if_needed<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -151,7 +145,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Applies the `deploy_code_cheatcode_call` symbolic executor helper.
     pub(super) fn deploy_code_cheatcode_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -326,7 +319,6 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
-    /// Applies the `observe_expected_create` symbolic executor helper.
     pub(super) fn observe_expected_create(
         &mut self,
         state: &mut PathState,
@@ -368,7 +360,6 @@ impl SymbolicExecutor {
         Ok(())
     }
 
-    /// Implements the `branch_accesses_cheatcode_if_needed` symbolic executor helper.
     pub(super) fn branch_accesses_cheatcode_if_needed(
         &mut self,
         state: &mut PathState,
@@ -435,7 +426,6 @@ impl SymbolicExecutor {
         Ok(Some(StepOutcome::Continue))
     }
 
-    /// Implements the `accesses_return_data_for_target` symbolic executor helper.
     pub(super) fn accesses_return_data_for_target(
         &mut self,
         state: &mut PathState,
@@ -475,7 +465,6 @@ impl SymbolicExecutor {
         Ok(accesses_return_data(Some(&record), Address::ZERO))
     }
 
-    /// Implements the `add_call_mock` symbolic executor helper.
     pub(super) fn add_call_mock(
         &mut self,
         state: &mut PathState,
@@ -496,7 +485,6 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    /// Applies the `set_function_mock` symbolic executor helper.
     pub(super) fn set_function_mock(
         &mut self,
         state: &mut PathState,
@@ -516,7 +504,6 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    /// Runs the `handle_foundry_cheatcode` symbolic executor helper.
     pub(super) fn handle_foundry_cheatcode<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -2562,7 +2549,6 @@ impl SymbolicExecutor {
         Err(SymbolicError::Unsupported("symbolic Foundry cheatcode"))
     }
 
-    /// Runs the `handle_symbolic_vm_cheatcode` symbolic executor helper.
     pub(super) fn handle_symbolic_vm_cheatcode(
         &mut self,
         state: &mut PathState,

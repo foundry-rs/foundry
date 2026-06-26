@@ -79,7 +79,6 @@ impl PathState {
         }
     }
 
-    /// Implements the `empty` symbolic state helper.
     pub(crate) fn empty(address: Address, caller: Address, ffi_enabled: bool) -> Self {
         Self {
             depth: 0,
@@ -119,7 +118,6 @@ impl PathState {
         }
     }
 
-    /// Applies the `apply_executor_env` symbolic state helper.
     pub(crate) fn apply_executor_env<FEN: FoundryEvmNetwork>(&mut self, executor: &Executor<FEN>) {
         self.block = SymbolicBlock::from_executor(executor);
         let gas_price = executor
@@ -131,7 +129,6 @@ impl PathState {
         self.gas_price = SymWord::constant(U256::from(gas_price));
     }
 
-    /// Implements the `child` symbolic state helper.
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
         let mut child = self.clone();
         child.call_depth += 1;
@@ -140,13 +137,11 @@ impl PathState {
         child
     }
 
-    /// Implements the `constrained_usize` symbolic state helper.
     pub(crate) fn constrained_usize(&self, word: &SymWord) -> Option<usize> {
         let value = self.constrained_word(word)?;
         (value <= U256::from(usize::MAX)).then(|| value.to::<usize>())
     }
 
-    /// Implements the `upper_bound_usize` symbolic state helper.
     pub(crate) fn upper_bound_usize(&self, word: &SymWord) -> Option<usize> {
         self.constrained_usize(word).or_else(|| {
             word.as_const()
@@ -155,7 +150,6 @@ impl PathState {
         })
     }
 
-    /// Implements the `constrained_word` symbolic state helper.
     pub(crate) fn constrained_word(&self, word: &SymWord) -> Option<U256> {
         word.as_const().or_else(|| {
             let expr = word.as_expr();
@@ -168,7 +162,6 @@ impl PathState {
         })
     }
 
-    /// Implements the `constrained_expr_value` symbolic state helper.
     pub(crate) fn constrained_expr_value(&self, expr: &Expr) -> Option<U256> {
         if let Some(value) = expr_const_value(expr) {
             return Some(value);
@@ -191,7 +184,6 @@ impl PathState {
         eval_expr(expr, &model).ok()
     }
 
-    /// Returns the `expr_upper_bound_usize` symbolic state helper result.
     pub(crate) fn expr_upper_bound_usize(&self, expr: &Expr) -> Option<usize> {
         if let Some(value) = expr_const_value(expr) {
             return u256_to_usize(value);
@@ -270,7 +262,6 @@ impl PathState {
         }
     }
 
-    /// Implements the `constraint_upper_bound_usize` symbolic state helper.
     pub(crate) fn constraint_upper_bound_usize(&self, expr: &Expr) -> Option<usize> {
         let mut bound: Option<usize> = None;
         for constraint in &self.constraints {
@@ -281,7 +272,6 @@ impl PathState {
         bound
     }
 
-    /// Implements the `expect_constrained_usize` symbolic state helper.
     pub(crate) fn expect_constrained_usize(
         &self,
         word: SymWord,
@@ -290,7 +280,6 @@ impl PathState {
         self.constrained_usize(&word).ok_or(SymbolicError::Unsupported(reason))
     }
 
-    /// Implements the `expect_constrained_word` symbolic state helper.
     pub(crate) fn expect_constrained_word(
         &self,
         word: SymWord,
@@ -299,7 +288,6 @@ impl PathState {
         self.constrained_word(&word).ok_or(SymbolicError::Unsupported(reason))
     }
 
-    /// Implements the `bin_word` symbolic state helper.
     pub(crate) fn bin_word(
         &mut self,
         concrete: impl FnOnce(U256, U256) -> U256,
@@ -315,7 +303,6 @@ impl PathState {
         Ok(StepOutcome::Continue)
     }
 
-    /// Implements the `bin_word_div_zero_guard` symbolic state helper.
     pub(crate) fn bin_word_div_zero_guard(
         &mut self,
         concrete: impl FnOnce(U256, U256) -> U256,
@@ -337,7 +324,6 @@ impl PathState {
         Ok(StepOutcome::Continue)
     }
 
-    /// Implements the `cmp_word` symbolic state helper.
     pub(crate) fn cmp_word(
         &mut self,
         concrete: impl FnOnce(U256, U256) -> bool,
@@ -353,7 +339,6 @@ impl PathState {
         Ok(StepOutcome::Continue)
     }
 
-    /// Computes the `shift_word` symbolic state helper result.
     pub(crate) fn shift_word(&mut self, kind: ShiftKind) -> Result<StepOutcome, SymbolicError> {
         let shift = self.stack.pop()?;
         let value = self.stack.pop()?;
@@ -385,7 +370,6 @@ impl PathState {
         Ok(StepOutcome::Continue)
     }
 
-    /// Computes the `exp_word` symbolic state helper result.
     pub(crate) fn exp_word(&mut self) -> Result<StepOutcome, SymbolicError> {
         let base = self.stack.pop()?;
         let exponent = self.stack.pop()?;
@@ -426,7 +410,6 @@ impl PathState {
         Ok(StepOutcome::Continue)
     }
 
-    /// Implements the `balance` symbolic state helper.
     pub(crate) fn balance<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -435,7 +418,6 @@ impl PathState {
         self.world.balance_word_for_address(executor, address)
     }
 
-    /// Implements the `balance_word` symbolic state helper.
     pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -444,7 +426,6 @@ impl PathState {
         self.world.balance_word(executor, word)
     }
 
-    /// Implements the `extcode_size_word` symbolic state helper.
     pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -453,7 +434,6 @@ impl PathState {
         self.world.extcode_size_word(executor, word)
     }
 
-    /// Implements the `extcode_hash_word` symbolic state helper.
     pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -462,7 +442,6 @@ impl PathState {
         self.world.extcode_hash_word(executor, word)
     }
 
-    /// Implements the `extcode_bytes_word` symbolic state helper.
     pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -473,7 +452,6 @@ impl PathState {
         self.world.extcode_bytes_word(executor, word, offset, size)
     }
 
-    /// Implements the `pop_address_word_or_symbolic_slot` symbolic state helper.
     pub(crate) fn pop_address_word_or_symbolic_slot(
         &mut self,
     ) -> Result<(SymWord, Address), SymbolicError> {
@@ -482,7 +460,6 @@ impl PathState {
         Ok((word, address))
     }
 
-    /// Returns the `address_or_symbolic_slot` symbolic state helper result.
     pub(crate) fn address_or_symbolic_slot(&mut self, word: SymWord) -> Address {
         if let Some(value) = self.constrained_word(&word) {
             return word_to_address(value);
@@ -490,21 +467,18 @@ impl PathState {
         self.world.resolve_address(&word).unwrap_or_else(|| self.world.symbolic_address_slot(word))
     }
 
-    /// Implements the `fresh_word` symbolic state helper.
     pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymWord {
         let id = self.next_symbol;
         self.next_symbol += 1;
         SymWord::expr(Expr::var(format!("{prefix}_{id}")))
     }
 
-    /// Implements the `fresh_gasleft` symbolic state helper.
     pub(crate) fn fresh_gasleft(&mut self) -> SymWord {
         let id = self.next_symbol;
         self.next_symbol += 1;
         SymWord::expr(Expr::gas_left(id))
     }
 
-    /// Implements the `fresh_bounded_uint` symbolic state helper.
     pub(crate) fn fresh_bounded_uint(&mut self, bits: U256) -> SymWord {
         let value = self.fresh_word("symbolic");
         if bits < U256::from(256) {
@@ -515,7 +489,6 @@ impl PathState {
         value
     }
 
-    /// Implements the `fresh_bounded_int` symbolic state helper.
     pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymWord {
         let value = self.fresh_word("symbolic");
         if bits.is_zero() {
@@ -534,7 +507,6 @@ impl PathState {
         value
     }
 
-    /// Implements the `prank_for_next_call` symbolic state helper.
     pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymWord, Option<(Address, SymWord)>) {
         if let Some((caller, caller_word)) = self.prank.next_caller.take() {
             (caller, caller_word, self.prank.next_origin.take())
@@ -550,7 +522,6 @@ impl PathState {
         }
     }
 
-    /// Returns the `read_callers_words` symbolic state helper result.
     pub(crate) fn read_callers_words(&self) -> Vec<SymWord> {
         let (mode, caller, origin) = if let Some((_, caller_word)) = self.prank.next_caller.as_ref()
         {
@@ -579,21 +550,18 @@ impl PathState {
         vec![SymWord::constant(mode), caller, origin]
     }
 
-    /// Applies the `record_log` symbolic state helper.
     pub(crate) fn record_log(&mut self, log: SymbolicLog) {
         if let Some(logs) = &mut self.recorded_logs {
             logs.push(log);
         }
     }
 
-    /// Applies the `record_sload` symbolic state helper.
     pub(crate) fn record_sload(&mut self, address: Address, slot: SymWord) {
         if let Some(record) = &mut self.access_record {
             record.read(address, slot);
         }
     }
 
-    /// Applies the `record_sstore` symbolic state helper.
     pub(crate) fn record_sstore(&mut self, address: Address, slot: SymWord) {
         if let Some(record) = &mut self.access_record {
             record.write(address, slot);
@@ -624,25 +592,21 @@ pub(crate) struct AccessRecord {
 }
 
 impl AccessRecord {
-    /// Implements the `read` symbolic state helper.
     pub(crate) fn read(&mut self, address: Address, slot: SymWord) {
         push_unique_slot(self.reads.entry(address).or_default(), slot);
     }
 
-    /// Implements the `write` symbolic state helper.
     pub(crate) fn write(&mut self, address: Address, slot: SymWord) {
         push_unique_slot(self.writes.entry(address).or_default(), slot);
     }
 }
 
-/// Applies the `push_unique_slot` symbolic state helper.
 pub(crate) fn push_unique_slot(slots: &mut Vec<SymWord>, slot: SymWord) {
     if !slots.iter().any(|existing| existing == &slot) {
         slots.push(slot);
     }
 }
 
-/// Implements the `adjust_expected_call_gas_for_value` symbolic state helper.
 pub(crate) fn adjust_expected_call_gas_for_value(
     value: Option<U256>,
     gas: Option<u64>,
@@ -666,7 +630,6 @@ pub(crate) struct ExpectedRevert {
 }
 
 impl ExpectedRevert {
-    /// Implements the `consume_one` symbolic state helper.
     pub(crate) const fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
         self.remaining == 0
@@ -718,7 +681,6 @@ pub(crate) struct ExpectedCreate {
 }
 
 impl ExpectedCall {
-    /// Implements the `static_parts_match` symbolic state helper.
     pub(crate) fn static_parts_match(
         &self,
         value: Option<U256>,
@@ -745,7 +707,6 @@ impl ExpectedCall {
             && self.min_gas.is_none_or(|expected| gas >= U256::from(expected)))
     }
 
-    /// Applies the `observe` symbolic state helper.
     pub(crate) const fn observe(&mut self) -> bool {
         if self.exact && self.observed >= self.expected {
             return false;
@@ -771,12 +732,10 @@ pub(crate) struct CallMock {
 }
 
 impl CallMock {
-    /// Implements the `static_parts_match` symbolic state helper.
     pub(crate) fn static_parts_match(&self, value: Option<U256>) -> bool {
         self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
     }
 
-    /// Implements the `next_outcome` symbolic state helper.
     pub(crate) fn next_outcome(&mut self) -> CallMockOutcome {
         let idx = self.calls.min(self.returns.len().saturating_sub(1));
         self.calls = self.calls.saturating_add(1);
@@ -814,7 +773,6 @@ impl ExpectedEmit {
         self.template.is_none() && self.remaining == 0
     }
 
-    /// Implements the `consume_one` symbolic state helper.
     pub(crate) fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
         if self.remaining == 0 {
@@ -833,17 +791,14 @@ pub(crate) struct ExpectedEmitChecks {
 }
 
 impl ExpectedEmitChecks {
-    /// Implements the `default_non_anonymous` symbolic state helper.
     pub(crate) const fn default_non_anonymous() -> Self {
         Self { topics: [true, true, true, true], data: true }
     }
 
-    /// Implements the `default_anonymous` symbolic state helper.
     pub(crate) const fn default_anonymous() -> Self {
         Self { topics: [true, true, true, true], data: true }
     }
 
-    /// Converts values for the `from_non_anonymous_args` symbolic state helper.
     pub(crate) fn from_non_anonymous_args(
         memory: &SymMemory,
         args_offset: usize,
@@ -859,7 +814,6 @@ impl ExpectedEmitChecks {
         })
     }
 
-    /// Converts values for the `from_anonymous_args` symbolic state helper.
     pub(crate) fn from_anonymous_args(
         memory: &SymMemory,
         args_offset: usize,
@@ -879,14 +833,12 @@ impl ExpectedEmitChecks {
 impl Deref for PathState {
     type Target = CallFrame;
 
-    /// Implements the `deref` symbolic state helper.
     fn deref(&self) -> &Self::Target {
         &self.frame
     }
 }
 
 impl DerefMut for PathState {
-    /// Implements the `deref_mut` symbolic state helper.
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.frame
     }
@@ -1020,7 +972,6 @@ pub(crate) struct SymbolicWorldSnapshot {
 }
 
 impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
-    /// Implements the `from` symbolic state helper.
     fn from(world: &SymbolicWorld) -> Self {
         Self {
             storage: world.storage.clone(),
@@ -1060,13 +1011,11 @@ pub(crate) struct SymbolicWorld {
 }
 
 impl SymbolicWorld {
-    /// Applies the `set_storage_layout` symbolic state helper.
     pub(crate) const fn set_storage_layout(&mut self, layout: SymbolicStorageLayout) {
         self.arbitrary_storage_all = matches!(layout, SymbolicStorageLayout::Generic);
         self.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
     }
 
-    /// Implements the `sload` symbolic state helper.
     pub(crate) fn sload<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -1079,17 +1028,14 @@ impl SymbolicWorld {
         Ok(read_storage_writes(&self.storage, address, read_key, base))
     }
 
-    /// Implements the `sstore` symbolic state helper.
     pub(crate) fn sstore(&mut self, address: Address, key: SymWord, value: SymWord) {
         self.storage.push(StorageWrite::new(address, key, value));
     }
 
-    /// Implements the `tload` symbolic state helper.
     pub(crate) fn tload(&self, address: Address, key: SymWord) -> SymWord {
         read_storage_writes(&self.transient_storage, address, key, SymWord::zero())
     }
 
-    /// Implements the `tstore` symbolic state helper.
     pub(crate) fn tstore(&mut self, address: Address, key: SymWord, value: SymWord) {
         self.transient_storage.push(StorageWrite::new(address, key, value));
     }
@@ -1100,7 +1046,6 @@ impl SymbolicWorld {
         self.current_transaction_created_accounts.clear();
     }
 
-    /// Applies the `mark_current_transaction_created` symbolic state helper.
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
         self.current_transaction_created_accounts.insert(address);
     }
@@ -1110,12 +1055,10 @@ impl SymbolicWorld {
         self.current_transaction_created_accounts.contains(&address)
     }
 
-    /// Applies the `enable_arbitrary_storage` symbolic state helper.
     pub(crate) fn enable_arbitrary_storage(&mut self, address: Address) {
         self.arbitrary_storage_accounts.insert(address);
     }
 
-    /// Implements the `resolve_address` symbolic state helper.
     pub(crate) fn resolve_address(&self, word: &SymWord) -> Option<Address> {
         word.as_const().map(word_to_address).or_else(|| {
             self.symbolic_address_aliases.get(word).copied().or_else(|| {
@@ -1126,7 +1069,6 @@ impl SymbolicWorld {
         })
     }
 
-    /// Returns the `symbolic_address_slot` symbolic state helper result.
     pub(crate) fn symbolic_address_slot(&mut self, word: SymWord) -> Address {
         if let Some(address) = self.resolve_address(&word) {
             return address;
@@ -1136,14 +1078,12 @@ impl SymbolicWorld {
         address
     }
 
-    /// Returns the `symbolic_word_for_address` symbolic state helper result.
     pub(crate) fn symbolic_word_for_address(&self, address: Address) -> Option<SymWord> {
         self.symbolic_address_aliases
             .iter()
             .find_map(|(word, slot)| (*slot == address).then(|| word.clone()))
     }
 
-    /// Implements the `snapshot_state` symbolic state helper.
     pub(crate) fn snapshot_state(&mut self) -> U256 {
         let id = U256::from(self.next_snapshot_id);
         self.next_snapshot_id = self.next_snapshot_id.saturating_add(1);
@@ -1151,7 +1091,6 @@ impl SymbolicWorld {
         id
     }
 
-    /// Applies the `restore_snapshot` symbolic state helper.
     pub(crate) fn restore_snapshot(&mut self, id: U256) -> bool {
         let Some(snapshot) = self.snapshots.get(&id).cloned() else {
             return false;
@@ -1171,17 +1110,14 @@ impl SymbolicWorld {
         true
     }
 
-    /// Applies the `delete_snapshot` symbolic state helper.
     pub(crate) fn delete_snapshot(&mut self, id: U256) -> bool {
         self.snapshots.remove(&id).is_some()
     }
 
-    /// Applies the `delete_snapshots` symbolic state helper.
     pub(crate) fn delete_snapshots(&mut self) {
         self.snapshots.clear();
     }
 
-    /// Implements the `storage_base` symbolic state helper.
     pub(crate) fn storage_base<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -1215,7 +1151,6 @@ impl SymbolicWorld {
         }
     }
 
-    /// Implements the `backend_balance` symbolic state helper.
     pub(crate) fn backend_balance<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -1230,7 +1165,6 @@ impl SymbolicWorld {
             .unwrap_or_default()
     }
 
-    /// Implements the `balance_word_for_address` symbolic state helper.
     pub(crate) fn balance_word_for_address<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -1245,7 +1179,6 @@ impl SymbolicWorld {
             .unwrap_or_else(|| SymWord::constant(self.backend_balance(executor, address)))
     }
 
-    /// Implements the `balance_word` symbolic state helper.
     pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1272,7 +1205,6 @@ impl SymbolicWorld {
         Ok(SymWord::expr(result))
     }
 
-    /// Applies the `set_balance_word` symbolic state helper.
     pub(crate) fn set_balance_word(&mut self, address: Address, value: SymWord) {
         self.balances.insert(address, value.clone());
         if !value.as_const().is_some_and(|value| value.is_zero()) {
@@ -1281,7 +1213,6 @@ impl SymbolicWorld {
         }
     }
 
-    /// Implements the `transfer` symbolic state helper.
     pub(crate) fn transfer<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1298,7 +1229,6 @@ impl SymbolicWorld {
         self.set_balance_word(to, sym_add(to_balance, value));
     }
 
-    /// Implements the `nonce` symbolic state helper.
     pub(crate) fn nonce<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -1317,7 +1247,6 @@ impl SymbolicWorld {
             .map(|account| account.map(|account| account.nonce).unwrap_or_default())
     }
 
-    /// Applies the `set_nonce` symbolic state helper.
     pub(crate) fn set_nonce(&mut self, address: Address, nonce: u64) {
         self.nonces.insert(address, nonce);
         if nonce != 0 {
@@ -1326,7 +1255,6 @@ impl SymbolicWorld {
         }
     }
 
-    /// Implements the `increment_nonce` symbolic state helper.
     pub(crate) fn increment_nonce<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1349,7 +1277,6 @@ impl SymbolicWorld {
         Ok(!self.extcode(executor, address)?.is_empty() || self.nonce(executor, address)? != 0)
     }
 
-    /// Applies the `install_code` symbolic state helper.
     pub(crate) fn install_code(&mut self, address: Address, code: SymCode) {
         self.code_cache.insert(address, code);
         self.existing_accounts.insert(address);
@@ -1398,7 +1325,6 @@ impl SymbolicWorld {
         }
     }
 
-    /// Implements the `account_exists` symbolic state helper.
     pub(crate) fn account_exists<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1448,7 +1374,6 @@ impl SymbolicWorld {
         Ok(false)
     }
 
-    /// Implements the `extcode` symbolic state helper.
     pub(crate) fn extcode<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1485,7 +1410,6 @@ impl SymbolicWorld {
         Ok(code)
     }
 
-    /// Implements the `extcode_hash_for_address` symbolic state helper.
     pub(crate) fn extcode_hash_for_address<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1499,7 +1423,6 @@ impl SymbolicWorld {
         }
     }
 
-    /// Implements the `extcode_size_word` symbolic state helper.
     pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1526,7 +1449,6 @@ impl SymbolicWorld {
         Ok(SymWord::expr(result))
     }
 
-    /// Implements the `extcode_hash_word` symbolic state helper.
     pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1557,7 +1479,6 @@ impl SymbolicWorld {
         Ok(SymWord::expr(result))
     }
 
-    /// Implements the `extcode_bytes_word` symbolic state helper.
     pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1594,7 +1515,6 @@ impl SymbolicWorld {
         Ok(result)
     }
 
-    /// Returns the `symbolic_call_targets` symbolic state helper result.
     pub(crate) fn symbolic_call_targets<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -1638,7 +1558,6 @@ pub(crate) struct SymbolicBlock {
 }
 
 impl Default for SymbolicBlock {
-    /// Implements the `default` symbolic state helper.
     fn default() -> Self {
         Self {
             chain_id: SymWord::constant(U256::from(1)),
@@ -1676,7 +1595,6 @@ fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
 }
 
 impl SymbolicBlock {
-    /// Converts values for the `from_executor` symbolic state helper.
     pub(crate) fn from_executor<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> Self {
         let evm_env = executor.evm_env();
         let block = executor
@@ -1704,7 +1622,6 @@ impl SymbolicBlock {
         }
     }
 
-    /// Applies the `set_block_hash` symbolic state helper.
     pub(crate) fn set_block_hash(
         &mut self,
         block_number: U256,
@@ -1718,7 +1635,6 @@ impl SymbolicBlock {
         Ok(())
     }
 
-    /// Implements the `block_hash` symbolic state helper.
     pub(crate) fn block_hash<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -1741,7 +1657,6 @@ impl SymbolicBlock {
         Ok(SymWord::constant(U256::from_be_slice(hash.as_slice())))
     }
 
-    /// Implements the `block_hash_word` symbolic state helper.
     pub(crate) fn block_hash_word<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
@@ -1775,12 +1690,10 @@ impl SymbolicBlock {
         Ok(SymWord::expr(result))
     }
 
-    /// Applies the `set_blob_hashes` symbolic state helper.
     pub(crate) fn set_blob_hashes(&mut self, blob_hashes: Vec<B256>) {
         self.blob_hashes = blob_hashes;
     }
 
-    /// Implements the `blob_hash` symbolic state helper.
     pub(crate) fn blob_hash(&self, index: usize) -> B256 {
         self.blob_hashes.get(index).copied().unwrap_or_default()
     }

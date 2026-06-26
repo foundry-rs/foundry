@@ -1,6 +1,5 @@
 use super::*;
 
-/// Returns the `bool_contains_hard_arith` solver helper result.
 pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
     match expr {
         BoolExpr::Const(_) => false,
@@ -12,7 +11,6 @@ pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
     }
 }
 
-/// Returns the `expr_contains_hard_arith` solver helper result.
 pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
     match expr.as_inner() {
         ExprInner::Const(_)
@@ -62,7 +60,6 @@ pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
     contains
 }
 
-/// Returns the `expr_contains_var` solver helper result.
 pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
     let mut contains = false;
     expr.visit(&mut |expr| {
@@ -88,7 +85,6 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[BoolEx
     !vars.is_empty() && vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS
 }
 
-/// Implements the `hard_arith_fallback_model` solver helper.
 pub(crate) fn hard_arith_fallback_model(constraints: &[BoolExpr]) -> Option<SymbolicModel> {
     if !constraints.iter().any(bool_contains_hard_arith)
         || constraints.iter().any(bool_contains_symbolic_hash)
@@ -314,7 +310,6 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
     }
 }
 
-/// Implements the `fallback_single_var_model` solver helper.
 #[cfg(test)]
 pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<SymbolicModel> {
     let mut vars = SymbolicVars::default();
@@ -373,7 +368,6 @@ pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<Symb
     None
 }
 
-/// Applies the `push_fallback_candidate` solver helper.
 pub(crate) fn push_fallback_candidate(
     candidates: &mut HashSet<U256>,
     candidate: U256,
@@ -382,7 +376,6 @@ pub(crate) fn push_fallback_candidate(
     candidates.insert((candidate | hints.one) & !hints.zero);
 }
 
-/// Implements the `collect_bool_constants` solver helper.
 pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut HashSet<U256>) {
     match expr {
         BoolExpr::Const(_) => {}
@@ -399,7 +392,6 @@ pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut HashSet<U2
     }
 }
 
-/// Implements the `collect_expr_constants` solver helper.
 pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut HashSet<U256>) {
     match expr.as_inner() {
         ExprInner::Const(value) => {
@@ -431,7 +423,6 @@ pub(crate) struct MaskHints {
 }
 
 impl MaskHints {
-    /// Implements the `for_var` solver helper.
     pub(crate) fn for_var(var: &str, constraints: &[BoolExpr]) -> Self {
         let mut hints = Self::default();
         for constraint in constraints {
@@ -440,7 +431,6 @@ impl MaskHints {
         hints
     }
 
-    /// Applies the `apply_bool` solver helper.
     pub(crate) fn apply_bool(&mut self, var: &str, expr: &BoolExpr, inverted: bool) {
         match expr {
             BoolExpr::Const(_) => {}
@@ -455,7 +445,6 @@ impl MaskHints {
         }
     }
 
-    /// Applies the `apply_equality` solver helper.
     pub(crate) fn apply_equality(&mut self, var: &str, left: &Expr, right: &Expr, inverted: bool) {
         if let Some(mask) =
             zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
@@ -469,7 +458,6 @@ impl MaskHints {
     }
 }
 
-/// Implements the `zero_mask_equality` solver helper.
 pub(crate) fn zero_mask_equality(var: &str, masked: &Expr, zero: &Expr) -> Option<U256> {
     if !zero.as_const().is_some_and(|value| value.is_zero()) {
         return None;

@@ -2,7 +2,6 @@ use super::*;
 
 impl SymbolicExecutor {
     #[expect(clippy::too_many_arguments)]
-    /// Computes the `execute_invariant_check` symbolic executor helper result.
     pub(super) fn execute_invariant_check<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -65,7 +64,6 @@ impl SymbolicExecutor {
         Ok(checked)
     }
 
-    /// Implements the `invariant_return_failed` symbolic executor helper.
     pub(super) fn invariant_return_failed(
         &mut self,
         invariant: &Function,
@@ -102,7 +100,6 @@ impl SymbolicExecutor {
     }
 
     #[expect(clippy::too_many_arguments)]
-    /// Computes the `execute_sequence_call` symbolic executor helper result.
     pub(super) fn execute_sequence_call<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
@@ -208,7 +205,6 @@ impl SymbolicExecutor {
         Ok(outcomes)
     }
 
-    /// Runs the `materialize_sequence` symbolic executor helper.
     pub(super) fn materialize_sequence(
         &mut self,
         steps: &[SequenceStepTemplate],

@@ -140,7 +140,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Runs the `run_inner` symbolic executor helper.
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
@@ -305,7 +304,6 @@ impl SymbolicExecutor {
         Ok(SymbolicRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
 
-    /// Runs the `materialize_stateless_counterexample` symbolic executor helper.
     pub(super) fn materialize_stateless_counterexample(
         &mut self,
         calldata: &SymbolicCalldata,
@@ -322,7 +320,6 @@ impl SymbolicExecutor {
         Ok((args, calldata_bytes))
     }
 
-    /// Runs the `run_invariant_inner` symbolic executor helper.
     pub(super) fn run_invariant_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
@@ -516,7 +513,6 @@ impl SymbolicExecutor {
         Ok(SymbolicInvariantRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
 
-    /// Implements the `stats_with_paths` symbolic executor helper.
     pub(super) fn stats_with_paths(&self, paths: usize) -> SymbolicStats {
         let mut stats = self.solver.stats();
         stats.paths = paths;
