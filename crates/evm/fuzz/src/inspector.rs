@@ -1,11 +1,16 @@
 use crate::invariant::RandomCallGenerator;
 use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
-use foundry_common::mapping_slots::{MappingSlots, step as mapping_step};
+use foundry_common::mapping_slots::{
+    MappingSlots, observes_opcode as observes_mapping_opcode, step as mapping_step,
+};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
-    interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
+    interpreter::{
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter,
+        interpreter_types::Jumps,
+    },
 };
 
 /// A sub-call observed by the [`Fuzzer`] inspector.
@@ -50,7 +55,10 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         if self.collect {
             self.collect_data(interp);
             if let Some(mapping_slots) = &mut self.mapping_slots {
-                mapping_step(mapping_slots, interp);
+                let op = interp.bytecode.opcode();
+                if observes_mapping_opcode(op) {
+                    mapping_step(mapping_slots, interp, op);
+                }
             }
         }
     }

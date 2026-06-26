@@ -2,10 +2,7 @@ use alloy_primitives::{
     B256, U256, keccak256,
     map::{AddressHashMap, B256HashMap},
 };
-use revm::{
-    bytecode::opcode,
-    interpreter::{Interpreter, interpreter_types::Jumps},
-};
+use revm::{bytecode::opcode, interpreter::Interpreter};
 
 /// Recorded mapping slots.
 #[derive(Clone, Debug, Default)]
@@ -44,11 +41,17 @@ impl MappingSlots {
     }
 }
 
+/// Returns whether the opcode can update recorded mapping slot metadata.
+#[inline]
+pub const fn observes_opcode(op: u8) -> bool {
+    matches!(op, opcode::KECCAK256 | opcode::SSTORE)
+}
+
 /// Function to be used in Inspector::step to record mapping slots and keys
 #[cold]
-pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
+pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter, op: u8) {
     #[allow(clippy::collapsible_match)]
-    match interpreter.bytecode.opcode() {
+    match op {
         opcode::KECCAK256 if interpreter.stack.peek(1) == Ok(U256::from(0x40)) => {
             let address = interpreter.input.target_address;
             let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();

@@ -30,7 +30,9 @@ use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
-    mapping_slots::{MappingSlots, step as mapping_step},
+    mapping_slots::{
+        MappingSlots, observes_opcode as observes_mapping_opcode, step as mapping_step,
+    },
 };
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
@@ -1396,7 +1398,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         // `startMappingRecording`: record SSTORE and KECCAK256.
         if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping_step(mapping_slots, interpreter);
+            let op = interpreter.bytecode.opcode();
+            if observes_mapping_opcode(op) {
+                mapping_step(mapping_slots, interpreter, op);
+            }
         }
 
         // `snapshotGas*`: take a snapshot of the current gas.
