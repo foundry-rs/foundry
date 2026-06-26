@@ -10,7 +10,11 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, shell};
+use foundry_common::{
+    abi::encode_args,
+    compile::{PathOrContractInfo, ProjectCompiler},
+    find_matching_contract_artifact, ignore_metadata_hash, shell,
+};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
@@ -89,6 +93,15 @@ pub fn build_project(
 ) -> Result<CompactContractBytecode> {
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
+
+    if args.contract.path.is_some() {
+        let contract = PathOrContractInfo::ContractInfo(args.contract.clone());
+        let target_path = project.root().join(contract.path().unwrap()).canonicalize()?;
+        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
+        let artifact =
+            find_matching_contract_artifact(&mut output, &target_path, Some(&args.contract.name))?;
+        return Ok(artifact.into_contract_bytecode());
+    }
 
     let mut output = compiler.compile(&project)?;
 
@@ -450,6 +463,46 @@ pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verify::VerifierArgs;
+    use foundry_cli::opts::EtherscanOpts;
+    use foundry_compilers::PathStyle;
+    use foundry_test_utils::TestProject;
+
+    #[test]
+    fn build_project_finds_artifact_by_relative_contract_path() {
+        let prj = TestProject::new("verify-bytecode-relative-path", PathStyle::Dapptools);
+        prj.add_source(
+            "Counter.sol",
+            r#"
+pragma solidity 0.8.16;
+
+contract Counter {
+    uint256 public number;
+}
+"#,
+        );
+
+        let mut config = Config::load_with_root(prj.root()).unwrap();
+        config.solc = Some("0.8.16".into());
+        let args = VerifyBytecodeArgs {
+            address: Address::ZERO,
+            contract: "src/Counter.sol:Counter".parse().unwrap(),
+            block: None,
+            constructor_args: None,
+            encoded_constructor_args: None,
+            constructor_args_path: None,
+            rpc_url: None,
+            network: None,
+            etherscan: EtherscanOpts::default(),
+            verifier: VerifierArgs::default(),
+            root: Some(prj.root().to_path_buf()),
+            ignore: None,
+        };
+
+        let artifact = build_project(&args, &config).unwrap();
+
+        assert!(artifact.bytecode.and_then(|bytecode| bytecode.into_bytes()).is_some());
+    }
 
     #[test]
     fn test_host_only() {
