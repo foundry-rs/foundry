@@ -176,7 +176,7 @@ pub(crate) fn normalize_expr_for_solver(expr: SymExpr) -> SymExpr {
 }
 
 fn normalize_expr_node_for_solver(expr: SymExpr) -> SymExpr {
-    if let Some(rebuilt) = rebuild_word_from_extracted_byte_terms(&expr)
+    if let Some(rebuilt) = expr.rebuild_from_extracted_byte_terms()
         && rebuilt != expr
     {
         return normalize_expr_for_solver(rebuilt);
@@ -242,78 +242,74 @@ fn self_div_expr_matches_zero_check(cond: &SymBoolExpr, expr: &SymExpr) -> bool 
     numerator == zero_operand && denominator == zero_operand
 }
 
-/// Rebuilds a word from OR-ed byte-extraction terms when the source is recoverable.
-pub(crate) fn rebuild_word_from_extracted_byte_terms(expr: &SymExpr) -> Option<SymExpr> {
-    let mut terms = Vec::new();
-    collect_or_terms(expr, &mut terms);
-    if terms.len() <= 1 {
-        return None;
-    }
-
-    let mut source = None;
-    let mut seen = [false; 32];
-    for term in terms {
-        if term.as_const().is_some_and(|value| value.is_zero()) {
-            continue;
-        }
-        let (term_source, index) = extracted_shifted_byte_term(term)?;
-        match &source {
-            Some(source) if source != &term_source => return None,
-            Some(_) => {}
-            None => source = Some(term_source),
-        }
-        seen[index] = true;
-    }
-
-    let source = source?;
-    for (index, seen) in seen.into_iter().enumerate() {
-        if !seen && source.known_byte(index) != Some(0) {
+impl SymExpr {
+    fn rebuild_from_extracted_byte_terms(&self) -> Option<Self> {
+        let mut terms = Vec::new();
+        self.push_or_terms(&mut terms);
+        if terms.len() <= 1 {
             return None;
         }
-    }
-    Some(source)
-}
 
-/// Flattens nested bitwise-OR expressions into their leaf terms.
-pub(crate) fn collect_or_terms<'a>(expr: &'a SymExpr, terms: &mut Vec<&'a SymExpr>) {
-    match expr.kind() {
-        SymExprKind::Op(SymExprOp::Or, left, right) => {
-            collect_or_terms(left, terms);
-            collect_or_terms(right, terms);
+        let mut source = None;
+        let mut seen = [false; 32];
+        for term in terms {
+            if term.as_const().is_some_and(|value| value.is_zero()) {
+                continue;
+            }
+            let (term_source, index) = term.extracted_shifted_byte_term()?;
+            match &source {
+                Some(source) if source != &term_source => return None,
+                Some(_) => {}
+                None => source = Some(term_source),
+            }
+            seen[index] = true;
         }
-        _ => terms.push(expr),
-    }
-}
 
-/// Returns the source word and byte index for one shifted extracted-byte term.
-pub(crate) fn extracted_shifted_byte_term(term: &SymExpr) -> Option<(SymExpr, usize)> {
-    match term.kind() {
-        SymExprKind::Op(SymExprOp::Shl, byte, shift) => {
-            let shift = shift.as_const()?;
-            let shift = usize::try_from(shift).expect("checked byte shift");
-            if shift % 8 != 0 || shift > 248 {
+        let source = source?;
+        for (index, seen) in seen.into_iter().enumerate() {
+            if !seen && source.known_byte(index) != Some(0) {
                 return None;
             }
-            let index = 31 - shift / 8;
-            let source = extracted_unshifted_byte_source(byte, index)?;
-            Some((source, index))
         }
-        _ => extracted_unshifted_byte_source(term, 31).map(|source| (source, 31)),
+        Some(source)
     }
-}
 
-/// Returns the source word for an unshifted byte extraction at `index`.
-pub(crate) fn extracted_unshifted_byte_source(term: &SymExpr, index: usize) -> Option<SymExpr> {
-    let expr = strip_low_byte_mask(term)?;
-    if index == 31 {
-        return Some(expr.clone());
+    fn push_or_terms<'a>(&'a self, terms: &mut Vec<&'a Self>) {
+        match self.kind() {
+            SymExprKind::Op(SymExprOp::Or, left, right) => {
+                left.push_or_terms(terms);
+                right.push_or_terms(terms);
+            }
+            _ => terms.push(self),
+        }
     }
-    let SymExprKind::Op(SymExprOp::Shr, source, shift) = expr.kind() else { return None };
-    let shift = shift.as_const()?;
-    (shift == U256::from((31 - index) * 8)).then(|| source.clone())
-}
 
-impl SymExpr {
+    fn extracted_shifted_byte_term(&self) -> Option<(Self, usize)> {
+        match self.kind() {
+            SymExprKind::Op(SymExprOp::Shl, byte, shift) => {
+                let shift = shift.as_const()?;
+                let Ok(shift) = usize::try_from(shift) else { return None };
+                if shift % 8 != 0 || shift > 248 {
+                    return None;
+                }
+                let index = 31 - shift / 8;
+                let source = byte.extracted_unshifted_byte_source(index)?;
+                Some((source, index))
+            }
+            _ => self.extracted_unshifted_byte_source(31).map(|source| (source, 31)),
+        }
+    }
+
+    fn extracted_unshifted_byte_source(&self, index: usize) -> Option<Self> {
+        let expr = strip_low_byte_mask(self)?;
+        if index == 31 {
+            return Some(expr.clone());
+        }
+        let SymExprKind::Op(SymExprOp::Shr, source, shift) = expr.kind() else { return None };
+        let shift = shift.as_const()?;
+        (shift == U256::from((31 - index) * 8)).then(|| source.clone())
+    }
+
     fn add_cannot_overflow_256(&self, right: &Self) -> bool {
         self.unsigned_bits().max(right.unsigned_bits()).saturating_add(1) <= 256
     }
@@ -594,7 +590,7 @@ impl SymExpr {
 impl ConstraintContext {
     fn word_bool_always_true(&self, expr: &SymExpr) -> bool {
         let mut terms = Vec::new();
-        collect_or_terms(expr, &mut terms);
+        expr.push_or_terms(&mut terms);
         if terms.len() <= 1 {
             return false;
         }
