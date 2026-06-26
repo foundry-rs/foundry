@@ -484,6 +484,9 @@ impl FuzzDictionary {
         let len = code.len().min(PUSH_BYTE_ANALYSIS_LIMIT);
         let code = &code[..len];
         for inst in InstIter::new(code) {
+            if self.values_full() {
+                break;
+            }
             // Don't add 0 to the dictionary as it's already present.
             if !inst.immediate.is_empty()
                 && let Some(push_value) = U256::try_from_be_slice(inst.immediate)
@@ -598,9 +601,14 @@ impl FuzzDictionary {
     fn insert_value_u256(&mut self, value: U256) -> bool {
         // Also add the value below and above the push value to the dictionary.
         let one = U256::from(1);
-        self.insert_value(value.into())
-            | self.insert_value((value.wrapping_sub(one)).into())
-            | self.insert_value((value.wrapping_add(one)).into())
+        let mut inserted = self.insert_value(value.into());
+        if !self.values_full() {
+            inserted |= self.insert_value((value.wrapping_sub(one)).into());
+        }
+        if !self.values_full() {
+            inserted |= self.insert_value((value.wrapping_add(one)).into());
+        }
+        inserted
     }
 
     fn values_full(&self) -> bool {
@@ -735,5 +743,21 @@ mod tests {
         assert_eq!(samples.len(), 2);
         assert_eq!(samples[0], DynSolValue::FixedBytes(selector, 32));
         assert_eq!(samples[1], DynSolValue::Uint(U256::from(42), 256));
+    }
+
+    #[test]
+    fn push_byte_collection_stops_when_dictionary_is_full() {
+        let mut dictionary = FuzzDictionary::new(FuzzDictionaryConfig {
+            max_fuzz_dictionary_values: 3,
+            ..Default::default()
+        });
+
+        dictionary.collect_push_bytes(&[0x60, 0x01, 0x60, 0x03]);
+
+        assert_eq!(dictionary.state_values.len(), 3);
+        assert!(dictionary.state_values.contains(&B256::from(U256::ZERO)));
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(2))));
+        assert!(!dictionary.state_values.contains(&B256::from(U256::from(3))));
     }
 }
