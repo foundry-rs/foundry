@@ -14,7 +14,7 @@ use foundry_evm::{
     decode::decode_console_logs,
     executors::ExecutorBuilder,
     inspectors::CheatsConfig,
-    traces::TraceMode,
+    traces::TraceRequirements,
 };
 use solar::{
     ast::{ElementaryType, LitKind, StrKind, UnOpKind},
@@ -195,7 +195,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 stack
                     .logs(self.config.foundry_config.live_logs)
                     .chisel_state(final_pc)
-                    .trace_mode(TraceMode::Call)
+                    .trace_requirements(TraceRequirements::default().with_calls(true))
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config.foundry_config,

@@ -350,7 +350,7 @@ pub fn load_contracts<'a>(
 }
 
 /// Different kinds of internal functions tracing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InternalTraceMode {
     #[default]
     None,
@@ -360,49 +360,8 @@ pub enum InternalTraceMode {
     Full,
 }
 
-impl From<InternalTraceMode> for TraceMode {
-    fn from(mode: InternalTraceMode) -> Self {
-        match mode {
-            InternalTraceMode::None => Self::None,
-            InternalTraceMode::Simple => Self::JumpSimple,
-            InternalTraceMode::Full => Self::Jump,
-        }
-    }
-}
-
-// Different kinds of traces used by different foundry components.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub enum TraceMode {
-    /// Disabled tracing.
-    #[default]
-    None,
-    /// Simple call trace, no steps tracing required.
-    Call,
-    /// Call trace with steps tracing for JUMP and JUMPDEST opcodes.
-    ///
-    /// Does not enable tracking memory or stack snapshots.
-    Steps,
-    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
-    ///
-    /// Used for internal functions identification. Does not track memory snapshots.
-    JumpSimple,
-    /// Call trace with tracing for JUMP and JUMPDEST opcode steps.
-    ///
-    /// Same as `JumpSimple`, but tracks memory snapshots as well.
-    Jump,
-    /// Call trace with complete steps tracing.
-    ///
-    /// Used by debugger.
-    Debug,
-    /// Step trace with storage change recording.
-    ///
-    /// Records JUMP/JUMPDEST steps (like `Steps`) plus storage diffs on SLOAD/SSTORE.
-    /// Does not enable memory/stack snapshots or unfiltered opcode recording.
-    RecordStateDiff,
-}
-
 /// Opcode step recording granularity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StepRecording {
     /// No opcode steps.
     #[default]
@@ -411,6 +370,16 @@ pub enum StepRecording {
     Jumps,
     /// Record all opcode steps.
     All,
+}
+
+impl StepRecording {
+    const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::All, _) | (_, Self::All) => Self::All,
+            (Self::Jumps, _) | (_, Self::Jumps) => Self::Jumps,
+            (Self::None, Self::None) => Self::None,
+        }
+    }
 }
 
 /// Trace data requirements composed across independent feature axes.
@@ -431,9 +400,9 @@ impl TraceRequirements {
         self
     }
 
-    pub fn merge(mut self, other: Self) -> Self {
+    pub const fn merge(mut self, other: Self) -> Self {
         self.calls |= other.calls;
-        self.steps = std::cmp::max(self.steps, other.steps);
+        self.steps = self.steps.merge(other.steps);
         self.memory_snapshots |= other.memory_snapshots;
         self.stack_snapshots |= other.stack_snapshots;
         self.returndata_snapshots |= other.returndata_snapshots;
@@ -442,8 +411,8 @@ impl TraceRequirements {
         self
     }
 
-    pub fn with_steps(mut self, steps: StepRecording) -> Self {
-        self.steps = std::cmp::max(self.steps, steps);
+    pub const fn with_steps(mut self, steps: StepRecording) -> Self {
+        self.steps = self.steps.merge(steps);
         self
     }
 
@@ -470,7 +439,7 @@ impl TraceRequirements {
         self
     }
 
-    pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
+    pub const fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
         match mode {
             InternalTraceMode::None => self,
             InternalTraceMode::Simple => {
@@ -484,7 +453,7 @@ impl TraceRequirements {
         }
     }
 
-    pub fn with_all_steps(self, yes: bool) -> Self {
+    pub const fn with_all_steps(self, yes: bool) -> Self {
         if yes { self.with_calls(true).with_steps(StepRecording::All) } else { self }
     }
 
@@ -500,6 +469,7 @@ impl TraceRequirements {
         match verbosity {
             0..3 => self,
             3..=4 => self.with_calls(true),
+            _ if matches!(self.steps, StepRecording::All) => self.with_calls(true),
             _ => self.with_state_changes(true),
         }
     }
@@ -534,84 +504,6 @@ impl TraceRequirements {
     }
 }
 
-impl From<TraceMode> for TraceRequirements {
-    fn from(mode: TraceMode) -> Self {
-        match mode {
-            TraceMode::None => Self::default(),
-            TraceMode::Call => Self::default().with_calls(true),
-            TraceMode::Steps => Self::default().with_calls(true).with_steps(StepRecording::Jumps),
-            TraceMode::JumpSimple => Self::default()
-                .with_calls(true)
-                .with_steps(StepRecording::Jumps)
-                .with_stack_snapshots(true),
-            TraceMode::Jump => Self::default()
-                .with_calls(true)
-                .with_steps(StepRecording::Jumps)
-                .with_memory_snapshots(true)
-                .with_stack_snapshots(true),
-            TraceMode::Debug => Self::default().with_debug(true),
-            TraceMode::RecordStateDiff => Self::default().with_state_changes(true),
-        }
-    }
-}
-
-impl TraceMode {
-    pub const fn is_none(self) -> bool {
-        matches!(self, Self::None)
-    }
-
-    pub const fn is_call(self) -> bool {
-        matches!(self, Self::Call)
-    }
-
-    pub const fn is_steps(self) -> bool {
-        matches!(self, Self::Steps)
-    }
-
-    pub const fn is_jump_simple(self) -> bool {
-        matches!(self, Self::JumpSimple)
-    }
-
-    pub const fn is_jump(self) -> bool {
-        matches!(self, Self::Jump)
-    }
-
-    pub const fn record_state_diff(self) -> bool {
-        matches!(self, Self::RecordStateDiff)
-    }
-
-    pub const fn is_debug(self) -> bool {
-        matches!(self, Self::Debug)
-    }
-
-    pub fn with_debug(self, yes: bool) -> Self {
-        if yes { std::cmp::max(self, Self::Debug) } else { self }
-    }
-
-    pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
-        std::cmp::max(self, mode.into())
-    }
-
-    pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes && !self.is_debug() { std::cmp::max(self, Self::RecordStateDiff) } else { self }
-    }
-
-    pub fn with_verbosity(self, verbosity: u8) -> Self {
-        match verbosity {
-            0..3 => self,
-            3..=4 => std::cmp::max(self, Self::Call),
-            // Enable step recording and state diff recording when verbosity is 5 or higher.
-            // This includes backtraces (JUMP/JUMPDEST steps) and storage changes.
-            _ if self.is_debug() => self,
-            _ => std::cmp::max(self, Self::RecordStateDiff),
-        }
-    }
-
-    pub fn into_config(self) -> Option<TracingInspectorConfig> {
-        TraceRequirements::from(self).into_config()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,26 +522,43 @@ mod tests {
         );
     }
 
-    // -- TraceMode::with_verbosity level tests --
-
     #[test]
     fn verbosity_0_through_2_is_noop() {
         for v in 0..=2 {
-            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::None, "v={v}");
-            assert_eq!(TraceMode::Call.with_verbosity(v), TraceMode::Call, "v={v}");
-            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
+            assert_eq!(
+                TraceRequirements::default().with_verbosity(v),
+                TraceRequirements::default(),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::default().with_calls(true).with_verbosity(v),
+                TraceRequirements::default().with_calls(true),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::default().with_debug(true).with_verbosity(v),
+                TraceRequirements::default().with_debug(true),
+                "v={v}"
+            );
         }
     }
 
     #[test]
     fn verbosity_3_and_4_raises_to_call() {
         for v in 3..=4 {
-            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::Call, "v={v}");
-            // Already above Call — must not downgrade.
-            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
             assert_eq!(
-                TraceMode::RecordStateDiff.with_verbosity(v),
-                TraceMode::RecordStateDiff,
+                TraceRequirements::default().with_verbosity(v),
+                TraceRequirements::default().with_calls(true),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::default().with_debug(true).with_verbosity(v),
+                TraceRequirements::default().with_debug(true),
+                "v={v}"
+            );
+            assert_eq!(
+                TraceRequirements::default().with_state_changes(true).with_verbosity(v),
+                TraceRequirements::default().with_state_changes(true),
                 "v={v}"
             );
         }
@@ -657,27 +566,36 @@ mod tests {
 
     #[test]
     fn verbosity_5_raises_to_record_state_diff() {
-        assert_eq!(TraceMode::None.with_verbosity(5), TraceMode::RecordStateDiff);
-        assert_eq!(TraceMode::Call.with_verbosity(5), TraceMode::RecordStateDiff);
-        assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
-        // Debug mode already records full steps; it must not be downgraded to the lightweight
-        // RecordStateDiff mode when high verbosity is also requested.
-        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::Debug);
-        // Already at the top — stays the same.
-        assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
-    }
+        let state_changes = TraceRequirements::default().with_state_changes(true);
 
-    // -- into_config at each verbosity level --
+        assert_eq!(TraceRequirements::default().with_verbosity(5), state_changes);
+        assert_eq!(TraceRequirements::default().with_calls(true).with_verbosity(5), state_changes);
+        let cfg = TraceRequirements::default()
+            .with_calls(true)
+            .with_steps(StepRecording::Jumps)
+            .with_verbosity(5)
+            .into_config()
+            .unwrap();
+        assert!(cfg.record_state_diff);
+        assert!(cfg.record_opcodes_filter.is_none());
+        assert_eq!(
+            TraceRequirements::default().with_debug(true).with_verbosity(5),
+            TraceRequirements::default().with_debug(true)
+        );
+        assert_eq!(
+            TraceRequirements::default().with_state_changes(true).with_verbosity(5),
+            state_changes
+        );
+    }
 
     #[test]
     fn config_at_verbosity_0_is_none() {
-        let mode = TraceMode::None.with_verbosity(0);
-        assert!(mode.into_config().is_none());
+        assert!(TraceRequirements::default().with_verbosity(0).into_config().is_none());
     }
 
     #[test]
     fn config_at_verbosity_3_records_calls_only() {
-        let cfg = TraceMode::None.with_verbosity(3).into_config().unwrap();
+        let cfg = TraceRequirements::default().with_verbosity(3).into_config().unwrap();
         assert!(!cfg.record_steps, "verbosity 3 should not record steps");
         assert!(!cfg.record_state_diff, "verbosity 3 should not record state diff");
         assert!(cfg.record_logs, "verbosity 3 should record logs");
@@ -685,7 +603,7 @@ mod tests {
 
     #[test]
     fn config_at_verbosity_5_records_steps_and_state_diff() {
-        let cfg = TraceMode::None.with_verbosity(5).into_config().unwrap();
+        let cfg = TraceRequirements::default().with_verbosity(5).into_config().unwrap();
         assert!(cfg.record_steps, "verbosity 5 must record steps for backtraces");
         assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
         assert!(cfg.record_logs, "verbosity 5 must record logs");
@@ -706,7 +624,7 @@ mod tests {
     #[test]
     fn config_debug_mode_unchanged() {
         // Debug mode must still enable full recording for the debugger.
-        let cfg = TraceMode::Debug.into_config().unwrap();
+        let cfg = TraceRequirements::default().with_debug(true).into_config().unwrap();
         assert!(cfg.record_steps);
         assert!(cfg.record_memory_snapshots, "Debug must record memory snapshots");
         assert_eq!(
@@ -741,7 +659,11 @@ mod tests {
 
     #[test]
     fn requirements_all_steps_avoid_debug_snapshots() {
-        let cfg = TraceRequirements::default().with_all_steps(true).into_config().unwrap();
+        let cfg = TraceRequirements::default()
+            .with_all_steps(true)
+            .with_verbosity(5)
+            .into_config()
+            .unwrap();
 
         assert!(cfg.record_steps, "all steps must record opcode steps");
         assert!(cfg.record_opcodes_filter.is_none(), "all steps must record every opcode step");

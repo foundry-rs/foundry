@@ -42,7 +42,7 @@ use foundry_evm::{
     },
     executors::TracingExecutor,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_wallets::WalletOpts;
 use regex::Regex;
@@ -336,7 +336,8 @@ impl CallArgs {
                 }
             }
 
-            let trace_mode = TraceMode::Call
+            let trace_requirements = TraceRequirements::default()
+                .with_calls(true)
                 .with_debug(debug)
                 .with_decode_internal(if decode_internal {
                     InternalTraceMode::Full
@@ -348,7 +349,7 @@ impl CallArgs {
                 (evm_env, tx_env),
                 fork,
                 evm_version,
-                trace_mode,
+                trace_requirements,
                 networks,
                 create2_deployer,
                 state_overrides,

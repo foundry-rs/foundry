@@ -17,7 +17,7 @@ use foundry_config::InvariantConfig;
 use foundry_evm_core::{decode::RevertDecoder, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantContract};
-use foundry_evm_traces::{TraceKind, TraceMode, Traces, load_contracts};
+use foundry_evm_traces::{TraceKind, TraceRequirements, Traces, load_contracts};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -46,7 +46,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
-        executor.set_tracing(TraceMode::Call);
+        executor.set_trace_requirements(TraceRequirements::default().with_calls(true));
     }
 
     let mut counterexample_sequence = vec![];

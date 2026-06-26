@@ -23,7 +23,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode, TraceRequirements};
+use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     Inspector,
     context::{
@@ -186,16 +186,9 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Set whether to enable the tracer.
-    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
-    #[inline]
-    pub fn trace_mode(self, mode: TraceMode) -> Self {
-        self.trace_requirements(TraceRequirements::from(mode))
-    }
-
     /// Set trace data requirements.
     #[inline]
-    pub fn trace_requirements(mut self, requirements: TraceRequirements) -> Self {
+    pub const fn trace_requirements(mut self, requirements: TraceRequirements) -> Self {
         self.trace_requirements = self.trace_requirements.merge(requirements);
         self
     }
@@ -634,13 +627,6 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub fn print(&mut self, yes: bool) {
         self.printer = yes.then(Default::default);
-    }
-
-    /// Set whether to enable the tracer.
-    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
-    #[inline]
-    pub fn tracing(&mut self, mode: TraceMode) {
-        self.tracing_requirements(TraceRequirements::from(mode));
     }
 
     /// Set trace data requirements.
