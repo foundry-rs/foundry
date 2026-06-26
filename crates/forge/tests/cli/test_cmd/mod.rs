@@ -55,54 +55,61 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     drop(dotenv);
 }
 
-fn collect_debug_dump_internal_calls<'a>(
+fn collect_debug_dump_values<'a, T>(
     value: &'a serde_json::Value,
-    calls: &mut Vec<&'a serde_json::Value>,
+    collected: &mut Vec<T>,
+    collect_from_object: &mut impl FnMut(&'a serde_json::Map<String, serde_json::Value>, &mut Vec<T>),
 ) {
     match value {
         serde_json::Value::Array(values) => {
             for value in values {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         serde_json::Value::Object(map) => {
-            if let Some(call) = map
-                .get("InternalCall")
-                .and_then(|value| value.as_array())
-                .and_then(|values| values.first())
-            {
-                calls.push(call);
-            }
+            collect_from_object(map, collected);
             for value in map.values() {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         _ => {}
     }
 }
 
+fn collect_debug_dump_internal_calls<'a>(
+    value: &'a serde_json::Value,
+    calls: &mut Vec<&'a serde_json::Value>,
+) {
+    collect_debug_dump_values(value, calls, &mut |map, calls| {
+        if let Some(call) = map
+            .get("InternalCall")
+            .and_then(|value| value.as_array())
+            .and_then(|values| values.first())
+        {
+            calls.push(call);
+        }
+    });
+}
+
+fn collect_debug_dump_decoded_lines<'a>(value: &'a serde_json::Value, lines: &mut Vec<&'a str>) {
+    collect_debug_dump_values(value, lines, &mut |map, lines| {
+        if let Some(line) = map.get("Line").and_then(|value| value.as_str()) {
+            lines.push(line);
+        }
+    });
+}
+
 fn collect_debug_dump_storage_changes<'a>(
     value: &'a serde_json::Value,
     changes: &mut Vec<&'a serde_json::Value>,
 ) {
-    match value {
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_debug_dump_storage_changes(value, changes);
-            }
+    collect_debug_dump_values(value, changes, &mut |map, changes| {
+        if let Some(change) = map.get("storage_change")
+            && !change.is_null()
+        {
+            changes.push(change);
         }
-        serde_json::Value::Object(map) => {
-            if let Some(change) = map.get("storage_change")
-                && !change.is_null()
-            {
-                changes.push(change);
-            }
-            for value in map.values() {
-                collect_debug_dump_storage_changes(value, changes);
-            }
-        }
-        _ => {}
-    }
+    });
 }
 
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
@@ -122,12 +129,7 @@ forgetest!(testdata, |_prj, cmd| {
     let nmc_isolate = format!(
         "--nmc=(LastCallGasDefaultTest|MockFunctionTest|WithSeed|StateDiff|GetStorageSlotsTest|RecordAccount|{FLAKY_TESTDATA_CONTRACTS})",
     );
-    let nmc_default = format!("--nmc=({FLAKY_TESTDATA_CONTRACTS})");
-    if cfg!(feature = "isolate-by-default") {
-        args.push(&nmc_isolate);
-    } else {
-        args.push(&nmc_default);
-    }
+    args.push(&nmc_isolate);
 
     let orig_assert = cmd.args(args).assert();
     if orig_assert.get_output().status.success() {
@@ -414,7 +416,6 @@ contract SimpleContractTest is DSTest {
 }
    "#;
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_console();
@@ -476,7 +477,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // checks that forge test repeatedly produces the same output
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_test_repeatedly, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
@@ -569,7 +569,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests that libraries are handled correctly in multiforking mode
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_use_libs_in_multi_fork, |prj, cmd| {
     prj.add_source(
         "Contract.sol",
@@ -922,6 +921,7 @@ Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -1079,6 +1079,7 @@ Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1194,6 +1195,7 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 Encountered a total of 2 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 
@@ -1219,6 +1221,7 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -1490,7 +1493,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests internal functions trace
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace, |prj, cmd| {
     prj.clear();
 
@@ -1541,14 +1543,14 @@ Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
   [..] SimpleContractTest::test()
-    ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [231452] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
-    ├─ [22630] SimpleContract::increment()
+    ├─ [43694] SimpleContract::increment()
     │   ├─ [20147] SimpleContract::_setNum(uint256)(1)
     │   │   └─ ← 0
     │   └─ ← [Stop]
-    ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
-    │   ├─ [247] SimpleContract::_setNum(uint256)(100)
+    ├─ [49360] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
+    │   ├─ [5047] SimpleContract::_setNum(uint256)(100)
     │   │   └─ ← 1
     │   ├─ [22336] SimpleContract::_setAddr(address)(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
@@ -1563,7 +1565,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 });
 
 // tests internal functions trace with memory decoding
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_memory, |prj, cmd| {
     prj.clear();
 
@@ -1609,7 +1610,6 @@ Traces:
 });
 
 // <https://github.com/foundry-rs/foundry/issues/15224>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(internal_functions_trace_calldata_bytes, |prj, cmd| {
     prj.clear();
 
@@ -1907,7 +1907,6 @@ contract ATest is Test {
 });
 
 // tests `pauseTracing` and `resumeTracing` functions
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -1962,10 +1961,10 @@ Traces:
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [449649] PauseTracingTest::test()
+  [558945] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
-    ├─ [22896] TraceGenerator::generate()
+    ├─ [48460] TraceGenerator::generate()
     │   ├─ [1589] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
     │   │   └─ ← [Stop]
@@ -2772,6 +2771,45 @@ contract Dummy {
     assert!(dump_path.exists());
 });
 
+forgetest!(debug_dump_marks_precompile_call_steps, |prj, cmd| {
+    prj.add_test(
+        "PrecompileDebug.t.sol",
+        r#"
+contract PrecompileDebugTest {
+    function testSha256PrecompileDebug() public {
+        (bool ok, bytes memory output) = address(0x02).staticcall(hex"68656c6c6f");
+        require(ok, "sha256 precompile failed");
+        require(output.length == 32, "bad sha256 output");
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("precompile_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testSha256PrecompileDebug",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut lines = Vec::new();
+    collect_debug_dump_decoded_lines(&dump, &mut lines);
+
+    assert!(
+        lines.iter().any(|line| {
+            *line == "precompile: sha256 @ 0x0000000000000000000000000000000000000002 input=0x68656c6c6f output=0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        }),
+        "missing decoded precompile line in debugger dump: {lines:?}"
+    );
+});
+
 forgetest!(debug_dump_disambiguates_overloaded_internal_functions, |prj, cmd| {
     prj.add_source(
         "DebugVars",
@@ -3499,7 +3537,6 @@ Ran 1 test for test/ForkTest.t.sol:ForkTest
 });
 
 // Tests that test traces display state changes when running with verbosity.
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--no-dynamic-test-linking"])
@@ -3509,19 +3546,19 @@ forgetest_init!(should_show_state_changes, |prj, cmd| {
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [137242] CounterTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218890] CounterTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [28783] CounterTest::test_Increment()
-    ├─ [22418] Counter::increment()
+  [51847] CounterTest::test_Increment()
+    ├─ [43482] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
@@ -3553,6 +3590,7 @@ Encountered 1 failing test in test/Foo.t.sol:ContractTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -3599,7 +3637,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args([
@@ -3617,7 +3654,6 @@ forgetest_init!(colored_traces, |prj, cmd| {
 
 // Tests that traces for successful tests can be suppressed by using `-s` flag.
 // <https://github.com/foundry-rs/foundry/issues/9864>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
@@ -3663,21 +3699,21 @@ Logs:
   test increment failure
 
 Traces:
-  [137242] SuppressTracesTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218890] SuppressTracesTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35200] SuppressTracesTest::test_increment_failure()
+  [58264] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [22418] Counter::increment()
+    ├─ [43482] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
@@ -3699,6 +3735,7 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 
@@ -3715,19 +3752,19 @@ Logs:
   test increment failure
 
 Traces:
-  [137242] SuppressTracesTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [218890] SuppressTracesTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [2592] Counter::setNumber(0)
+    ├─ [23784] Counter::setNumber(0)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35200] SuppressTracesTest::test_increment_failure()
+  [58264] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [22418] Counter::increment()
+    ├─ [43482] Counter::increment()
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 100) [staticcall]
     │   └─ ← [Revert] assertion failed: 1 != 100
@@ -3742,12 +3779,12 @@ Logs:
   test increment success
 
 Traces:
-  [32164] SuppressTracesTest::test_increment_success()
+  [55228] SuppressTracesTest::test_increment_success()
     ├─ [0] console::log("test increment success") [staticcall]
     │   └─ ← [Stop]
-    ├─ [22418] Counter::increment()
+    ├─ [43482] Counter::increment()
     │   └─ ← [Stop]
-    ├─ [424] Counter::number() [staticcall]
+    ├─ [2424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     └─ ← [Stop]
 
@@ -3762,6 +3799,7 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -4471,11 +4509,11 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(detailed_revert_when_calling_non_contract_address, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.add_test(
@@ -4530,17 +4568,17 @@ Logs:
   test non contract call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238803] NonContractCallRevertTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
+    ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [6350] NonContractCallRevertTest::test_non_contract_call_failure()
+  [27510] NonContractCallRevertTest::test_non_contract_call_failure()
     ├─ [0] console::log("test non contract call failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
+    ├─ [21160] 0xdEADBEeF00000000000000000000000000000000::number()
     │   └─ ← [Stop]
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
 
@@ -4552,10 +4590,10 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238803] NonContractCallRevertTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
+    ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -4572,17 +4610,17 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [238803] NonContractCallRevertTest::setUp()
+    ├─ [156801] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
+    ├─ [43696] Counter::setNumber(1)
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [8620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
+  [29684] NonContractCallRevertTest::test_non_supported_selector_call_failure()
     ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
     │   └─ ← [Stop]
-    ├─ [145] Counter::random()
+    ├─ [21209] Counter::random()
     │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
     └─ ← [Revert] EvmError: Revert
 
@@ -4603,11 +4641,11 @@ Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractC
 Encountered a total of 3 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(detailed_revert_when_delegatecalling_unlinked_library, |prj, cmd| {
     prj.add_test(
         "NonContractDelegateCallRevertTest.t.sol",
@@ -4661,14 +4699,14 @@ Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [255303] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [350691] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
-    ├─ [214746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [286930] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   ├─  storage changes:
     │   │   @ 0: 0 → 0x000000000000000000000000deadbeef00000000000000000000000000000000
     │   └─ ← [Return] 960 bytes of code
-    ├─ [3896] LibraryCaller::foobar(10)
+    ├─ [27100] LibraryCaller::foobar(10)
     │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
     │   │   └─ ← [Stop]
     │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
@@ -4689,6 +4727,7 @@ Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonCo
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -4806,7 +4845,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // tests proper reverts in fork mode for contracts with non-existent linked libraries.
 // <https://github.com/foundry-rs/foundry/issues/11185>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_fork_test_with_non_existent_linked_library, |prj, cmd| {
     prj.update_config(|config| {
         config.libraries =
@@ -4886,12 +4924,12 @@ Encountered 2 failing tests in test/Counter.t.sol:CounterTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11632>
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(invariant_consistent_output, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
@@ -4975,6 +5013,7 @@ Encountered 1 failing test in test/MemoryLimit.t.sol:MemoryLimitTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });

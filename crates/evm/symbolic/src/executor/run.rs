@@ -15,12 +15,40 @@ impl SymbolicExecutor {
 
     /// Defers an incomplete result until all counterexample-producing modeled paths are explored.
     pub(super) fn defer_incomplete(&mut self, reason: &'static str) {
-        self.deferred_incomplete.get_or_insert(reason);
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::Unsupported(reason));
+    }
+
+    /// Defers a solver-unknown result while continuing with decidable sibling paths.
+    pub(super) fn defer_solver_unknown(&mut self) {
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
+    }
+
+    /// Checks branch feasibility, recording solver-unknown as an incomplete proof path.
+    pub(super) fn branch_is_sat_or_defer(
+        &mut self,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        match self.solver.is_sat_branch(constraints) {
+            Ok(feasible) => Ok(feasible),
+            Err(SymbolicError::SolverUnknown) => {
+                self.defer_solver_unknown();
+                Ok(false)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// Returns and clears any deferred incomplete reason.
-    const fn take_deferred_incomplete(&mut self) -> Option<&'static str> {
-        self.deferred_incomplete.take()
+    fn take_deferred_incomplete(&mut self) -> Option<(SymbolicStopReason, String)> {
+        match self.deferred_incomplete.take()? {
+            DeferredIncomplete::Unsupported(reason) => Some((
+                SymbolicStopReason::Stuck,
+                format!("unsupported symbolic execution feature: {reason}"),
+            )),
+            DeferredIncomplete::SolverUnknown => {
+                Some((SymbolicStopReason::Timeout, "solver returned unknown".to_string()))
+            }
+        }
     }
 
     /// Returns staged solver portfolio diagnostics collected by this executor.
@@ -112,7 +140,6 @@ impl SymbolicExecutor {
         }
     }
 
-    /// Runs the `run_inner` symbolic executor helper.
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
@@ -124,10 +151,8 @@ impl SymbolicExecutor {
             .basic_ref(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
-        let code =
-            account.code.ok_or(SymbolicError::MissingCode(input.target))?.original_bytes().to_vec();
-        let code = SymCode::concrete(code);
-        let jumpdests = analyze_jumpdests(&code);
+        let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
+        let code = SymCode::from_bytecode(&bytecode);
         let mut worklist = VecDeque::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
             let mut root = PathState::new(
@@ -196,7 +221,7 @@ impl SymbolicExecutor {
                 match self.step(
                     input.executor,
                     &code,
-                    &jumpdests,
+                    code.jump_table(),
                     &mut state,
                     &mut worklist,
                     &mut completed_paths,
@@ -265,10 +290,10 @@ impl SymbolicExecutor {
             });
         }
 
-        if let Some(reason) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.take_deferred_incomplete() {
             return Ok(SymbolicRunResult::Incomplete {
-                kind: SymbolicStopReason::Stuck,
-                reason: format!("unsupported symbolic execution feature: {reason}"),
+                kind,
+                reason,
                 stats: self.stats_with_paths(completed_paths),
             });
         }
@@ -277,7 +302,6 @@ impl SymbolicExecutor {
         Ok(SymbolicRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
 
-    /// Runs the `materialize_stateless_counterexample` symbolic executor helper.
     pub(super) fn materialize_stateless_counterexample(
         &mut self,
         calldata: &SymbolicCalldata,
@@ -294,7 +318,6 @@ impl SymbolicExecutor {
         Ok((args, calldata_bytes))
     }
 
-    /// Runs the `run_invariant_inner` symbolic executor helper.
     pub(super) fn run_invariant_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
@@ -342,7 +365,7 @@ impl SymbolicExecutor {
                         let calldatas = SymbolicCalldata::variants_with_prefix(
                             &target.function,
                             &self.config,
-                            prefix,
+                            &prefix,
                         )?;
                         for calldata in calldatas {
                             let step = SequenceStepTemplate {
@@ -359,7 +382,7 @@ impl SymbolicExecutor {
                                 sender,
                                 &target.function,
                                 step.calldata.call_data(),
-                                step.calldata.constraints.clone(),
+                                step.calldata.constraints().to_vec(),
                                 &mut completed_paths,
                             )?;
 
@@ -477,10 +500,10 @@ impl SymbolicExecutor {
             });
         }
 
-        if let Some(reason) = self.take_deferred_incomplete() {
+        if let Some((kind, reason)) = self.take_deferred_incomplete() {
             return Ok(SymbolicInvariantRunResult::Incomplete {
-                kind: SymbolicStopReason::Stuck,
-                reason: format!("unsupported symbolic execution feature: {reason}"),
+                kind,
+                reason,
                 stats: self.stats_with_paths(completed_paths),
             });
         }
@@ -488,7 +511,6 @@ impl SymbolicExecutor {
         Ok(SymbolicInvariantRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
 
-    /// Implements the `stats_with_paths` symbolic executor helper.
     pub(super) fn stats_with_paths(&self, paths: usize) -> SymbolicStats {
         let mut stats = self.solver.stats();
         stats.paths = paths;
