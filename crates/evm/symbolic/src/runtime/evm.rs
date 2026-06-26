@@ -139,30 +139,30 @@ pub(crate) fn byte_word_dynamic(index: SymWord, word: SymWord) -> SymWord {
         return byte_word(index, word);
     }
 
-    let index = index.into_expr();
-    let mut result = Expr::Const(U256::ZERO);
+    let index = index.into_arc_expr();
+    let mut result = Arc::new(Expr::Const(U256::ZERO));
     match word {
         SymWord::Concrete(word) => {
             let bytes = word.to_be_bytes::<32>();
             for idx in (0..32).rev() {
-                result = Expr::ite(
-                    BoolExpr::eq(index.clone(), Expr::Const(U256::from(idx))),
-                    Expr::Const(U256::from(bytes[idx])),
+                result = Expr::ite_arc(
+                    BoolExpr::eq_arc(Arc::clone(&index), Arc::new(Expr::Const(U256::from(idx)))),
+                    Arc::new(Expr::Const(U256::from(bytes[idx]))),
                     result,
                 );
             }
         }
         SymWord::Expr(word) => {
             for idx in (0..32).rev() {
-                result = Expr::ite(
-                    BoolExpr::eq(index.clone(), Expr::Const(U256::from(idx))),
-                    byte_expr(idx, &word).into_expr(),
+                result = Expr::ite_arc(
+                    BoolExpr::eq_arc(Arc::clone(&index), Arc::new(Expr::Const(U256::from(idx)))),
+                    byte_expr(idx, &word).into_arc_expr(),
                     result,
                 );
             }
         }
     }
-    SymWord::from_expr(result)
+    SymWord::from_arc_expr(result)
 }
 
 /// Returns the byte extraction expression for a symbolic word.

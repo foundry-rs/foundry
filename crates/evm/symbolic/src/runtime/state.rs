@@ -1765,7 +1765,7 @@ impl SymbolicBlock {
             SymWord::Concrete(block_number) => {
                 return self.block_hash(executor, block_number);
             }
-            SymWord::Expr(block_number) => Arc::unwrap_or_clone(block_number),
+            SymWord::Expr(block_number) => block_number,
         };
 
         let current = self.number.clone().into_concrete("symbolic BLOCKHASH current number")?;
@@ -1773,7 +1773,7 @@ impl SymbolicBlock {
             return Ok(SymWord::zero());
         }
 
-        let mut result = Expr::Const(U256::ZERO);
+        let mut result = Arc::new(Expr::Const(U256::ZERO));
         let max_distance = current.min(U256::from(256)).to::<usize>();
         for distance in (1..=max_distance).rev() {
             let candidate = current - U256::from(distance);
@@ -1781,14 +1781,14 @@ impl SymbolicBlock {
             if matches!(&hash, SymWord::Concrete(hash) if hash.is_zero()) {
                 continue;
             }
-            result = Expr::ite(
-                BoolExpr::eq(block_number.clone(), Expr::Const(candidate)),
-                hash.into_expr(),
+            result = Expr::ite_arc(
+                BoolExpr::eq_arc(Arc::clone(&block_number), Arc::new(Expr::Const(candidate))),
+                hash.into_arc_expr(),
                 result,
             );
         }
 
-        Ok(SymWord::from_expr(result))
+        Ok(SymWord::from_arc_expr(result))
     }
 
     /// Applies the `set_blob_hashes` symbolic state helper.
