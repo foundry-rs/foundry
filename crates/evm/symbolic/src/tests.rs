@@ -3669,24 +3669,34 @@ fn portfolio_diagnostics_counts_staged_outcomes() {
 
     diagnostics.record(&summaries);
 
-    assert_eq!(diagnostics.queries, 1);
-    assert_eq!(diagnostics.solver_runs, 4);
-    assert_eq!(diagnostics.rescue_runs, 3);
-    assert_eq!(diagnostics.not_started, 1);
-    assert_eq!(diagnostics.cancelled_after_winner, 1);
-    assert_eq!(diagnostics.invalid_models, 1);
-    assert_eq!(diagnostics.solver_errors, 1);
-    assert_eq!(diagnostics.non_primary_wins, 0);
-    assert_eq!(diagnostics.rescue_wins, 0);
-    assert_eq!(diagnostics.winner_counts.get("primary"), Some(&1));
-    assert_eq!(diagnostics.launch_counts.get("primary"), Some(&1));
-    assert_eq!(diagnostics.launch_counts.get("secondary"), None);
-    assert_eq!(diagnostics.launch_counts.get("rescue"), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::SatValid), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::NotStarted), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::Cancelled), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::SatInvalid), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::Error), Some(&1));
+    assert_eq!(
+        diagnostics.to_string(),
+        "\
+--- symbolic solver portfolio summary ---
+queries: 1
+solver runs: 4
+rescue solver runs: 3
+not-started solver runs: 1
+non-primary wins: 0
+rescue wins: 0
+cancelled after winner: 1
+invalid models: 1
+solver errors: 1
+winner counts:
+  primary: 1
+launch counts:
+  bad: 1
+  missing: 1
+  primary: 1
+  rescue: 1
+outcome counts:
+  cancelled: 1
+  error: 1
+  not-started: 1
+  sat-invalid: 1
+  sat-valid: 1
+"
+    );
 }
 
 #[test]

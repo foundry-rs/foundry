@@ -1053,18 +1053,18 @@ impl SolverRunSummary {
 
 #[derive(Clone, Debug, Default)]
 pub struct PortfolioDiagnostics {
-    pub(crate) queries: usize,
-    pub(crate) solver_runs: usize,
-    pub(crate) rescue_runs: usize,
-    pub(crate) non_primary_wins: usize,
-    pub(crate) rescue_wins: usize,
-    pub(crate) not_started: usize,
-    pub(crate) cancelled_after_winner: usize,
-    pub(crate) invalid_models: usize,
-    pub(crate) solver_errors: usize,
-    pub(crate) winner_counts: HashMap<String, usize>,
-    pub(crate) launch_counts: HashMap<String, usize>,
-    pub(crate) outcome_counts: HashMap<SolverOutcome, usize>,
+    queries: usize,
+    solver_runs: usize,
+    rescue_runs: usize,
+    non_primary_wins: usize,
+    rescue_wins: usize,
+    not_started: usize,
+    cancelled_after_winner: usize,
+    invalid_models: usize,
+    solver_errors: usize,
+    winner_counts: HashMap<String, usize>,
+    launch_counts: HashMap<String, usize>,
+    outcome_counts: HashMap<SolverOutcome, usize>,
 }
 
 impl PortfolioDiagnostics {
