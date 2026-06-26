@@ -601,7 +601,7 @@ pub(crate) fn word_bytes(word: SymWord) -> Vec<SymWord> {
             .into_iter()
             .map(|byte| SymWord::Concrete(U256::from(byte)))
             .collect(),
-        word => (0..32).map(|idx| byte_word(U256::from(idx), word.clone())).collect(),
+        SymWord::Expr(expr) => (0..32).map(|idx| byte_expr(idx, &expr)).collect(),
     }
 }
 
