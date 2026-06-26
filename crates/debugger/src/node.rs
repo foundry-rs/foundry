@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, Bytes, hex};
 use foundry_evm_core::precompiles;
 use foundry_evm_traces::{CallKind, CallTrace, CallTraceArena};
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{
     CallTraceStep, DecodedCallTrace, DecodedTraceStep, TraceMemberOrder,
 };
@@ -75,16 +76,19 @@ pub fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
     ) {
         let mut pending = PendingNode { node_idx, steps_count: 0, step_offset: 0 };
         let mut next_step_offset = 0;
+        let mut last_step_idx: Option<usize> = None;
         let node = &arena.nodes()[node_idx];
         for order in &node.ordering {
             match order {
                 TraceMemberOrder::Call(idx) => {
                     let child_idx = node.children[*idx];
-                    if next_step_offset > 0
+                    if let Some(step_idx) = last_step_idx.take()
+                        && let Some(step) = node.trace.steps.get(step_idx)
+                        && is_call_like_op(step.op)
                         && let Some(notice) =
                             precompile_call_notice(&arena.nodes()[child_idx].trace)
                     {
-                        step_notices.push((node_idx, next_step_offset - 1, notice));
+                        step_notices.push((node_idx, step_idx, notice));
                     }
                     out.push(pending);
                     pending =
@@ -97,8 +101,11 @@ pub fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
                     }
                     pending.steps_count += 1;
                     next_step_offset = step_idx.saturating_add(1);
+                    last_step_idx = Some(*step_idx);
                 }
-                _ => {}
+                _ => {
+                    last_step_idx = None;
+                }
             }
         }
         out.push(pending);
@@ -112,7 +119,7 @@ pub fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
         if let Some(step) =
             arena_nodes.get_mut(node_idx).and_then(|node| node.trace.steps.get_mut(step_idx))
         {
-            step.decoded = Some(Box::new(DecodedTraceStep::Line(notice)));
+            set_step_notice(step, notice);
         }
     }
 
@@ -146,6 +153,26 @@ pub fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
 
         out.push(node);
     }
+}
+
+fn set_step_notice(step: &mut CallTraceStep, notice: String) {
+    match step.decoded.as_deref_mut() {
+        None => step.decoded = Some(Box::new(DecodedTraceStep::Line(notice))),
+        Some(DecodedTraceStep::Line(line)) if line.is_empty() => *line = notice,
+        Some(_) => {}
+    }
+}
+
+const fn is_call_like_op(op: OpCode) -> bool {
+    matches!(
+        op,
+        OpCode::CALL
+            | OpCode::STATICCALL
+            | OpCode::DELEGATECALL
+            | OpCode::CALLCODE
+            | OpCode::CREATE
+            | OpCode::CREATE2
+    )
 }
 
 fn precompile_call_notice(trace: &CallTrace) -> Option<String> {
@@ -216,8 +243,8 @@ const fn known_precompile_name(address: Address) -> Option<&'static str> {
 mod tests {
     use super::*;
     use foundry_evm_traces::CallTraceNode;
-    use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
-    use revm_inspectors::tracing::types::DecodedCallData;
+    use revm::interpreter::InstructionResult;
+    use revm_inspectors::tracing::types::{DecodedCallData, DecodedInternalCall};
 
     fn step(pc: usize) -> CallTraceStep {
         CallTraceStep {
@@ -240,6 +267,35 @@ mod tests {
 
     fn step_with_op(pc: usize, op: OpCode) -> CallTraceStep {
         CallTraceStep { op, ..step(pc) }
+    }
+
+    fn known_sha256_precompile_node() -> CallTraceNode {
+        CallTraceNode {
+            parent: Some(0),
+            idx: 1,
+            trace: CallTrace {
+                address: precompiles::SHA_256,
+                data: Bytes::from_static(b"hello"),
+                output: alloy_primitives::hex!(
+                    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                )
+                .into(),
+                ..Default::default()
+            },
+            ordering: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    fn assert_no_precompile_notice(step: &CallTraceStep) {
+        assert!(
+            !matches!(
+                step.decoded.as_deref(),
+                Some(DecodedTraceStep::Line(line)) if line.starts_with("precompile:")
+            ),
+            "unexpected precompile notice: {:?}",
+            step.decoded
+        );
     }
 
     #[test]
@@ -359,21 +415,7 @@ mod tests {
             root.children.push(1);
         }
 
-        arena.nodes_mut().push(CallTraceNode {
-            parent: Some(0),
-            idx: 1,
-            trace: CallTrace {
-                address: precompiles::SHA_256,
-                data: Bytes::from_static(b"hello"),
-                output: alloy_primitives::hex!(
-                    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-                )
-                .into(),
-                ..Default::default()
-            },
-            ordering: Vec::new(),
-            ..Default::default()
-        });
+        arena.nodes_mut().push(known_sha256_precompile_node());
 
         let mut flattened = Vec::new();
         flatten_call_trace(arena, &mut flattened);
@@ -385,5 +427,82 @@ mod tests {
             notice,
             "precompile: sha256 @ 0x0000000000000000000000000000000000000002 input=0x68656c6c6f output=0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+    }
+
+    #[test]
+    fn flatten_preserves_existing_decoded_step_metadata_on_precompile_child_calls() {
+        let mut arena = CallTraceArena::default();
+
+        {
+            let root = &mut arena.nodes_mut()[0];
+            let mut call_step = step_with_op(0, OpCode::STATICCALL);
+            call_step.decoded = Some(Box::new(DecodedTraceStep::InternalCall(
+                DecodedInternalCall {
+                    func_name: "DebugMe::foo".to_string(),
+                    args: Some(vec!["1".to_string()]),
+                    return_data: Some(vec!["2".to_string()]),
+                },
+                1,
+            )));
+            root.trace.steps = vec![call_step, step_with_op(1, OpCode::STOP)];
+            root.ordering = vec![
+                TraceMemberOrder::Step(0),
+                TraceMemberOrder::Call(0),
+                TraceMemberOrder::Step(1),
+            ];
+            root.children.push(1);
+        }
+        arena.nodes_mut().push(known_sha256_precompile_node());
+
+        let mut flattened = Vec::new();
+        flatten_call_trace(arena, &mut flattened);
+
+        let Some(DecodedTraceStep::InternalCall(decoded, end_step)) =
+            flattened[0].steps[0].decoded.as_deref()
+        else {
+            panic!("expected existing internal call metadata to be preserved");
+        };
+        assert_eq!(decoded.func_name, "DebugMe::foo");
+        assert_eq!(*end_step, 1);
+    }
+
+    #[test]
+    fn flatten_skips_precompile_notice_without_preceding_step() {
+        let mut arena = CallTraceArena::default();
+
+        {
+            let root = &mut arena.nodes_mut()[0];
+            root.trace.steps = vec![step_with_op(0, OpCode::STOP)];
+            root.ordering = vec![TraceMemberOrder::Call(0), TraceMemberOrder::Step(0)];
+            root.children.push(1);
+        }
+        arena.nodes_mut().push(known_sha256_precompile_node());
+
+        let mut flattened = Vec::new();
+        flatten_call_trace(arena, &mut flattened);
+
+        assert_no_precompile_notice(&flattened[0].steps[0]);
+    }
+
+    #[test]
+    fn flatten_skips_precompile_notice_after_non_call_step() {
+        let mut arena = CallTraceArena::default();
+
+        {
+            let root = &mut arena.nodes_mut()[0];
+            root.trace.steps = vec![step_with_op(0, OpCode::STOP), step_with_op(1, OpCode::STOP)];
+            root.ordering = vec![
+                TraceMemberOrder::Step(0),
+                TraceMemberOrder::Call(0),
+                TraceMemberOrder::Step(1),
+            ];
+            root.children.push(1);
+        }
+        arena.nodes_mut().push(known_sha256_precompile_node());
+
+        let mut flattened = Vec::new();
+        flatten_call_trace(arena, &mut flattened);
+
+        assert_no_precompile_notice(&flattened[0].steps[0]);
     }
 }
