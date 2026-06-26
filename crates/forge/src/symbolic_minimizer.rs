@@ -3,8 +3,34 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Function as SolFunction, I256, U256};
 use itertools::Itertools;
+use std::collections::HashSet;
 
 const MAX_SUBSET_CANDIDATES_PER_PASS: usize = 256;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ReplayCallKey {
+    warp: Option<U256>,
+    roll: Option<U256>,
+    sender: Address,
+    target: Address,
+    calldata: Bytes,
+    value: Option<U256>,
+}
+
+fn replay_call_key(call: &SymbolicCounterexampleCall) -> ReplayCallKey {
+    ReplayCallKey {
+        warp: call.warp,
+        roll: call.roll,
+        sender: call.sender,
+        target: call.target,
+        calldata: call.calldata.clone(),
+        value: call.value.filter(|value| !value.is_zero()),
+    }
+}
+
+fn replay_sequence_key(calls: &[SymbolicCounterexampleCall]) -> Vec<ReplayCallKey> {
+    calls.iter().map(replay_call_key).collect()
+}
 
 /// Result of deterministic single-call counterexample minimization.
 #[derive(Clone, Debug)]
@@ -19,6 +45,242 @@ impl MinimizedSingleCall {
     pub(crate) fn changed(&self) -> bool {
         self.original_call.calldata != self.minimized_call.calldata
     }
+}
+
+/// Result of deterministic stateful sequence counterexample minimization.
+#[derive(Clone, Debug)]
+pub(crate) struct MinimizedSequence {
+    pub original_calls: Vec<SymbolicCounterexampleCall>,
+    pub minimized_calls: Vec<SymbolicCounterexampleCall>,
+    pub attempts: usize,
+    pub accepted: usize,
+}
+
+impl MinimizedSequence {
+    pub(crate) fn changed(&self) -> bool {
+        self.original_calls != self.minimized_calls
+    }
+
+    pub(crate) fn original_calldata_bytes(&self) -> usize {
+        sequence_calldata_bytes(&self.original_calls)
+    }
+
+    pub(crate) fn minimized_calldata_bytes(&self) -> usize {
+        sequence_calldata_bytes(&self.minimized_calls)
+    }
+}
+
+fn sequence_calldata_bytes(calls: &[SymbolicCounterexampleCall]) -> usize {
+    calls.iter().map(|call| call.calldata.len()).sum()
+}
+
+/// Minimizes a replay-confirmed stateful sequence while preserving the concrete failure.
+///
+/// The caller's `still_fails` predicate must replay the whole candidate sequence and return true
+/// only when it preserves the already-confirmed failure identity.
+pub(crate) fn minimize_sequence_counterexample(
+    calls: &[SymbolicCounterexampleCall],
+    sender_candidates: &[Address],
+    max_attempts: usize,
+    mut still_fails: impl FnMut(&[SymbolicCounterexampleCall]) -> bool,
+) -> Option<MinimizedSequence> {
+    if calls.is_empty() {
+        return None;
+    }
+
+    let original_calls = calls.to_vec();
+    let mut minimizer =
+        SequenceMinimizer::new(original_calls.clone(), max_attempts, &mut still_fails);
+
+    minimizer.minimize_len();
+    minimizer.minimize_calldata();
+    minimizer.minimize_senders(sender_candidates);
+    minimizer.minimize_values();
+
+    let (minimized_calls, attempts, accepted) = minimizer.finish();
+    Some(MinimizedSequence { original_calls, minimized_calls, attempts, accepted })
+}
+
+struct SequenceMinimizer<'a> {
+    current_calls: Vec<SymbolicCounterexampleCall>,
+    tried_candidates: HashSet<Vec<ReplayCallKey>>,
+    max_attempts: usize,
+    attempts: usize,
+    accepted: usize,
+    still_fails: &'a mut dyn FnMut(&[SymbolicCounterexampleCall]) -> bool,
+}
+
+impl<'a> SequenceMinimizer<'a> {
+    fn new(
+        current_calls: Vec<SymbolicCounterexampleCall>,
+        max_attempts: usize,
+        still_fails: &'a mut dyn FnMut(&[SymbolicCounterexampleCall]) -> bool,
+    ) -> Self {
+        let tried_candidates = HashSet::from([replay_sequence_key(&current_calls)]);
+        Self {
+            current_calls,
+            tried_candidates,
+            max_attempts,
+            attempts: 0,
+            accepted: 0,
+            still_fails,
+        }
+    }
+
+    const fn can_try(&self) -> bool {
+        self.attempts < self.max_attempts
+    }
+
+    const fn remaining_attempts(&self) -> usize {
+        self.max_attempts - self.attempts
+    }
+
+    fn finish(self) -> (Vec<SymbolicCounterexampleCall>, usize, usize) {
+        (self.current_calls, self.attempts, self.accepted)
+    }
+
+    fn try_candidate(&mut self, candidate_calls: Vec<SymbolicCounterexampleCall>) -> bool {
+        if !self.can_try() || candidate_calls == self.current_calls {
+            return false;
+        }
+        if !self.tried_candidates.insert(replay_sequence_key(&candidate_calls)) {
+            return false;
+        }
+
+        self.attempts += 1;
+        if (self.still_fails)(&candidate_calls) {
+            self.current_calls = candidate_calls;
+            self.accepted += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn minimize_len(&mut self) {
+        loop {
+            if self.current_calls.len() <= 1 || !self.can_try() {
+                break;
+            }
+
+            let mut changed = false;
+            let mut idx = 0usize;
+            while idx < self.current_calls.len() && self.current_calls.len() > 1 && self.can_try() {
+                let candidate_calls = sequence_without_call(&self.current_calls, idx);
+                if self.try_candidate(candidate_calls) {
+                    changed = true;
+                } else {
+                    idx += 1;
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    fn minimize_calldata(&mut self) {
+        let mut idx = 0usize;
+        while idx < self.current_calls.len() && self.can_try() {
+            let Some(function) = self.current_calls[idx]
+                .signature
+                .as_deref()
+                .and_then(|signature| Function::parse(signature).ok())
+            else {
+                idx += 1;
+                continue;
+            };
+            let template = self.current_calls[idx].clone();
+            let remaining_attempts = self.remaining_attempts();
+            let minimized = minimize_single_call_counterexample(
+                &function,
+                &template,
+                remaining_attempts,
+                |candidate_call| {
+                    let mut candidate_calls = self.current_calls.clone();
+                    candidate_calls[idx] = candidate_call.clone();
+                    self.try_candidate(candidate_calls)
+                },
+            );
+            if let Some(minimized) = minimized
+                && minimized.changed()
+                && let Some(call) = self.current_calls.get_mut(idx)
+            {
+                *call = minimized.minimized_call;
+            }
+            idx += 1;
+        }
+    }
+
+    fn minimize_senders(&mut self, sender_candidates: &[Address]) {
+        let mut idx = 0usize;
+        while idx < self.current_calls.len() && self.can_try() {
+            for sender in sender_candidates.iter().copied() {
+                if !self.can_try() || self.current_calls[idx].sender == sender {
+                    continue;
+                }
+                let mut candidate_calls = self.current_calls.clone();
+                candidate_calls[idx].sender = sender;
+                self.try_candidate(candidate_calls);
+            }
+            idx += 1;
+        }
+    }
+
+    fn minimize_values(&mut self) {
+        let mut idx = 0usize;
+        while idx < self.current_calls.len() && self.can_try() {
+            self.minimize_call_value(idx);
+            idx += 1;
+        }
+    }
+
+    fn minimize_call_value(&mut self, idx: usize) {
+        let Some(mut accepted_value) = self.current_calls[idx].value else {
+            return;
+        };
+
+        let mut zero_candidate = self.current_calls.clone();
+        zero_candidate[idx].value = None;
+        if self.try_candidate(zero_candidate) {
+            return;
+        }
+
+        if accepted_value.is_zero() {
+            return;
+        }
+
+        let mut rejected_value = U256::ZERO;
+        while accepted_value > rejected_value + U256::from(1) && self.can_try() {
+            let candidate_value = rejected_value + ((accepted_value - rejected_value) >> 1usize);
+            let mut candidate_calls = self.current_calls.clone();
+            candidate_calls[idx].value = Some(candidate_value);
+            if self.try_candidate(candidate_calls) {
+                accepted_value = candidate_value;
+            } else {
+                rejected_value = candidate_value;
+            }
+        }
+    }
+}
+
+fn sequence_without_call(
+    calls: &[SymbolicCounterexampleCall],
+    idx: usize,
+) -> Vec<SymbolicCounterexampleCall> {
+    let mut candidate = calls.to_vec();
+    let removed = candidate.remove(idx);
+    if let Some(next) = candidate.get_mut(idx) {
+        next.warp = add_optional_u256(removed.warp, next.warp);
+        next.roll = add_optional_u256(removed.roll, next.roll);
+    }
+    candidate
+}
+
+fn add_optional_u256(left: Option<U256>, right: Option<U256>) -> Option<U256> {
+    let sum = left.unwrap_or_default() + right.unwrap_or_default();
+    (!sum.is_zero()).then_some(sum)
 }
 
 /// Minimizes a stateless symbolic counterexample with ABI-valid candidates only.
@@ -40,6 +302,7 @@ pub(crate) fn minimize_single_call_counterexample(
     let mut current_call = call_with_args(function, call, &current_args)?;
     let mut attempts = 0usize;
     let mut accepted = 0usize;
+    let mut tried_calldata = HashSet::from([current_call.calldata.clone()]);
 
     let mut try_args = |candidate_args: &[DynSolValue]| {
         if attempts >= max_attempts {
@@ -48,7 +311,9 @@ pub(crate) fn minimize_single_call_counterexample(
         let Some(candidate_call) = call_with_args(function, call, candidate_args) else {
             return false;
         };
-        if candidate_call.calldata == current_call.calldata {
+        if candidate_call.calldata == current_call.calldata
+            || !tried_calldata.insert(candidate_call.calldata.clone())
+        {
             return false;
         }
 
@@ -1257,6 +1522,33 @@ mod tests {
     }
 
     #[test]
+    fn skips_duplicate_single_call_replay_candidates() {
+        let abi = JsonAbi::parse(["function check(uint256,uint256) external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let start = call(
+            function,
+            vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Uint(U256::from(1), 256)],
+        );
+        let mut replayed = HashSet::new();
+
+        let minimized = minimize_single_call_counterexample(
+            function,
+            &start,
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                assert!(replayed.insert(candidate.calldata.clone()), "duplicate candidate replay");
+                false
+            },
+        )
+        .unwrap();
+
+        assert!(!minimized.changed());
+        assert_eq!(minimized.accepted, 0);
+        assert_eq!(minimized.attempts, 3);
+        assert_eq!(replayed.len(), minimized.attempts);
+    }
+
+    #[test]
     fn matches_echidna_contiguous_slice_examples() {
         let bytes_abi = JsonAbi::parse(["function check(bytes) external"]).unwrap();
         let bytes_function = bytes_abi.functions().next().unwrap();
@@ -1661,6 +1953,106 @@ mod tests {
             ])]
         );
         assert!(minimized.changed());
+        assert!(minimized.accepted > 0);
+    }
+
+    #[test]
+    fn skips_duplicate_sequence_replay_candidates() {
+        let abi = JsonAbi::parse(["function noop() external"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let mut start = call(function, Vec::new());
+        start.sender = address(0xaaaa);
+        start.value = Some(U256::ZERO);
+        let sender = address(0x100);
+        let mut replays = 0usize;
+
+        let minimized = minimize_sequence_counterexample(
+            &[start],
+            &[sender, sender],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |calls| {
+                replays += 1;
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].sender, sender);
+                assert_eq!(calls[0].value, Some(U256::ZERO));
+                false
+            },
+        )
+        .unwrap();
+
+        assert!(!minimized.changed());
+        assert_eq!(minimized.accepted, 0);
+        assert_eq!(minimized.attempts, 1);
+        assert_eq!(replays, minimized.attempts);
+    }
+
+    #[test]
+    fn minimizes_stateful_sequence_length_calldata_senders_and_values() {
+        let abi = JsonAbi::parse([
+            "function noise(uint256) external",
+            "function prime(uint256) external",
+            "function fire(uint256) external payable",
+        ])
+        .unwrap();
+        let noise = abi.functions().find(|function| function.name == "noise").unwrap();
+        let prime = abi.functions().find(|function| function.name == "prime").unwrap();
+        let fire = abi.functions().find(|function| function.name == "fire").unwrap();
+        let smaller_sender = address(0x100);
+        let original_sender = address(0xaaaa);
+        let mut sequence = vec![
+            call(noise, vec![DynSolValue::Uint(U256::from(999), 256)]),
+            call(prime, vec![DynSolValue::Uint(U256::from(1_000), 256)]),
+            call(noise, vec![DynSolValue::Uint(U256::from(123), 256)]),
+            call(fire, vec![DynSolValue::Uint(U256::from(5_000), 256)]),
+        ];
+        for call in &mut sequence {
+            call.sender = original_sender;
+            call.value = Some(U256::from(200));
+        }
+
+        let minimized = minimize_sequence_counterexample(
+            &sequence,
+            &[smaller_sender],
+            TEST_MAX_MINIMIZATION_ATTEMPTS,
+            |candidate| {
+                let mut primed = false;
+                for call in candidate {
+                    if call.calldata.get(..4) == Some(prime.selector().as_slice()) {
+                        let args = decoded(prime, call);
+                        primed |= matches!(&args[0], DynSolValue::Uint(value, _) if *value > U256::from(40));
+                    }
+                    if call.calldata.get(..4) == Some(fire.selector().as_slice()) {
+                        let args = decoded(fire, call);
+                        let enough_value = call.value.unwrap_or_default() > U256::from(10);
+                        if primed
+                            && enough_value
+                            && matches!(&args[0], DynSolValue::Uint(value, _) if *value > U256::from(100))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                false
+            },
+        )
+        .unwrap();
+
+        assert!(minimized.changed());
+        assert_eq!(minimized.minimized_calls.len(), 2);
+        assert_eq!(
+            decoded(prime, &minimized.minimized_calls[0]),
+            vec![DynSolValue::Uint(U256::from(41), 256)]
+        );
+        assert_eq!(
+            decoded(fire, &minimized.minimized_calls[1]),
+            vec![DynSolValue::Uint(U256::from(101), 256)]
+        );
+        assert_eq!(minimized.minimized_calls[0].sender, smaller_sender);
+        assert_eq!(minimized.minimized_calls[1].sender, smaller_sender);
+        assert_eq!(minimized.minimized_calls[0].value, None);
+        assert_eq!(minimized.minimized_calls[1].value, Some(U256::from(11)));
+        assert_eq!(minimized.original_calldata_bytes(), sequence_calldata_bytes(&sequence));
+        assert!(minimized.minimized_calldata_bytes() < minimized.original_calldata_bytes());
         assert!(minimized.accepted > 0);
     }
 

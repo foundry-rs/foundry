@@ -814,6 +814,9 @@ pub enum InvariantFailure {
         /// Durable replay artifact for this counterexample, when one was written.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         artifact: Option<SymbolicArtifactRef>,
+        /// Deterministic concrete minimization details for this sequence, when minimized.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        minimization: Option<SymbolicCounterexampleMinimization>,
         /// Path where the counterexample was persisted for re-running and shrinking.
         persisted_path: std::path::PathBuf,
         /// Whether this failure is the stable campaign anchor.
@@ -878,6 +881,14 @@ impl InvariantFailure {
     pub const fn artifact(&self) -> Option<&SymbolicArtifactRef> {
         match self {
             Self::Predicate { artifact, .. } | Self::Handler { artifact, .. } => artifact.as_ref(),
+        }
+    }
+
+    /// Deterministic concrete minimization details for predicate failures.
+    pub const fn minimization(&self) -> Option<&SymbolicCounterexampleMinimization> {
+        match self {
+            Self::Predicate { minimization, .. } => minimization.as_ref(),
+            Self::Handler { .. } => None,
         }
     }
 }
@@ -1046,6 +1057,12 @@ pub struct SymbolicCounterexampleMinimization {
     pub original_calldata_bytes: usize,
     /// ABI calldata byte length after minimization.
     pub minimized_calldata_bytes: usize,
+    /// Stateful sequence length before minimization, when this minimized a sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_sequence_len: Option<usize>,
+    /// Stateful sequence length after minimization, when this minimized a sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimized_sequence_len: Option<usize>,
 }
 
 impl SymbolicCounterexampleMinimization {
@@ -1065,7 +1082,20 @@ impl SymbolicCounterexampleMinimization {
             accepted,
             original_calldata_bytes,
             minimized_calldata_bytes,
+            original_sequence_len: None,
+            minimized_sequence_len: None,
         }
+    }
+
+    /// Adds stateful sequence lengths to minimization metadata.
+    pub const fn with_sequence_lengths(
+        mut self,
+        original_sequence_len: usize,
+        minimized_sequence_len: usize,
+    ) -> Self {
+        self.original_sequence_len = Some(original_sequence_len);
+        self.minimized_sequence_len = Some(minimized_sequence_len);
+        self
     }
 }
 
@@ -1444,7 +1474,7 @@ pub struct SymbolicCounterexampleTestIdentity {
 }
 
 /// One concrete call in a symbolic counterexample artifact.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolicCounterexampleCall {
     /// Amount to increase block timestamp before executing the call.
@@ -2202,8 +2232,17 @@ impl TestResult {
             .invariant_failures
             .iter()
             .chain(&self.invariant_handler_failures)
-            .filter_map(InvariantFailure::artifact)
-            .cloned()
+            .flat_map(|failure| {
+                let mut artifacts = Vec::new();
+                if let Some(artifact) = failure.artifact().cloned() {
+                    artifacts.push(artifact);
+                }
+                if let Some(minimization) = failure.minimization().cloned() {
+                    artifacts.push(minimization.original);
+                    artifacts.push(minimization.minimized);
+                }
+                artifacts
+            })
             .collect::<Vec<_>>();
         for artifact in artifacts {
             self.add_counterexample_artifact(artifact);
