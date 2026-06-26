@@ -17,7 +17,6 @@ impl SymbolicExecutor {
         match op {
             opcode::PUSH0 => {
                 state.stack.push(SymExpr::zero())?;
-                Ok(StepOutcome::Continue)
             }
             op if (opcode::PUSH1..=opcode::PUSH32).contains(&op) => {
                 let n = (op - opcode::PUSH1 + 1) as usize;
@@ -31,80 +30,106 @@ impl SymbolicExecutor {
                     .collect::<Vec<_>>();
                 state.pc = end;
                 state.stack.push(word_from_bytes(bytes))?;
-                Ok(StepOutcome::Continue)
             }
             op if (opcode::DUP1..=opcode::DUP16).contains(&op) => {
                 let n = (op - opcode::DUP1 + 1) as usize;
                 let value = state.stack.peek(n - 1)?.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             op if (opcode::SWAP1..=opcode::SWAP16).contains(&op) => {
                 let n = (op - opcode::SWAP1 + 1) as usize;
                 state.stack.swap(n)?;
-                Ok(StepOutcome::Continue)
             }
-            opcode::STOP => Ok(StepOutcome::Halt),
-            opcode::ADD => state.bin_word(SymExprOp::Add),
-            opcode::SUB => state.bin_word(SymExprOp::Sub),
-            opcode::MUL => state.bin_word(SymExprOp::Mul),
-            opcode::EXP => state.exp_word(),
-            opcode::DIV => state.bin_word_div_zero_guard(SymExprOp::UDiv),
-            opcode::SDIV => state.bin_word_div_zero_guard(SymExprOp::SDiv),
-            opcode::MOD => state.bin_word_div_zero_guard(SymExprOp::URem),
-            opcode::SMOD => state.bin_word_div_zero_guard(SymExprOp::SRem),
+            opcode::STOP => return Ok(StepOutcome::Halt),
+            opcode::ADD => {
+                state.bin_word(SymExprOp::Add)?;
+            }
+            opcode::SUB => {
+                state.bin_word(SymExprOp::Sub)?;
+            }
+            opcode::MUL => {
+                state.bin_word(SymExprOp::Mul)?;
+            }
+            opcode::EXP => {
+                state.exp_word()?;
+            }
+            opcode::DIV => {
+                state.bin_word_div_zero_guard(SymExprOp::UDiv)?;
+            }
+            opcode::SDIV => {
+                state.bin_word_div_zero_guard(SymExprOp::SDiv)?;
+            }
+            opcode::MOD => {
+                state.bin_word_div_zero_guard(SymExprOp::URem)?;
+            }
+            opcode::SMOD => {
+                state.bin_word_div_zero_guard(SymExprOp::SRem)?;
+            }
             opcode::ADDMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
                 state.stack.push(SymExpr::addmod(a, b, n))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::MULMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
                 state.stack.push(SymExpr::mulmod(a, b, n))?;
-                Ok(StepOutcome::Continue)
             }
-            opcode::LT => state.cmp_word(SymBoolExprOp::Ult),
-            opcode::GT => state.cmp_word(SymBoolExprOp::Ugt),
-            opcode::SLT => state.cmp_word(SymBoolExprOp::Slt),
-            opcode::SGT => state.cmp_word(SymBoolExprOp::Sgt),
+            opcode::LT => {
+                state.cmp_word(SymBoolExprOp::Ult)?;
+            }
+            opcode::GT => {
+                state.cmp_word(SymBoolExprOp::Ugt)?;
+            }
+            opcode::SLT => {
+                state.cmp_word(SymBoolExprOp::Slt)?;
+            }
+            opcode::SGT => {
+                state.cmp_word(SymBoolExprOp::Sgt)?;
+            }
             opcode::EQ => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 state.stack.push(SymExpr::from_bool(SymBoolExpr::eq(b, a)))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::ISZERO => {
                 let value = state.stack.pop()?;
                 state.stack.push(SymExpr::from_bool(value.into_zero_bool()))?;
-                Ok(StepOutcome::Continue)
             }
-            opcode::AND => state.bin_word(SymExprOp::And),
-            opcode::OR => state.bin_word(SymExprOp::Or),
-            opcode::XOR => state.bin_word(SymExprOp::Xor),
+            opcode::AND => {
+                state.bin_word(SymExprOp::And)?;
+            }
+            opcode::OR => {
+                state.bin_word(SymExprOp::Or)?;
+            }
+            opcode::XOR => {
+                state.bin_word(SymExprOp::Xor)?;
+            }
             opcode::NOT => {
                 let value = state.stack.pop()?;
                 state.stack.push(SymExpr::not(value))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::SIGNEXTEND => {
                 let byte_index = state.stack.pop()?;
                 let value = state.stack.pop()?;
                 state.stack.push(signextend_word_dynamic(byte_index, value))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::BYTE => {
                 let index = state.stack.pop()?;
                 let word = state.stack.pop()?;
                 state.stack.push(byte_word_dynamic(index, word))?;
-                Ok(StepOutcome::Continue)
             }
-            opcode::SHL => state.shift_word(ShiftKind::Shl),
-            opcode::SHR => state.shift_word(ShiftKind::Shr),
-            opcode::SAR => state.shift_word(ShiftKind::Sar),
+            opcode::SHL => {
+                state.shift_word(ShiftKind::Shl)?;
+            }
+            opcode::SHR => {
+                state.shift_word(ShiftKind::Shr)?;
+            }
+            opcode::SAR => {
+                state.shift_word(ShiftKind::Sar)?;
+            }
             opcode::KECCAK256 => {
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
@@ -135,56 +160,46 @@ impl SymbolicExecutor {
                         state.stack.push(keccak_word_with_len(bytes, size))?;
                     }
                 }
-                Ok(StepOutcome::Continue)
             }
             opcode::ADDRESS => {
                 let address = state.address_word.clone();
                 state.stack.push(address)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::CALLER => {
                 let caller = state.caller_word.clone();
                 state.stack.push(caller)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::ORIGIN => {
                 let origin = state.origin_word.clone();
                 state.stack.push(origin)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::CALLVALUE => {
                 let callvalue = state.callvalue.clone();
                 state.stack.push(callvalue)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::BLOCKHASH => {
                 let number = state.stack.pop()?;
                 let hash = state.block.block_hash_word(executor, number)?;
                 state.stack.push(hash)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::BALANCE => {
                 let target = state.stack.pop()?;
                 let balance = state.balance_word(executor, target)?;
                 state.stack.push(balance)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::SELFBALANCE => {
                 let balance = state.balance(executor, state.address);
                 state.stack.push(balance)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::EXTCODESIZE => {
                 let target = state.stack.pop()?;
                 let size = state.extcode_size_word(executor, target)?;
                 state.stack.push(size)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::EXTCODEHASH => {
                 let target = state.stack.pop()?;
                 let hash = state.extcode_hash_word(executor, target)?;
                 state.stack.push(hash)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::EXTCODECOPY => {
                 let target = state.stack.pop()?;
@@ -220,18 +235,15 @@ impl SymbolicExecutor {
                         }
                     }
                 }
-                Ok(StepOutcome::Continue)
             }
             opcode::CALLDATALOAD => {
                 let offset = state.stack.pop()?;
                 let value = state.calldata.load_word(offset)?;
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::CALLDATASIZE => {
                 let size = state.calldata.size_word();
                 state.stack.push(size)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::CALLDATACOPY => {
                 let dest = state.stack.pop()?;
@@ -269,11 +281,9 @@ impl SymbolicExecutor {
                         }
                     }
                 }
-                Ok(StepOutcome::Continue)
             }
             opcode::CODESIZE => {
                 state.stack.push(SymExpr::constant(U256::from(code.len())))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::CODECOPY => {
                 let dest = state.stack.pop()?;
@@ -311,12 +321,10 @@ impl SymbolicExecutor {
                         }
                     }
                 }
-                Ok(StepOutcome::Continue)
             }
             opcode::RETURNDATASIZE => {
                 let size = state.return_data.len_word();
                 state.stack.push(size)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::RETURNDATACOPY => {
                 let dest = state.stack.pop()?;
@@ -366,29 +374,24 @@ impl SymbolicExecutor {
                         }
                     }
                 }
-                Ok(StepOutcome::Continue)
             }
             opcode::POP => {
                 state.stack.pop()?;
-                Ok(StepOutcome::Continue)
             }
             opcode::MLOAD => {
                 let offset = state.stack.pop()?;
                 let value = state.memory.load_word_offset(offset)?;
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::MSTORE => {
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
                 state.memory.store_word_offset(offset, value);
-                Ok(StepOutcome::Continue)
             }
             opcode::MSTORE8 => {
                 let offset = state.stack.pop()?;
                 let value = state.stack.pop()?;
                 state.memory.store_byte_offset(offset, value);
-                Ok(StepOutcome::Continue)
             }
             opcode::SLOAD => {
                 let key = state.stack.pop()?;
@@ -397,7 +400,6 @@ impl SymbolicExecutor {
                 let value =
                     state.world.sload(executor, state.storage_address, key, concrete_key)?;
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::SSTORE => {
                 if state.is_static {
@@ -408,13 +410,11 @@ impl SymbolicExecutor {
                 let value = state.stack.pop()?;
                 state.record_sstore(state.storage_address, key.clone());
                 state.world.sstore(state.storage_address, key, value);
-                Ok(StepOutcome::Continue)
             }
             opcode::TLOAD => {
                 let key = state.stack.pop()?;
                 let value = state.world.tload(state.storage_address, key);
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::TSTORE => {
                 if state.is_static {
@@ -424,7 +424,6 @@ impl SymbolicExecutor {
                 let key = state.stack.pop()?;
                 let value = state.stack.pop()?;
                 state.world.tstore(state.storage_address, key, value);
-                Ok(StepOutcome::Continue)
             }
             opcode::JUMP => {
                 let dest = state.stack.pop()?;
@@ -434,7 +433,6 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::AssumeRejected);
                 }
                 state.pc = dest;
-                Ok(StepOutcome::Continue)
             }
             opcode::JUMPI => {
                 let dest = state.stack.pop()?;
@@ -447,9 +445,8 @@ impl SymbolicExecutor {
                             return Ok(StepOutcome::AssumeRejected);
                         }
                         state.pc = dest;
-                        Ok(StepOutcome::Continue)
                     }
-                    Some(false) => Ok(StepOutcome::Continue),
+                    Some(false) => {}
                     None => {
                         if cond.contains_gasleft() {
                             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
@@ -477,26 +474,23 @@ impl SymbolicExecutor {
                         if false_feasible {
                             worklist.push_back(false_state);
                         }
-                        Ok(StepOutcome::Forked)
+                        return Ok(StepOutcome::Forked);
                     }
                 }
             }
             opcode::PC => {
                 let pc = state.pc - 1;
                 state.stack.push(SymExpr::constant(U256::from(pc)))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::MSIZE => {
                 let size = state.memory.size_word();
                 state.stack.push(size)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::GAS => {
                 let gas = state.fresh_gasleft();
                 state.stack.push(gas)?;
-                Ok(StepOutcome::Continue)
             }
-            opcode::JUMPDEST => Ok(StepOutcome::Continue),
+            opcode::JUMPDEST => {}
             opcode::MCOPY => {
                 let dest = state.stack.pop()?;
                 let src = state.stack.pop()?;
@@ -527,26 +521,39 @@ impl SymbolicExecutor {
                         }
                     }
                 }
-                Ok(StepOutcome::Continue)
             }
-            opcode::RETURN => self.return_or_revert(state, false),
-            opcode::REVERT => self.return_or_revert(state, true),
-            opcode::INVALID => Ok(StepOutcome::Failure),
-            opcode::CALL => self.call(executor, state, worklist, completed_paths, CallKind::Call),
+            opcode::RETURN => return self.return_or_revert(state, false),
+            opcode::REVERT => return self.return_or_revert(state, true),
+            opcode::INVALID => return Ok(StepOutcome::Failure),
+            opcode::CALL => {
+                return self.call(executor, state, worklist, completed_paths, CallKind::Call);
+            }
             opcode::CALLCODE => {
-                self.call(executor, state, worklist, completed_paths, CallKind::CallCode)
+                return self.call(executor, state, worklist, completed_paths, CallKind::CallCode);
             }
             opcode::DELEGATECALL => {
-                self.call(executor, state, worklist, completed_paths, CallKind::DelegateCall)
+                return self.call(
+                    executor,
+                    state,
+                    worklist,
+                    completed_paths,
+                    CallKind::DelegateCall,
+                );
             }
             opcode::STATICCALL => {
-                self.call(executor, state, worklist, completed_paths, CallKind::StaticCall)
+                return self.call(executor, state, worklist, completed_paths, CallKind::StaticCall);
             }
             opcode::CREATE => {
-                self.create(executor, state, worklist, completed_paths, CreateKind::Create)
+                return self.create(executor, state, worklist, completed_paths, CreateKind::Create);
             }
             opcode::CREATE2 => {
-                self.create(executor, state, worklist, completed_paths, CreateKind::Create2)
+                return self.create(
+                    executor,
+                    state,
+                    worklist,
+                    completed_paths,
+                    CreateKind::Create2,
+                );
             }
             opcode::SELFDESTRUCT => {
                 if state.is_static {
@@ -568,59 +575,49 @@ impl SymbolicExecutor {
                     state.world.selfdestruct_cancun_existing(executor, state.address, beneficiary);
                 }
                 state.return_data = SymReturnData::default();
-                Ok(StepOutcome::Halt)
+                return Ok(StepOutcome::Halt);
             }
             opcode::CHAINID => {
                 let value = state.block.chain_id.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::BASEFEE => {
                 let value = state.block.basefee.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::GASPRICE => {
                 let gas_price = state.gas_price.clone();
                 state.stack.push(gas_price)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::BLOBHASH => {
                 let index = state.stack.pop()?;
                 let index = state.expect_constrained_usize(index, "symbolic BLOBHASH index")?;
                 let hash = state.block.blob_hash(index);
                 state.stack.push(SymExpr::constant(U256::from_be_slice(hash.as_slice())))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::COINBASE => {
                 let coinbase = state.block.coinbase;
                 state.stack.push(SymExpr::constant(address_word(coinbase)))?;
-                Ok(StepOutcome::Continue)
             }
             opcode::TIMESTAMP => {
                 let value = state.block.timestamp.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::NUMBER => {
                 let value = state.block.number.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::DIFFICULTY => {
                 let value = state.block.difficulty.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::GASLIMIT => {
                 let value = state.block.gaslimit.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::BLOBBASEFEE => {
                 let value = state.block.blob_basefee.clone();
                 state.stack.push(value)?;
-                Ok(StepOutcome::Continue)
             }
             opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
                 if state.is_static {
@@ -674,7 +671,7 @@ impl SymbolicExecutor {
                 if data.iter().any(SymExpr::contains_gasleft) {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
-                self.handle_log(
+                return self.handle_log(
                     state,
                     SymbolicLog {
                         topics: log_topics.into(),
@@ -682,10 +679,12 @@ impl SymbolicExecutor {
                         data: data.into(),
                         emitter: state.address,
                     },
-                )
+                );
             }
-            _ => Err(SymbolicError::UnsupportedOpcode(op)),
-        }
+            _ => return Err(SymbolicError::UnsupportedOpcode(op)),
+        };
+
+        Ok(StepOutcome::Continue)
     }
 
     pub(super) fn assume_returndata_copy_in_bounds(
