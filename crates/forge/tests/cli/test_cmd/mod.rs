@@ -2804,9 +2804,55 @@ contract PrecompileDebugTest {
 
     assert!(
         lines.iter().any(|line| {
-            *line == "precompile: sha256 @ 0x0000000000000000000000000000000000000002 input=0x68656c6c6f output=0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            *line == "precompile: PRECOMPILES::sha256(0x68656c6c6f) -> 0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         }),
         "missing decoded precompile line in debugger dump: {lines:?}"
+    );
+});
+
+forgetest!(debug_dump_marks_tempo_precompile_call_steps, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_tempo();
+        config.hardfork = Some("tempo:T5".parse::<foundry_config::FoundryHardfork>().unwrap());
+    });
+
+    prj.add_test(
+        "TempoPrecompileDebug.t.sol",
+        r#"
+contract TempoPrecompileDebugTest {
+    address constant TIP_FEE_MANAGER = 0xfeEC000000000000000000000000000000000000;
+
+    function testTempoFeeManagerPrecompileDebug() public view {
+        (bool ok, bytes memory output) = TIP_FEE_MANAGER.staticcall(
+            abi.encodeWithSignature("userTokens(address)", address(0))
+        );
+        require(ok, "FeeManager precompile failed");
+        require(output.length == 32, "bad FeeManager output");
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("tempo_precompile_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testTempoFeeManagerPrecompileDebug",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut lines = Vec::new();
+    collect_debug_dump_decoded_lines(&dump, &mut lines);
+
+    assert!(
+        lines.iter().any(|line| line.contains("precompile: FeeManager::userTokens(")),
+        "missing decoded Tempo precompile line in debugger dump: {lines:?}"
     );
 });
 
