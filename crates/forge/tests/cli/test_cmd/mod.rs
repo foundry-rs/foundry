@@ -975,6 +975,114 @@ contract TransientTest is Test {
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
 });
 
+forgetest_init!(setup_selfdestruct_deletes_same_tx_created_contracts, |prj, cmd| {
+    prj.add_test(
+        "SetupSelfdestruct.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract A {
+    function codeLength() public view returns (uint256) {
+        return address(this).code.length;
+    }
+
+    function kill() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract B {
+    uint256 private x;
+
+    constructor(uint256 x_) {
+        x = x_;
+    }
+}
+
+contract Factory {
+    function helloA() public returns (address) {
+        return address(new A());
+    }
+
+    function helloB() public returns (address) {
+        return address(new B(1337));
+    }
+
+    function kill() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract SetupSelfdestructTest is Test {
+    A private a;
+    B private b;
+    Factory private factory;
+
+    function setUp() public {
+        factory = new Factory{salt: keccak256(abi.encode("evil"))}();
+        a = A(factory.helloA());
+
+        (bool success, bytes memory data) = address(a).staticcall(abi.encodeCall(A.codeLength, ()));
+        assertTrue(success);
+        assertEq(abi.decode(data, (uint256)), address(a).code.length);
+
+        a.kill();
+        factory.kill();
+    }
+
+    function testMorphingContract() public {
+        assertEq(address(a).code.length, 0);
+        assertEq(address(factory).code.length, 0);
+
+        factory = new Factory{salt: keccak256(abi.encode("evil"))}();
+        b = B(factory.helloB());
+        assertEq(address(a), address(b));
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--match-path", "test/SetupSelfdestruct.t.sol", "--evm-version", "cancun"])
+        .assert_success();
+});
+
+forgetest_init!(selfdestruct_keeps_setup_created_contract_in_test_body, |prj, cmd| {
+    prj.add_test(
+        "SetupThenTestSelfdestruct.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract A {
+    function kill() public {
+        selfdestruct(payable(address(0)));
+    }
+}
+
+contract SetupThenTestSelfdestructTest is Test {
+    A private a;
+
+    function setUp() public {
+        a = new A();
+    }
+
+    function testCodePersistsAcrossSetupBoundary() public {
+        a.kill();
+        assertGt(address(a).code.length, 0);
+    }
+}
+   "#,
+    );
+
+    cmd.args([
+        "test",
+        "--match-path",
+        "test/SetupThenTestSelfdestruct.t.sol",
+        "--evm-version",
+        "cancun",
+    ])
+    .assert_success();
+});
+
 forgetest_init!(
     #[ignore = "Too slow"]
     can_disable_block_gas_limit,
