@@ -9,7 +9,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, Log, U256,
-    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, IndexSet},
+    map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, HashSet, IndexSet},
 };
 use foundry_common::{
     ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
@@ -497,6 +497,7 @@ impl FuzzDictionary {
     fn collect_push_bytes(&mut self, code: &[u8]) {
         let len = code.len().min(PUSH_BYTE_ANALYSIS_LIMIT);
         let code = &code[..len];
+        let mut seen = HashSet::default();
         for inst in InstIter::new(code) {
             if self.values_full() {
                 break;
@@ -506,7 +507,7 @@ impl FuzzDictionary {
                 && let Some(push_value) = U256::try_from_be_slice(inst.immediate)
                 && push_value != U256::ZERO
             {
-                self.insert_value_u256(push_value);
+                self.insert_push_value_u256(push_value, &mut seen);
             }
         }
     }
@@ -621,6 +622,22 @@ impl FuzzDictionary {
         }
         if !self.values_full() {
             inserted |= self.insert_value((value.wrapping_add(one)).into());
+        }
+        inserted
+    }
+
+    fn insert_push_value_u256(&mut self, value: U256, seen: &mut HashSet<B256>) -> bool {
+        // Also add the value below and above the push value to the dictionary.
+        let one = U256::from(1);
+        let mut inserted = false;
+        for value in [value, value.wrapping_sub(one), value.wrapping_add(one)] {
+            if self.values_full() {
+                break;
+            }
+            let value = value.into();
+            if seen.insert(value) {
+                inserted |= self.insert_value(value);
+            }
         }
         inserted
     }
@@ -780,6 +797,18 @@ mod tests {
         assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
         assert!(dictionary.state_values.contains(&B256::from(U256::from(2))));
         assert!(!dictionary.state_values.contains(&B256::from(U256::from(3))));
+    }
+
+    #[test]
+    fn duplicate_push_values_in_same_bytecode_are_collected_once() {
+        let mut dictionary = FuzzDictionary::default();
+
+        dictionary.collect_push_bytes(&[0x60, 0x01, 0x60, 0x01]);
+
+        assert!(dictionary.state_values.contains(&B256::from(U256::ZERO)));
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(2))));
+        assert_eq!(dictionary.hits, 1);
     }
 
     #[test]
