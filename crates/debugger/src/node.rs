@@ -7,6 +7,8 @@ use revm_inspectors::tracing::types::{
 };
 use serde::{Deserialize, Serialize};
 
+const PRECOMPILES_TRACE_LABEL: &str = "PRECOMPILES";
+
 /// Represents a part of the execution frame before the next call or end of the execution.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DebugNode {
@@ -187,8 +189,6 @@ const fn is_call_like_op(op: OpCode) -> bool {
             | OpCode::CREATE2
     )
 }
-
-const PRECOMPILES_TRACE_LABEL: &str = "PRECOMPILES";
 
 fn precompile_call_notice(
     trace: &CallTrace,
