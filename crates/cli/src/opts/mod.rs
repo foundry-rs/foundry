@@ -12,7 +12,6 @@ pub use build::*;
 pub use chain::*;
 pub use dependency::*;
 pub use evm::*;
-pub(crate) use global::pre_parse_global_flag_present;
 pub use global::*;
 pub use rpc::*;
 pub use rpc_common::*;

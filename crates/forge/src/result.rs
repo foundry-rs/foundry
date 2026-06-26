@@ -216,10 +216,6 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
-    //
-    // Exit-code policy: under `--machine` we honor the agent contract
-    // ([`ExitCode::TestFailure`]); legacy invocations preserve the
-    // historical exit-1 contract that scripts and CIs already depend on.
     pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
@@ -228,7 +224,7 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            std::process::exit(test_failure_exit_code());
+            std::process::exit(1);
         }
 
         sh_println!("\nFailing tests:")?;
@@ -285,7 +281,7 @@ impl TestOutcome {
             }
         }
 
-        std::process::exit(test_failure_exit_code());
+        std::process::exit(1);
     }
 
     /// Removes first test result, if any.
@@ -299,11 +295,6 @@ impl TestOutcome {
             }
         })
     }
-}
-
-/// Process exit code emitted when at least one test failed.
-fn test_failure_exit_code() -> i32 {
-    if foundry_cli::is_machine() { foundry_cli::ExitCode::TestFailure.to_i32() } else { 1 }
 }
 
 #[cfg(test)]
