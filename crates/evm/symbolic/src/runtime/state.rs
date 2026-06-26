@@ -609,10 +609,25 @@ impl PathState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SymbolicLog {
-    pub(crate) topics: Arc<[SymExpr]>,
-    pub(crate) data_len: SymExpr,
-    pub(crate) data: Arc<[SymExpr]>,
-    pub(crate) emitter: Address,
+    topics: Arc<[SymExpr]>,
+    data_len: SymExpr,
+    data: Arc<[SymExpr]>,
+    emitter: Address,
+}
+
+impl SymbolicLog {
+    pub(crate) fn new(
+        topics: Vec<SymExpr>,
+        data_len: SymExpr,
+        data: Vec<SymExpr>,
+        emitter: Address,
+    ) -> Self {
+        Self { topics: topics.into(), data_len, data: data.into(), emitter }
+    }
+
+    pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, Arc<[SymExpr]>, Address) {
+        (self.topics, self.data_len, self.data, self.emitter)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

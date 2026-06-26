@@ -295,8 +295,8 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
         elements: logs
             .into_iter()
             .map(|log| {
-                let topics = log
-                    .topics
+                let (topics, data_len, data, emitter) = log.into_parts();
+                let topics = topics
                     .iter()
                     .cloned()
                     .map(|topic| SymbolicAbiValue::FixedBytes {
@@ -307,9 +307,9 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                 SymbolicAbiValue::Tuple {
                     elements: vec![
                         SymbolicAbiValue::Array { elements: topics },
-                        SymbolicAbiValue::Bytes { len: log.data_len, bytes: log.data },
+                        SymbolicAbiValue::Bytes { len: data_len, bytes: data },
                         SymbolicAbiValue::Address {
-                            word: SymExpr::constant(address_word(log.emitter)),
+                            word: SymExpr::constant(address_word(emitter)),
                         },
                     ],
                 }
@@ -325,11 +325,12 @@ pub(crate) fn recorded_logs_json_return_data(
     let mut bytes = Vec::new();
     push_ascii(&mut bytes, "[");
     for (log_idx, log) in logs.into_iter().enumerate() {
+        let (topics, data_len, data, emitter) = log.into_parts();
         if log_idx > 0 {
             push_ascii(&mut bytes, ",");
         }
         push_ascii(&mut bytes, "{\"topics\":[");
-        for (topic_idx, topic) in log.topics.iter().cloned().enumerate() {
+        for (topic_idx, topic) in topics.iter().cloned().enumerate() {
             if topic_idx > 0 {
                 push_ascii(&mut bytes, ",");
             }
@@ -339,23 +340,22 @@ pub(crate) fn recorded_logs_json_return_data(
         }
         push_ascii(&mut bytes, "],\"data\":\"0x");
 
-        let len = log
-            .data_len
-            .into_concrete("symbolic vm.getRecordedLogsJson data length")
-            .and_then(|len| {
+        let len = data_len.into_concrete("symbolic vm.getRecordedLogsJson data length").and_then(
+            |len| {
                 usize::try_from(len).map_err(|_| {
                     SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length")
                 })
-            })?;
-        if len > log.data.len() {
+            },
+        )?;
+        if len > data.len() {
             return Err(SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length"));
         }
-        for byte in log.data.iter().take(len).cloned() {
+        for byte in data.iter().take(len).cloned() {
             push_hex_byte(&mut bytes, byte);
         }
 
         push_ascii(&mut bytes, "\",\"emitter\":\"");
-        push_ascii(&mut bytes, &format!("{}", log.emitter));
+        push_ascii(&mut bytes, &format!("{emitter}"));
         push_ascii(&mut bytes, "\"}");
     }
     push_ascii(&mut bytes, "]");

@@ -1077,12 +1077,12 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
 fn recorded_logs_return_data_matches_abi_encoding() {
     let emitter = Address::from([0x33; 20]);
     let topic = B256::from([0x11; 32]);
-    let log = SymbolicLog {
-        topics: vec![SymExpr::constant(U256::from_be_bytes(topic.0))].into(),
-        data_len: SymExpr::constant(U256::from(2)),
-        data: vec![SymExpr::constant(U256::from(0x22)), SymExpr::constant(U256::from(0x33))].into(),
+    let log = SymbolicLog::new(
+        vec![SymExpr::constant(U256::from_be_bytes(topic.0))],
+        SymExpr::constant(U256::from(2)),
+        vec![SymExpr::constant(U256::from(0x22)), SymExpr::constant(U256::from(0x33))],
         emitter,
-    };
+    );
 
     let encoded =
         recorded_logs_return_data(vec![log]).read_concrete("recorded log return data").unwrap();
@@ -1099,12 +1099,12 @@ fn recorded_logs_return_data_matches_abi_encoding() {
 #[test]
 fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let emitter = Address::from([0x33; 20]);
-    let log = SymbolicLog {
-        topics: vec![SymExpr::var("topic")].into(),
-        data_len: SymExpr::constant(U256::from(2)),
-        data: vec![SymExpr::constant(U256::from(0x12)), SymExpr::var("byte")].into(),
+    let log = SymbolicLog::new(
+        vec![SymExpr::var("topic")],
+        SymExpr::constant(U256::from(2)),
+        vec![SymExpr::constant(U256::from(0x12)), SymExpr::var("byte")],
         emitter,
-    };
+    );
 
     let return_data = recorded_logs_json_return_data(vec![log]).unwrap();
     let encoded = (0..return_data.len())
