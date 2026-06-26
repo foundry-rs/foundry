@@ -1084,17 +1084,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
-        if let Some(inner_context) = &self.inner_context_data {
-            let address = interpreter.input.target_address();
-            if inner_context.locally_created_accounts.contains(&address)
-                && let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&address)
-            {
-                account.mark_created_locally();
-            }
-        }
-        if self.locally_created_accounts.contains(&interpreter.input.target_address())
-            && let Some(account) =
-                ecx.journal_mut().evm_state_mut().get_mut(&interpreter.input.target_address())
+        let address = interpreter.input.target_address();
+        let should_mark_created_locally = self.locally_created_accounts.contains(&address)
+            || self
+                .inner_context_data
+                .as_ref()
+                .is_some_and(|ctx| ctx.locally_created_accounts.contains(&address));
+        if should_mark_created_locally
+            && let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&address)
         {
             account.mark_created_locally();
         }
@@ -1441,17 +1438,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
-        if self.in_inner_context
-            && outcome.result.result.is_ok()
-            && let Some(address) = outcome.address
-            && let Some(inner_context) = &mut self.inner_context_data
-        {
-            inner_context.locally_created_accounts.insert(address);
-        }
         if outcome.result.result.is_ok()
             && let Some(address) = outcome.address
         {
             self.locally_created_accounts.insert(address);
+
+            if self.in_inner_context
+                && let Some(inner_context) = &mut self.inner_context_data
+            {
+                inner_context.locally_created_accounts.insert(address);
+            }
         }
 
         // We are processing inner context outputs in the outer context, so need to avoid processing
