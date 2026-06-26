@@ -4,6 +4,7 @@ use crate::{
     RetryArgs,
     etherscan::EtherscanVerificationProvider,
     provider::{VerificationContext, VerificationProvider, VerificationProviderType},
+    sourcify::SourcifyVerificationProvider,
     utils::wrap_verifier_url_error,
 };
 use alloy_primitives::{Address, TxHash, map::HashSet};
@@ -541,6 +542,14 @@ impl FigmentProvider for VerifyArgs {
     }
 }
 
+struct ProviderRun {
+    label: VerificationProviderType,
+    args: VerifyArgs,
+    provider: Box<dyn VerificationProvider>,
+    /// If true, a failed run fails the command; otherwise the failure is logged as a warning.
+    required: bool,
+}
+
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(mut self) -> Result<()> {
@@ -620,16 +629,100 @@ impl VerifyArgs {
             sh_status!("Constructor args: {args}")?
         }
         let using_etherscan = resolved.is_etherscan();
-        resolved
-            .client(
-                etherscan_key.as_deref(),
-                self.etherscan.chain,
-                had_user_verifier_url,
-                self.verifier.is_explicitly_set(),
-            )?
-            .verify(self, context)
-            .await
-            .map_err(|err| wrap_verifier_url_error(err, verifier_url.as_deref(), using_etherscan))
+        let runs =
+            self.collect_runs(chain, etherscan_key.as_deref(), resolved, had_user_verifier_url)?;
+
+        // Submit every provider before polling any of them
+        let mut required_err = None;
+        let mut pending_check = None;
+        for ProviderRun { label, args, mut provider, required } in runs {
+            sh_status!("\nVerifying on {label}...")?;
+            let watch = args.watch;
+            match provider.submit(args, context.clone()).await {
+                Ok(check_args) => {
+                    if required
+                        && watch
+                        && let Some(check_args) = check_args
+                    {
+                        pending_check = Some((label, provider, check_args));
+                    }
+                }
+                Err(err) => {
+                    if required {
+                        required_err = Some(wrap_verifier_url_error(
+                            err,
+                            verifier_url.as_deref(),
+                            using_etherscan,
+                        ));
+                    } else {
+                        sh_warn!("{label} verification failed: {err}")?;
+                    }
+                }
+            }
+        }
+
+        // Poll the primary submission for completion
+        if required_err.is_none()
+            && let Some((label, provider, check_args)) = pending_check
+        {
+            sh_status!("\nWaiting for {label} verification result...")?;
+            if let Err(err) = provider.check(check_args).await {
+                required_err =
+                    Some(wrap_verifier_url_error(err, verifier_url.as_deref(), using_etherscan));
+            }
+        }
+
+        required_err.map_or(Ok(()), Err)
+    }
+
+    /// Plans the set of verification submissions to run for this invocation.
+    ///
+    /// `resolved` is the decision from [`VerifierArgs::resolve`] for the primary verifier.
+    /// Sourcify is added as an auxiliary run whenever the primary is not Sourcify.
+    fn collect_runs(
+        &self,
+        chain: Chain,
+        etherscan_key: Option<&str>,
+        resolved: VerificationProviderType,
+        had_user_verifier_url: bool,
+    ) -> Result<Vec<ProviderRun>> {
+        let mut runs = Vec::new();
+
+        let primary_provider = resolved.client(
+            etherscan_key,
+            self.etherscan.chain,
+            had_user_verifier_url,
+            self.verifier.is_explicitly_set(),
+        )?;
+        let primary_is_sourcify = resolved.is_sourcify();
+        runs.push(ProviderRun {
+            label: resolved,
+            args: self.clone(),
+            provider: primary_provider,
+            required: true,
+        });
+
+        // Skip the auxiliary Sourcify submission when the user appears to be using a
+        // non-public setup: an explicit `--verifier-url`, `--verifier custom`, or a
+        // local/dev chain.
+        let is_private_setup = had_user_verifier_url || resolved.is_custom() || is_dev_chain(chain);
+        if !primary_is_sourcify && !is_private_setup {
+            let mut args = self.clone();
+            args.verifier.verifier = Some(VerificationProviderType::Sourcify);
+            args.verifier.verifier_api_key = None;
+            // For chains with Sourcify-compatible APIs, use the chain's URL from etherscan_urls
+            // Otherwise, drop the URL so Sourcify falls back to its default.
+            args.verifier.verifier_url = sourcify_api_url(chain);
+            args.watch = false;
+            runs.push(ProviderRun {
+                label: VerificationProviderType::Sourcify,
+                args,
+                provider: Box::<SourcifyVerificationProvider>::default(),
+                required: false,
+            });
+        }
+
+        Ok(runs)
     }
 
     /// Returns the configured verification provider
@@ -876,6 +969,12 @@ fn sourcify_api_url(chain: Chain) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Returns `true` for local/dev chains.
+const fn is_dev_chain(chain: Chain) -> bool {
+    use foundry_config::NamedChain;
+    matches!(chain.named(), Some(NamedChain::Dev | NamedChain::AnvilHardhat | NamedChain::Cannon))
 }
 
 #[cfg(test)]
@@ -1138,5 +1237,91 @@ mod tests {
             verifier_url: Some("https://contracts.tempo.xyz/".to_string()),
         };
         assert_eq!(args.resolve(Some("mykey"), Some(tempo)), VerificationProviderType::Sourcify,);
+    }
+
+    #[test]
+    fn collect_runs_adds_sourcify_provider() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--etherscan-api-key",
+            "k",
+        ]);
+        let resolved = args.verifier.resolve(Some("k"), Some(Chain::mainnet()));
+        let runs = args.collect_runs(Chain::mainnet(), Some("k"), resolved, false).unwrap();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].label, VerificationProviderType::Etherscan);
+        assert!(runs[0].required);
+        assert_eq!(runs[1].label, VerificationProviderType::Sourcify);
+        assert!(!runs[1].required);
+        assert!(runs[1].args.verifier.verifier_api_key.is_none());
+    }
+
+    #[test]
+    fn collect_runs_skips_secondary_when_primary_is_sourcify() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--verifier",
+            "sourcify",
+        ]);
+        let resolved = args.verifier.resolve(None, Some(Chain::mainnet()));
+        let runs = args.collect_runs(Chain::mainnet(), None, resolved, false).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].label, VerificationProviderType::Sourcify);
+        assert!(runs[0].required);
+    }
+
+    #[test]
+    fn collect_runs_skips_secondary_for_custom_verifier() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            "https://internal.example.com/api",
+        ]);
+        let runs = args
+            .collect_runs(Chain::mainnet(), None, VerificationProviderType::Custom, true)
+            .unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].label, VerificationProviderType::Custom);
+    }
+
+    #[test]
+    fn collect_runs_skips_secondary_on_dev_chain() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--etherscan-api-key",
+            "k",
+        ]);
+        let anvil = Chain::from(31337u64);
+        let resolved = args.verifier.resolve(Some("k"), Some(anvil));
+        let runs = args.collect_runs(anvil, Some("k"), resolved, false).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].required);
+    }
+
+    #[test]
+    fn collect_runs_skips_secondary_with_user_verifier_url() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Counter.sol:Counter",
+            "--verifier",
+            "blockscout",
+            "--verifier-url",
+            "https://internal-blockscout.example.com/api",
+        ]);
+        let resolved = args.verifier.resolve(None, Some(Chain::mainnet()));
+        let runs = args.collect_runs(Chain::mainnet(), None, resolved, true).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].label, VerificationProviderType::Blockscout);
     }
 }

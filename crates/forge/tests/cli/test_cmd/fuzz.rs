@@ -384,6 +384,7 @@ Encountered 1 failing test in test/Fuzz.t.sol:FuzzTest
 Encountered a total of 1 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -954,6 +955,7 @@ Ran 1 test for test/RandomFuzzTest.t.sol:RandomFuzzTest
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -1004,6 +1006,74 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
     let assert = cmd.forge_fuse().args(["test", "--rerun", "-j1"]).assert_failure();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
     assert_eq!(random_failure_reason(&stdout), reason, "{stdout}");
+});
+
+// Fuzzed enum inputs must stay within `0..variant_count`, else the contract rejects them with
+// `Panic(0x21)` when decoding, before the test body runs. https://github.com/foundry-rs/foundry/issues/6623
+forgetest_init!(fuzz_bounds_enum_inputs, |prj, cmd| {
+    // File-level enum in a non-test source, used as a struct field below, to exercise enum
+    // collection from outside the test file.
+    prj.add_source(
+        "LibEnum.sol",
+        r#"
+enum LibEnumVal { L0, L1 }
+   "#,
+    );
+
+    prj.add_test(
+        "FuzzEnum.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {LibEnumVal} from "src/LibEnum.sol";
+
+contract FuzzEnum is Test {
+    enum EnumVal { VAL_0, VAL_1, VAL_2 }
+
+    struct WithEnum {
+        EnumVal e;
+        uint8 raw;
+        LibEnumVal lib;
+    }
+
+    function testScalarEnum(EnumVal val) public pure {
+        assert(uint8(val) < 3);
+    }
+
+    function testEnumArray(EnumVal[] memory vals) public pure {
+        for (uint256 i; i < vals.length; ++i) {
+            assert(uint8(vals[i]) < 3);
+        }
+    }
+
+    function testEnumInStruct(WithEnum memory s) public pure {
+        assert(uint8(s.e) < 3);
+        assert(uint8(s.lib) < 2);
+    }
+
+    function testEnumInStructArray(WithEnum[] memory xs) public pure {
+        for (uint256 i; i < xs.length; ++i) {
+            assert(uint8(xs[i].e) < 3);
+            assert(uint8(xs[i].lib) < 2);
+        }
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "FuzzEnum", "--fuzz-runs", "512"]).assert_success().stdout_eq(str![
+        [r#"
+...
+Ran 4 tests for test/FuzzEnum.t.sol:FuzzEnum
+[PASS] testEnumArray(uint8[]) (runs: 512, [AVG_GAS])
+[PASS] testEnumInStruct((uint8,uint8,uint8)) (runs: 512, [AVG_GAS])
+[PASS] testEnumInStructArray((uint8,uint8,uint8)[]) (runs: 512, [AVG_GAS])
+[PASS] testScalarEnum(uint8) (runs: 512, [AVG_GAS])
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]
+    ]);
 });
 
 fn random_failure_reason(stdout: &str) -> String {

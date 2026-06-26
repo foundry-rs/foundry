@@ -123,8 +123,27 @@ pub trait VerificationProvider {
         context: VerificationContext,
     ) -> Result<()>;
 
-    /// Sends the actual verify request for the targeted contract.
-    async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()>;
+    /// Submits the verification request for the targeted contract.
+    ///
+    /// Returns `Some(check_args)` if a follow-up status check is possible (the request was
+    /// accepted by the provider), or `None` if the submission was a no-op (e.g. the contract
+    /// was already verified).
+    async fn submit(
+        &mut self,
+        args: VerifyArgs,
+        context: VerificationContext,
+    ) -> Result<Option<VerifyCheckArgs>>;
+
+    /// Convenience wrapper: [`Self::submit`]s and, if `args.watch` is set, polls
+    /// [`Self::check`] until completion.
+    async fn verify(&mut self, args: VerifyArgs, context: VerificationContext) -> Result<()> {
+        let watch = args.watch;
+        let check_args = self.submit(args, context).await?;
+        if watch && let Some(check_args) = check_args {
+            return self.check(check_args).await;
+        }
+        Ok(())
+    }
 
     /// Checks whether the contract is verified.
     async fn check(&self, args: VerifyCheckArgs) -> Result<()>;
@@ -196,10 +215,6 @@ impl VerificationProviderType {
 
         // 1. Explicit `--verifier sourcify` always wins over ETHERSCAN_API_KEY.
         if is_explicit && self.is_sourcify() {
-            sh_status!(
-                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
-            or use the --verifier flag to verify on another provider."
-            )?;
             return Ok(Box::<SourcifyVerificationProvider>::default());
         }
 
@@ -251,20 +266,12 @@ impl VerificationProviderType {
                 }
                 // Fall through to branch 5 (Sourcify default) below.
             } else {
-                sh_status!(
-                    "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
-                     Unset it or pass `--verifier sourcify` (or another provider) to override."
-                )?;
                 return Ok(Box::<EtherscanVerificationProvider>::default());
             }
         }
 
         // 5. No key, no explicit verifier: default to Sourcify.
         if self.is_sourcify() {
-            sh_status!(
-                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
-            or use the --verifier flag to verify on another provider."
-            )?;
             return Ok(Box::<SourcifyVerificationProvider>::default());
         }
 
@@ -280,6 +287,10 @@ impl VerificationProviderType {
 
     pub const fn is_etherscan(&self) -> bool {
         matches!(self, Self::Etherscan)
+    }
+
+    pub const fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom)
     }
 }
 

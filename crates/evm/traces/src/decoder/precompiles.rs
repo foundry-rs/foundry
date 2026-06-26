@@ -91,9 +91,10 @@ pub(super) fn is_known_precompile(
         Some(hardfork) => active_tempo_precompile_addresses(hardfork).any(|addr| addr == address),
         None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
     };
-    if chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
-        && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address))
-    {
+    let is_tempo_context = chain_id
+        .map(|id| Chain::from_id(id).is_tempo())
+        .unwrap_or_else(|| tempo_hardfork.is_some());
+    if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
         return true;
     }
     // Celo transfer precompile (only on Celo chains).

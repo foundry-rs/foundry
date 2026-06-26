@@ -96,7 +96,7 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas used. Returned by `lastCallGas`.
+    /// Gas used. Returned by `lastCallGas` and `lastFrameGas`.
     struct Gas {
         /// The gas limit of the call.
         uint64 gasLimit;
@@ -778,13 +778,23 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
@@ -1012,9 +1022,14 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
+    /// DEPRECATED: use `lastFrameGas` instead.
     /// Gets the gas used in the last call from the callee perspective.
-    #[cheatcode(group = Evm, safety = Safe)]
+    #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
+
+    /// Gets the gas used in the last call or create from the callee perspective.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastFrameGas() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 
@@ -1185,6 +1200,17 @@ interface Vm {
     /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.
+    ///
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
 
     /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
     #[cheatcode(group = Testing, safety = Unsafe)]
@@ -2813,6 +2839,20 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.
+    #[cheatcode(group = Crypto)]
+    function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Crypto)]
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
     /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
@@ -3083,7 +3123,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will output the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will output the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
@@ -3105,7 +3145,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will use the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will use the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);

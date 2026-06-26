@@ -7,8 +7,9 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
-    SettingsOverrides, SolcReq, SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout,
+    CompilationRestrictions, Config, Eip1559FeeEstimatePreset, FsPermissions, FuzzConfig,
+    FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq, SymbolicConfig,
+    SymbolicExplorationOrder, SymbolicStorageLayout,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -79,6 +80,7 @@ ffi = false
 live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
+eip1559_fee_estimate = "market"
 prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
@@ -105,7 +107,7 @@ bytecode_hash = "ipfs"
 cbor_metadata = true
 sparse_mode = false
 build_info = false
-isolate = false
+isolate = true
 disable_block_gas_limit = false
 enable_tx_gas_limit = false
 unchecked_cheatcode_artifacts = false
@@ -168,11 +170,7 @@ prefer_compact = "all"
 single_line_imports = false
 
 [lint]
-severity = [
-    "high",
-    "medium",
-    "low",
-]
+severity = []
 exclude_lints = []
 ignore = []
 lint_on_build = true
@@ -218,12 +216,23 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+corpus_random_sequence_weight = 10
+payable_value_weight = 0
+mutation_weight_splice = 1
+mutation_weight_repeat = 1
+mutation_weight_interleave = 1
+mutation_weight_prefix = 1
+mutation_weight_suffix = 1
+mutation_weight_abi = 1
+mutation_weight_cmp = 1
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
 [invariant]
 runs = 256
 depth = 500
+min_depth = 1
+depth_mode = "fixed"
 workers = 1
 fail_on_revert = false
 call_override = false
@@ -244,6 +253,15 @@ evm_edge_coverage_collision_free = true
 evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
+corpus_random_sequence_weight = 10
+payable_value_weight = 15
+mutation_weight_splice = 1
+mutation_weight_repeat = 1
+mutation_weight_interleave = 1
+mutation_weight_prefix = 1
+mutation_weight_suffix = 1
+mutation_weight_abi = 1
+mutation_weight_cmp = 1
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -374,6 +392,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset::Market,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
@@ -1344,7 +1363,6 @@ contract CounterTest {
     cmd.forge_fuse().args(["build"]).assert_success();
 });
 
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(test_default_config, |prj, cmd| {
     prj.write_config(Config::default());
     cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(DEFAULT_CONFIG);
@@ -1442,6 +1460,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "corpus_random_sequence_weight": 10,
+    "payable_value_weight": 0,
+    "mutation_weight_splice": 1,
+    "mutation_weight_repeat": 1,
+    "mutation_weight_interleave": 1,
+    "mutation_weight_prefix": 1,
+    "mutation_weight_suffix": 1,
+    "mutation_weight_abi": 1,
+    "mutation_weight_cmp": 1,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -1449,6 +1476,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "invariant": {
     "runs": 256,
     "depth": 500,
+    "min_depth": 1,
+    "depth_mode": "fixed",
     "workers": 1,
     "fail_on_revert": false,
     "call_override": false,
@@ -1470,6 +1499,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
+    "corpus_random_sequence_weight": 10,
+    "payable_value_weight": 15,
+    "mutation_weight_splice": 1,
+    "mutation_weight_repeat": 1,
+    "mutation_weight_interleave": 1,
+    "mutation_weight_prefix": 1,
+    "mutation_weight_suffix": 1,
+    "mutation_weight_abi": 1,
+    "mutation_weight_cmp": 1,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
@@ -1509,12 +1547,15 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "mutation": {
     "include_operators": [],
     "exclude_operators": [],
-    "timeout": null
+    "timeout": null,
+    "optimizer_runs": null,
+    "via_ir": null
   },
   "ffi": false,
   "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
+  "eip1559_fee_estimate": "market",
   "prompt_timeout": 120,
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
@@ -1575,11 +1616,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "single_line_imports": false
   },
   "lint": {
-    "severity": [
-      "high",
-      "medium",
-      "low"
-    ],
+    "severity": [],
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
@@ -1617,7 +1654,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
       "path": "out"
     }
   ],
-  "isolate": false,
+  "isolate": true,
   "disable_block_gas_limit": false,
   "enable_tx_gas_limit": false,
   "labels": {},

@@ -32,7 +32,11 @@ use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
-    provider::{ProviderBuilder, try_get_http_provider},
+    provider::{
+        ProviderBuilder,
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+        try_get_http_provider,
+    },
     shell,
     tempo::{
         KeyEntry, KeysFile, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization,
@@ -612,32 +616,31 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         )
                     }
                     (false, _, _) => {
-                        let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let fees = estimate_eip1559_fees(
+                            &provider,
+                            self.script_config.config.eip1559_fee_estimate,
+                        )
+                        .await
+                        .wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
-                        // When using --browser, the browser wallet may override the
-                        // priority fee with its own estimate (from
-                        // eth_maxPriorityFeePerGas) without adjusting maxFeePerGas,
-                        // leading to maxPriorityFeePerGas > maxFeePerGas.
-                        // This is common on OP Stack chains (e.g. Base) where
-                        // eth_feeHistory returns empty reward arrays, causing the
-                        // estimator to fall back to a 1 wei priority fee.
-                        if matches!(&send_kind, SendTransactionsKind::Raw { browser: Some(_), .. })
-                            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
-                            && suggested_tip > fees.max_priority_fee_per_gas
-                        {
-                            fees.max_fee_per_gas += suggested_tip - fees.max_priority_fee_per_gas;
-                            fees.max_priority_fee_per_gas = suggested_tip;
-                        }
+                        // Browser wallets may suggest their own tip; query it best-effort.
+                        let browser_suggested_tip = if matches!(
+                            &send_kind,
+                            SendTransactionsKind::Raw { browser: Some(_), .. }
+                        ) {
+                            provider.get_max_priority_fee_per_gas().await.ok()
+                        } else {
+                            None
+                        };
 
-                        if let Some(gas_price) = self.args.with_gas_price {
-                            fees.max_fee_per_gas = gas_price.to();
-                        }
+                        let fees = resolve_broadcast_eip1559_fees(
+                            fees,
+                            self.args.with_gas_price.map(|p| p.to()),
+                            self.args.priority_gas_price.map(|p| p.to()),
+                            browser_suggested_tip,
+                        )?;
 
-                        if let Some(priority_gas_price) = self.args.priority_gas_price {
-                            fees.max_priority_fee_per_gas = priority_gas_price.to();
-                        }
-
-                        (None, Some(fees))
+                        (None, Some(fees.estimation()))
                     }
                 };
 
@@ -1227,12 +1230,17 @@ impl BundledState<TempoEvmNetwork> {
         // Build the batch transaction request
         let nonce = provider.get_transaction_count(sender).await?;
 
-        // Get gas prices - batch transactions are Tempo-only, always use EIP-1559 style fees
-        let fees = provider.estimate_eip1559_fees().await?;
-        let max_fee_per_gas =
-            self.args.with_gas_price.map(|p| p.to()).unwrap_or(fees.max_fee_per_gas);
-        let max_priority_fee_per_gas =
-            self.args.priority_gas_price.map(|p| p.to()).unwrap_or(fees.max_priority_fee_per_gas);
+        // Batch transactions are Tempo-only and always use EIP-1559 style fees.
+        let fees = estimate_eip1559_fees(&provider, self.script_config.config.eip1559_fee_estimate)
+            .await?;
+        let fees = resolve_broadcast_eip1559_fees(
+            fees,
+            self.args.with_gas_price.map(|p| p.to()),
+            self.args.priority_gas_price.map(|p| p.to()),
+            None,
+        )?;
+        let max_fee_per_gas = fees.max_fee_per_gas;
+        let max_priority_fee_per_gas = fees.max_priority_fee_per_gas;
 
         let mut batch_tx = TempoTransactionRequest {
             inner: TransactionRequest {

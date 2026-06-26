@@ -1,9 +1,13 @@
 use crate::{
-    cmd::tip20::{resolve_tip20_signer, send_tip20_transaction},
+    cmd::{
+        keychain::is_tempo_hardfork_active,
+        tip20::{resolve_tip20_signer, send_tip20_transaction},
+    },
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
+use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, SolValue};
 use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, ensure};
@@ -13,6 +17,7 @@ use foundry_cli::{
     utils::{LoadConfig, get_provider},
 };
 use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use serde_json::{Value, json};
 use std::str::FromStr;
@@ -27,6 +32,8 @@ use tempo_primitives::TempoAddressExt;
 #[derive(Debug, Parser, Clone)]
 pub enum ReceivePolicySubcommand {
     /// Set the caller's TIP-403 receive policy.
+    ///
+    /// Create the sender and token-filter policies referenced here with `cast tip403 create`.
     Set {
         /// Sender policy ID to evaluate for inbound transfer originators.
         sender_policy_id: u64,
@@ -186,6 +193,12 @@ async fn set(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
+    // Reject authorities that can never satisfy `ReceivePolicyGuard.claim()` before doing
+    // anything else; `--force` only suppresses the softer originator-recovery warning below.
+    if let Some(message) = invalid_recovery_authority_message(recovery_authority) {
+        eyre::bail!("{message}");
+    }
+
     let warning = if force {
         None
     } else {
@@ -380,8 +393,29 @@ async fn receipt_balance(receipt: Bytes, rpc: RpcOpts) -> Result<()> {
     })
 }
 
+// The ReceivePolicyGuard precompile only has code from T6 onwards, so a pre-T6 call would
+// succeed as a silent no-op instead of reverting. Fail early with a clear message.
+async fn ensure_receive_policy_t6<P>(provider: &P, command: &str) -> Result<()>
+where
+    P: Provider<TempoNetwork>,
+{
+    // Prefer the hardfork query, but if it is unavailable (e.g. an older RPC without the method)
+    // fall back to checking whether the guard precompile has code.
+    let active = match is_tempo_hardfork_active(provider, TempoHardfork::T6).await {
+        Ok(active) => active,
+        Err(_) => !provider.get_code_at(RECEIVE_POLICY_GUARD_ADDRESS).await?.is_empty(),
+    };
+    if !active {
+        eyre::bail!("{command} requires a Tempo T6-capable ReceivePolicy RPC");
+    }
+    Ok(())
+}
+
 async fn burn_receipt(receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
     decode_claim_receipt(&receipt)?;
+    let config = send_tx.eth.rpc.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    ensure_receive_policy_t6(&provider, "cast receive-policy receipt burn").await?;
     let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
     send_tip20_transaction(
         NameOrAddress::Address(RECEIVE_POLICY_GUARD_ADDRESS),
@@ -399,6 +433,7 @@ async fn claim(to: NameOrAddress, receipt: Bytes, send_tx: SendTxOpts, tx: TxPar
     decode_claim_receipt(&receipt)?;
     let config = send_tx.eth.rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    ensure_receive_policy_t6(&provider, "cast receive-policy claim").await?;
     let to = to.resolve(&provider).await?;
     let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
     send_tip20_transaction(
@@ -444,6 +479,32 @@ async fn recovery_warning(
         blocked.len(),
         blocked.iter().map(Address::to_string).collect::<Vec<_>>().join(", ")
     )))
+}
+
+/// Returns an error message when `recovery_authority` could never pass
+/// `ReceivePolicyGuard.claim()` and would leave held receipts unclaimable.
+///
+/// `address(0)` is the originator-recovery sentinel and a receiver's own address is valid
+/// (receiver recovery), so those pass. Virtual and TIP-20 addresses are always rejected. Fixed
+/// system precompiles are rejected conservatively against the full known list (a superset of the
+/// registry's spec-aware check), since a not-yet-active precompile is never a sound authority and
+/// becomes unclaimable once it activates.
+fn invalid_recovery_authority_message(recovery_authority: Address) -> Option<String> {
+    if recovery_authority == Address::ZERO {
+        return None;
+    }
+    if recovery_authority.is_virtual() {
+        return Some("recovery authority cannot be a TIP-1022 virtual address".to_string());
+    }
+    if recovery_authority.is_tip20() {
+        return Some("recovery authority cannot be a TIP-20 token address".to_string());
+    }
+    if TEMPO_PRECOMPILE_ADDRESSES.contains(&recovery_authority) {
+        return Some(format!(
+            "recovery authority cannot be a fixed Tempo system precompile: {recovery_authority}"
+        ));
+    }
+    None
 }
 
 fn decode_claim_receipt(receipt: &Bytes) -> Result<IReceivePolicyGuard::ClaimReceiptV1> {
@@ -769,6 +830,38 @@ mod tests {
         assert_eq!(payload["recovery_mode"], "originator");
         assert_eq!(payload["recipient_is_virtual"], true);
         assert_eq!(payload["claim_target"], Value::Null);
+    }
+
+    #[test]
+    fn rejects_unclaimable_recovery_authorities() {
+        // Originator recovery and a plain EOA authority are valid.
+        assert_eq!(invalid_recovery_authority_message(Address::ZERO), None);
+        assert_eq!(
+            invalid_recovery_authority_message(address!(
+                "1111111111111111111111111111111111111111"
+            )),
+            None
+        );
+
+        // Every fixed Tempo system precompile is unclaimable.
+        for authority in TEMPO_PRECOMPILE_ADDRESSES {
+            let err = invalid_recovery_authority_message(*authority).unwrap();
+            assert!(err.contains("fixed Tempo system precompile"));
+        }
+
+        // TIP-20 token and TIP-1022 virtual addresses are unclaimable too.
+        let err = invalid_recovery_authority_message(address!(
+            "20c0000000000000000000000000000000000001"
+        ))
+        .unwrap();
+        assert!(err.contains("TIP-20 token address"));
+
+        let virtual_address = Address::new_virtual(
+            MasterId::from([0x12, 0x34, 0x56, 0x78]),
+            UserTag::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]),
+        );
+        let err = invalid_recovery_authority_message(virtual_address).unwrap();
+        assert!(err.contains("TIP-1022 virtual address"));
     }
 
     #[test]
