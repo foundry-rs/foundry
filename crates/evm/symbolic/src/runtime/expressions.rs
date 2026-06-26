@@ -1191,6 +1191,17 @@ impl Expr {
         }
     }
 
+    /// Adds a concrete value to a shared expression.
+    pub(crate) fn add_arc_const(expr: Arc<Self>, value: U256) -> Arc<Self> {
+        if value.is_zero() {
+            return expr;
+        }
+        match expr.as_ref() {
+            Self::Const(expr) => Arc::new(Self::Const(expr.wrapping_add(value))),
+            _ => Arc::new(Self::Op(ExprOp::Add, expr, Arc::new(Self::Const(value)))),
+        }
+    }
+
     /// Builds a bitwise-not expression.
     pub(crate) fn not(value: Self) -> Self {
         match value {

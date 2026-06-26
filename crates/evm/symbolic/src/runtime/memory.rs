@@ -216,7 +216,7 @@ impl SymMemory {
                 self.read_bytes(offset.to::<usize>(), size)
             }
             SymWord::Expr(offset) => {
-                (0..size).map(|idx| self.byte_dynamic_with_delta(&offset, idx)).collect()
+                (0..size).map(|idx| self.byte_dynamic_with_delta_arc(&offset, idx)).collect()
             }
         }
     }
@@ -256,13 +256,9 @@ impl SymMemory {
             for (idx, byte) in write.bytes.iter().enumerate() {
                 has_symbolic_match = true;
                 result = Expr::ite_arc(
-                    BoolExpr::eq(
-                        Expr::op(
-                            ExprOp::Add,
-                            write.offset.as_ref().clone(),
-                            Expr::Const(U256::from(idx)),
-                        ),
-                        Expr::Const(U256::from(offset)),
+                    BoolExpr::eq_arc(
+                        Expr::add_arc_const(Arc::clone(&write.offset), U256::from(idx)),
+                        Arc::new(Expr::Const(U256::from(offset))),
                     ),
                     byte.clone_arc_expr(),
                     result,
@@ -281,7 +277,13 @@ impl SymMemory {
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
+    #[cfg(test)]
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
+        self.byte_dynamic_with_delta_arc(&Arc::new(offset.clone()), delta)
+    }
+
+    /// Returns the `byte_dynamic_with_delta_arc` symbolic memory helper result.
+    pub(crate) fn byte_dynamic_with_delta_arc(&self, offset: &Arc<Expr>, delta: usize) -> SymWord {
         let mut result = Arc::new(Expr::Const(U256::ZERO));
         for candidate in (delta..self.size).rev() {
             let (byte, base_epoch) = self.base_byte(candidate);
@@ -289,13 +291,9 @@ impl SymMemory {
             for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
                 for (idx, byte) in write.bytes.iter().enumerate() {
                     candidate_result = Expr::ite_arc(
-                        BoolExpr::eq(
-                            Expr::op(
-                                ExprOp::Add,
-                                write.offset.as_ref().clone(),
-                                Expr::Const(U256::from(idx)),
-                            ),
-                            Expr::Const(U256::from(candidate)),
+                        BoolExpr::eq_arc(
+                            Expr::add_arc_const(Arc::clone(&write.offset), U256::from(idx)),
+                            Arc::new(Expr::Const(U256::from(candidate))),
                         ),
                         byte.clone_arc_expr(),
                         candidate_result,
@@ -303,7 +301,10 @@ impl SymMemory {
                 }
             }
             result = Expr::ite_arc(
-                BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
+                BoolExpr::eq_arc(
+                    Arc::clone(offset),
+                    Arc::new(Expr::Const(U256::from(candidate - delta))),
+                ),
                 candidate_result,
                 result,
             );
@@ -369,7 +370,7 @@ impl SymMemory {
                     .into_iter()
                     .enumerate()
                     .map(|(idx, source)| {
-                        let existing = self.byte_dynamic_with_delta(&dest, idx);
+                        let existing = self.byte_dynamic_with_delta_arc(&dest, idx);
                         symbolic_copy_size_byte(idx, &size, source, existing)
                     })
                     .collect();
@@ -603,7 +604,7 @@ impl SymMemory {
                 self.byte(dest.to::<usize>() + idx)
             }
             SymWord::Concrete(_) => SymWord::zero(),
-            SymWord::Expr(dest) => self.byte_dynamic_with_delta(dest, idx),
+            SymWord::Expr(dest) => self.byte_dynamic_with_delta_arc(dest, idx),
         }
     }
 
@@ -834,11 +835,14 @@ impl SymCode {
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
+    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Arc<Expr>, delta: usize) -> SymWord {
         let mut result = Arc::new(Expr::Const(U256::ZERO));
         for candidate in (delta..self.len()).rev() {
             result = Expr::ite_arc(
-                BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
+                BoolExpr::eq_arc(
+                    Arc::clone(offset),
+                    Arc::new(Expr::Const(U256::from(candidate - delta))),
+                ),
                 self.bytes[candidate].clone_arc_expr(),
                 result,
             );
@@ -932,11 +936,14 @@ impl SymReturnData {
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic memory helper result.
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
+    pub(crate) fn byte_dynamic_with_delta(&self, offset: &Arc<Expr>, delta: usize) -> SymWord {
         let mut result = Arc::new(Expr::Const(U256::ZERO));
         for candidate in (delta..self.len()).rev() {
             result = Expr::ite_arc(
-                BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
+                BoolExpr::eq_arc(
+                    Arc::clone(offset),
+                    Arc::new(Expr::Const(U256::from(candidate - delta))),
+                ),
                 self.bytes[candidate].clone_arc_expr(),
                 result,
             );
