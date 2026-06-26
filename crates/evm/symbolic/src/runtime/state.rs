@@ -1518,21 +1518,23 @@ impl SymbolicWorld {
             return Ok(SymWord::Concrete(U256::from(self.extcode(executor, address)?.len())));
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
-        let mut result = Expr::Const(U256::from(self.extcode(executor, representative)?.len()));
+        let expr = word.into_arc_expr();
+        let representative =
+            representative_symbolic_address(&SymWord::from_arc_expr(Arc::clone(&expr)));
+        let mut result =
+            Arc::new(Expr::Const(U256::from(self.extcode(executor, representative)?.len())));
         for (address, code) in &self.code_cache {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = Expr::ite(
-                BoolExpr::eq(expr.clone(), Expr::Const(address_word(*address))),
-                Expr::Const(U256::from(code.len())),
+            result = Expr::ite_arc(
+                BoolExpr::eq_arc(Arc::clone(&expr), Arc::new(Expr::Const(address_word(*address)))),
+                Arc::new(Expr::Const(U256::from(code.len()))),
                 result,
             );
         }
 
-        Ok(SymWord::from_expr(result))
+        Ok(SymWord::from_arc_expr(result))
     }
 
     /// Implements the `extcode_hash_word` symbolic state helper.
@@ -1545,9 +1547,10 @@ impl SymbolicWorld {
             return self.extcode_hash_for_address(executor, address);
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
-        let mut result = self.extcode_hash_for_address(executor, representative)?.into_expr();
+        let expr = word.into_arc_expr();
+        let representative =
+            representative_symbolic_address(&SymWord::from_arc_expr(Arc::clone(&expr)));
+        let mut result = self.extcode_hash_for_address(executor, representative)?.into_arc_expr();
         let cached_codes: Vec<_> =
             self.code_cache.iter().map(|(address, code)| (*address, code.clone())).collect();
         for (address, code) in cached_codes.into_iter().rev() {
@@ -1556,14 +1559,14 @@ impl SymbolicWorld {
             } else {
                 keccak_word(code.read_bytes(0, code.len()))
             };
-            result = Expr::ite(
-                BoolExpr::eq(expr.clone(), Expr::Const(address_word(address))),
-                hash.into_expr(),
+            result = Expr::ite_arc(
+                BoolExpr::eq_arc(Arc::clone(&expr), Arc::new(Expr::Const(address_word(address)))),
+                hash.into_arc_expr(),
                 result,
             );
         }
 
-        Ok(SymWord::from_expr(result))
+        Ok(SymWord::from_arc_expr(result))
     }
 
     /// Implements the `extcode_bytes_word` symbolic state helper.
