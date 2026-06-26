@@ -2145,6 +2145,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if !should_symbolically_seed_fuzz_corpus(&self.config, func) {
             return;
         }
+        if fuzz_config.corpus.corpus_dir.is_none() {
+            let _ = sh_warn!(
+                "`--symbolic-seed-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`; \
+                 skipping symbolic corpus seeding"
+            );
+            return;
+        }
 
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         let result = symbolic.run(SymbolicRunInput {

@@ -1682,6 +1682,38 @@ contract SymbolicFuzzCorpusBestEffort {
     assert!(stdout.contains("[PASS] testFuzz_symbolicHostile(uint256)"), "{stdout}");
 });
 
+forgetest_init!(symbolic_seed_corpus_warns_without_corpus_dir, |prj, cmd| {
+    prj.add_test(
+        "SymbolicFuzzCorpusNoDir.t.sol",
+        r#"
+contract SymbolicFuzzCorpusNoDir {
+    function testFuzz_noop(uint256) public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_noop",
+            "--symbolic-seed-corpus",
+            "--fuzz-runs",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+
+    assert!(
+        stderr
+            .contains("`--symbolic-seed-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`"),
+        "{stderr}"
+    );
+});
+
 forgetest_init!(symbolic_artifact_replay_uses_stored_fail_on_revert, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.fail_on_revert = false;
