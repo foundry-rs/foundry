@@ -183,7 +183,7 @@ impl SymbolicExecutor {
 
         let mut candidates = HashSet::<U256>::default();
         for expected in &state.expected_calls {
-            let Some(expected_value) = expected.value else { continue };
+            let Some(expected_value) = expected.value() else { continue };
             if self
                 .expected_call_match_constraints(
                     state,
@@ -544,18 +544,7 @@ impl SymbolicExecutor {
         gas: &SymExpr,
         calldata: &[SymExpr],
     ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        if !expected.static_parts_match(value, gas)? {
-            return Ok(None);
-        }
-        let Some(data_condition) =
-            calldata_prefix_condition(calldata, &expected.data, "symbolic expected call calldata")?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(SymBoolExpr::and(vec![
-            address_match_condition(&expected.callee, callee),
-            data_condition,
-        ])))
+        expected.match_condition(callee, value, gas, calldata)
     }
 
     pub(super) fn call_mock_match_condition(

@@ -693,14 +693,14 @@ pub(crate) enum AssumeNoRevert {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedCall {
-    pub(crate) callee: SymExpr,
-    pub(crate) value: Option<U256>,
-    pub(crate) gas: Option<u64>,
-    pub(crate) min_gas: Option<u64>,
-    pub(crate) data: Arc<[SymExpr]>,
-    pub(crate) expected: u64,
-    pub(crate) observed: u64,
-    pub(crate) exact: bool,
+    callee: SymExpr,
+    value: Option<U256>,
+    gas: Option<u64>,
+    min_gas: Option<u64>,
+    data: Arc<[SymExpr]>,
+    expected: u64,
+    observed: u64,
+    exact: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -739,7 +739,32 @@ impl ExpectedCall {
         }
     }
 
-    pub(crate) fn static_parts_match(
+    pub(crate) const fn value(&self) -> Option<U256> {
+        self.value
+    }
+
+    pub(crate) fn match_condition(
+        &self,
+        callee: Address,
+        value: Option<U256>,
+        gas: &SymExpr,
+        calldata: &[SymExpr],
+    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
+        if !self.static_parts_match(value, gas)? {
+            return Ok(None);
+        }
+        let Some(data_condition) =
+            calldata_prefix_condition(calldata, &self.data, "symbolic expected call calldata")?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(SymBoolExpr::and(vec![
+            address_match_condition(&self.callee, callee),
+            data_condition,
+        ])))
+    }
+
+    fn static_parts_match(
         &self,
         value: Option<U256>,
         gas: &SymExpr,
@@ -748,11 +773,7 @@ impl ExpectedCall {
             && self.gas_matches(gas, value)?)
     }
 
-    pub(crate) fn gas_matches(
-        &self,
-        gas: &SymExpr,
-        value: Option<U256>,
-    ) -> Result<bool, SymbolicError> {
+    fn gas_matches(&self, gas: &SymExpr, value: Option<U256>) -> Result<bool, SymbolicError> {
         if self.gas.is_none() && self.min_gas.is_none() {
             return Ok(true);
         }
