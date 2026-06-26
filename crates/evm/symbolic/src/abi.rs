@@ -145,7 +145,7 @@ impl SymbolicCalldata {
     /// Returns the `model_to_args` symbolic ABI helper result.
     pub(super) fn model_to_args(
         &self,
-        model: &BTreeMap<String, U256>,
+        model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<Vec<DynSolValue>, SymbolicError> {
         self.inputs.iter().map(|input| input.value.model_value(model)).collect()
     }
@@ -718,7 +718,7 @@ impl SymbolicAbiValue {
     /// Returns the `model_value` symbolic ABI helper result.
     pub(super) fn model_value(
         &self,
-        model: &BTreeMap<String, U256>,
+        model: &(impl SymbolicModelLookup + ?Sized),
     ) -> Result<DynSolValue, SymbolicError> {
         Ok(match self {
             Self::Bool { word } => DynSolValue::Bool(!model_word(word, model)?.is_zero()),

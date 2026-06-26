@@ -119,7 +119,7 @@ pub(crate) trait SymbolicSolver {
     ///
     /// The executor uses the returned variable assignments to materialize ABI
     /// arguments, calldata, and invariant sequences for concrete replay.
-    fn model(&mut self, constraints: &[BoolExpr]) -> Result<BTreeMap<String, U256>, SymbolicError>;
+    fn model(&mut self, constraints: &[BoolExpr]) -> Result<SymbolicModel, SymbolicError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,7 +158,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
     sat_cache: HashMap<Vec<BoolExpr>, bool>,
-    model_cache: HashMap<Vec<BoolExpr>, BTreeMap<String, U256>>,
+    model_cache: HashMap<Vec<BoolExpr>, SymbolicModel>,
     sat_queries: usize,
     model_queries: usize,
     sat_cache_hits: usize,
@@ -280,7 +280,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     /// Implements the `model` solver helper.
-    fn model(&mut self, constraints: &[BoolExpr]) -> Result<BTreeMap<String, U256>, SymbolicError> {
+    fn model(&mut self, constraints: &[BoolExpr]) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
         if constraints.iter().any(bool_contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
@@ -514,7 +514,7 @@ impl SmtLibSubprocessSolver {
     }
 
     /// Caches a validated normalized model result if the cache has room.
-    fn cache_model_result(&mut self, key: Vec<BoolExpr>, model: BTreeMap<String, U256>) {
+    fn cache_model_result(&mut self, key: Vec<BoolExpr>, model: SymbolicModel) {
         if self.model_cache.contains_key(&key)
             || self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES
         {
@@ -739,13 +739,16 @@ const fn expr_op_is_commutative(op: ExprOp) -> bool {
 fn validated_hard_arith_fallback_model(
     normalized_constraints: &[BoolExpr],
     original_constraints: &[BoolExpr],
-) -> Option<BTreeMap<String, U256>> {
+) -> Option<SymbolicModel> {
     let model = hard_arith_fallback_model(normalized_constraints)?;
     model_satisfies_constraints(&model, original_constraints).then_some(model)
 }
 
 /// Returns whether a parsed model satisfies the current original constraints.
-fn model_satisfies_constraints(model: &BTreeMap<String, U256>, constraints: &[BoolExpr]) -> bool {
+fn model_satisfies_constraints(
+    model: &(impl SymbolicModelLookup + ?Sized),
+    constraints: &[BoolExpr],
+) -> bool {
     constraints.iter().all(|constraint| eval_bool_expr(constraint, model).unwrap_or(false))
 }
 
@@ -1628,7 +1631,7 @@ fn first_solver_line(output: &str) -> &str {
 pub(crate) fn parse_and_validate_model(
     output: &str,
     constraints: &[BoolExpr],
-) -> Result<BTreeMap<String, U256>, SymbolicError> {
+) -> Result<SymbolicModel, SymbolicError> {
     let model = parse_model(output)?;
     if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false)) {
         Ok(model)
@@ -1654,8 +1657,8 @@ pub(crate) fn validate_solver_model_output(
 }
 
 /// Returns the `parse_model` solver helper result.
-pub(crate) fn parse_model(output: &str) -> Result<BTreeMap<String, U256>, SymbolicError> {
-    let mut values = BTreeMap::new();
+pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> {
+    let mut values = SymbolicModel::default();
     let mut tokens = output
         .split(|c: char| c.is_whitespace() || matches!(c, '(' | ')'))
         .filter(|token| !token.is_empty());
@@ -1675,7 +1678,7 @@ pub(crate) fn parse_model(output: &str) -> Result<BTreeMap<String, U256>, Symbol
                     })?;
                     let start = 32usize.saturating_sub(decoded.len());
                     bytes[start..start + decoded.len()].copy_from_slice(&decoded);
-                    values.insert(name.to_string(), U256::from_be_bytes(bytes));
+                    values.insert(intern_symbol(name), U256::from_be_bytes(bytes));
                     break;
                 }
                 if let Some(binary) = value.strip_prefix("#b") {
@@ -1687,7 +1690,7 @@ pub(crate) fn parse_model(output: &str) -> Result<BTreeMap<String, U256>, Symbol
                     let parsed = U256::from_str_radix(binary, 2).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver binary model value: {err}"))
                     })?;
-                    values.insert(name.to_string(), parsed);
+                    values.insert(intern_symbol(name), parsed);
                     break;
                 }
                 if value == "_"
@@ -1696,7 +1699,7 @@ pub(crate) fn parse_model(output: &str) -> Result<BTreeMap<String, U256>, Symbol
                     let parsed = U256::from_str_radix(bv, 10).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver decimal model value: {err}"))
                     })?;
-                    values.insert(name.to_string(), parsed);
+                    values.insert(intern_symbol(name), parsed);
                     break;
                 }
             }

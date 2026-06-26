@@ -3,6 +3,33 @@ use super::*;
 /// Set of symbolic variable names collected from expression trees.
 pub(crate) type SymbolicVars = IndexSet<Arc<str>>;
 
+/// Concrete assignments for symbolic variables.
+pub(crate) type SymbolicModel = HashMap<Arc<str>, U256>;
+
+/// Lookup interface for concrete symbolic assignments.
+pub(crate) trait SymbolicModelLookup {
+    /// Returns the concrete assignment for `name`.
+    fn value(&self, name: &str) -> Option<U256>;
+
+    /// Returns whether `name` has a concrete assignment.
+    fn contains_name(&self, name: &str) -> bool {
+        self.value(name).is_some()
+    }
+}
+
+impl SymbolicModelLookup for SymbolicModel {
+    fn value(&self, name: &str) -> Option<U256> {
+        self.get(name).copied()
+    }
+}
+
+#[cfg(test)]
+impl SymbolicModelLookup for BTreeMap<String, U256> {
+    fn value(&self, name: &str) -> Option<U256> {
+        self.get(name).copied()
+    }
+}
+
 #[derive(Default)]
 struct SymbolInterner {
     names: IndexSet<Arc<str>>,
@@ -20,7 +47,7 @@ impl SymbolInterner {
     }
 }
 
-fn intern_symbol(name: impl AsRef<str>) -> Arc<str> {
+pub(crate) fn intern_symbol(name: impl AsRef<str>) -> Arc<str> {
     static INTERNER: std::sync::LazyLock<std::sync::Mutex<SymbolInterner>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(SymbolInterner::default()));
     let mut interner = INTERNER.lock().expect("symbol interner mutex poisoned");
@@ -676,7 +703,7 @@ pub(crate) fn low_byte(word: SymWord) -> SymWord {
 /// Returns the `model_word` symbolic expression helper result.
 pub(crate) fn model_word(
     word: &SymWord,
-    model: &BTreeMap<String, U256>,
+    model: &(impl SymbolicModelLookup + ?Sized),
 ) -> Result<U256, SymbolicError> {
     match word {
         SymWord::Concrete(value) => Ok(*value),
@@ -687,7 +714,7 @@ pub(crate) fn model_word(
 /// Returns the `model_bytes` symbolic expression helper result.
 pub(crate) fn model_bytes(
     bytes: &[SymWord],
-    model: &BTreeMap<String, U256>,
+    model: &(impl SymbolicModelLookup + ?Sized),
 ) -> Result<Vec<u8>, SymbolicError> {
     bytes.iter().map(|byte| Ok(model_word(byte, model)?.to::<u8>())).collect()
 }
@@ -747,14 +774,14 @@ pub(crate) fn function_mock_match_condition(
 /// Returns the `eval_expr` symbolic expression helper result.
 pub(crate) fn eval_expr(
     expr: &Expr,
-    model: &BTreeMap<String, U256>,
+    model: &(impl SymbolicModelLookup + ?Sized),
 ) -> Result<U256, SymbolicError> {
     Ok(match expr {
         Expr::Const(value) => *value,
-        Expr::Var(var) => model.get(var.as_ref()).copied().unwrap_or_default(),
+        Expr::Var(var) => model.value(var).unwrap_or_default(),
         Expr::GasLeft(_) => return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled")),
         Expr::Keccak(hash) => eval_keccak_expr(&hash.len, &hash.bytes, model)?,
-        Expr::Hash(hash) => model.get(hash.name.as_ref()).copied().unwrap_or_default(),
+        Expr::Hash(hash) => model.value(&hash.name).unwrap_or_default(),
         Expr::Not(value) => !eval_expr(value, model)?,
         Expr::Op(op, left, right) => {
             let left = eval_expr(left, model)?;
@@ -785,7 +812,7 @@ pub(crate) fn eval_expr(
 pub(crate) fn eval_keccak_expr(
     len: &Expr,
     bytes: &[Expr],
-    model: &BTreeMap<String, U256>,
+    model: &(impl SymbolicModelLookup + ?Sized),
 ) -> Result<U256, SymbolicError> {
     let len = eval_expr(len, model)?;
     if len > U256::from(bytes.len()) {
@@ -854,7 +881,7 @@ pub(crate) fn eval_expr_op(op: ExprOp, left: U256, right: U256) -> U256 {
 /// Returns the `eval_bool_expr` symbolic expression helper result.
 pub(crate) fn eval_bool_expr(
     expr: &BoolExpr,
-    model: &BTreeMap<String, U256>,
+    model: &(impl SymbolicModelLookup + ?Sized),
 ) -> Result<bool, SymbolicError> {
     Ok(match expr {
         BoolExpr::Const(value) => *value,

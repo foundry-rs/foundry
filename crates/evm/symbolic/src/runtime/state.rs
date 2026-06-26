@@ -180,13 +180,13 @@ impl PathState {
 
         let mut vars = SymbolicVars::default();
         collect_eval_vars(expr, &mut vars);
-        let mut model = BTreeMap::new();
+        let mut model = SymbolicModel::default();
         for var in vars {
             let var_expr = Expr::var(var.clone());
             let value = self.constraints.iter().find_map(|constraint| {
                 bool_forces_expr_const_with_context(constraint, &var_expr, &self.constraints)
             })?;
-            model.insert(var.to_string(), value);
+            model.insert(var, value);
         }
 
         eval_expr(expr, &model).ok()

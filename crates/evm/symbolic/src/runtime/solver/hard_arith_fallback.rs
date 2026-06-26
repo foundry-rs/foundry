@@ -80,9 +80,7 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[BoolEx
 }
 
 /// Implements the `hard_arith_fallback_model` solver helper.
-pub(crate) fn hard_arith_fallback_model(
-    constraints: &[BoolExpr],
-) -> Option<BTreeMap<String, U256>> {
+pub(crate) fn hard_arith_fallback_model(constraints: &[BoolExpr]) -> Option<SymbolicModel> {
     if !constraints.iter().any(bool_contains_hard_arith)
         || constraints.iter().any(bool_contains_symbolic_hash)
     {
@@ -113,7 +111,7 @@ pub(crate) fn hard_arith_fallback_model(
             vars
         })
         .collect::<Vec<_>>();
-    let mut model = BTreeMap::new();
+    let mut model = SymbolicModel::default();
     let mut assignments = 0usize;
     let search = FallbackSearch {
         constraints,
@@ -200,9 +198,9 @@ impl FallbackSearch<'_> {
     fn model(
         &self,
         index: usize,
-        model: &mut BTreeMap<String, U256>,
+        model: &mut SymbolicModel,
         assignments: &mut usize,
-    ) -> Option<BTreeMap<String, U256>> {
+    ) -> Option<SymbolicModel> {
         if index == self.vars.len() {
             *assignments += 1;
             if *assignments > HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS {
@@ -213,7 +211,7 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
-            model.insert(self.vars[index].to_string(), *candidate);
+            model.insert(Arc::clone(&self.vars[index]), *candidate);
             if fallback_partial_model_satisfies_known_constraints(
                 self.constraints,
                 self.constraint_vars,
@@ -235,7 +233,7 @@ impl FallbackSearch<'_> {
 /// Checks all constraints before returning a hard-arithmetic fallback witness.
 pub(crate) fn fallback_model_satisfies_all_constraints(
     constraints: &[BoolExpr],
-    model: &BTreeMap<String, U256>,
+    model: &(impl SymbolicModelLookup + ?Sized),
 ) -> bool {
     constraints.iter().all(|constraint| eval_bool_expr(constraint, model).unwrap_or(false))
 }
@@ -245,11 +243,11 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
     constraints: &[BoolExpr],
     constraint_vars: &[SymbolicVars],
     searched_vars: &SymbolicVars,
-    model: &BTreeMap<String, U256>,
+    model: &SymbolicModel,
 ) -> bool {
     constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
         !vars.is_subset(searched_vars)
-            || !vars.iter().all(|var| model.contains_key(var.as_ref()))
+            || !vars.iter().all(|var| model.contains_name(var))
             || eval_bool_expr(constraint, model).unwrap_or(false)
     })
 }
@@ -304,9 +302,7 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
 
 /// Implements the `fallback_single_var_model` solver helper.
 #[cfg(test)]
-pub(crate) fn fallback_single_var_model(
-    constraints: &[BoolExpr],
-) -> Option<BTreeMap<String, U256>> {
+pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<SymbolicModel> {
     let mut vars = SymbolicVars::default();
     let mut constants = BTreeSet::new();
     for constraint in constraints {
@@ -348,7 +344,8 @@ pub(crate) fn fallback_single_var_model(
     }
 
     for candidate in candidates {
-        let model = BTreeMap::from([(var.to_string(), candidate)]);
+        let mut model = SymbolicModel::default();
+        model.insert(Arc::clone(&var), candidate);
         if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false))
         {
             return Some(model);
