@@ -341,25 +341,12 @@ pub(crate) fn sym_sub(left: SymWord, right: SymWord) -> SymWord {
 
 /// Computes the exact EVM `ADDMOD` semantics without truncating the intermediate sum.
 pub(crate) fn addmod_word(left: U256, right: U256, modulus: U256) -> U256 {
-    if modulus.is_zero() {
-        return U256::ZERO;
-    }
-    u256_from_u512((U512::from(left) + U512::from(right)) % U512::from(modulus))
+    left.add_mod(right, modulus)
 }
 
 /// Computes the exact EVM `MULMOD` semantics without truncating the intermediate product.
 pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
-    if modulus.is_zero() {
-        return U256::ZERO;
-    }
-    u256_from_u512((U512::from(left) * U512::from(right)) % U512::from(modulus))
-}
-
-/// Converts a known 256-bit-range `U512` result back into `U256`.
-fn u256_from_u512(value: U512) -> U256 {
-    let limbs = value.as_limbs();
-    debug_assert!(limbs[4..].iter().all(|limb| *limb == 0));
-    U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]])
+    left.mul_mod(right, modulus)
 }
 
 /// Returns the `expr_contains_keccak` symbolic expression helper result.

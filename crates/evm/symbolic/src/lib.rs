@@ -5,7 +5,7 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, B256, Bytes, I256, U256, U512, hex, keccak256,
+    Address, B256, Bytes, I256, U256, hex, keccak256,
     map::{HashMap, HashSet, IndexSet},
 };
 use alloy_signer::SignerSync;
