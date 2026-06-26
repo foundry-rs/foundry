@@ -572,14 +572,10 @@ pub struct WorkerCorpus {
     arg_mutation_distribution: Option<WeightedIndex<u32>>,
     /// Identifier of current mutated entry for this worker.
     current_mutated_index: Option<usize>,
-    /// Identifier of current verbatim replay entry for this worker.
-    current_replayed_index: Option<usize>,
     /// Config
     config: Arc<FuzzCorpusConfig>,
     /// Indices of new entries added to [`WorkerCorpus::in_memory_corpus`] since last sync.
     new_entry_indices: Vec<usize>,
-    /// Next initially loaded corpus entry to replay verbatim before applying stateless mutations.
-    next_replay_index: usize,
     /// Last sync timestamp in seconds.
     last_sync_timestamp: u64,
     /// Worker Dir
@@ -826,8 +822,6 @@ impl WorkerCorpus {
             worker_dir
         });
 
-        let next_replay_index = seed.in_memory_corpus.len();
-
         Ok(Self {
             id,
             in_memory_corpus: seed.in_memory_corpus,
@@ -841,10 +835,8 @@ impl WorkerCorpus {
             mutation_distribution,
             arg_mutation_distribution,
             current_mutated_index: None,
-            current_replayed_index: None,
             config: config.into(),
             new_entry_indices: Default::default(),
-            next_replay_index,
             last_sync_timestamp: 0,
             worker_dir,
             last_sync_metrics: Default::default(),
@@ -915,12 +907,6 @@ impl WorkerCorpus {
                 );
             }
         }
-        if let Some(index) = self.current_replayed_index.take()
-            && let Some(corpus) = self.in_memory_corpus.get_mut(index)
-        {
-            corpus.cmp_seq = cmp_seq.iter().take(corpus.tx_seq.len()).cloned().collect();
-        }
-
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
@@ -1282,11 +1268,6 @@ impl WorkerCorpus {
         let tx = if generate_fresh {
             self.current_mutated_index = None;
             self.new_tx(test_runner)?
-        } else if self.next_replay_index > 0 {
-            self.next_replay_index -= 1;
-            self.current_mutated_index = None;
-            self.current_replayed_index = Some(self.next_replay_index);
-            self.in_memory_corpus[self.next_replay_index].tx_seq.first().unwrap().clone()
         } else {
             let corpus_index = test_runner.rng().random_range(0..self.in_memory_corpus.len());
             let corpus = &self.in_memory_corpus[corpus_index];
@@ -2203,39 +2184,6 @@ mod tests {
 
         assert_eq!(input, Bytes::from(vec![0x22]));
         assert!(manager.current_mutated_index.is_none());
-    }
-
-    #[test]
-    fn stateless_new_input_replays_loaded_corpus_before_mutating() {
-        let mut config = corpus_config(temp_corpus_dir());
-        config.corpus_random_sequence_weight = 0;
-        let loaded = basic_tx_with_calldata(vec![0x11]);
-        let generated = basic_tx_with_calldata(vec![0x22]);
-        let seed = WorkerCorpusSeed {
-            in_memory_corpus: vec![CorpusEntry::new(vec![loaded.clone()])],
-            ..Default::default()
-        };
-        let mut manager = worker_corpus_with_config(0, config, generated, seed);
-        let mut runner = TestRunner::default();
-        let function = Function::parse("foo()").unwrap();
-
-        let replayed = manager.new_input(&mut runner, &empty_fuzz_state(), &function).unwrap();
-
-        assert_eq!(replayed, loaded.call_details.calldata);
-        assert!(manager.current_mutated_index.is_none());
-        assert_eq!(manager.current_replayed_index, Some(0));
-        assert_eq!(manager.next_replay_index, 0);
-
-        let cmp = CmpOperands {
-            op1: U256::from(1),
-            op2: U256::from(2),
-            pc: 0,
-            address: Address::ZERO,
-            opcode: 0,
-        };
-        manager.process_inputs(&[loaded], &[vec![cmp]], false, None);
-        assert_eq!(manager.in_memory_corpus[0].total_mutations, 0);
-        assert_eq!(manager.in_memory_corpus[0].cmp_seq[0][0].op2, U256::from(2));
     }
 
     #[test]

@@ -1635,7 +1635,7 @@ contract SymbolicFuzzCorpusSeed {
             "--fuzz-mutation-weight-cmp",
             "0",
             "--fuzz-runs",
-            "8",
+            "256",
         ])
         .assert_failure()
         .get_output()
