@@ -303,8 +303,8 @@ fn symbolic_address_aliases_match_abi_encoded_address_words() {
     encoded.extend((12..32).map(|idx| byte_word(U256::from(idx), masked.clone())));
     let reassembled = word_from_bytes(encoded);
 
-    assert!(address_expr_equivalent(&source, &reassembled));
-    assert_eq!(symbolic_address_key(&source), symbolic_address_key(&reassembled));
+    assert!(source.symbolic_address_equivalent(&reassembled));
+    assert_eq!(source.symbolic_address_key(), reassembled.symbolic_address_key());
 }
 
 #[test]

@@ -361,7 +361,7 @@ impl SymbolicExecutor {
         let mut branches = VecDeque::new();
         let mut matched_conditions = Vec::new();
         for address in addresses {
-            let condition = address_match_condition(&target, address);
+            let condition = target.address_match_condition(address);
             matched_conditions.push(condition.clone());
             if let Some(constraints) = self.constraints_for_condition(state, condition)? {
                 let mut branch = state.clone();
@@ -417,7 +417,7 @@ impl SymbolicExecutor {
         }
 
         for address in addresses {
-            let condition = address_match_condition(&target, address);
+            let condition = target.address_match_condition(address);
             let (match_constraints, match_sat) =
                 self.constraints_with_condition(state, condition.clone())?;
             let (_, mismatch_sat) = self.constraints_with_condition(state, condition.not())?;

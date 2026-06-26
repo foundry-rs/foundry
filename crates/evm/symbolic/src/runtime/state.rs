@@ -717,7 +717,7 @@ impl ExpectedRevert {
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
         if let Some(expected_reverter) = &self.reverter {
-            conditions.push(address_match_condition(expected_reverter, reverter));
+            conditions.push(expected_reverter.address_match_condition(reverter));
         }
         match &self.data {
             ExpectedRevertData::Any => {}
@@ -807,7 +807,7 @@ impl ExpectedCreate {
         bytecode: &[u8],
     ) -> Option<SymBoolExpr> {
         (self.kind == kind && self.bytecode == bytecode)
-            .then(|| address_match_condition(&self.deployer, deployer))
+            .then(|| self.deployer.address_match_condition(deployer))
     }
 }
 
@@ -860,7 +860,7 @@ impl ExpectedCall {
             return Ok(None);
         };
         Ok(Some(SymBoolExpr::and(vec![
-            address_match_condition(&self.callee, callee),
+            self.callee.address_match_condition(callee),
             data_condition,
         ])))
     }
@@ -943,7 +943,7 @@ impl CallMock {
             return Ok(None);
         };
         Ok(Some(SymBoolExpr::and(vec![
-            address_match_condition(&self.callee, callee),
+            self.callee.address_match_condition(callee),
             data_condition,
         ])))
     }
@@ -1012,7 +1012,7 @@ impl FunctionMock {
             return Ok(None);
         };
         Ok(Some(SymBoolExpr::and(vec![
-            address_match_condition(&self.callee, callee),
+            self.callee.address_match_condition(callee),
             data_condition,
         ])))
     }
@@ -1064,7 +1064,7 @@ impl ExpectedEmit {
     ) -> Option<SymBoolExpr> {
         let mut conditions = Vec::new();
         if let Some(expected_emitter) = &self.emitter {
-            conditions.push(address_match_condition(expected_emitter, actual.emitter));
+            conditions.push(expected_emitter.address_match_condition(actual.emitter));
         }
         for idx in 0..self.checks.topics.len() {
             if !self.checks.topics[idx] {
@@ -1438,7 +1438,7 @@ impl SymbolicWorld {
         word.as_const().map(word_to_address).or_else(|| {
             self.symbolic_address_aliases.get(word).copied().or_else(|| {
                 self.symbolic_address_aliases.iter().find_map(|(alias, address)| {
-                    symbolic_address_equivalent(word, alias).then_some(*address)
+                    word.symbolic_address_equivalent(alias).then_some(*address)
                 })
             })
         })
@@ -1448,7 +1448,7 @@ impl SymbolicWorld {
         if let Some(address) = self.resolve_address(&word) {
             return address;
         }
-        let address = representative_symbolic_address(&word);
+        let address = word.representative_symbolic_address();
         self.symbolic_address_aliases.insert(word, address);
         address
     }
@@ -1563,7 +1563,7 @@ impl SymbolicWorld {
         }
 
         let expr = word;
-        let representative = representative_symbolic_address(&expr);
+        let representative = expr.representative_symbolic_address();
         let mut result = self.balance_word_for_address(executor, representative);
         for (address, balance) in &self.balances {
             if self.destroyed_accounts.contains(address) {
@@ -1812,7 +1812,7 @@ impl SymbolicWorld {
         }
 
         let expr = word;
-        let representative = representative_symbolic_address(&expr);
+        let representative = expr.representative_symbolic_address();
         let mut result =
             SymExpr::constant(U256::from(self.extcode(executor, representative)?.len()));
         for (address, code) in &self.code_cache {
@@ -1839,7 +1839,7 @@ impl SymbolicWorld {
         }
 
         let expr = word;
-        let representative = representative_symbolic_address(&expr);
+        let representative = expr.representative_symbolic_address();
         let mut result = self.extcode_hash_for_address(executor, representative)?;
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
@@ -1870,7 +1870,7 @@ impl SymbolicWorld {
         }
 
         let expr = word;
-        let representative = representative_symbolic_address(&expr);
+        let representative = expr.representative_symbolic_address();
         let mut result =
             self.extcode(executor, representative)?.read_bytes_offset(offset.clone(), size);
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
