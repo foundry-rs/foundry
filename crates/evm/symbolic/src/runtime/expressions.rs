@@ -698,36 +698,15 @@ impl SymExpr {
     }
 
     pub(crate) fn contains_keccak(&self) -> bool {
-        self.visit(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::Keccak { .. }) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Keccak { .. }))
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::GasLeft(_)) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::GasLeft(_)))
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
-        self.visit(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::Op(SymExprOp::UDiv, _, _)) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Op(SymExprOp::UDiv, _, _)))
     }
 
     pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
@@ -1124,6 +1103,13 @@ impl SymExpr {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    pub(crate) fn visit_bool(&self, mut visitor: impl FnMut(&Self) -> bool) -> bool {
+        self.visit(&mut |expr| {
+            if visitor(expr) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+        })
+        .is_break()
     }
 
     pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {
@@ -1547,32 +1533,15 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn contains_keccak(&self) -> bool {
-        self.visit_exprs(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::Keccak { .. }) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Keccak { .. }))
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
-        self.visit_exprs(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::GasLeft(_)) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::GasLeft(_)))
     }
 
     pub(crate) fn contains_udiv(&self) -> bool {
-        self.visit_exprs(&mut |expr| {
-            if expr.contains_udiv() { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
-        })
-        .is_break()
+        self.visit_bool(|expr| expr.contains_udiv())
     }
 
     pub(crate) fn forces_expr_const_with_context(
@@ -1698,6 +1667,13 @@ impl SymBoolExpr {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    pub(crate) fn visit_bool(&self, mut visitor: impl FnMut(&SymExpr) -> bool) -> bool {
+        self.visit_exprs(&mut |expr| {
+            if visitor(expr) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+        })
+        .is_break()
     }
 
     pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {

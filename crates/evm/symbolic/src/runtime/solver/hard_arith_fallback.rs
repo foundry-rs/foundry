@@ -2,53 +2,27 @@ use super::*;
 
 impl SymBoolExpr {
     pub(crate) fn contains_hard_arith(&self) -> bool {
-        self.visit_exprs(&mut |expr| {
-            if is_hard_arith_node(expr) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(is_hard_arith_node)
     }
 
     fn contains_symbolic_hash(&self) -> bool {
-        self.visit_exprs(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::Hash { .. }) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(|expr| matches!(expr.kind(), SymExprKind::Hash { .. }))
     }
 }
 
 impl SymExpr {
     #[cfg(test)]
     pub(crate) fn contains_hard_arith(&self) -> bool {
-        self.visit(&mut |expr| {
-            if is_hard_arith_node(expr) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
+        self.visit_bool(is_hard_arith_node)
     }
 
     fn contains_var(&self) -> bool {
-        self.visit(&mut |expr| {
-            if matches!(
+        self.visit_bool(|expr| {
+            matches!(
                 expr.kind(),
                 SymExprKind::Var(_) | SymExprKind::Keccak { .. } | SymExprKind::Hash { .. }
-            ) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
+            )
         })
-        .is_break()
     }
 }
 
