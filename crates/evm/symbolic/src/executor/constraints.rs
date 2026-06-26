@@ -22,7 +22,7 @@ impl SymbolicExecutor {
     pub(super) fn assume_condition(
         &mut self,
         state: &mut PathState,
-        condition: BoolExpr,
+        condition: SymBoolExpr,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         match condition.as_const() {
             Some(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
@@ -52,7 +52,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let mut above_max = state.constraints.clone();
-        above_max.push(BoolExpr::cmp_word_const(BoolExprOp::Ugt, word, U256::from(max)));
+        above_max.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ugt, word, U256::from(max)));
         if self.solver.is_sat(&above_max)? {
             return Err(SymbolicError::Unsupported(reason));
         }
@@ -62,7 +62,7 @@ impl SymbolicExecutor {
         while low < high {
             let mid = low + (high - low) / 2;
             let mut above_mid = state.constraints.clone();
-            above_mid.push(BoolExpr::cmp_word_const(BoolExprOp::Ugt, word, U256::from(mid)));
+            above_mid.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ugt, word, U256::from(mid)));
             if self.solver.is_sat(&above_mid)? {
                 low = mid + 1;
             } else {
@@ -81,7 +81,7 @@ impl SymbolicExecutor {
         if word.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let condition = BoolExpr::cmp_word_const(BoolExprOp::Uge, word, U256::from(min));
+        let condition = SymBoolExpr::cmp_word_const(SymBoolExprOp::Uge, word, U256::from(min));
         match condition.as_const() {
             Some(value) => Ok(value),
             None => {
@@ -134,9 +134,9 @@ impl SymbolicExecutor {
         };
 
         let value_expr = value;
-        let in_range = BoolExpr::and(vec![
-            BoolExpr::cmp(BoolExprOp::Uge, value_expr.clone(), SymExpr::constant(min_value)),
-            BoolExpr::cmp(BoolExprOp::Ule, value_expr.clone(), SymExpr::constant(max_value)),
+        let in_range = SymBoolExpr::and(vec![
+            SymBoolExpr::cmp(SymBoolExprOp::Uge, value_expr.clone(), SymExpr::constant(min_value)),
+            SymBoolExpr::cmp(SymBoolExprOp::Ule, value_expr.clone(), SymExpr::constant(max_value)),
         ]);
         let (_in_range_constraints, in_range_sat) =
             self.constraints_with_condition(state, in_range.clone())?;
@@ -150,9 +150,17 @@ impl SymbolicExecutor {
         }
 
         let bounded = state.fresh_word("vmBoundUint");
-        state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Uge, &bounded, min_value));
-        state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ule, &bounded, max_value));
-        state.constraints.push(BoolExpr::eq_word_expr(&bounded, value_expr).not());
+        state.constraints.push(SymBoolExpr::cmp_word_const(
+            SymBoolExprOp::Uge,
+            &bounded,
+            min_value,
+        ));
+        state.constraints.push(SymBoolExpr::cmp_word_const(
+            SymBoolExprOp::Ule,
+            &bounded,
+            max_value,
+        ));
+        state.constraints.push(SymBoolExpr::eq_word_expr(&bounded, value_expr).not());
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
 
@@ -185,9 +193,11 @@ impl SymbolicExecutor {
         };
 
         let value_expr = value;
-        let in_range = BoolExpr::and(vec![
-            BoolExpr::cmp(BoolExprOp::Slt, value_expr.clone(), SymExpr::constant(min_value)).not(),
-            BoolExpr::cmp(BoolExprOp::Sgt, value_expr.clone(), SymExpr::constant(max_value)).not(),
+        let in_range = SymBoolExpr::and(vec![
+            SymBoolExpr::cmp(SymBoolExprOp::Slt, value_expr.clone(), SymExpr::constant(min_value))
+                .not(),
+            SymBoolExpr::cmp(SymBoolExprOp::Sgt, value_expr.clone(), SymExpr::constant(max_value))
+                .not(),
         ]);
         let (_in_range_constraints, in_range_sat) =
             self.constraints_with_condition(state, in_range.clone())?;
@@ -203,11 +213,11 @@ impl SymbolicExecutor {
         let bounded = state.fresh_word("vmBoundInt");
         state
             .constraints
-            .push(BoolExpr::cmp_word_const(BoolExprOp::Slt, &bounded, min_value).not());
+            .push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Slt, &bounded, min_value).not());
         state
             .constraints
-            .push(BoolExpr::cmp_word_const(BoolExprOp::Sgt, &bounded, max_value).not());
-        state.constraints.push(BoolExpr::eq_word_expr(&bounded, value_expr).not());
+            .push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Sgt, &bounded, max_value).not());
+        state.constraints.push(SymBoolExpr::eq_word_expr(&bounded, value_expr).not());
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
 }

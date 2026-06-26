@@ -46,20 +46,20 @@ impl SymbolicExecutor {
 
         match op {
             opcode::STOP => Ok(StepOutcome::Halt),
-            opcode::ADD => state.bin_word(|a, b| a.wrapping_add(b), ExprOp::Add),
-            opcode::SUB => state.bin_word(|a, b| a.wrapping_sub(b), ExprOp::Sub),
-            opcode::MUL => state.bin_word(|a, b| a.wrapping_mul(b), ExprOp::Mul),
+            opcode::ADD => state.bin_word(|a, b| a.wrapping_add(b), SymExprOp::Add),
+            opcode::SUB => state.bin_word(|a, b| a.wrapping_sub(b), SymExprOp::Sub),
+            opcode::MUL => state.bin_word(|a, b| a.wrapping_mul(b), SymExprOp::Mul),
             opcode::EXP => state.exp_word(),
             opcode::DIV => state.bin_word_div_zero_guard(
                 |a, b| if b.is_zero() { U256::ZERO } else { a / b },
-                ExprOp::UDiv,
+                SymExprOp::UDiv,
             ),
-            opcode::SDIV => state.bin_word_div_zero_guard(sdiv, ExprOp::SDiv),
+            opcode::SDIV => state.bin_word_div_zero_guard(sdiv, SymExprOp::SDiv),
             opcode::MOD => state.bin_word_div_zero_guard(
                 |a, b| if b.is_zero() { U256::ZERO } else { a % b },
-                ExprOp::URem,
+                SymExprOp::URem,
             ),
-            opcode::SMOD => state.bin_word_div_zero_guard(smod, ExprOp::SRem),
+            opcode::SMOD => state.bin_word_div_zero_guard(smod, SymExprOp::SRem),
             opcode::ADDMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
@@ -86,14 +86,14 @@ impl SymbolicExecutor {
                 }
                 Ok(StepOutcome::Continue)
             }
-            opcode::LT => state.cmp_word(|a, b| a < b, BoolExprOp::Ult),
-            opcode::GT => state.cmp_word(|a, b| a > b, BoolExprOp::Ugt),
-            opcode::SLT => state.cmp_word(slt, BoolExprOp::Slt),
-            opcode::SGT => state.cmp_word(|a, b| slt(b, a), BoolExprOp::Sgt),
+            opcode::LT => state.cmp_word(|a, b| a < b, SymBoolExprOp::Ult),
+            opcode::GT => state.cmp_word(|a, b| a > b, SymBoolExprOp::Ugt),
+            opcode::SLT => state.cmp_word(slt, SymBoolExprOp::Slt),
+            opcode::SGT => state.cmp_word(|a, b| slt(b, a), SymBoolExprOp::Sgt),
             opcode::EQ => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
-                state.stack.push(SymExpr::from_bool(BoolExpr::eq(b, a)))?;
+                state.stack.push(SymExpr::from_bool(SymBoolExpr::eq(b, a)))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::ISZERO => {
@@ -101,9 +101,9 @@ impl SymbolicExecutor {
                 state.stack.push(SymExpr::from_bool(value.into_zero_bool()))?;
                 Ok(StepOutcome::Continue)
             }
-            opcode::AND => state.bin_word(|a, b| a & b, ExprOp::And),
-            opcode::OR => state.bin_word(|a, b| a | b, ExprOp::Or),
-            opcode::XOR => state.bin_word(|a, b| a ^ b, ExprOp::Xor),
+            opcode::AND => state.bin_word(|a, b| a & b, SymExprOp::And),
+            opcode::OR => state.bin_word(|a, b| a | b, SymExprOp::Or),
+            opcode::XOR => state.bin_word(|a, b| a ^ b, SymExprOp::Xor),
             opcode::NOT => {
                 let value = state.stack.pop()?;
                 if let Some(value) = value.as_const() {
@@ -720,8 +720,8 @@ impl SymbolicExecutor {
         if offset.contains_gasleft() || size.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let end = SymExpr::op(ExprOp::Add, offset, size);
-        let in_bounds = BoolExpr::cmp(BoolExprOp::Ule, end, state.return_data.len_expr());
+        let end = SymExpr::op(SymExprOp::Add, offset, size);
+        let in_bounds = SymBoolExpr::cmp(SymBoolExprOp::Ule, end, state.return_data.len_expr());
         match in_bounds.as_const() {
             Some(value) => Ok(value),
             None => {

@@ -108,7 +108,7 @@ impl SymbolicExecutor {
         sender: Address,
         _function: &Function,
         calldata: SymCalldata,
-        constraints: Vec<BoolExpr>,
+        constraints: Vec<SymBoolExpr>,
         completed_paths: &mut usize,
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
         state.world.clear_transaction_scoped_state();

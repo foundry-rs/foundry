@@ -217,7 +217,7 @@ impl SymbolicExecutor {
         let mut candidates = candidates.into_iter().collect::<Vec<_>>();
         candidates.sort_unstable();
         for candidate in candidates {
-            let eq = BoolExpr::eq_word_const(value, candidate);
+            let eq = SymBoolExpr::eq_word_const(value, candidate);
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
             let (neq_constraints, neq_sat) = self.constraints_with_condition(state, eq.not())?;
 
@@ -408,7 +408,7 @@ impl SymbolicExecutor {
             };
             let specificity = (mock.data.len(), mock.value.is_some());
             if best.as_ref().is_none_or(
-                |(_, best_specificity, _): &(usize, (usize, bool), Vec<BoolExpr>)| {
+                |(_, best_specificity, _): &(usize, (usize, bool), Vec<SymBoolExpr>)| {
                     specificity > *best_specificity
                 },
             ) {
@@ -428,7 +428,7 @@ impl SymbolicExecutor {
         worklist: &mut VecDeque<PathState>,
         pre_call_state: &PathState,
         call_pc: usize,
-        condition: BoolExpr,
+        condition: SymBoolExpr,
     ) -> Result<bool, SymbolicError> {
         let (match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
@@ -513,7 +513,7 @@ impl SymbolicExecutor {
         value: Option<U256>,
         gas: &SymExpr,
         calldata: &[SymExpr],
-    ) -> Result<Option<Vec<BoolExpr>>, SymbolicError> {
+    ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
         let Some(condition) =
             self.expected_call_match_condition(expected, callee, value, gas, calldata)?
         else {
@@ -529,7 +529,7 @@ impl SymbolicExecutor {
         callee: Address,
         value: Option<U256>,
         calldata: &[SymExpr],
-    ) -> Result<Option<Vec<BoolExpr>>, SymbolicError> {
+    ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
         let Some(condition) = self.call_mock_match_condition(mock, callee, value, calldata)? else {
             return Ok(None);
         };
@@ -543,7 +543,7 @@ impl SymbolicExecutor {
         value: Option<U256>,
         gas: &SymExpr,
         calldata: &[SymExpr],
-    ) -> Result<Option<BoolExpr>, SymbolicError> {
+    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
         if !expected.static_parts_match(value, gas)? {
             return Ok(None);
         }
@@ -552,7 +552,7 @@ impl SymbolicExecutor {
         else {
             return Ok(None);
         };
-        Ok(Some(BoolExpr::and(vec![
+        Ok(Some(SymBoolExpr::and(vec![
             address_match_condition(&expected.callee, callee),
             data_condition,
         ])))
@@ -564,7 +564,7 @@ impl SymbolicExecutor {
         callee: Address,
         value: Option<U256>,
         calldata: &[SymExpr],
-    ) -> Result<Option<BoolExpr>, SymbolicError> {
+    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
         if !mock.static_parts_match(value) {
             return Ok(None);
         }
@@ -573,7 +573,10 @@ impl SymbolicExecutor {
         else {
             return Ok(None);
         };
-        Ok(Some(BoolExpr::and(vec![address_match_condition(&mock.callee, callee), data_condition])))
+        Ok(Some(SymBoolExpr::and(vec![
+            address_match_condition(&mock.callee, callee),
+            data_condition,
+        ])))
     }
 
     /// Returns whether `expected_revert_matches` holds.
@@ -625,7 +628,7 @@ impl SymbolicExecutor {
             return Ok(false);
         }
 
-        let condition = BoolExpr::or(conditions);
+        let condition = SymBoolExpr::or(conditions);
         let (_match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {
@@ -645,8 +648,8 @@ impl SymbolicExecutor {
     pub(super) fn constraints_for_condition(
         &mut self,
         state: &PathState,
-        condition: BoolExpr,
-    ) -> Result<Option<Vec<BoolExpr>>, SymbolicError> {
+        condition: SymBoolExpr,
+    ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
         let (constraints, sat) = self.constraints_with_condition(state, condition)?;
         Ok(sat.then_some(constraints))
     }
@@ -654,8 +657,8 @@ impl SymbolicExecutor {
     pub(super) fn constraints_with_condition(
         &mut self,
         state: &PathState,
-        condition: BoolExpr,
-    ) -> Result<(Vec<BoolExpr>, bool), SymbolicError> {
+        condition: SymBoolExpr,
+    ) -> Result<(Vec<SymBoolExpr>, bool), SymbolicError> {
         match condition.as_const() {
             Some(true) => Ok((state.constraints.clone(), true)),
             Some(false) => Ok((state.constraints.clone(), false)),
@@ -738,7 +741,7 @@ impl SymbolicExecutor {
             }
             match (template.topics.get(idx), actual.topics.get(idx)) {
                 (Some(left), Some(right)) => {
-                    conditions.push(BoolExpr::eq_words(left, right));
+                    conditions.push(SymBoolExpr::eq_words(left, right));
                 }
                 (None, None) => {}
                 _ => return Ok(false),
@@ -746,7 +749,7 @@ impl SymbolicExecutor {
         }
 
         if expected.checks.data {
-            conditions.push(BoolExpr::eq_words(&template.data_len, &actual.data_len));
+            conditions.push(SymBoolExpr::eq_words(&template.data_len, &actual.data_len));
             if template.data.len() != actual.data.len() {
                 return Ok(false);
             }
@@ -755,11 +758,11 @@ impl SymbolicExecutor {
                     .data
                     .iter()
                     .zip(actual.data.iter())
-                    .map(|(left, right)| BoolExpr::eq_words(left, right)),
+                    .map(|(left, right)| SymBoolExpr::eq_words(left, right)),
             );
         }
 
-        let condition = BoolExpr::and(conditions);
+        let condition = SymBoolExpr::and(conditions);
         let (match_constraints, match_sat) =
             self.constraints_with_condition(state, condition.clone())?;
         if !match_sat {
@@ -1172,7 +1175,7 @@ impl SymbolicExecutor {
         let success_condition = kzg_success_witness_condition(&input, &input_len);
         let failure_condition = kzg_failure_witness_condition(state, &input, &input_len);
         let modeled_condition =
-            BoolExpr::or(vec![success_condition.clone(), failure_condition.clone()]);
+            SymBoolExpr::or(vec![success_condition.clone(), failure_condition.clone()]);
         let (_, residual_sat) = self.constraints_with_condition(state, modeled_condition.not())?;
         if residual_sat {
             self.defer_incomplete(KZG_RESIDUAL_REASON);
@@ -1283,7 +1286,7 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(executor, state.address);
-        let can_pay = BoolExpr::cmp(BoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(SymBoolExprOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
@@ -1342,7 +1345,7 @@ impl SymbolicExecutor {
         }
 
         let balance = state.world.balance_word_for_address(executor, state.address);
-        let can_pay = BoolExpr::cmp(BoolExprOp::Uge, balance, value);
+        let can_pay = SymBoolExpr::cmp(SymBoolExprOp::Uge, balance, value);
         match can_pay.as_const() {
             Some(true) => Ok(true),
             Some(false) => {
@@ -1414,10 +1417,12 @@ impl SymbolicExecutor {
 
         let candidate_constraints = candidates
             .iter()
-            .map(|address| BoolExpr::eq(target.clone(), SymExpr::constant(address_word(*address))))
+            .map(|address| {
+                SymBoolExpr::eq(target.clone(), SymExpr::constant(address_word(*address)))
+            })
             .collect::<Vec<_>>();
         let mut outside_constraints = state.constraints.clone();
-        outside_constraints.extend(candidate_constraints.iter().cloned().map(BoolExpr::not));
+        outside_constraints.extend(candidate_constraints.iter().cloned().map(SymBoolExpr::not));
         let outside_sat = self.solver.is_sat(&outside_constraints)?;
 
         if !self.config.symbolic_call_targets && outside_sat {
@@ -1569,8 +1574,8 @@ fn kzg_constrained_outcome(
     Ok(None)
 }
 
-fn kzg_success_witness_condition(input: &[SymExpr], input_len: &SymExpr) -> BoolExpr {
-    BoolExpr::and(vec![
+fn kzg_success_witness_condition(input: &[SymExpr], input_len: &SymExpr) -> SymBoolExpr {
+    SymBoolExpr::and(vec![
         word_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
         bytes_eq_condition(input, KZG_VERSIONED_HASH_OFFSET, &KZG_SUCCESS_INPUT),
     ])
@@ -1580,23 +1585,23 @@ fn kzg_failure_witness_condition(
     state: &PathState,
     input: &[SymExpr],
     input_len: &SymExpr,
-) -> BoolExpr {
+) -> SymBoolExpr {
     let len_192 = word_eq_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN);
     let mut conditions = vec![
         word_ne_condition(input_len, KZG_POINT_EVALUATION_INPUT_LEN),
-        BoolExpr::and(vec![
+        SymBoolExpr::and(vec![
             len_192.clone(),
             byte_ne_condition(input, 0, kzg_point_evaluation::VERSIONED_HASH_VERSION_KZG),
         ]),
-        BoolExpr::and(vec![
+        SymBoolExpr::and(vec![
             len_192.clone(),
             bytes_eq_condition(input, KZG_Z_OFFSET, &KZG_BLS_MODULUS),
         ]),
-        BoolExpr::and(vec![
+        SymBoolExpr::and(vec![
             len_192.clone(),
             bytes_eq_condition(input, KZG_Y_OFFSET, &KZG_BLS_MODULUS),
         ]),
-        BoolExpr::and(vec![
+        SymBoolExpr::and(vec![
             len_192.clone(),
             bytes_eq_condition(input, KZG_PROOF_OFFSET, &KZG_INVALID_PROOF),
         ]),
@@ -1604,7 +1609,7 @@ fn kzg_failure_witness_condition(
 
     if let Some(commitment) = constrained_bytes_at(state, input, KZG_COMMITMENT_OFFSET, 48) {
         let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(&commitment);
-        conditions.push(BoolExpr::and(vec![
+        conditions.push(SymBoolExpr::and(vec![
             len_192.clone(),
             kzg_versioned_hash_mismatch_condition(input, &expected_hash),
         ]));
@@ -1612,7 +1617,7 @@ fn kzg_failure_witness_condition(
 
     let expected_hash = &KZG_SUCCESS_INPUT[KZG_VERSIONED_HASH_OFFSET..KZG_Z_OFFSET];
     let commitment = &KZG_SUCCESS_INPUT[KZG_COMMITMENT_OFFSET..KZG_PROOF_OFFSET];
-    conditions.push(BoolExpr::and(vec![
+    conditions.push(SymBoolExpr::and(vec![
         len_192.clone(),
         bytes_eq_condition(input, KZG_COMMITMENT_OFFSET, commitment),
         byte_eq_condition(input, 1, expected_hash[1] ^ 1),
@@ -1620,50 +1625,53 @@ fn kzg_failure_witness_condition(
 
     for commitment in [&KZG_ZERO_COMMITMENT, &KZG_ONE_COMMITMENT] {
         let expected_hash = kzg_point_evaluation::kzg_to_versioned_hash(commitment);
-        conditions.push(BoolExpr::and(vec![
+        conditions.push(SymBoolExpr::and(vec![
             len_192.clone(),
             bytes_eq_condition(input, KZG_COMMITMENT_OFFSET, commitment),
             kzg_versioned_hash_mismatch_condition(input, &expected_hash),
         ]));
     }
 
-    BoolExpr::or(conditions)
+    SymBoolExpr::or(conditions)
 }
 
-fn kzg_versioned_hash_mismatch_condition(input: &[SymExpr], expected_hash: &[u8; 32]) -> BoolExpr {
+fn kzg_versioned_hash_mismatch_condition(
+    input: &[SymExpr],
+    expected_hash: &[u8; 32],
+) -> SymBoolExpr {
     bytes_ne_condition(input, KZG_VERSIONED_HASH_OFFSET, expected_hash)
 }
 
-fn word_eq_condition(word: &SymExpr, value: usize) -> BoolExpr {
-    BoolExpr::eq_word_const(word, U256::from(value))
+fn word_eq_condition(word: &SymExpr, value: usize) -> SymBoolExpr {
+    SymBoolExpr::eq_word_const(word, U256::from(value))
 }
 
-fn word_ne_condition(word: &SymExpr, value: usize) -> BoolExpr {
+fn word_ne_condition(word: &SymExpr, value: usize) -> SymBoolExpr {
     word_eq_condition(word, value).not()
 }
 
-fn byte_eq_condition(input: &[SymExpr], offset: usize, value: u8) -> BoolExpr {
+fn byte_eq_condition(input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
     match input.get(offset) {
         Some(word) => word_eq_condition(word, value as usize),
-        None => BoolExpr::constant(false),
+        None => SymBoolExpr::constant(false),
     }
 }
 
-fn byte_ne_condition(input: &[SymExpr], offset: usize, value: u8) -> BoolExpr {
+fn byte_ne_condition(input: &[SymExpr], offset: usize, value: u8) -> SymBoolExpr {
     match input.get(offset) {
         Some(word) => word_ne_condition(word, value as usize),
-        None => BoolExpr::constant(false),
+        None => SymBoolExpr::constant(false),
     }
 }
 
-fn bytes_eq_condition(input: &[SymExpr], offset: usize, bytes: &[u8]) -> BoolExpr {
+fn bytes_eq_condition(input: &[SymExpr], offset: usize, bytes: &[u8]) -> SymBoolExpr {
     let Some(end) = offset.checked_add(bytes.len()) else {
-        return BoolExpr::constant(false);
+        return SymBoolExpr::constant(false);
     };
     if end > input.len() {
-        return BoolExpr::constant(false);
+        return SymBoolExpr::constant(false);
     }
-    BoolExpr::and(
+    SymBoolExpr::and(
         input[offset..end]
             .iter()
             .zip(bytes)
@@ -1672,14 +1680,14 @@ fn bytes_eq_condition(input: &[SymExpr], offset: usize, bytes: &[u8]) -> BoolExp
     )
 }
 
-fn bytes_ne_condition(input: &[SymExpr], offset: usize, bytes: &[u8]) -> BoolExpr {
+fn bytes_ne_condition(input: &[SymExpr], offset: usize, bytes: &[u8]) -> SymBoolExpr {
     let Some(end) = offset.checked_add(bytes.len()) else {
-        return BoolExpr::constant(false);
+        return SymBoolExpr::constant(false);
     };
     if end > input.len() {
-        return BoolExpr::constant(false);
+        return SymBoolExpr::constant(false);
     }
-    BoolExpr::or(
+    SymBoolExpr::or(
         input[offset..end]
             .iter()
             .zip(bytes)

@@ -12,7 +12,7 @@ pub(crate) struct PathState {
     pub(crate) frame: CallFrame,
     pub(crate) world: SymbolicWorld,
     pub(crate) prank: SymbolicPrank,
-    pub(crate) constraints: Vec<BoolExpr>,
+    pub(crate) constraints: Vec<SymBoolExpr>,
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     pub(crate) access_record: Option<AccessRecord>,
@@ -221,13 +221,13 @@ impl PathState {
 
         let constraint_bound = self.constraint_upper_bound_usize(expr);
         let structural_bound = match expr.as_inner() {
-            ExprInner::Const(value) => u256_to_usize(*value),
-            ExprInner::Var(_)
-            | ExprInner::GasLeft(_)
-            | ExprInner::Keccak { .. }
-            | ExprInner::Hash { .. } => None,
-            ExprInner::Not(_) => None,
-            ExprInner::AddMod { modulus, .. } | ExprInner::MulMod { modulus, .. } => {
+            SymExprInner::Const(value) => u256_to_usize(*value),
+            SymExprInner::Var(_)
+            | SymExprInner::GasLeft(_)
+            | SymExprInner::Keccak { .. }
+            | SymExprInner::Hash { .. } => None,
+            SymExprInner::Not(_) => None,
+            SymExprInner::AddMod { modulus, .. } | SymExprInner::MulMod { modulus, .. } => {
                 match modulus.eval_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => u256_to_usize(modulus - U256::from(1)),
@@ -236,29 +236,29 @@ impl PathState {
                     }
                 }
             }
-            ExprInner::Ite(_, left, right) => {
+            SymExprInner::Ite(_, left, right) => {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
             }
-            ExprInner::Op(op, left, right) => match op {
-                ExprOp::Add => self
+            SymExprInner::Op(op, left, right) => match op {
+                SymExprOp::Add => self
                     .expr_upper_bound_usize(left)?
                     .checked_add(self.expr_upper_bound_usize(right)?),
-                ExprOp::Mul => self
+                SymExprOp::Mul => self
                     .expr_upper_bound_usize(left)?
                     .checked_mul(self.expr_upper_bound_usize(right)?),
-                ExprOp::UDiv => {
+                SymExprOp::UDiv => {
                     let left = self.expr_upper_bound_usize(left)?;
                     match right.eval_const()? {
                         divisor if divisor.is_zero() => Some(0),
                         divisor => Some(left / u256_to_usize(divisor)?),
                     }
                 }
-                ExprOp::URem => match right.eval_const() {
+                SymExprOp::URem => match right.eval_const() {
                     Some(divisor) if divisor.is_zero() => Some(0),
                     Some(divisor) => u256_to_usize(divisor - U256::from(1)),
                     None => self.expr_upper_bound_usize(left),
                 },
-                ExprOp::And => right
+                SymExprOp::And => right
                     .eval_const()
                     .and_then(u256_to_usize)
                     .or_else(|| left.eval_const().and_then(u256_to_usize))
@@ -267,18 +267,18 @@ impl PathState {
                             .or_else(|| self.expr_upper_bound_usize(right))
                             .map_or(mask, |bound| bound.min(mask))
                     }),
-                ExprOp::Shr => {
+                SymExprOp::Shr => {
                     let left = self.expr_upper_bound_usize(left)?;
                     let shift = u256_to_usize(right.eval_const()?)?;
                     Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
                 }
-                ExprOp::Sub
-                | ExprOp::SDiv
-                | ExprOp::SRem
-                | ExprOp::Or
-                | ExprOp::Xor
-                | ExprOp::Shl
-                | ExprOp::Sar => None,
+                SymExprOp::Sub
+                | SymExprOp::SDiv
+                | SymExprOp::SRem
+                | SymExprOp::Or
+                | SymExprOp::Xor
+                | SymExprOp::Shl
+                | SymExprOp::Sar => None,
             },
         };
 
@@ -318,7 +318,7 @@ impl PathState {
     pub(crate) fn bin_word(
         &mut self,
         concrete: impl FnOnce(U256, U256) -> U256,
-        op: ExprOp,
+        op: SymExprOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
@@ -333,7 +333,7 @@ impl PathState {
     pub(crate) fn bin_word_div_zero_guard(
         &mut self,
         concrete: impl FnOnce(U256, U256) -> U256,
-        op: ExprOp,
+        op: SymExprOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
@@ -341,7 +341,7 @@ impl PathState {
             self.stack.push(SymExpr::constant(concrete(a_value, b_value)))?;
         } else {
             self.stack.push(SymExpr::ite(
-                BoolExpr::eq(b.clone(), SymExpr::constant(U256::ZERO)),
+                SymBoolExpr::eq(b.clone(), SymExpr::constant(U256::ZERO)),
                 SymExpr::constant(U256::ZERO),
                 SymExpr::op(op, a, b),
             ))?;
@@ -352,14 +352,14 @@ impl PathState {
     pub(crate) fn cmp_word(
         &mut self,
         concrete: impl FnOnce(U256, U256) -> bool,
-        op: BoolExprOp,
+        op: SymBoolExprOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
         if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
             self.stack.push(SymExpr::constant(U256::from(concrete(a_value, b_value))))?;
         } else {
-            self.stack.push(SymExpr::from_bool(BoolExpr::cmp(op, a, b)))?;
+            self.stack.push(SymExpr::from_bool(SymBoolExpr::cmp(op, a, b)))?;
         }
         Ok(StepOutcome::Continue)
     }
@@ -385,9 +385,9 @@ impl PathState {
             SymExpr::constant(result)
         } else {
             let expr = match kind {
-                ShiftKind::Shl => SymExpr::op(ExprOp::Shl, value, shift),
-                ShiftKind::Shr => SymExpr::op(ExprOp::Shr, value, shift),
-                ShiftKind::Sar => SymExpr::op(ExprOp::Sar, value, shift),
+                ShiftKind::Shl => SymExpr::op(SymExprOp::Shl, value, shift),
+                ShiftKind::Shr => SymExpr::op(SymExprOp::Shr, value, shift),
+                ShiftKind::Sar => SymExpr::op(SymExprOp::Sar, value, shift),
             };
             expr_known_word(&expr).map(SymExpr::constant).unwrap_or_else(|| expr)
         };
@@ -419,7 +419,7 @@ impl PathState {
             let mut expr = SymExpr::constant(U256::ZERO);
             for candidate in (0..=max_exponent).rev() {
                 expr = SymExpr::ite(
-                    BoolExpr::eq(exponent.clone(), SymExpr::constant(U256::from(candidate))),
+                    SymBoolExpr::eq(exponent.clone(), SymExpr::constant(U256::from(candidate))),
                     exp_expr_for_concrete_exponent(base.clone(), candidate),
                     expr,
                 );
@@ -504,7 +504,7 @@ impl PathState {
         if bits < U256::from(256) {
             let upper =
                 if bits.is_zero() { U256::ZERO } else { U256::from(1) << bits.to::<usize>() };
-            self.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &value, upper));
+            self.constraints.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ult, &value, upper));
         }
         value
     }
@@ -512,13 +512,13 @@ impl PathState {
     pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymExpr {
         let value = self.fresh_word("symbolic");
         if bits.is_zero() {
-            self.constraints.push(BoolExpr::eq_word_const(&value, U256::ZERO));
+            self.constraints.push(SymBoolExpr::eq_word_const(&value, U256::ZERO));
         } else if bits < U256::from(256) {
             let magnitude = U256::from(1) << (bits.to::<usize>() - 1);
-            self.constraints.push(BoolExpr::or(vec![
-                BoolExpr::cmp_word_const(BoolExprOp::Ult, &value, magnitude),
-                BoolExpr::cmp_word_const(
-                    BoolExprOp::Uge,
+            self.constraints.push(SymBoolExpr::or(vec![
+                SymBoolExpr::cmp_word_const(SymBoolExprOp::Ult, &value, magnitude),
+                SymBoolExpr::cmp_word_const(
+                    SymBoolExprOp::Uge,
                     &value,
                     U256::ZERO.wrapping_sub(magnitude),
                 ),
@@ -1207,7 +1207,7 @@ impl SymbolicWorld {
                 continue;
             }
             result = SymExpr::ite(
-                BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
+                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
                 balance.clone(),
                 result,
             );
@@ -1451,7 +1451,7 @@ impl SymbolicWorld {
                 continue;
             }
             result = SymExpr::ite(
-                BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
+                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
                 SymExpr::constant(U256::from(code.len())),
                 result,
             );
@@ -1481,7 +1481,7 @@ impl SymbolicWorld {
                 keccak_word(code.read_bytes(0, code.len()))
             };
             result = SymExpr::ite(
-                BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address))),
+                SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address))),
                 hash,
                 result,
             );
@@ -1513,7 +1513,7 @@ impl SymbolicWorld {
             } else {
                 code.read_bytes_offset(offset.clone(), size)
             };
-            let condition = BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
+            let condition = SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
             for (idx, byte) in bytes.into_iter().enumerate() {
                 result[idx] = SymExpr::ite(condition.clone(), byte, result[idx].clone());
             }
@@ -1585,20 +1585,20 @@ impl Default for SymbolicBlock {
 fn collect_eval_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit(&mut |expr| {
         match expr.as_inner() {
-            ExprInner::Var(var) => {
+            SymExprInner::Var(var) => {
                 vars.insert(*var);
             }
-            ExprInner::Hash { name, .. } => {
+            SymExprInner::Hash { name, .. } => {
                 vars.insert(*name);
             }
-            ExprInner::Const(_)
-            | ExprInner::GasLeft(_)
-            | ExprInner::Keccak { .. }
-            | ExprInner::Not(_)
-            | ExprInner::Op(_, _, _)
-            | ExprInner::AddMod { .. }
-            | ExprInner::MulMod { .. }
-            | ExprInner::Ite(_, _, _) => {}
+            SymExprInner::Const(_)
+            | SymExprInner::GasLeft(_)
+            | SymExprInner::Keccak { .. }
+            | SymExprInner::Not(_)
+            | SymExprInner::Op(_, _, _)
+            | SymExprInner::AddMod { .. }
+            | SymExprInner::MulMod { .. }
+            | SymExprInner::Ite(_, _, _) => {}
         }
         ControlFlow::<()>::Continue(())
     });
@@ -1689,7 +1689,7 @@ impl SymbolicBlock {
                 continue;
             }
             result = SymExpr::ite(
-                BoolExpr::eq(block_number.clone(), SymExpr::constant(candidate)),
+                SymBoolExpr::eq(block_number.clone(), SymExpr::constant(candidate)),
                 hash,
                 result,
             );

@@ -4,7 +4,7 @@ use super::{runtime::*, *};
 pub(super) struct SymbolicCalldata {
     bytes: Arc<[SymExpr]>,
     inputs: Vec<SymbolicInput>,
-    constraints: Vec<BoolExpr>,
+    constraints: Vec<SymBoolExpr>,
 }
 
 impl SymbolicCalldata {
@@ -13,7 +13,7 @@ impl SymbolicCalldata {
     pub(super) fn from_raw(
         bytes: Vec<SymExpr>,
         inputs: Vec<SymbolicInput>,
-        constraints: Vec<BoolExpr>,
+        constraints: Vec<SymBoolExpr>,
     ) -> Self {
         Self { bytes: bytes.into(), inputs, constraints }
     }
@@ -114,12 +114,12 @@ impl SymbolicCalldata {
     }
 
     /// Returns symbolic calldata constraints.
-    pub(super) fn constraints(&self) -> &[BoolExpr] {
+    pub(super) fn constraints(&self) -> &[SymBoolExpr] {
         &self.constraints
     }
 
     /// Consumes this symbolic calldata into its constraints.
-    pub(super) fn into_constraints(self) -> Vec<BoolExpr> {
+    pub(super) fn into_constraints(self) -> Vec<SymBoolExpr> {
         self.constraints
     }
 
@@ -176,7 +176,7 @@ impl SymbolicInput {
 #[derive(Clone)]
 pub(super) struct SymbolicAbiBuilder<'a> {
     config: &'a SymbolicConfig,
-    constraints: Vec<BoolExpr>,
+    constraints: Vec<SymBoolExpr>,
     positional_dynamic_index: usize,
 }
 
@@ -195,8 +195,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(match ty {
             DynSolType::Bool => {
                 let word = self.fresh_word(&name);
-                self.constraints.push(BoolExpr::cmp_word_const(
-                    BoolExprOp::Ult,
+                self.constraints.push(SymBoolExpr::cmp_word_const(
+                    SymBoolExprOp::Ult,
                     &word,
                     U256::from(2),
                 ));
@@ -437,15 +437,19 @@ impl<'a> SymbolicAbiBuilder<'a> {
 
     pub(super) fn fresh_byte(&mut self, name: &str, printable: bool) -> SymExpr {
         let word = self.fresh_word(name);
-        self.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(256)));
+        self.constraints.push(SymBoolExpr::cmp_word_const(
+            SymBoolExprOp::Ult,
+            &word,
+            U256::from(256),
+        ));
         if printable {
-            self.constraints.push(BoolExpr::cmp_word_const(
-                BoolExprOp::Uge,
+            self.constraints.push(SymBoolExpr::cmp_word_const(
+                SymBoolExprOp::Uge,
                 &word,
                 U256::from(0x20),
             ));
-            self.constraints.push(BoolExpr::cmp_word_const(
-                BoolExprOp::Ule,
+            self.constraints.push(SymBoolExpr::cmp_word_const(
+                SymBoolExprOp::Ule,
                 &word,
                 U256::from(0x7e),
             ));
@@ -507,8 +511,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
 
     pub(super) fn constrain_uint(&mut self, word: &SymExpr, bits: usize) {
         if bits < 256 {
-            self.constraints.push(BoolExpr::cmp_word_const(
-                BoolExprOp::Ult,
+            self.constraints.push(SymBoolExpr::cmp_word_const(
+                SymBoolExprOp::Ult,
                 word,
                 U256::from(1) << bits,
             ));
@@ -519,7 +523,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
         if bits < 256 {
             let byte_index = U256::from(bits / 8 - 1);
             self.constraints
-                .push(BoolExpr::eq_word_expr(word, signextend_word(byte_index, word.clone())));
+                .push(SymBoolExpr::eq_word_expr(word, signextend_word(byte_index, word.clone())));
         }
     }
 }

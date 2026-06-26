@@ -47,7 +47,7 @@ impl SymCalldata {
         let mut result = SymExpr::constant(U256::ZERO);
         for candidate in (0..self.size).rev() {
             result = SymExpr::ite(
-                BoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate))),
+                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate))),
                 self.load(candidate)?,
                 result,
             );
@@ -59,7 +59,7 @@ impl SymCalldata {
         let mut result = SymExpr::constant(U256::ZERO);
         for candidate in (delta..self.size).rev() {
             result = SymExpr::ite(
-                BoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
+                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
                 self.byte(candidate),
                 result,
             );

@@ -37,20 +37,20 @@ pub(crate) fn symbolic_address_key(word: &SymExpr) -> String {
     }
 }
 
-pub(crate) fn address_match_condition(word: &SymExpr, address: Address) -> BoolExpr {
+pub(crate) fn address_match_condition(word: &SymExpr, address: Address) -> SymBoolExpr {
     if let Some(word) = word.as_const() {
-        return BoolExpr::constant(word == address_word(address));
+        return SymBoolExpr::constant(word == address_word(address));
     }
     let expr = word;
     let Some(terms) = address_byte_terms(expr) else {
-        return BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
+        return SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
     };
     let bytes = address.as_slice();
-    BoolExpr::and(
+    SymBoolExpr::and(
         terms
             .into_iter()
             .enumerate()
-            .map(|(index, term)| BoolExpr::eq(term, SymExpr::constant(U256::from(bytes[index]))))
+            .map(|(index, term)| SymBoolExpr::eq(term, SymExpr::constant(U256::from(bytes[index]))))
             .collect(),
     )
 }
@@ -75,12 +75,14 @@ pub(crate) fn address_expr_equivalent(candidate: &SymExpr, alias: &SymExpr) -> b
     }
 
     match candidate.as_inner() {
-        ExprInner::Op(ExprOp::And, left, right) => {
+        SymExprInner::Op(SymExprOp::And, left, right) => {
             (is_address_mask(right) && address_expr_equivalent(left, alias))
                 || (is_address_mask(left) && address_expr_equivalent(right, alias))
         }
-        ExprInner::Op(ExprOp::Shr, value, shift) if is_shift_96(shift) => match value.as_inner() {
-            ExprInner::Op(ExprOp::Shl, inner, inner_shift) if is_shift_96(inner_shift) => {
+        SymExprInner::Op(SymExprOp::Shr, value, shift) if is_shift_96(shift) => match value
+            .as_inner()
+        {
+            SymExprInner::Op(SymExprOp::Shl, inner, inner_shift) if is_shift_96(inner_shift) => {
                 address_expr_equivalent(inner, alias)
             }
             _ => false,
@@ -97,35 +99,45 @@ pub(crate) fn expr_byte_term(expr: &SymExpr, index: usize) -> Option<SymExpr> {
     debug_assert!(index < 32);
 
     match expr.as_inner() {
-        ExprInner::Const(value) => {
+        SymExprInner::Const(value) => {
             Some(SymExpr::constant(U256::from(value.to_be_bytes::<32>()[index])))
         }
-        ExprInner::Var(_)
-        | ExprInner::GasLeft(_)
-        | ExprInner::Keccak { .. }
-        | ExprInner::Hash { .. } => Some(extracted_byte_expr(expr, index)),
-        ExprInner::Not(value) => Some(SymExpr::not(expr_byte_term(value, index)?)),
-        ExprInner::Ite(cond, then_expr, else_expr) => Some(SymExpr::ite(
+        SymExprInner::Var(_)
+        | SymExprInner::GasLeft(_)
+        | SymExprInner::Keccak { .. }
+        | SymExprInner::Hash { .. } => Some(extracted_byte_expr(expr, index)),
+        SymExprInner::Not(value) => Some(SymExpr::not(expr_byte_term(value, index)?)),
+        SymExprInner::Ite(cond, then_expr, else_expr) => Some(SymExpr::ite(
             cond.clone(),
             expr_byte_term(then_expr, index)?,
             expr_byte_term(else_expr, index)?,
         )),
-        ExprInner::Op(op, left, right) => match op {
-            ExprOp::And => expr_binary_byte_term(
+        SymExprInner::Op(op, left, right) => match op {
+            SymExprOp::And => expr_binary_byte_term(
                 left,
                 right,
                 index,
-                ExprOp::And,
+                SymExprOp::And,
                 |byte| byte == 0xff,
                 |byte| byte == 0,
             ),
-            ExprOp::Or => {
-                expr_binary_byte_term(left, right, index, ExprOp::Or, |byte| byte == 0, |_| false)
-            }
-            ExprOp::Xor => {
-                expr_binary_byte_term(left, right, index, ExprOp::Xor, |byte| byte == 0, |_| false)
-            }
-            ExprOp::Shl => {
+            SymExprOp::Or => expr_binary_byte_term(
+                left,
+                right,
+                index,
+                SymExprOp::Or,
+                |byte| byte == 0,
+                |_| false,
+            ),
+            SymExprOp::Xor => expr_binary_byte_term(
+                left,
+                right,
+                index,
+                SymExprOp::Xor,
+                |byte| byte == 0,
+                |_| false,
+            ),
+            SymExprOp::Shl => {
                 let shift = right.eval_const()?;
                 if shift >= U256::from(256) {
                     return Some(SymExpr::constant(U256::ZERO));
@@ -141,7 +153,7 @@ pub(crate) fn expr_byte_term(expr: &SymExpr, index: usize) -> Option<SymExpr> {
                     expr_byte_term(left, source_index)
                 }
             }
-            ExprOp::Shr => {
+            SymExprOp::Shr => {
                 let shift = right.eval_const()?;
                 if shift >= U256::from(256) {
                     return Some(SymExpr::constant(U256::ZERO));
@@ -157,16 +169,16 @@ pub(crate) fn expr_byte_term(expr: &SymExpr, index: usize) -> Option<SymExpr> {
                     expr_byte_term(left, index - byte_shift)
                 }
             }
-            ExprOp::Add
-            | ExprOp::Sub
-            | ExprOp::Mul
-            | ExprOp::UDiv
-            | ExprOp::URem
-            | ExprOp::SDiv
-            | ExprOp::SRem
-            | ExprOp::Sar => None,
+            SymExprOp::Add
+            | SymExprOp::Sub
+            | SymExprOp::Mul
+            | SymExprOp::UDiv
+            | SymExprOp::URem
+            | SymExprOp::SDiv
+            | SymExprOp::SRem
+            | SymExprOp::Sar => None,
         },
-        ExprInner::AddMod { .. } | ExprInner::MulMod { .. } => None,
+        SymExprInner::AddMod { .. } | SymExprInner::MulMod { .. } => None,
     }
 }
 
@@ -174,7 +186,7 @@ pub(crate) fn expr_binary_byte_term(
     left: &SymExpr,
     right: &SymExpr,
     index: usize,
-    op: ExprOp,
+    op: SymExprOp,
     identity: impl Fn(u8) -> bool,
     absorbing: impl Fn(u8) -> bool,
 ) -> Option<SymExpr> {
@@ -195,8 +207,8 @@ pub(crate) fn expr_byte_const(expr: &SymExpr) -> Option<u8> {
 
 pub(crate) fn extracted_byte_expr(expr: &SymExpr, index: usize) -> SymExpr {
     SymExpr::op(
-        ExprOp::And,
-        SymExpr::op(ExprOp::Shr, expr.clone(), SymExpr::constant(U256::from((31 - index) * 8))),
+        SymExprOp::And,
+        SymExpr::op(SymExprOp::Shr, expr.clone(), SymExpr::constant(U256::from((31 - index) * 8))),
         SymExpr::constant(U256::from(0xff)),
     )
 }

@@ -15,7 +15,7 @@ impl SymbolicExecutor {
     pub(super) fn handle_assertion(
         &mut self,
         state: &mut PathState,
-        pass: BoolExpr,
+        pass: SymBoolExpr,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         let fail = pass.clone().not();
         match fail.as_const() {
@@ -399,7 +399,7 @@ impl SymbolicExecutor {
         }
 
         let unmatched_condition =
-            BoolExpr::and(matched_conditions.into_iter().map(BoolExpr::not).collect());
+            SymBoolExpr::and(matched_conditions.into_iter().map(SymBoolExpr::not).collect());
         if let Some(constraints) = self.constraints_for_condition(state, unmatched_condition)? {
             let mut branch = state.clone();
             branch.constraints = constraints;
@@ -2395,7 +2395,7 @@ impl SymbolicExecutor {
             | assertEq_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::eq(left, right));
+                return self.handle_assertion(state, SymBoolExpr::eq(left, right));
             }
             assertEq_10Call::SELECTOR | assertEq_11Call::SELECTOR => {
                 let values = decode_cheatcode_args(
@@ -2410,7 +2410,7 @@ impl SymbolicExecutor {
                 )?;
                 return self.handle_assertion(
                     state,
-                    BoolExpr::constant(dyn_string(&values[0])? == dyn_string(&values[1])?),
+                    SymBoolExpr::constant(dyn_string(&values[0])? == dyn_string(&values[1])?),
                 );
             }
             assertEq_12Call::SELECTOR | assertEq_13Call::SELECTOR => {
@@ -2426,7 +2426,7 @@ impl SymbolicExecutor {
                 )?;
                 return self.handle_assertion(
                     state,
-                    BoolExpr::constant(dyn_bytes(&values[0])? == dyn_bytes(&values[1])?),
+                    SymBoolExpr::constant(dyn_bytes(&values[0])? == dyn_bytes(&values[1])?),
                 );
             }
             assertEq_14Call::SELECTOR
@@ -2461,7 +2461,7 @@ impl SymbolicExecutor {
                         ]
                     },
                 )?;
-                return self.handle_assertion(state, BoolExpr::constant(values[0] == values[1]));
+                return self.handle_assertion(state, SymBoolExpr::constant(values[0] == values[1]));
             }
             assertEqDecimal_0Call::SELECTOR
             | assertEqDecimal_1Call::SELECTOR
@@ -2469,7 +2469,7 @@ impl SymbolicExecutor {
             | assertEqDecimal_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::eq(left, right));
+                return self.handle_assertion(state, SymBoolExpr::eq(left, right));
             }
             assertNotEq_2Call::SELECTOR
             | assertNotEq_3Call::SELECTOR
@@ -2483,7 +2483,7 @@ impl SymbolicExecutor {
             | assertNotEq_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::eq(left, right).not());
+                return self.handle_assertion(state, SymBoolExpr::eq(left, right).not());
             }
             assertNotEq_10Call::SELECTOR | assertNotEq_11Call::SELECTOR => {
                 let values = decode_cheatcode_args(
@@ -2498,7 +2498,7 @@ impl SymbolicExecutor {
                 )?;
                 return self.handle_assertion(
                     state,
-                    BoolExpr::constant(dyn_string(&values[0])? != dyn_string(&values[1])?),
+                    SymBoolExpr::constant(dyn_string(&values[0])? != dyn_string(&values[1])?),
                 );
             }
             assertNotEq_12Call::SELECTOR | assertNotEq_13Call::SELECTOR => {
@@ -2514,7 +2514,7 @@ impl SymbolicExecutor {
                 )?;
                 return self.handle_assertion(
                     state,
-                    BoolExpr::constant(dyn_bytes(&values[0])? != dyn_bytes(&values[1])?),
+                    SymBoolExpr::constant(dyn_bytes(&values[0])? != dyn_bytes(&values[1])?),
                 );
             }
             assertNotEq_14Call::SELECTOR
@@ -2549,49 +2549,59 @@ impl SymbolicExecutor {
                         ]
                     },
                 )?;
-                return self.handle_assertion(state, BoolExpr::constant(values[0] != values[1]));
+                return self.handle_assertion(state, SymBoolExpr::constant(values[0] != values[1]));
             }
             assertLt_0Call::SELECTOR | assertLt_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::cmp(BoolExprOp::Ult, left, right));
+                return self
+                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Ult, left, right));
             }
             assertLe_0Call::SELECTOR | assertLe_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::cmp(BoolExprOp::Ule, left, right));
+                return self
+                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Ule, left, right));
             }
             assertGt_0Call::SELECTOR | assertGt_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::cmp(BoolExprOp::Ugt, left, right));
+                return self
+                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Ugt, left, right));
             }
             assertGe_0Call::SELECTOR | assertGe_1Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::cmp(BoolExprOp::Uge, left, right));
+                return self
+                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Uge, left, right));
             }
             assertLt_2Call::SELECTOR | assertLt_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::cmp(BoolExprOp::Slt, left, right));
+                return self
+                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Slt, left, right));
             }
             assertGt_2Call::SELECTOR | assertGt_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self.handle_assertion(state, BoolExpr::cmp(BoolExprOp::Sgt, left, right));
+                return self
+                    .handle_assertion(state, SymBoolExpr::cmp(SymBoolExprOp::Sgt, left, right));
             }
             assertLe_2Call::SELECTOR | assertLe_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, BoolExpr::cmp(BoolExprOp::Sgt, left, right).not());
+                return self.handle_assertion(
+                    state,
+                    SymBoolExpr::cmp(SymBoolExprOp::Sgt, left, right).not(),
+                );
             }
             assertGe_2Call::SELECTOR | assertGe_3Call::SELECTOR => {
                 let left = read_abi_word_arg(&state.memory, args_offset, 0)?;
                 let right = read_abi_word_arg(&state.memory, args_offset, 1)?;
-                return self
-                    .handle_assertion(state, BoolExpr::cmp(BoolExprOp::Slt, left, right).not());
+                return self.handle_assertion(
+                    state,
+                    SymBoolExpr::cmp(SymBoolExprOp::Slt, left, right).not(),
+                );
             }
             randomUint_0Call::SELECTOR => {
                 return Ok(CheatcodeOutcome::Continue(vec![state.fresh_word("vmRandomUint")]));
@@ -2610,8 +2620,8 @@ impl SymbolicExecutor {
                 let min = state.memory.load_word(in_offset + 4)?;
                 let max = state.memory.load_word(in_offset + 36)?;
                 let value = state.fresh_word("vmRandomUintRange");
-                state.constraints.push(BoolExpr::cmp_word_expr(BoolExprOp::Uge, &value, min));
-                state.constraints.push(BoolExpr::cmp_word_expr(BoolExprOp::Ule, &value, max));
+                state.constraints.push(SymBoolExpr::cmp_word_expr(SymBoolExprOp::Uge, &value, min));
+                state.constraints.push(SymBoolExpr::cmp_word_expr(SymBoolExprOp::Ule, &value, max));
                 return Ok(CheatcodeOutcome::Continue(vec![value]));
             }
             randomInt_0Call::SELECTOR => {
@@ -2757,13 +2767,13 @@ impl SymbolicExecutor {
             let bytes = (0..len)
                 .map(|_| {
                     let byte = state.fresh_bounded_uint(U256::from(8));
-                    state.constraints.push(BoolExpr::cmp_word_const(
-                        BoolExprOp::Uge,
+                    state.constraints.push(SymBoolExpr::cmp_word_const(
+                        SymBoolExprOp::Uge,
                         &byte,
                         U256::from(0x20),
                     ));
-                    state.constraints.push(BoolExpr::cmp_word_const(
-                        BoolExprOp::Ule,
+                    state.constraints.push(SymBoolExpr::cmp_word_const(
+                        SymBoolExprOp::Ule,
                         &byte,
                         U256::from(0x7e),
                     ));
@@ -2785,13 +2795,13 @@ impl SymbolicExecutor {
             let bytes = (0..len)
                 .map(|_| {
                     let byte = state.fresh_bounded_uint(U256::from(8));
-                    state.constraints.push(BoolExpr::cmp_word_const(
-                        BoolExprOp::Uge,
+                    state.constraints.push(SymBoolExpr::cmp_word_const(
+                        SymBoolExprOp::Uge,
                         &byte,
                         U256::from(0x20),
                     ));
-                    state.constraints.push(BoolExpr::cmp_word_const(
-                        BoolExprOp::Ule,
+                    state.constraints.push(SymBoolExpr::cmp_word_const(
+                        SymBoolExprOp::Ule,
                         &byte,
                         U256::from(0x7e),
                     ));

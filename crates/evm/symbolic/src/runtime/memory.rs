@@ -65,10 +65,10 @@ pub(crate) fn memory_size_after_access(offset: usize, len: usize) -> usize {
 }
 
 pub(crate) fn memory_size_after_symbolic_access(offset: &SymExpr, len: U256) -> SymExpr {
-    let end = SymExpr::op(ExprOp::Add, offset.clone(), SymExpr::constant(len));
+    let end = SymExpr::op(SymExprOp::Add, offset.clone(), SymExpr::constant(len));
     SymExpr::op(
-        ExprOp::And,
-        SymExpr::op(ExprOp::Add, end, SymExpr::constant(U256::from(31))),
+        SymExprOp::And,
+        SymExpr::op(SymExprOp::Add, end, SymExpr::constant(U256::from(31))),
         SymExpr::constant(!U256::from(31)),
     )
 }
@@ -80,7 +80,7 @@ pub(crate) fn max_u256_expr(left: SymExpr, right: SymExpr) -> SymExpr {
     if left == right {
         left
     } else {
-        SymExpr::ite(BoolExpr::cmp(BoolExprOp::Ult, left.clone(), right.clone()), right, left)
+        SymExpr::ite(SymBoolExpr::cmp(SymBoolExprOp::Ult, left.clone(), right.clone()), right, left)
     }
 }
 
@@ -206,8 +206,8 @@ impl SymMemory {
             .enumerate()
             .map(|(idx, source)| {
                 SymExpr::ite(
-                    BoolExpr::cmp(
-                        BoolExprOp::Ult,
+                    SymBoolExpr::cmp(
+                        SymBoolExprOp::Ult,
                         SymExpr::constant(U256::from(idx)),
                         size.clone(),
                     ),
@@ -226,7 +226,7 @@ impl SymMemory {
             for (idx, byte) in write.bytes.iter().enumerate() {
                 has_symbolic_match = true;
                 result = SymExpr::ite(
-                    BoolExpr::eq(
+                    SymBoolExpr::eq(
                         SymExpr::add_const(write.offset.clone(), U256::from(idx)),
                         SymExpr::constant(U256::from(offset)),
                     ),
@@ -253,7 +253,7 @@ impl SymMemory {
             for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
                 for (idx, byte) in write.bytes.iter().enumerate() {
                     candidate_result = SymExpr::ite(
-                        BoolExpr::eq(
+                        SymBoolExpr::eq(
                             SymExpr::add_const(write.offset.clone(), U256::from(idx)),
                             SymExpr::constant(U256::from(candidate)),
                         ),
@@ -263,7 +263,7 @@ impl SymMemory {
                 }
             }
             result = SymExpr::ite(
-                BoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
+                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
                 candidate_result,
                 result,
             );
@@ -505,20 +505,20 @@ impl SymMemory {
     ) -> SymExpr {
         let mut guards = Vec::new();
         if let Some(output_size) = output_size {
-            guards.push(BoolExpr::cmp(
-                BoolExprOp::Ult,
+            guards.push(SymBoolExpr::cmp(
+                SymBoolExprOp::Ult,
                 SymExpr::constant(U256::from(idx)),
                 output_size.clone(),
             ));
         }
         if return_data.has_symbolic_len() {
-            guards.push(BoolExpr::cmp(
-                BoolExprOp::Ult,
+            guards.push(SymBoolExpr::cmp(
+                SymBoolExprOp::Ult,
                 SymExpr::constant(U256::from(idx)),
                 return_data.len_expr(),
             ));
         }
-        let guard = BoolExpr::and(guards);
+        let guard = SymBoolExpr::and(guards);
         match guard.as_const() {
             Some(true) => return_data.byte(idx),
             Some(false) => self.call_output_existing_byte(dest, idx),
@@ -608,7 +608,7 @@ pub(crate) fn symbolic_copy_size_byte(
     existing: SymExpr,
 ) -> SymExpr {
     SymExpr::ite(
-        BoolExpr::cmp(BoolExprOp::Ult, SymExpr::constant(U256::from(idx)), size.clone()),
+        SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::constant(U256::from(idx)), size.clone()),
         source,
         existing,
     )
@@ -624,7 +624,7 @@ pub(crate) struct SymCode {
 pub(crate) enum GuardedOpcode {
     End,
     Concrete(u8),
-    SymbolicSize { condition: BoolExpr, opcode: u8 },
+    SymbolicSize { condition: SymBoolExpr, opcode: u8 },
 }
 
 impl SymCode {
@@ -704,7 +704,7 @@ impl SymCode {
                 Ok(GuardedOpcode::Concrete(byte.as_const().expect("checked concrete").to::<u8>()))
             }
             Some(byte) => {
-                if let ExprInner::Ite(condition, then_expr, else_expr) = byte.as_inner()
+                if let SymExprInner::Ite(condition, then_expr, else_expr) = byte.as_inner()
                     && else_expr.as_const().is_some_and(|value| value.is_zero())
                 {
                     match then_expr.as_const() {
@@ -762,7 +762,7 @@ impl SymCode {
         let mut result = SymExpr::constant(U256::ZERO);
         for candidate in (delta..self.len()).rev() {
             result = SymExpr::ite(
-                BoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
+                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
                 self.bytes[candidate].clone(),
                 result,
             );
@@ -844,7 +844,7 @@ impl SymReturnData {
         let mut result = SymExpr::constant(U256::ZERO);
         for candidate in (delta..self.len()).rev() {
             result = SymExpr::ite(
-                BoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
+                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
                 self.bytes[candidate].clone(),
                 result,
             );

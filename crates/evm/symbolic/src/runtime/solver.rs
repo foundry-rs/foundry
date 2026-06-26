@@ -108,10 +108,10 @@ pub(crate) trait SymbolicSolver {
     /// Implementations should count this as one solver query and map solver `unknown`
     /// or timeout responses into [`SymbolicError::SolverUnknown`] or
     /// [`SymbolicError::Solver`], as appropriate.
-    fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError>;
+    fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError>;
 
     /// Returns branch satisfiability, allowing branch-only hard-arithmetic shortcuts.
-    fn is_sat_branch(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
+    fn is_sat_branch(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
         self.is_sat(constraints)
     }
 
@@ -119,7 +119,7 @@ pub(crate) trait SymbolicSolver {
     ///
     /// The executor uses the returned variable assignments to materialize ABI
     /// arguments, calldata, and invariant sequences for concrete replay.
-    fn model(&mut self, constraints: &[BoolExpr]) -> Result<SymbolicModel, SymbolicError>;
+    fn model(&mut self, constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,8 +157,8 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
-    sat_cache: HashMap<Vec<BoolExpr>, bool>,
-    model_cache: HashMap<Vec<BoolExpr>, SymbolicModel>,
+    sat_cache: HashMap<Vec<SymBoolExpr>, bool>,
+    model_cache: HashMap<Vec<SymBoolExpr>, SymbolicModel>,
     sat_queries: usize,
     model_queries: usize,
     sat_cache_hits: usize,
@@ -266,16 +266,16 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
+    fn is_sat(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
         self.is_sat_inner(constraints, false)
     }
 
     /// Returns whether a branch is feasible.
-    fn is_sat_branch(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
+    fn is_sat_branch(&mut self, constraints: &[SymBoolExpr]) -> Result<bool, SymbolicError> {
         self.is_sat_inner(constraints, true)
     }
 
-    fn model(&mut self, constraints: &[BoolExpr]) -> Result<SymbolicModel, SymbolicError> {
+    fn model(&mut self, constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
         if constraints.iter().any(bool_contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
@@ -377,7 +377,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 impl SmtLibSubprocessSolver {
     fn is_sat_inner(
         &mut self,
-        constraints: &[BoolExpr],
+        constraints: &[SymBoolExpr],
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
         self.sat_queries += 1;
@@ -498,7 +498,7 @@ impl SmtLibSubprocessSolver {
     }
 
     /// Caches a definitive normalized satisfiability result if the cache has room.
-    fn cache_sat_result(&mut self, key: Vec<BoolExpr>, result: bool) {
+    fn cache_sat_result(&mut self, key: Vec<SymBoolExpr>, result: bool) {
         if self.sat_cache.contains_key(&key)
             || self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES
         {
@@ -507,7 +507,7 @@ impl SmtLibSubprocessSolver {
     }
 
     /// Caches a validated normalized model result if the cache has room.
-    fn cache_model_result(&mut self, key: Vec<BoolExpr>, model: SymbolicModel) {
+    fn cache_model_result(&mut self, key: Vec<SymBoolExpr>, model: SymbolicModel) {
         if self.model_cache.contains_key(&key)
             || self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES
         {
@@ -516,7 +516,7 @@ impl SmtLibSubprocessSolver {
     }
 
     /// Returns whether an already-proved unsat constraint set is a subset of `key`.
-    fn has_cached_unsat_subset(&self, key: &[BoolExpr]) -> bool {
+    fn has_cached_unsat_subset(&self, key: &[SymBoolExpr]) -> bool {
         self.sat_cache
             .iter()
             .any(|(cached_key, result)| !*result && sorted_bool_exprs_are_subset(cached_key, key))
@@ -525,9 +525,9 @@ impl SmtLibSubprocessSolver {
     /// Sends already-normalized constraints to the configured solver portfolio.
     pub(crate) fn query_normalized(
         &mut self,
-        smt_constraints: &[BoolExpr],
+        smt_constraints: &[SymBoolExpr],
         model: bool,
-        model_constraints: &[BoolExpr],
+        model_constraints: &[SymBoolExpr],
     ) -> Result<String, SymbolicError> {
         self.smt_queries += 1;
         let mut vars = SymbolicVars::default();
@@ -581,7 +581,7 @@ impl SmtLibSubprocessSolver {
 }
 
 /// Returns a structural key for normalized solver cache lookups.
-fn constraint_cache_key(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
+fn constraint_cache_key(constraints: &[SymBoolExpr]) -> Vec<SymBoolExpr> {
     let mut key = Vec::with_capacity(constraints.len());
     for constraint in constraints.iter().cloned().map(cache_key_bool) {
         collect_cache_key_conjunct(constraint, &mut key);
@@ -592,16 +592,16 @@ fn constraint_cache_key(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
 }
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
-fn constraints_are_directly_unsat(constraints: &[BoolExpr]) -> bool {
+fn constraints_are_directly_unsat(constraints: &[SymBoolExpr]) -> bool {
     constraints.iter().any(|constraint| match constraint.as_inner() {
-        BoolExprInner::Const(false) => true,
-        BoolExprInner::Not(inner) => constraints.binary_search(inner).is_ok(),
+        SymBoolExprInner::Const(false) => true,
+        SymBoolExprInner::Not(inner) => constraints.binary_search(inner).is_ok(),
         _ => constraints.binary_search(&constraint.clone().not()).is_ok(),
     })
 }
 
 /// Returns whether every expression in sorted `subset` appears in sorted `superset`.
-fn sorted_bool_exprs_are_subset(subset: &[BoolExpr], superset: &[BoolExpr]) -> bool {
+fn sorted_bool_exprs_are_subset(subset: &[SymBoolExpr], superset: &[SymBoolExpr]) -> bool {
     if subset.len() > superset.len() {
         return false;
     }
@@ -620,35 +620,35 @@ fn sorted_bool_exprs_are_subset(subset: &[BoolExpr], superset: &[BoolExpr]) -> b
 }
 
 /// Returns a conservative canonical boolean expression for cache-key equality.
-fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
+fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
     match expr.into_inner() {
-        BoolExprInner::Const(value) => BoolExpr::constant(value),
-        BoolExprInner::Not(value) => cache_key_bool(value).not(),
-        BoolExprInner::And(values) => {
+        SymBoolExprInner::Const(value) => SymBoolExpr::constant(value),
+        SymBoolExprInner::Not(value) => cache_key_bool(value).not(),
+        SymBoolExprInner::And(values) => {
             let mut conjuncts = Vec::new();
             for value in values.iter().cloned().map(cache_key_bool) {
                 collect_cache_key_conjunct(value, &mut conjuncts);
             }
             conjuncts.sort();
             conjuncts.dedup();
-            BoolExpr::and(conjuncts)
+            SymBoolExpr::and(conjuncts)
         }
-        BoolExprInner::Eq(left, right) => {
+        SymBoolExprInner::Eq(left, right) => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
-            if left <= right { BoolExpr::eq(left, right) } else { BoolExpr::eq(right, left) }
+            if left <= right { SymBoolExpr::eq(left, right) } else { SymBoolExpr::eq(right, left) }
         }
-        BoolExprInner::Cmp(op, left, right) => {
+        SymBoolExprInner::Cmp(op, left, right) => {
             cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
         }
     }
 }
 
 /// Collects cache-key conjuncts, flattening conjunctions because path constraints are conjunctive.
-fn collect_cache_key_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
+fn collect_cache_key_conjunct(expr: SymBoolExpr, out: &mut Vec<SymBoolExpr>) {
     match expr.as_inner() {
-        BoolExprInner::Const(true) => {}
-        BoolExprInner::And(values) => {
+        SymBoolExprInner::Const(true) => {}
+        SymBoolExprInner::And(values) => {
             for value in values.iter().cloned() {
                 collect_cache_key_conjunct(value, out);
             }
@@ -658,34 +658,39 @@ fn collect_cache_key_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
 }
 
 /// Returns a conservative canonical comparison for cache-key equality.
-fn cache_key_cmp(op: BoolExprOp, left: SymExpr, right: SymExpr) -> BoolExpr {
+fn cache_key_cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> SymBoolExpr {
     match op {
-        BoolExprOp::Ugt => BoolExpr::cmp(BoolExprOp::Ult, right, left),
-        BoolExprOp::Uge => BoolExpr::cmp(BoolExprOp::Ule, right, left),
-        BoolExprOp::Sgt => BoolExpr::cmp(BoolExprOp::Slt, right, left),
-        BoolExprOp::Ult | BoolExprOp::Ule | BoolExprOp::Slt => BoolExpr::cmp(op, left, right),
+        SymBoolExprOp::Ugt => SymBoolExpr::cmp(SymBoolExprOp::Ult, right, left),
+        SymBoolExprOp::Uge => SymBoolExpr::cmp(SymBoolExprOp::Ule, right, left),
+        SymBoolExprOp::Sgt => SymBoolExpr::cmp(SymBoolExprOp::Slt, right, left),
+        SymBoolExprOp::Ult | SymBoolExprOp::Ule | SymBoolExprOp::Slt => {
+            SymBoolExpr::cmp(op, left, right)
+        }
     }
 }
 
 /// Returns a conservative canonical word expression for cache-key equality.
 fn cache_key_expr(expr: SymExpr) -> SymExpr {
-    if matches!(expr.as_inner(), ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_)) {
+    if matches!(
+        expr.as_inner(),
+        SymExprInner::Const(_) | SymExprInner::Var(_) | SymExprInner::GasLeft(_)
+    ) {
         return expr;
     }
 
     match expr.into_inner() {
-        ExprInner::Keccak { name, len, bytes } => SymExpr::keccak_symbol(
+        SymExprInner::Keccak { name, len, bytes } => SymExpr::keccak_symbol(
             name,
             cache_key_expr(len),
             bytes.iter().cloned().map(cache_key_expr).collect(),
         ),
-        ExprInner::Hash { name, algorithm, bytes } => SymExpr::hash_symbol(
+        SymExprInner::Hash { name, algorithm, bytes } => SymExpr::hash_symbol(
             name,
             algorithm,
             bytes.iter().cloned().map(cache_key_expr).collect(),
         ),
-        ExprInner::Not(value) => SymExpr::not(cache_key_expr(value)),
-        ExprInner::Op(op, left, right) => {
+        SymExprInner::Not(value) => SymExpr::not(cache_key_expr(value)),
+        SymExprInner::Op(op, left, right) => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             if expr_op_is_commutative(op) && right < left {
@@ -694,7 +699,7 @@ fn cache_key_expr(expr: SymExpr) -> SymExpr {
                 SymExpr::op(op, left, right)
             }
         }
-        ExprInner::AddMod { left, right, modulus } => {
+        SymExprInner::AddMod { left, right, modulus } => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -704,7 +709,7 @@ fn cache_key_expr(expr: SymExpr) -> SymExpr {
                 SymExpr::addmod(left, right, modulus)
             }
         }
-        ExprInner::MulMod { left, right, modulus } => {
+        SymExprInner::MulMod { left, right, modulus } => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -714,22 +719,22 @@ fn cache_key_expr(expr: SymExpr) -> SymExpr {
                 SymExpr::mulmod(left, right, modulus)
             }
         }
-        ExprInner::Ite(cond, left, right) => {
+        SymExprInner::Ite(cond, left, right) => {
             SymExpr::ite(cache_key_bool(cond), cache_key_expr(left), cache_key_expr(right))
         }
-        ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_) => unreachable!(),
+        SymExprInner::Const(_) | SymExprInner::Var(_) | SymExprInner::GasLeft(_) => unreachable!(),
     }
 }
 
 /// Returns whether a word operation is safe to reorder for cache-key equality.
-const fn expr_op_is_commutative(op: ExprOp) -> bool {
-    matches!(op, ExprOp::Add | ExprOp::Mul | ExprOp::And | ExprOp::Or | ExprOp::Xor)
+const fn expr_op_is_commutative(op: SymExprOp) -> bool {
+    matches!(op, SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor)
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
 fn validated_hard_arith_fallback_model(
-    normalized_constraints: &[BoolExpr],
-    original_constraints: &[BoolExpr],
+    normalized_constraints: &[SymBoolExpr],
+    original_constraints: &[SymBoolExpr],
 ) -> Option<SymbolicModel> {
     let model = hard_arith_fallback_model(normalized_constraints)?;
     model_satisfies_constraints(&model, original_constraints).then_some(model)
@@ -738,7 +743,7 @@ fn validated_hard_arith_fallback_model(
 /// Returns whether a parsed model satisfies the current original constraints.
 fn model_satisfies_constraints(
     model: &(impl SymbolicModelLookup + ?Sized),
-    constraints: &[BoolExpr],
+    constraints: &[SymBoolExpr],
 ) -> bool {
     constraints.iter().all(|constraint| constraint.eval(model).unwrap_or(false))
 }
@@ -1175,7 +1180,7 @@ fn run_solver_commands(
     commands: &[SolverCommand],
     smt: &str,
     timeout: Option<u32>,
-    model_constraints: Option<&[BoolExpr]>,
+    model_constraints: Option<&[SymBoolExpr]>,
 ) -> SolverCommandRun {
     if commands.is_empty() {
         return SolverCommandRun {
@@ -1620,7 +1625,7 @@ fn first_solver_line(output: &str) -> &str {
 
 pub(crate) fn parse_and_validate_model(
     output: &str,
-    constraints: &[BoolExpr],
+    constraints: &[SymBoolExpr],
 ) -> Result<SymbolicModel, SymbolicError> {
     let model = parse_model(output)?;
     if constraints.iter().all(|constraint| constraint.eval(&model).unwrap_or(false)) {
@@ -1641,7 +1646,7 @@ pub(crate) fn parse_and_validate_model(
 
 pub(crate) fn validate_solver_model_output(
     output: &str,
-    constraints: &[BoolExpr],
+    constraints: &[SymBoolExpr],
 ) -> Result<(), SymbolicError> {
     parse_and_validate_model(output, constraints).map(|_| ())
 }

@@ -199,7 +199,11 @@ pub(crate) fn symbolic_create_address_word(
 ) -> SymExpr {
     let name = stable_symbol("create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
     let word = SymExpr::var(&name);
-    state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(1) << 160));
+    state.constraints.push(SymBoolExpr::cmp_word_const(
+        SymBoolExprOp::Ult,
+        &word,
+        U256::from(1) << 160,
+    ));
     word
 }
 
@@ -214,7 +218,11 @@ pub(crate) fn symbolic_create2_address_word(
         format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
     );
     let word = SymExpr::var(&name);
-    state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(1) << 160));
+    state.constraints.push(SymBoolExpr::cmp_word_const(
+        SymBoolExprOp::Ult,
+        &word,
+        U256::from(1) << 160,
+    ));
     word
 }
 
@@ -248,43 +256,45 @@ pub(crate) fn storage_select(
     }
 }
 
-pub(crate) fn storage_key_eq(read_key: SymExpr, write_key: SymExpr) -> BoolExpr {
+pub(crate) fn storage_key_eq(read_key: SymExpr, write_key: SymExpr) -> SymBoolExpr {
     if let (Some(read_root), Some(write_root)) =
         (storage_mapping_root_slot(&read_key), storage_mapping_root_slot(&write_key))
         && read_root != write_root
     {
-        return BoolExpr::constant(false);
+        return SymBoolExpr::constant(false);
     }
     match (storage_layout_key(&read_key), storage_layout_key(&write_key)) {
-        (Some((read_base, read_offset)), Some((write_base, write_offset))) => BoolExpr::and(vec![
-            BoolExpr::eq(read_base, write_base),
-            BoolExpr::eq(read_offset, write_offset),
-        ]),
-        (Some(_), None) if write_key.as_const().is_some() => BoolExpr::constant(false),
-        (None, Some(_)) if read_key.as_const().is_some() => BoolExpr::constant(false),
-        _ => BoolExpr::eq(read_key, write_key),
+        (Some((read_base, read_offset)), Some((write_base, write_offset))) => {
+            SymBoolExpr::and(vec![
+                SymBoolExpr::eq(read_base, write_base),
+                SymBoolExpr::eq(read_offset, write_offset),
+            ])
+        }
+        (Some(_), None) if write_key.as_const().is_some() => SymBoolExpr::constant(false),
+        (None, Some(_)) if read_key.as_const().is_some() => SymBoolExpr::constant(false),
+        _ => SymBoolExpr::eq(read_key, write_key),
     }
 }
 
 /// Returns the root Solidity storage slot for a mapping-style keccak key.
 pub(crate) fn storage_mapping_root_slot(key: &SymExpr) -> Option<U256> {
-    let ExprInner::Keccak { len, bytes, .. } = key.as_inner() else { return None };
+    let SymExprInner::Keccak { len, bytes, .. } = key.as_inner() else { return None };
     if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
         return None;
     }
 
     let slot = word_from_bytes(bytes[32..64].iter().cloned());
     match slot.as_inner() {
-        ExprInner::Const(slot) => Some(*slot),
-        ExprInner::Keccak { .. } => storage_mapping_root_slot(&slot),
+        SymExprInner::Const(slot) => Some(*slot),
+        SymExprInner::Keccak { .. } => storage_mapping_root_slot(&slot),
         _ => None,
     }
 }
 
 pub(crate) fn storage_layout_key(key: &SymExpr) -> Option<(SymExpr, SymExpr)> {
     match key.as_inner() {
-        ExprInner::Keccak { .. } => Some((key.clone(), SymExpr::constant(U256::ZERO))),
-        ExprInner::Op(ExprOp::Add, left, right) => {
+        SymExprInner::Keccak { .. } => Some((key.clone(), SymExpr::constant(U256::ZERO))),
+        SymExprInner::Op(SymExprOp::Add, left, right) => {
             if let Some((base, offset)) = storage_layout_key(left)
                 && !expr_contains_keccak(right)
             {
@@ -308,7 +318,7 @@ pub(crate) fn expr_add(left: SymExpr, right: SymExpr) -> SymExpr {
     match (left.as_const(), right.as_const()) {
         (Some(value), _) if value.is_zero() => right,
         (_, Some(value)) if value.is_zero() => left,
-        _ => SymExpr::op(ExprOp::Add, left, right),
+        _ => SymExpr::op(SymExprOp::Add, left, right),
     }
 }
 
@@ -323,7 +333,7 @@ pub(crate) fn sym_sub(left: SymExpr, right: SymExpr) -> SymExpr {
     if let (Some(left_value), Some(right_value)) = (left.as_const(), right.as_const()) {
         return SymExpr::constant(left_value.wrapping_sub(right_value));
     }
-    SymExpr::op(ExprOp::Sub, left, right)
+    SymExpr::op(SymExprOp::Sub, left, right)
 }
 
 /// Computes the exact EVM `ADDMOD` semantics without truncating the intermediate sum.
@@ -338,7 +348,7 @@ pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
 
 pub(crate) fn expr_contains_keccak(expr: &SymExpr) -> bool {
     expr.visit(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::Keccak { .. }) {
+        if matches!(expr.as_inner(), SymExprInner::Keccak { .. }) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -350,7 +360,7 @@ pub(crate) fn expr_contains_keccak(expr: &SymExpr) -> bool {
 /// Returns whether a word expression depends on the opaque `GAS` / `gasleft()` value.
 pub(crate) fn expr_contains_gasleft(expr: &SymExpr) -> bool {
     expr.visit(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::GasLeft(_)) {
+        if matches!(expr.as_inner(), SymExprInner::GasLeft(_)) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -360,32 +370,36 @@ pub(crate) fn expr_contains_gasleft(expr: &SymExpr) -> bool {
 }
 
 pub(crate) fn bool_forces_expr_const_with_context(
-    condition: &BoolExpr,
+    condition: &SymBoolExpr,
     expr: &SymExpr,
-    context: &[BoolExpr],
+    context: &[SymBoolExpr],
 ) -> Option<U256> {
     match condition.as_inner() {
-        BoolExprInner::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
-            (_, ExprInner::Const(value)) => expr_equality_forces_const(left, *value, expr, context),
-            (ExprInner::Const(value), _) => {
+        SymBoolExprInner::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
+            (_, SymExprInner::Const(value)) => {
+                expr_equality_forces_const(left, *value, expr, context)
+            }
+            (SymExprInner::Const(value), _) => {
                 expr_equality_forces_const(right, *value, expr, context)
             }
             _ => None,
         },
-        BoolExprInner::Not(value) => match value.as_inner() {
-            BoolExprInner::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
-                (left, ExprInner::Const(value)) if value.is_zero() => {
+        SymBoolExprInner::Not(value) => match value.as_inner() {
+            SymBoolExprInner::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
+                (left, SymExprInner::Const(value)) if value.is_zero() => {
                     expr_nonzero_forces_const_inner(left, expr, context)
                 }
-                (ExprInner::Const(value), right) if value.is_zero() => {
+                (SymExprInner::Const(value), right) if value.is_zero() => {
                     expr_nonzero_forces_const_inner(right, expr, context)
                 }
                 _ => None,
             },
-            BoolExprInner::Not(value) => bool_forces_expr_const_with_context(value, expr, context),
+            SymBoolExprInner::Not(value) => {
+                bool_forces_expr_const_with_context(value, expr, context)
+            }
             _ => None,
         },
-        BoolExprInner::And(values) => values
+        SymBoolExprInner::And(values) => values
             .iter()
             .find_map(|value| bool_forces_expr_const_with_context(value, expr, context)),
         _ => None,
@@ -396,7 +410,7 @@ pub(crate) fn expr_equality_forces_const(
     candidate: &SymExpr,
     value: U256,
     expr: &SymExpr,
-    context: &[BoolExpr],
+    context: &[SymBoolExpr],
 ) -> Option<U256> {
     if candidate == expr {
         return Some(value);
@@ -405,10 +419,10 @@ pub(crate) fn expr_equality_forces_const(
 }
 
 fn expr_equality_forces_const_inner(
-    candidate: &ExprInner,
+    candidate: &SymExprInner,
     value: U256,
     expr: &SymExpr,
-    context: &[BoolExpr],
+    context: &[SymBoolExpr],
 ) -> Option<U256> {
     let mask = masked_expr_matches(candidate, expr)?;
     if value & !mask != U256::ZERO || !context_forces_masked_expr(context, expr, mask) {
@@ -420,24 +434,24 @@ fn expr_equality_forces_const_inner(
 pub(crate) fn expr_nonzero_forces_const(
     expr: &SymExpr,
     target: &SymExpr,
-    context: &[BoolExpr],
+    context: &[SymBoolExpr],
 ) -> Option<U256> {
     expr_nonzero_forces_const_inner(expr.as_inner(), target, context)
 }
 
 fn expr_nonzero_forces_const_inner(
-    expr: &ExprInner,
+    expr: &SymExprInner,
     target: &SymExpr,
-    context: &[BoolExpr],
+    context: &[SymBoolExpr],
 ) -> Option<U256> {
     match expr {
-        ExprInner::Const(_)
-        | ExprInner::Var(_)
-        | ExprInner::GasLeft(_)
-        | ExprInner::Keccak { .. }
-        | ExprInner::Hash { .. }
-        | ExprInner::Not(_) => None,
-        ExprInner::Ite(cond, then_expr, else_expr) => {
+        SymExprInner::Const(_)
+        | SymExprInner::Var(_)
+        | SymExprInner::GasLeft(_)
+        | SymExprInner::Keccak { .. }
+        | SymExprInner::Hash { .. }
+        | SymExprInner::Not(_) => None,
+        SymExprInner::Ite(cond, then_expr, else_expr) => {
             if then_expr.eval_const().is_some_and(|value| !value.is_zero())
                 && else_expr.eval_const().is_some_and(|value| value.is_zero())
             {
@@ -446,7 +460,7 @@ fn expr_nonzero_forces_const_inner(
                 None
             }
         }
-        ExprInner::Op(ExprOp::Or, left, right) => {
+        SymExprInner::Op(SymExprOp::Or, left, right) => {
             if left.eval_const().is_some_and(|value| value.is_zero()) {
                 return expr_nonzero_forces_const(right, target, context);
             }
@@ -455,7 +469,7 @@ fn expr_nonzero_forces_const_inner(
             }
             None
         }
-        ExprInner::Op(ExprOp::And, left, right) => {
+        SymExprInner::Op(SymExprOp::And, left, right) => {
             if left.eval_const().is_some_and(|value| !value.is_zero()) {
                 return expr_nonzero_forces_const(right, target, context);
             }
@@ -464,42 +478,42 @@ fn expr_nonzero_forces_const_inner(
             }
             None
         }
-        ExprInner::Op(ExprOp::Shl | ExprOp::Shr, value, shift)
+        SymExprInner::Op(SymExprOp::Shl | SymExprOp::Shr, value, shift)
             if shift.eval_const().is_some_and(|shift| shift.is_zero()) =>
         {
             expr_nonzero_forces_const(value, target, context)
         }
-        ExprInner::AddMod { .. } | ExprInner::MulMod { .. } => None,
-        ExprInner::Op(_, _, _) => None,
+        SymExprInner::AddMod { .. } | SymExprInner::MulMod { .. } => None,
+        SymExprInner::Op(_, _, _) => None,
     }
 }
 
-fn masked_expr_matches(candidate: &ExprInner, target: &SymExpr) -> Option<U256> {
+fn masked_expr_matches(candidate: &SymExprInner, target: &SymExpr) -> Option<U256> {
     match candidate {
-        ExprInner::Op(ExprOp::And, left, right) if left == target => right.eval_const(),
-        ExprInner::Op(ExprOp::And, left, right) if right == target => left.eval_const(),
+        SymExprInner::Op(SymExprOp::And, left, right) if left == target => right.eval_const(),
+        SymExprInner::Op(SymExprOp::And, left, right) if right == target => left.eval_const(),
         _ => None,
     }
 }
 
 pub(crate) fn context_forces_masked_expr(
-    context: &[BoolExpr],
+    context: &[SymBoolExpr],
     target: &SymExpr,
     mask: U256,
 ) -> bool {
     context.iter().any(|condition| match condition.as_inner() {
-        BoolExprInner::Eq(left, right) => {
+        SymBoolExprInner::Eq(left, right) => {
             (left == target && masked_expr_matches(right.as_inner(), target) == Some(mask))
                 || (right == target && masked_expr_matches(left.as_inner(), target) == Some(mask))
         }
-        BoolExprInner::And(values) => context_forces_masked_expr(values, target, mask),
+        SymBoolExprInner::And(values) => context_forces_masked_expr(values, target, mask),
         _ => false,
     })
 }
 
-pub(crate) fn bool_contains_keccak(expr: &BoolExpr) -> bool {
+pub(crate) fn bool_contains_keccak(expr: &SymBoolExpr) -> bool {
     expr.visit_exprs(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::Keccak { .. }) {
+        if matches!(expr.as_inner(), SymExprInner::Keccak { .. }) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -509,9 +523,9 @@ pub(crate) fn bool_contains_keccak(expr: &BoolExpr) -> bool {
 }
 
 /// Returns whether a boolean expression depends on the opaque `GAS` / `gasleft()` value.
-pub(crate) fn bool_contains_gasleft(expr: &BoolExpr) -> bool {
+pub(crate) fn bool_contains_gasleft(expr: &SymBoolExpr) -> bool {
     expr.visit_exprs(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::GasLeft(_)) {
+        if matches!(expr.as_inner(), SymExprInner::GasLeft(_)) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -553,9 +567,9 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymExpr>) -> SymEx
         let byte = if shift == 0 {
             byte
         } else {
-            SymExpr::op(ExprOp::Shl, byte, SymExpr::constant(U256::from(shift)))
+            SymExpr::op(SymExprOp::Shl, byte, SymExpr::constant(U256::from(shift)))
         };
-        expr = SymExpr::op(ExprOp::Or, expr, byte);
+        expr = SymExpr::op(SymExprOp::Or, expr, byte);
     }
     expr
 }
@@ -593,17 +607,21 @@ pub(crate) fn extracted_byte_source(byte: &SymExpr, index: usize) -> Option<SymE
     if index == 31 {
         return Some(expr.clone());
     }
-    let ExprInner::Op(ExprOp::Shr, source, shift) = expr.as_inner() else { return None };
+    let SymExprInner::Op(SymExprOp::Shr, source, shift) = expr.as_inner() else { return None };
     let shift = shift.as_const()?;
     (shift == U256::from((31 - index) * 8)).then(|| source.clone())
 }
 
 pub(crate) fn strip_low_byte_mask(expr: &SymExpr) -> Option<&SymExpr> {
     match expr.as_inner() {
-        ExprInner::Op(ExprOp::And, left, right) if right.as_const() == Some(U256::from(0xff)) => {
+        SymExprInner::Op(SymExprOp::And, left, right)
+            if right.as_const() == Some(U256::from(0xff)) =>
+        {
             Some(strip_low_byte_mask(left).unwrap_or(left))
         }
-        ExprInner::Op(ExprOp::And, left, right) if left.as_const() == Some(U256::from(0xff)) => {
+        SymExprInner::Op(SymExprOp::And, left, right)
+            if left.as_const() == Some(U256::from(0xff)) =>
+        {
             Some(strip_low_byte_mask(right).unwrap_or(right))
         }
         _ => Some(expr),
@@ -614,7 +632,7 @@ pub(crate) fn low_byte(word: SymExpr) -> SymExpr {
     if let Some(word) = word.as_const() {
         return SymExpr::constant(U256::from(word.to::<u8>()));
     }
-    SymExpr::op(ExprOp::And, word, SymExpr::constant(U256::from(0xff)))
+    SymExpr::op(SymExprOp::And, word, SymExpr::constant(U256::from(0xff)))
 }
 
 pub(crate) fn concrete_bytes(
@@ -634,7 +652,7 @@ pub(crate) fn calldata_prefix_condition(
     calldata: &[SymExpr],
     prefix: &[SymExpr],
     _reason: &'static str,
-) -> Result<Option<BoolExpr>, SymbolicError> {
+) -> Result<Option<SymBoolExpr>, SymbolicError> {
     if prefix.len() > calldata.len() {
         return Ok(None);
     }
@@ -649,10 +667,10 @@ pub(crate) fn calldata_prefix_condition(
                 .zip(expected.as_const())
                 .is_some_and(|(actual, expected)| actual.to::<u8>() == expected.to::<u8>()) => {}
             _ if actual.as_const().is_some() && expected.as_const().is_some() => return Ok(None),
-            _ => conditions.push(BoolExpr::eq_words(actual, expected)),
+            _ => conditions.push(SymBoolExpr::eq_words(actual, expected)),
         }
     }
-    Ok(Some(BoolExpr::and(conditions)))
+    Ok(Some(SymBoolExpr::and(conditions)))
 }
 
 pub(crate) fn function_mock_match_condition(
@@ -660,11 +678,11 @@ pub(crate) fn function_mock_match_condition(
     callee: Address,
     calldata: &[SymExpr],
     reason: &'static str,
-) -> Result<Option<BoolExpr>, SymbolicError> {
+) -> Result<Option<SymBoolExpr>, SymbolicError> {
     let Some(data_condition) = calldata_prefix_condition(calldata, &mock.data, reason)? else {
         return Ok(None);
     };
-    Ok(Some(BoolExpr::and(vec![address_match_condition(&mock.callee, callee), data_condition])))
+    Ok(Some(SymBoolExpr::and(vec![address_match_condition(&mock.callee, callee), data_condition])))
 }
 
 pub(crate) trait SymExprSliceExt {
@@ -678,7 +696,7 @@ impl SymExprSliceExt for [SymExpr] {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct SymExpr(Arc<ExprInner>);
+pub(crate) struct SymExpr(Arc<SymExprInner>);
 
 impl fmt::Debug for SymExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -687,29 +705,30 @@ impl fmt::Debug for SymExpr {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) enum ExprInner {
+pub(super) enum SymExprInner {
     Const(U256),
     Var(Symbol),
     GasLeft(usize),
     Keccak { name: Symbol, len: SymExpr, bytes: Arc<[SymExpr]> },
     Hash { name: Symbol, algorithm: &'static str, bytes: Arc<[SymExpr]> },
     Not(SymExpr),
-    Op(ExprOp, SymExpr, SymExpr),
+    Op(SymExprOp, SymExpr, SymExpr),
     AddMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
     MulMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
-    Ite(BoolExpr, SymExpr, SymExpr),
+    Ite(SymBoolExpr, SymExpr, SymExpr),
 }
 
-static EXPR_ZERO: LazyLock<Arc<ExprInner>> =
-    LazyLock::new(|| Arc::new(ExprInner::Const(U256::ZERO)));
-static EXPR_ONE: LazyLock<Arc<ExprInner>> =
-    LazyLock::new(|| Arc::new(ExprInner::Const(U256::from(1))));
-static EXPR_MAX: LazyLock<Arc<ExprInner>> = LazyLock::new(|| Arc::new(ExprInner::Const(U256::MAX)));
+static EXPR_ZERO: LazyLock<Arc<SymExprInner>> =
+    LazyLock::new(|| Arc::new(SymExprInner::Const(U256::ZERO)));
+static EXPR_ONE: LazyLock<Arc<SymExprInner>> =
+    LazyLock::new(|| Arc::new(SymExprInner::Const(U256::from(1))));
+static EXPR_MAX: LazyLock<Arc<SymExprInner>> =
+    LazyLock::new(|| Arc::new(SymExprInner::Const(U256::MAX)));
 
 impl SymExpr {
-    fn from_inner(expr: ExprInner) -> Self {
+    fn from_inner(expr: SymExprInner) -> Self {
         match expr {
-            ExprInner::Const(value) => Self::constant(value),
+            SymExprInner::Const(value) => Self::constant(value),
             expr => Self(Arc::new(expr)),
         }
     }
@@ -718,27 +737,27 @@ impl SymExpr {
         Self::constant(U256::ZERO)
     }
 
-    pub(super) fn as_inner(&self) -> &ExprInner {
+    pub(super) fn as_inner(&self) -> &SymExprInner {
         self.0.as_ref()
     }
 
     #[cfg(test)]
     pub(crate) fn var_name(&self) -> Option<&str> {
         match self.as_inner() {
-            ExprInner::Var(name) => Some(name.as_str()),
+            SymExprInner::Var(name) => Some(name.as_str()),
             _ => None,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn is_keccak(&self) -> bool {
-        matches!(self.as_inner(), ExprInner::Keccak { .. })
+        matches!(self.as_inner(), SymExprInner::Keccak { .. })
     }
 
     #[cfg(test)]
     pub(crate) fn keccak_len_and_byte_count(&self) -> Option<(&Self, usize)> {
         match self.as_inner() {
-            ExprInner::Keccak { len, bytes, .. } => Some((len, bytes.len())),
+            SymExprInner::Keccak { len, bytes, .. } => Some((len, bytes.len())),
             _ => None,
         }
     }
@@ -746,12 +765,12 @@ impl SymExpr {
     #[cfg(test)]
     pub(crate) fn hash_algorithm(&self) -> Option<&'static str> {
         match self.as_inner() {
-            ExprInner::Hash { algorithm, .. } => Some(algorithm),
+            SymExprInner::Hash { algorithm, .. } => Some(algorithm),
             _ => None,
         }
     }
 
-    pub(super) fn into_inner(self) -> ExprInner {
+    pub(super) fn into_inner(self) -> SymExprInner {
         Arc::unwrap_or_clone(self.0)
     }
 
@@ -763,35 +782,35 @@ impl SymExpr {
         } else if value == U256::MAX {
             Self(EXPR_MAX.clone())
         } else {
-            Self(Arc::new(ExprInner::Const(value)))
+            Self(Arc::new(SymExprInner::Const(value)))
         }
     }
 
     pub(crate) fn as_const(&self) -> Option<U256> {
         match self.as_inner() {
-            ExprInner::Const(value) => Some(*value),
+            SymExprInner::Const(value) => Some(*value),
             _ => None,
         }
     }
 
     pub(crate) fn eval_const(&self) -> Option<U256> {
         match self.as_inner() {
-            ExprInner::Const(value) => Some(*value),
-            ExprInner::Var(_)
-            | ExprInner::GasLeft(_)
-            | ExprInner::Keccak { .. }
-            | ExprInner::Hash { .. } => None,
-            ExprInner::Not(value) => Some(!value.eval_const()?),
-            ExprInner::Op(op, left, right) => {
+            SymExprInner::Const(value) => Some(*value),
+            SymExprInner::Var(_)
+            | SymExprInner::GasLeft(_)
+            | SymExprInner::Keccak { .. }
+            | SymExprInner::Hash { .. } => None,
+            SymExprInner::Not(value) => Some(!value.eval_const()?),
+            SymExprInner::Op(op, left, right) => {
                 Some(op.eval(left.eval_const()?, right.eval_const()?))
             }
-            ExprInner::AddMod { left, right, modulus } => {
+            SymExprInner::AddMod { left, right, modulus } => {
                 Some(addmod_word(left.eval_const()?, right.eval_const()?, modulus.eval_const()?))
             }
-            ExprInner::MulMod { left, right, modulus } => {
+            SymExprInner::MulMod { left, right, modulus } => {
                 Some(mulmod_word(left.eval_const()?, right.eval_const()?, modulus.eval_const()?))
             }
-            ExprInner::Ite(cond, then_expr, else_expr) => {
+            SymExprInner::Ite(cond, then_expr, else_expr) => {
                 if cond.eval_const()? {
                     then_expr.eval_const()
                 } else {
@@ -806,12 +825,12 @@ impl SymExpr {
         model: &M,
     ) -> Result<U256, SymbolicError> {
         Ok(match self.as_inner() {
-            ExprInner::Const(value) => *value,
-            ExprInner::Var(var) => model.value(*var).unwrap_or_default(),
-            ExprInner::GasLeft(_) => {
+            SymExprInner::Const(value) => *value,
+            SymExprInner::Var(var) => model.value(*var).unwrap_or_default(),
+            SymExprInner::GasLeft(_) => {
                 return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
             }
-            ExprInner::Keccak { len, bytes, .. } => {
+            SymExprInner::Keccak { len, bytes, .. } => {
                 let len = len.eval(model)?;
                 if len > U256::from(bytes.len()) {
                     return Err(SymbolicError::Solver(
@@ -826,16 +845,16 @@ impl SymExpr {
 
                 U256::from_be_bytes(keccak256(input).0)
             }
-            ExprInner::Hash { name, .. } => model.value(*name).unwrap_or_default(),
-            ExprInner::Not(value) => !value.eval(model)?,
-            ExprInner::Op(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
-            ExprInner::AddMod { left, right, modulus } => {
+            SymExprInner::Hash { name, .. } => model.value(*name).unwrap_or_default(),
+            SymExprInner::Not(value) => !value.eval(model)?,
+            SymExprInner::Op(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
+            SymExprInner::AddMod { left, right, modulus } => {
                 addmod_word(left.eval(model)?, right.eval(model)?, modulus.eval(model)?)
             }
-            ExprInner::MulMod { left, right, modulus } => {
+            SymExprInner::MulMod { left, right, modulus } => {
                 mulmod_word(left.eval(model)?, right.eval(model)?, modulus.eval(model)?)
             }
-            ExprInner::Ite(cond, then_expr, else_expr) => {
+            SymExprInner::Ite(cond, then_expr, else_expr) => {
                 if cond.eval(model)? {
                     then_expr.eval(model)?
                 } else {
@@ -845,7 +864,7 @@ impl SymExpr {
         })
     }
 
-    pub(crate) fn from_bool(value: BoolExpr) -> Self {
+    pub(crate) fn from_bool(value: SymBoolExpr) -> Self {
         match value.as_const() {
             Some(value) => Self::constant(U256::from(value)),
             None => Self::ite(value, Self::constant(U256::from(1)), Self::constant(U256::ZERO)),
@@ -856,28 +875,28 @@ impl SymExpr {
         self.as_const().map(|value| !value.is_zero())
     }
 
-    pub(crate) fn into_zero_bool(self) -> BoolExpr {
+    pub(crate) fn into_zero_bool(self) -> SymBoolExpr {
         if let Some(value) = self.as_const() {
-            return BoolExpr::constant(value.is_zero());
+            return SymBoolExpr::constant(value.is_zero());
         }
         match self.into_inner() {
-            ExprInner::Ite(cond, then_expr, else_expr)
+            SymExprInner::Ite(cond, then_expr, else_expr)
                 if then_expr.as_const() == Some(U256::from(1))
                     && else_expr.as_const() == Some(U256::ZERO) =>
             {
                 cond.not()
             }
-            ExprInner::Ite(cond, then_expr, else_expr)
+            SymExprInner::Ite(cond, then_expr, else_expr)
                 if then_expr.as_const() == Some(U256::ZERO)
                     && else_expr.as_const() == Some(U256::from(1)) =>
             {
                 cond
             }
-            expr => BoolExpr::eq(Self::from_inner(expr), Self::constant(U256::ZERO)),
+            expr => SymBoolExpr::eq(Self::from_inner(expr), Self::constant(U256::ZERO)),
         }
     }
 
-    pub(crate) fn nonzero_bool(self) -> BoolExpr {
+    pub(crate) fn nonzero_bool(self) -> SymBoolExpr {
         self.into_zero_bool().not()
     }
 
@@ -898,7 +917,7 @@ impl SymExpr {
     }
 
     pub(crate) fn is_raw_gasleft(&self) -> bool {
-        matches!(self.as_inner(), ExprInner::GasLeft(_))
+        matches!(self.as_inner(), SymExprInner::GasLeft(_))
     }
 
     pub(crate) fn var(name: &str) -> Self {
@@ -906,11 +925,11 @@ impl SymExpr {
     }
 
     pub(crate) fn var_symbol(name: Symbol) -> Self {
-        Self::from_inner(ExprInner::Var(name))
+        Self::from_inner(SymExprInner::Var(name))
     }
 
     pub(crate) fn gas_left(id: usize) -> Self {
-        Self::from_inner(ExprInner::GasLeft(id))
+        Self::from_inner(SymExprInner::GasLeft(id))
     }
 
     pub(crate) fn keccak(name: &str, len: Self, bytes: Vec<Self>) -> Self {
@@ -918,7 +937,7 @@ impl SymExpr {
     }
 
     pub(crate) fn keccak_symbol(name: Symbol, len: Self, bytes: Vec<Self>) -> Self {
-        Self::from_inner(ExprInner::Keccak { name, len, bytes: bytes.into() })
+        Self::from_inner(SymExprInner::Keccak { name, len, bytes: bytes.into() })
     }
 
     pub(crate) fn hash(name: &str, algorithm: &'static str, bytes: Vec<Self>) -> Self {
@@ -926,10 +945,10 @@ impl SymExpr {
     }
 
     pub(crate) fn hash_symbol(name: Symbol, algorithm: &'static str, bytes: Vec<Self>) -> Self {
-        Self::from_inner(ExprInner::Hash { name, algorithm, bytes: bytes.into() })
+        Self::from_inner(SymExprInner::Hash { name, algorithm, bytes: bytes.into() })
     }
 
-    pub(crate) fn ite(cond: BoolExpr, then_expr: Self, else_expr: Self) -> Self {
+    pub(crate) fn ite(cond: SymBoolExpr, then_expr: Self, else_expr: Self) -> Self {
         match cond.as_const() {
             Some(true) => then_expr,
             Some(false) => else_expr,
@@ -937,7 +956,7 @@ impl SymExpr {
                 if then_expr == else_expr {
                     then_expr
                 } else {
-                    Self::from_inner(ExprInner::Ite(cond, then_expr, else_expr))
+                    Self::from_inner(SymExprInner::Ite(cond, then_expr, else_expr))
                 }
             }
         }
@@ -948,16 +967,16 @@ impl SymExpr {
             return expr;
         }
         match expr.as_inner() {
-            ExprInner::Const(expr) => Self::constant(expr.wrapping_add(value)),
-            _ => Self::from_inner(ExprInner::Op(ExprOp::Add, expr, Self::constant(value))),
+            SymExprInner::Const(expr) => Self::constant(expr.wrapping_add(value)),
+            _ => Self::from_inner(SymExprInner::Op(SymExprOp::Add, expr, Self::constant(value))),
         }
     }
 
     pub(crate) fn not(value: Self) -> Self {
         match value.into_inner() {
-            ExprInner::Const(value) => Self::constant(!value),
-            ExprInner::Not(value) => value,
-            value => Self::from_inner(ExprInner::Not(Self::from_inner(value))),
+            SymExprInner::Const(value) => Self::constant(!value),
+            SymExprInner::Not(value) => value,
+            value => Self::from_inner(SymExprInner::Not(Self::from_inner(value))),
         }
     }
 
@@ -968,30 +987,30 @@ impl SymExpr {
     ) -> ControlFlow<B> {
         visitor(self)?;
         match self.as_inner() {
-            ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_) => {}
-            ExprInner::Keccak { len, bytes, .. } => {
+            SymExprInner::Const(_) | SymExprInner::Var(_) | SymExprInner::GasLeft(_) => {}
+            SymExprInner::Keccak { len, bytes, .. } => {
                 len.visit(visitor)?;
                 for byte in bytes.iter() {
                     byte.visit(visitor)?;
                 }
             }
-            ExprInner::Hash { bytes, .. } => {
+            SymExprInner::Hash { bytes, .. } => {
                 for byte in bytes.iter() {
                     byte.visit(visitor)?;
                 }
             }
-            ExprInner::Not(value) => value.visit(visitor)?,
-            ExprInner::Op(_, left, right) => {
+            SymExprInner::Not(value) => value.visit(visitor)?,
+            SymExprInner::Op(_, left, right) => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
             }
-            ExprInner::AddMod { left, right, modulus }
-            | ExprInner::MulMod { left, right, modulus } => {
+            SymExprInner::AddMod { left, right, modulus }
+            | SymExprInner::MulMod { left, right, modulus } => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
                 modulus.visit(visitor)?;
             }
-            ExprInner::Ite(cond, left, right) => {
+            SymExprInner::Ite(cond, left, right) => {
                 cond.visit_exprs(visitor)?;
                 left.visit(visitor)?;
                 right.visit(visitor)?;
@@ -1000,69 +1019,77 @@ impl SymExpr {
         ControlFlow::Continue(())
     }
 
-    pub(crate) fn op(op: ExprOp, left: Self, right: Self) -> Self {
+    pub(crate) fn op(op: SymExprOp, left: Self, right: Self) -> Self {
         if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
             return Self::constant(op.eval(left, right));
         }
 
         match (op, left.as_inner(), right.as_inner()) {
-            (ExprOp::Add, ExprInner::Const(value), _) if value.is_zero() => return right,
-            (ExprOp::Add, _, ExprInner::Const(value)) if value.is_zero() => return left,
-            (ExprOp::Sub, _, ExprInner::Const(value)) if value.is_zero() => return left,
-            (ExprOp::Sub, _, _) if left == right => return Self::constant(U256::ZERO),
-            (ExprOp::Mul, ExprInner::Const(value), _)
-            | (ExprOp::Mul, _, ExprInner::Const(value))
+            (SymExprOp::Add, SymExprInner::Const(value), _) if value.is_zero() => return right,
+            (SymExprOp::Add, _, SymExprInner::Const(value)) if value.is_zero() => return left,
+            (SymExprOp::Sub, _, SymExprInner::Const(value)) if value.is_zero() => return left,
+            (SymExprOp::Sub, _, _) if left == right => return Self::constant(U256::ZERO),
+            (SymExprOp::Mul, SymExprInner::Const(value), _)
+            | (SymExprOp::Mul, _, SymExprInner::Const(value))
                 if value.is_zero() =>
             {
                 return Self::constant(U256::ZERO);
             }
-            (ExprOp::Mul, ExprInner::Const(value), _) if *value == U256::from(1) => return right,
-            (ExprOp::Mul, _, ExprInner::Const(value)) if *value == U256::from(1) => return left,
+            (SymExprOp::Mul, SymExprInner::Const(value), _) if *value == U256::from(1) => {
+                return right;
+            }
+            (SymExprOp::Mul, _, SymExprInner::Const(value)) if *value == U256::from(1) => {
+                return left;
+            }
             (
-                ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem,
+                SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
                 _,
-                ExprInner::Const(value),
+                SymExprInner::Const(value),
             ) if value.is_zero() => {
                 return Self::constant(U256::ZERO);
             }
-            (ExprOp::UDiv | ExprOp::SDiv, _, ExprInner::Const(value))
+            (SymExprOp::UDiv | SymExprOp::SDiv, _, SymExprInner::Const(value))
                 if *value == U256::from(1) =>
             {
                 return left;
             }
-            (ExprOp::URem | ExprOp::SRem, _, ExprInner::Const(value))
+            (SymExprOp::URem | SymExprOp::SRem, _, SymExprInner::Const(value))
                 if *value == U256::from(1) =>
             {
                 return Self::constant(U256::ZERO);
             }
-            (ExprOp::And, ExprInner::Const(value), _)
-            | (ExprOp::And, _, ExprInner::Const(value))
+            (SymExprOp::And, SymExprInner::Const(value), _)
+            | (SymExprOp::And, _, SymExprInner::Const(value))
                 if value.is_zero() =>
             {
                 return Self::constant(U256::ZERO);
             }
-            (ExprOp::And, ExprInner::Const(value), _) if *value == U256::MAX => return right,
-            (ExprOp::And, _, ExprInner::Const(value)) if *value == U256::MAX => return left,
-            (ExprOp::And, _, _) if left == right => return left,
-            (ExprOp::And, ExprInner::Const(mask), _) => return Self::and_const(right, *mask),
-            (ExprOp::And, _, ExprInner::Const(mask)) => return Self::and_const(left, *mask),
-            (ExprOp::Or | ExprOp::Xor, ExprInner::Const(value), _)
-            | (ExprOp::Or | ExprOp::Xor, _, ExprInner::Const(value))
+            (SymExprOp::And, SymExprInner::Const(value), _) if *value == U256::MAX => return right,
+            (SymExprOp::And, _, SymExprInner::Const(value)) if *value == U256::MAX => return left,
+            (SymExprOp::And, _, _) if left == right => return left,
+            (SymExprOp::And, SymExprInner::Const(mask), _) => return Self::and_const(right, *mask),
+            (SymExprOp::And, _, SymExprInner::Const(mask)) => return Self::and_const(left, *mask),
+            (SymExprOp::Or | SymExprOp::Xor, SymExprInner::Const(value), _)
+            | (SymExprOp::Or | SymExprOp::Xor, _, SymExprInner::Const(value))
                 if value.is_zero() =>
             {
-                return if matches!(left.as_inner(), ExprInner::Const(_)) { right } else { left };
+                return if matches!(left.as_inner(), SymExprInner::Const(_)) {
+                    right
+                } else {
+                    left
+                };
             }
-            (ExprOp::Shl | ExprOp::Shr | ExprOp::Sar, _, ExprInner::Const(value))
+            (SymExprOp::Shl | SymExprOp::Shr | SymExprOp::Sar, _, SymExprInner::Const(value))
                 if value.is_zero() =>
             {
                 return left;
             }
-            (ExprOp::Shl | ExprOp::Shr, ExprInner::Const(value), _) if value.is_zero() => {
+            (SymExprOp::Shl | SymExprOp::Shr, SymExprInner::Const(value), _) if value.is_zero() => {
                 return Self::constant(U256::ZERO);
             }
             _ => {}
         }
-        Self::from_inner(ExprInner::Op(op, left, right))
+        Self::from_inner(SymExprInner::Op(op, left, right))
     }
 
     /// Builds an exact EVM `ADDMOD` expression.
@@ -1075,7 +1102,7 @@ impl SymExpr {
         {
             return Self::constant(addmod_word(left, right, modulus));
         }
-        Self::from_inner(ExprInner::AddMod { left, right, modulus })
+        Self::from_inner(SymExprInner::AddMod { left, right, modulus })
     }
 
     /// Builds an exact EVM `MULMOD` expression.
@@ -1088,7 +1115,7 @@ impl SymExpr {
         {
             return Self::constant(mulmod_word(left, right, modulus));
         }
-        Self::from_inner(ExprInner::MulMod { left, right, modulus })
+        Self::from_inner(SymExprInner::MulMod { left, right, modulus })
     }
 
     fn and_const(expr: Self, mask: U256) -> Self {
@@ -1100,18 +1127,18 @@ impl SymExpr {
         }
 
         match expr.into_inner() {
-            ExprInner::Op(ExprOp::And, left, right) => match (left, right) {
+            SymExprInner::Op(SymExprOp::And, left, right) => match (left, right) {
                 (left, right) if left.as_const() == Some(mask) => Self::and_const(right, mask),
                 (left, right) if right.as_const() == Some(mask) => Self::and_const(left, mask),
                 (left, right) if left == right => Self::and_const(left, mask),
-                (left, right) => Self::from_inner(ExprInner::Op(
-                    ExprOp::And,
-                    Self::from_inner(ExprInner::Op(ExprOp::And, left, right)),
+                (left, right) => Self::from_inner(SymExprInner::Op(
+                    SymExprOp::And,
+                    Self::from_inner(SymExprInner::Op(SymExprOp::And, left, right)),
                     Self::constant(mask),
                 )),
             },
-            expr => Self::from_inner(ExprInner::Op(
-                ExprOp::And,
+            expr => Self::from_inner(SymExprInner::Op(
+                SymExprOp::And,
                 Self::from_inner(expr),
                 Self::constant(mask),
             )),
@@ -1121,22 +1148,22 @@ impl SymExpr {
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         let _ = self.visit(&mut |expr| {
             match expr.as_inner() {
-                ExprInner::Var(var) => {
+                SymExprInner::Var(var) => {
                     vars.insert(*var);
                 }
-                ExprInner::Keccak { name, .. } => {
+                SymExprInner::Keccak { name, .. } => {
                     vars.insert(*name);
                 }
-                ExprInner::Hash { name, .. } => {
+                SymExprInner::Hash { name, .. } => {
                     vars.insert(*name);
                 }
-                ExprInner::Const(_)
-                | ExprInner::GasLeft(_)
-                | ExprInner::Not(_)
-                | ExprInner::Op(_, _, _)
-                | ExprInner::AddMod { .. }
-                | ExprInner::MulMod { .. }
-                | ExprInner::Ite(_, _, _) => {}
+                SymExprInner::Const(_)
+                | SymExprInner::GasLeft(_)
+                | SymExprInner::Not(_)
+                | SymExprInner::Op(_, _, _)
+                | SymExprInner::AddMod { .. }
+                | SymExprInner::MulMod { .. }
+                | SymExprInner::Ite(_, _, _) => {}
             }
             ControlFlow::<()>::Continue(())
         });
@@ -1151,34 +1178,34 @@ impl SymExpr {
 
     fn write_smt(&self, out: &mut String) {
         match self.as_inner() {
-            ExprInner::Const(value) => {
+            SymExprInner::Const(value) => {
                 let _ = write!(out, "(_ bv{value} 256)");
             }
-            ExprInner::Var(var) => out.push_str(var.as_str()),
-            ExprInner::GasLeft(id) => {
+            SymExprInner::Var(var) => out.push_str(var.as_str()),
+            SymExprInner::GasLeft(id) => {
                 let _ = write!(out, "gasleft_{id}");
             }
-            ExprInner::Keccak { name, .. } => out.push_str(name.as_str()),
-            ExprInner::Hash { name, .. } => out.push_str(name.as_str()),
-            ExprInner::Not(value) => {
+            SymExprInner::Keccak { name, .. } => out.push_str(name.as_str()),
+            SymExprInner::Hash { name, .. } => out.push_str(name.as_str()),
+            SymExprInner::Not(value) => {
                 out.push_str("(bvnot ");
                 value.write_smt(out);
                 out.push(')');
             }
-            ExprInner::Op(op, left, right) => {
+            SymExprInner::Op(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 left.write_smt(out);
                 out.push(' ');
                 right.write_smt(out);
                 out.push(')');
             }
-            ExprInner::AddMod { left, right, modulus } => {
+            SymExprInner::AddMod { left, right, modulus } => {
                 write_smt_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
             }
-            ExprInner::MulMod { left, right, modulus } => {
+            SymExprInner::MulMod { left, right, modulus } => {
                 write_smt_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
             }
-            ExprInner::Ite(cond, left, right) => {
+            SymExprInner::Ite(cond, left, right) => {
                 out.push_str("(ite ");
                 cond.write_smt(out);
                 out.push(' ');
@@ -1213,7 +1240,7 @@ fn write_smt_wide_modular_arithmetic(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum ExprOp {
+pub(crate) enum SymExprOp {
     Add,
     Sub,
     Mul,
@@ -1229,7 +1256,7 @@ pub(crate) enum ExprOp {
     Sar,
 }
 
-impl ExprOp {
+impl SymExprOp {
     pub(crate) const fn smt(self) -> &'static str {
         match self {
             Self::Add => "bvadd",
@@ -1298,32 +1325,32 @@ impl ExprOp {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct BoolExpr(Arc<BoolExprInner>);
+pub(crate) struct SymBoolExpr(Arc<SymBoolExprInner>);
 
-impl fmt::Debug for BoolExpr {
+impl fmt::Debug for SymBoolExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_inner().fmt(f)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) enum BoolExprInner {
+pub(super) enum SymBoolExprInner {
     Const(bool),
-    Not(BoolExpr),
-    And(Arc<[BoolExpr]>),
+    Not(SymBoolExpr),
+    And(Arc<[SymBoolExpr]>),
     Eq(SymExpr, SymExpr),
-    Cmp(BoolExprOp, SymExpr, SymExpr),
+    Cmp(SymBoolExprOp, SymExpr, SymExpr),
 }
 
-static BOOL_TRUE: LazyLock<Arc<BoolExprInner>> =
-    LazyLock::new(|| Arc::new(BoolExprInner::Const(true)));
-static BOOL_FALSE: LazyLock<Arc<BoolExprInner>> =
-    LazyLock::new(|| Arc::new(BoolExprInner::Const(false)));
+static BOOL_TRUE: LazyLock<Arc<SymBoolExprInner>> =
+    LazyLock::new(|| Arc::new(SymBoolExprInner::Const(true)));
+static BOOL_FALSE: LazyLock<Arc<SymBoolExprInner>> =
+    LazyLock::new(|| Arc::new(SymBoolExprInner::Const(false)));
 
-impl BoolExpr {
-    fn from_inner(expr: BoolExprInner) -> Self {
+impl SymBoolExpr {
+    fn from_inner(expr: SymBoolExprInner) -> Self {
         match expr {
-            BoolExprInner::Const(value) => Self::constant(value),
+            SymBoolExprInner::Const(value) => Self::constant(value),
             expr => Self(Arc::new(expr)),
         }
     }
@@ -1332,34 +1359,34 @@ impl BoolExpr {
         Self(if value { BOOL_TRUE.clone() } else { BOOL_FALSE.clone() })
     }
 
-    pub(super) fn as_inner(&self) -> &BoolExprInner {
+    pub(super) fn as_inner(&self) -> &SymBoolExprInner {
         self.0.as_ref()
     }
 
-    pub(super) fn into_inner(self) -> BoolExprInner {
+    pub(super) fn into_inner(self) -> SymBoolExprInner {
         Arc::unwrap_or_clone(self.0)
     }
 
     pub(crate) fn as_const(&self) -> Option<bool> {
         match self.as_inner() {
-            BoolExprInner::Const(value) => Some(*value),
+            SymBoolExprInner::Const(value) => Some(*value),
             _ => None,
         }
     }
 
     pub(crate) fn eval_const(&self) -> Option<bool> {
         match self.as_inner() {
-            BoolExprInner::Const(value) => Some(*value),
-            BoolExprInner::Not(value) => Some(!value.eval_const()?),
-            BoolExprInner::And(values) => {
+            SymBoolExprInner::Const(value) => Some(*value),
+            SymBoolExprInner::Not(value) => Some(!value.eval_const()?),
+            SymBoolExprInner::And(values) => {
                 let mut all_true = true;
                 for value in values.iter() {
                     all_true &= value.eval_const()?;
                 }
                 Some(all_true)
             }
-            BoolExprInner::Eq(left, right) => Some(left.eval_const()? == right.eval_const()?),
-            BoolExprInner::Cmp(op, left, right) => {
+            SymBoolExprInner::Eq(left, right) => Some(left.eval_const()? == right.eval_const()?),
+            SymBoolExprInner::Cmp(op, left, right) => {
                 Some(op.eval(left.eval_const()?, right.eval_const()?))
             }
         }
@@ -1370,9 +1397,9 @@ impl BoolExpr {
         model: &M,
     ) -> Result<bool, SymbolicError> {
         Ok(match self.as_inner() {
-            BoolExprInner::Const(value) => *value,
-            BoolExprInner::Not(value) => !value.eval(model)?,
-            BoolExprInner::And(values) => {
+            SymBoolExprInner::Const(value) => *value,
+            SymBoolExprInner::Not(value) => !value.eval(model)?,
+            SymBoolExprInner::And(values) => {
                 for value in values.iter() {
                     if !value.eval(model)? {
                         return Ok(false);
@@ -1380,8 +1407,10 @@ impl BoolExpr {
                 }
                 true
             }
-            BoolExprInner::Eq(left, right) => left.eval(model)? == right.eval(model)?,
-            BoolExprInner::Cmp(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
+            SymBoolExprInner::Eq(left, right) => left.eval(model)? == right.eval(model)?,
+            SymBoolExprInner::Cmp(op, left, right) => {
+                op.eval(left.eval(model)?, right.eval(model)?)
+            }
         })
     }
 
@@ -1392,9 +1421,11 @@ impl BoolExpr {
     ) -> ControlFlow<B> {
         visitor(self)?;
         match self.as_inner() {
-            BoolExprInner::Const(_) | BoolExprInner::Eq(_, _) | BoolExprInner::Cmp(_, _, _) => {}
-            BoolExprInner::Not(value) => value.visit(visitor)?,
-            BoolExprInner::And(values) => {
+            SymBoolExprInner::Const(_)
+            | SymBoolExprInner::Eq(_, _)
+            | SymBoolExprInner::Cmp(_, _, _) => {}
+            SymBoolExprInner::Not(value) => value.visit(visitor)?,
+            SymBoolExprInner::And(values) => {
                 for value in values.iter() {
                     value.visit(visitor)?;
                 }
@@ -1409,14 +1440,14 @@ impl BoolExpr {
         visitor: &mut impl FnMut(&SymExpr) -> ControlFlow<B>,
     ) -> ControlFlow<B> {
         match self.as_inner() {
-            BoolExprInner::Const(_) => {}
-            BoolExprInner::Not(value) => value.visit_exprs(visitor)?,
-            BoolExprInner::And(values) => {
+            SymBoolExprInner::Const(_) => {}
+            SymBoolExprInner::Not(value) => value.visit_exprs(visitor)?,
+            SymBoolExprInner::And(values) => {
                 for value in values.iter() {
                     value.visit_exprs(visitor)?;
                 }
             }
-            BoolExprInner::Eq(left, right) | BoolExprInner::Cmp(_, left, right) => {
+            SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right) => {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
             }
@@ -1429,22 +1460,24 @@ impl BoolExpr {
             return Self::constant(true);
         }
         match (left.as_inner(), right.as_inner()) {
-            (ExprInner::Const(left), ExprInner::Const(right)) => Self::constant(left == right),
-            (_, ExprInner::Const(right_value)) => {
+            (SymExprInner::Const(left), SymExprInner::Const(right)) => {
+                Self::constant(left == right)
+            }
+            (_, SymExprInner::Const(right_value)) => {
                 if let Some(left_value) = expr_known_word(&left) {
                     return Self::constant(left_value == *right_value);
                 }
-                Self::from_inner(BoolExprInner::Eq(left, right))
+                Self::from_inner(SymBoolExprInner::Eq(left, right))
             }
-            (ExprInner::Const(left_value), _) => {
+            (SymExprInner::Const(left_value), _) => {
                 if let Some(right_value) = expr_known_word(&right) {
                     return Self::constant(*left_value == right_value);
                 }
-                Self::from_inner(BoolExprInner::Eq(left, right))
+                Self::from_inner(SymBoolExprInner::Eq(left, right))
             }
             (
-                ExprInner::Keccak { len: left_len, bytes: left_bytes, .. },
-                ExprInner::Keccak { len: right_len, bytes: right_bytes, .. },
+                SymExprInner::Keccak { len: left_len, bytes: left_bytes, .. },
+                SymExprInner::Keccak { len: right_len, bytes: right_bytes, .. },
             ) if left_bytes.len() == right_bytes.len() => {
                 let mut conditions = vec![Self::eq(left_len.clone(), right_len.clone())];
                 conditions.extend(
@@ -1457,8 +1490,8 @@ impl BoolExpr {
                 Self::and(conditions)
             }
             (
-                ExprInner::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
-                ExprInner::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
+                SymExprInner::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
+                SymExprInner::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
             ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
                 Self::and(
                     left_bytes
@@ -1469,7 +1502,7 @@ impl BoolExpr {
                         .collect(),
                 )
             }
-            _ => Self::from_inner(BoolExprInner::Eq(left, right)),
+            _ => Self::from_inner(SymBoolExprInner::Eq(left, right)),
         }
     }
 
@@ -1493,9 +1526,9 @@ impl BoolExpr {
         let mut out = Vec::new();
         for value in values {
             match value.as_inner() {
-                BoolExprInner::Const(true) => {}
-                BoolExprInner::Const(false) => return Self::constant(false),
-                BoolExprInner::And(values) => out.extend(values.iter().cloned()),
+                SymBoolExprInner::Const(true) => {}
+                SymBoolExprInner::Const(false) => return Self::constant(false),
+                SymBoolExprInner::And(values) => out.extend(values.iter().cloned()),
                 _ => out.push(value),
             }
         }
@@ -1504,21 +1537,21 @@ impl BoolExpr {
         } else if out.len() == 1 {
             out.pop().expect("single item exists")
         } else {
-            Self::from_inner(BoolExprInner::And(out.into()))
+            Self::from_inner(SymBoolExprInner::And(out.into()))
         }
     }
 
     #[cfg(test)]
     pub(crate) fn raw_and(values: Vec<Self>) -> Self {
-        Self::from_inner(BoolExprInner::And(values.into()))
+        Self::from_inner(SymBoolExprInner::And(values.into()))
     }
 
     pub(crate) fn or(values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {
             match value.as_inner() {
-                BoolExprInner::Const(false) => {}
-                BoolExprInner::Const(true) => return Self::constant(true),
+                SymBoolExprInner::Const(false) => {}
+                SymBoolExprInner::Const(true) => return Self::constant(true),
                 _ => out.push(value),
             }
         }
@@ -1531,44 +1564,44 @@ impl BoolExpr {
         }
     }
 
-    pub(crate) fn cmp(op: BoolExprOp, left: SymExpr, right: SymExpr) -> Self {
+    pub(crate) fn cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> Self {
         if left == right {
-            return Self::constant(matches!(op, BoolExprOp::Ule | BoolExprOp::Uge));
+            return Self::constant(matches!(op, SymBoolExprOp::Ule | SymBoolExprOp::Uge));
         }
         if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
             return Self::constant(op.eval(left, right));
         }
         match (op, left.as_inner(), right.as_inner()) {
-            (BoolExprOp::Ugt, ExprInner::Const(value), _) if value.is_zero() => {
+            (SymBoolExprOp::Ugt, SymExprInner::Const(value), _) if value.is_zero() => {
                 return Self::constant(false);
             }
-            (BoolExprOp::Ule, ExprInner::Const(value), _) if value.is_zero() => {
+            (SymBoolExprOp::Ule, SymExprInner::Const(value), _) if value.is_zero() => {
                 return Self::constant(true);
             }
-            (BoolExprOp::Ult, _, ExprInner::Const(value)) if value.is_zero() => {
+            (SymBoolExprOp::Ult, _, SymExprInner::Const(value)) if value.is_zero() => {
                 return Self::constant(false);
             }
-            (BoolExprOp::Uge, _, ExprInner::Const(value)) if value.is_zero() => {
+            (SymBoolExprOp::Uge, _, SymExprInner::Const(value)) if value.is_zero() => {
                 return Self::constant(true);
             }
-            (BoolExprOp::Ult, ExprInner::Const(value), _) if *value == U256::MAX => {
+            (SymBoolExprOp::Ult, SymExprInner::Const(value), _) if *value == U256::MAX => {
                 return Self::constant(false);
             }
-            (BoolExprOp::Uge, ExprInner::Const(value), _) if *value == U256::MAX => {
+            (SymBoolExprOp::Uge, SymExprInner::Const(value), _) if *value == U256::MAX => {
                 return Self::constant(true);
             }
-            (BoolExprOp::Ugt, _, ExprInner::Const(value)) if *value == U256::MAX => {
+            (SymBoolExprOp::Ugt, _, SymExprInner::Const(value)) if *value == U256::MAX => {
                 return Self::constant(false);
             }
-            (BoolExprOp::Ule, _, ExprInner::Const(value)) if *value == U256::MAX => {
+            (SymBoolExprOp::Ule, _, SymExprInner::Const(value)) if *value == U256::MAX => {
                 return Self::constant(true);
             }
             _ => {}
         }
-        Self::from_inner(BoolExprInner::Cmp(op, left, right))
+        Self::from_inner(SymBoolExprInner::Cmp(op, left, right))
     }
 
-    pub(crate) fn cmp_word_const(op: BoolExprOp, word: &SymExpr, value: U256) -> Self {
+    pub(crate) fn cmp_word_const(op: SymBoolExprOp, word: &SymExpr, value: U256) -> Self {
         if let Some(word) = word.as_const() {
             Self::constant(op.eval(word, value))
         } else {
@@ -1576,26 +1609,28 @@ impl BoolExpr {
         }
     }
 
-    pub(crate) fn cmp_word_expr(op: BoolExprOp, word: &SymExpr, expr: SymExpr) -> Self {
+    pub(crate) fn cmp_word_expr(op: SymBoolExprOp, word: &SymExpr, expr: SymExpr) -> Self {
         Self::cmp(op, word.clone(), expr)
     }
 
     pub(crate) fn not(self) -> Self {
         match self.as_inner() {
-            BoolExprInner::Const(value) => Self::constant(!*value),
-            BoolExprInner::Not(value) => value.clone(),
-            _ => Self::from_inner(BoolExprInner::Not(self)),
+            SymBoolExprInner::Const(value) => Self::constant(!*value),
+            SymBoolExprInner::Not(value) => value.clone(),
+            _ => Self::from_inner(SymBoolExprInner::Not(self)),
         }
     }
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         let _ = self.visit(&mut |expr| {
             match expr.as_inner() {
-                BoolExprInner::Eq(left, right) | BoolExprInner::Cmp(_, left, right) => {
+                SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right) => {
                     left.collect_vars(vars);
                     right.collect_vars(vars);
                 }
-                BoolExprInner::Const(_) | BoolExprInner::Not(_) | BoolExprInner::And(_) => {}
+                SymBoolExprInner::Const(_)
+                | SymBoolExprInner::Not(_)
+                | SymBoolExprInner::And(_) => {}
             }
             ControlFlow::<()>::Continue(())
         });
@@ -1609,13 +1644,13 @@ impl BoolExpr {
 
     fn write_smt(&self, out: &mut String) {
         match self.as_inner() {
-            BoolExprInner::Const(value) => out.push_str(if *value { "true" } else { "false" }),
-            BoolExprInner::Not(value) => {
+            SymBoolExprInner::Const(value) => out.push_str(if *value { "true" } else { "false" }),
+            SymBoolExprInner::Not(value) => {
                 out.push_str("(not ");
                 value.write_smt(out);
                 out.push(')');
             }
-            BoolExprInner::And(values) => {
+            SymBoolExprInner::And(values) => {
                 out.push_str("(and");
                 for value in values.iter() {
                     out.push(' ');
@@ -1623,14 +1658,14 @@ impl BoolExpr {
                 }
                 out.push(')');
             }
-            BoolExprInner::Eq(left, right) => {
+            SymBoolExprInner::Eq(left, right) => {
                 out.push_str("(= ");
                 left.write_smt(out);
                 out.push(' ');
                 right.write_smt(out);
                 out.push(')');
             }
-            BoolExprInner::Cmp(op, left, right) => {
+            SymBoolExprInner::Cmp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 left.write_smt(out);
                 out.push(' ');
@@ -1642,7 +1677,7 @@ impl BoolExpr {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) enum BoolExprOp {
+pub(crate) enum SymBoolExprOp {
     Ult,
     Ugt,
     Ule,
@@ -1651,7 +1686,7 @@ pub(crate) enum BoolExprOp {
     Sgt,
 }
 
-impl BoolExprOp {
+impl SymBoolExprOp {
     pub(crate) const fn smt(self) -> &'static str {
         match self {
             Self::Ult => "bvult",
@@ -1679,10 +1714,10 @@ pub(crate) fn u256_to_usize(value: U256) -> Option<usize> {
     if value > U256::from(usize::MAX) { None } else { Some(value.to::<usize>()) }
 }
 
-pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &SymExpr) -> Option<usize> {
+pub(crate) fn bool_upper_bound_usize(condition: &SymBoolExpr, expr: &SymExpr) -> Option<usize> {
     match condition.as_inner() {
-        BoolExprInner::Const(_) | BoolExprInner::Not(_) => None,
-        BoolExprInner::And(values) => {
+        SymBoolExprInner::Const(_) | SymBoolExprInner::Not(_) => None,
+        SymBoolExprInner::And(values) => {
             let mut bound: Option<usize> = None;
             for value in values.iter() {
                 if let Some(candidate) = bool_upper_bound_usize(value, expr) {
@@ -1691,28 +1726,28 @@ pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &SymExpr) -> Op
             }
             bound
         }
-        BoolExprInner::Eq(left, right) => match (left == expr, right == expr) {
+        SymBoolExprInner::Eq(left, right) => match (left == expr, right == expr) {
             (true, _) => right.eval_const().and_then(u256_to_usize),
             (_, true) => left.eval_const().and_then(u256_to_usize),
             _ => None,
         },
-        BoolExprInner::Cmp(op, left, right) => {
+        SymBoolExprInner::Cmp(op, left, right) => {
             if left == expr {
                 match *op {
-                    BoolExprOp::Ult => right
+                    SymBoolExprOp::Ult => right
                         .eval_const()
                         .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                         .and_then(u256_to_usize),
-                    BoolExprOp::Ule => right.eval_const().and_then(u256_to_usize),
+                    SymBoolExprOp::Ule => right.eval_const().and_then(u256_to_usize),
                     _ => None,
                 }
             } else if right == expr {
                 match *op {
-                    BoolExprOp::Ugt => left
+                    SymBoolExprOp::Ugt => left
                         .eval_const()
                         .and_then(|bound| (!bound.is_zero()).then(|| bound - U256::from(1)))
                         .and_then(u256_to_usize),
-                    BoolExprOp::Uge => left.eval_const().and_then(u256_to_usize),
+                    SymBoolExprOp::Uge => left.eval_const().and_then(u256_to_usize),
                     _ => None,
                 }
             } else {

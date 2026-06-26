@@ -5,13 +5,13 @@ type PositiveFacts<'a> = HashSet<&'a SymExpr>;
 
 /// Returns whether monotonic product facts make these constraints unsatisfiable.
 #[cfg(test)]
-pub(crate) fn product_monotonic_unsat(constraints: &[BoolExpr]) -> bool {
+pub(crate) fn product_monotonic_unsat(constraints: &[SymBoolExpr]) -> bool {
     let constraints = normalize_constraints_for_solver(constraints);
     product_monotonic_unsat_normalized(&constraints)
 }
 
 /// Returns whether normalized monotonic product facts make constraints unsatisfiable.
-pub(crate) fn product_monotonic_unsat_normalized(constraints: &[BoolExpr]) -> bool {
+pub(crate) fn product_monotonic_unsat_normalized(constraints: &[SymBoolExpr]) -> bool {
     let mut less_than = HashSet::default();
     let mut positive = HashSet::default();
     for constraint in constraints {
@@ -26,38 +26,40 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[BoolExpr]) -> bo
 }
 
 fn collect_order_facts<'a>(
-    expr: &'a BoolExpr,
+    expr: &'a SymBoolExpr,
     less_than: &mut LessThanFacts<'a>,
     positive: &mut PositiveFacts<'a>,
 ) {
     match expr.as_inner() {
-        BoolExprInner::And(values) => {
+        SymBoolExprInner::And(values) => {
             for value in values.iter() {
                 collect_order_facts(value, less_than, positive);
             }
         }
-        BoolExprInner::Cmp(BoolExprOp::Ult, left, right) => {
+        SymBoolExprInner::Cmp(SymBoolExprOp::Ult, left, right) => {
             less_than.insert((left, right));
             if left.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(right);
             }
         }
-        BoolExprInner::Cmp(BoolExprOp::Ugt, left, right) => {
+        SymBoolExprInner::Cmp(SymBoolExprOp::Ugt, left, right) => {
             less_than.insert((right, left));
             if right.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(left);
             }
         }
-        BoolExprInner::Const(_)
-        | BoolExprInner::Not(_)
-        | BoolExprInner::Eq(_, _)
-        | BoolExprInner::Cmp(_, _, _) => {}
+        SymBoolExprInner::Const(_)
+        | SymBoolExprInner::Not(_)
+        | SymBoolExprInner::Eq(_, _)
+        | SymBoolExprInner::Cmp(_, _, _) => {}
     }
 }
 
-fn product_less_than_negation(expr: &BoolExpr) -> Option<(&SymExpr, &SymExpr, &SymExpr, &SymExpr)> {
-    let BoolExprInner::Not(value) = expr.as_inner() else { return None };
-    let BoolExprInner::Cmp(BoolExprOp::Ult, left, right) = value.as_inner() else {
+fn product_less_than_negation(
+    expr: &SymBoolExpr,
+) -> Option<(&SymExpr, &SymExpr, &SymExpr, &SymExpr)> {
+    let SymBoolExprInner::Not(value) = expr.as_inner() else { return None };
+    let SymBoolExprInner::Cmp(SymBoolExprOp::Ult, left, right) = value.as_inner() else {
         return None;
     };
     let (left_a, left_b) = mul_operands(left)?;
@@ -97,7 +99,7 @@ fn product_less_than_known_ordered<'a>(
 
 fn mul_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
     match expr.as_inner() {
-        ExprInner::Op(ExprOp::Mul, left, right) => Some((left, right)),
+        SymExprInner::Op(SymExprOp::Mul, left, right) => Some((left, right)),
         _ => None,
     }
 }

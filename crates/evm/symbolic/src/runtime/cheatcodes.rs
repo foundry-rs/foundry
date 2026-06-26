@@ -462,8 +462,8 @@ pub(crate) fn push_hex_byte(out: &mut Vec<SymExpr>, byte: SymExpr) {
     } else {
         let expr = byte;
         (
-            SymExpr::op(ExprOp::Shr, expr.clone(), SymExpr::constant(U256::from(4))),
-            SymExpr::op(ExprOp::And, expr, SymExpr::constant(U256::from(0x0f))),
+            SymExpr::op(SymExprOp::Shr, expr.clone(), SymExpr::constant(U256::from(4))),
+            SymExpr::op(SymExprOp::And, expr, SymExpr::constant(U256::from(0x0f))),
         )
     };
     out.push(hex_nibble_ascii(high));
@@ -478,9 +478,9 @@ pub(crate) fn hex_nibble_ascii(nibble: SymExpr) -> SymExpr {
         SymExpr::constant(U256::from(byte))
     } else {
         SymExpr::ite(
-            BoolExpr::cmp(BoolExprOp::Ult, nibble.clone(), SymExpr::constant(U256::from(10))),
-            SymExpr::op(ExprOp::Add, nibble.clone(), SymExpr::constant(U256::from(b'0'))),
-            SymExpr::op(ExprOp::Add, nibble, SymExpr::constant(U256::from(b'a' - 10))),
+            SymBoolExpr::cmp(SymBoolExprOp::Ult, nibble.clone(), SymExpr::constant(U256::from(10))),
+            SymExpr::op(SymExprOp::Add, nibble.clone(), SymExpr::constant(U256::from(b'0'))),
+            SymExpr::op(SymExprOp::Add, nibble, SymExpr::constant(U256::from(b'a' - 10))),
         )
     }
 }
@@ -704,7 +704,7 @@ pub(crate) fn expected_revert_match_condition(
     expected: &ExpectedRevert,
     reverter: Address,
     return_data: &SymReturnData,
-) -> Option<BoolExpr> {
+) -> Option<SymBoolExpr> {
     let mut conditions = Vec::new();
     if let Some(expected_reverter) = &expected.reverter {
         conditions.push(address_match_condition(expected_reverter, reverter));
@@ -715,31 +715,31 @@ pub(crate) fn expected_revert_match_condition(
             if return_data.len() < prefix.len() {
                 return None;
             }
-            conditions.push(BoolExpr::cmp(
-                BoolExprOp::Uge,
+            conditions.push(SymBoolExpr::cmp(
+                SymBoolExprOp::Uge,
                 return_data.len_expr(),
                 SymExpr::constant(U256::from(prefix.len())),
             ));
             conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
-                BoolExpr::eq_words(&actual, expected)
+                SymBoolExpr::eq_words(&actual, expected)
             }));
         }
         ExpectedRevertData::Exact(data) => {
             if return_data.len() < data.len() {
                 return None;
             }
-            conditions.push(BoolExpr::eq(
+            conditions.push(SymBoolExpr::eq(
                 return_data.len_expr(),
                 SymExpr::constant(U256::from(data.len())),
             ));
             conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
-                BoolExpr::eq_words(&actual, expected)
+                SymBoolExpr::eq_words(&actual, expected)
             }));
         }
     }
-    Some(BoolExpr::and(conditions))
+    Some(SymBoolExpr::and(conditions))
 }
 
 pub(crate) fn decode_cheatcode_args(

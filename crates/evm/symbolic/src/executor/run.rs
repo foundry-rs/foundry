@@ -26,7 +26,7 @@ impl SymbolicExecutor {
     /// Checks branch feasibility, recording solver-unknown as an incomplete proof path.
     pub(super) fn branch_is_sat_or_defer(
         &mut self,
-        constraints: &[BoolExpr],
+        constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
         match self.solver.is_sat_branch(constraints) {
             Ok(feasible) => Ok(feasible),
