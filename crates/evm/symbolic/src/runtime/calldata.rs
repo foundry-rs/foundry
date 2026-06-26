@@ -9,16 +9,12 @@ pub(crate) struct SymCalldata {
 
 impl SymCalldata {
     pub(crate) fn new(bytes: Vec<SymExpr>) -> Self {
-        let size = bytes.len();
-        Self { size_word: SymExpr::constant(U256::from(size)), size, bytes: SymBytes::exprs(bytes) }
+        Self::from_symbytes(SymBytes::exprs(bytes))
     }
 
-    pub(crate) fn from_shared(bytes: Arc<[SymExpr]>) -> Self {
-        Self {
-            size_word: SymExpr::constant(U256::from(bytes.len())),
-            size: bytes.len(),
-            bytes: SymBytes::exprs(bytes.iter().cloned().collect()),
-        }
+    pub(crate) fn from_symbytes(bytes: SymBytes) -> Self {
+        let size = bytes.len();
+        Self { size_word: SymExpr::constant(U256::from(size)), size, bytes }
     }
 
     pub(crate) fn new_symbolic_size(bytes: Vec<SymExpr>, size_word: SymExpr) -> Self {

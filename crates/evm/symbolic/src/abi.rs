@@ -2,7 +2,7 @@ use super::{runtime::*, *};
 
 #[derive(Clone, Debug)]
 pub(super) struct SymbolicCalldata {
-    bytes: Arc<[SymExpr]>,
+    bytes: SymBytes,
     inputs: Vec<SymbolicInput>,
     constraints: Vec<SymBoolExpr>,
 }
@@ -15,7 +15,7 @@ impl SymbolicCalldata {
         inputs: Vec<SymbolicInput>,
         constraints: Vec<SymBoolExpr>,
     ) -> Self {
-        Self { bytes: bytes.into(), inputs, constraints }
+        Self { bytes: SymBytes::exprs(bytes), inputs, constraints }
     }
 
     /// Constructs a new instance.
@@ -44,7 +44,7 @@ impl SymbolicCalldata {
             .copied()
             .map(|byte| SymExpr::constant(U256::from(byte)))
             .collect::<Vec<_>>();
-        Ok(Self { bytes: bytes.into(), inputs: Vec::new(), constraints: Vec::new() })
+        Ok(Self { bytes: SymBytes::exprs(bytes), inputs: Vec::new(), constraints: Vec::new() })
     }
 
     pub(super) fn variants_with_prefix(
@@ -94,23 +94,23 @@ impl SymbolicCalldata {
                     ));
                 }
 
-                Ok(Self { bytes: bytes.into(), inputs, constraints: builder.constraints })
+                Ok(Self { bytes: SymBytes::exprs(bytes), inputs, constraints: builder.constraints })
             })
             .collect()
     }
 
     #[cfg(test)]
     pub(super) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
+        Ok(self.bytes.word_at(offset))
     }
 
     #[cfg(test)]
     pub(super) fn byte(&self, offset: usize) -> SymExpr {
-        self.bytes.get(offset).cloned().unwrap_or_else(SymExpr::zero)
+        self.bytes.byte(offset)
     }
 
     pub(super) fn call_data(&self) -> SymCalldata {
-        SymCalldata::from_shared(self.bytes.clone())
+        SymCalldata::from_symbytes(self.bytes.clone())
     }
 
     /// Returns symbolic calldata constraints.
@@ -213,10 +213,11 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 SymbolicAbiValue::Int { bits: *bits, word }
             }
             DynSolType::FixedBytes(size) => SymbolicAbiValue::FixedBytes {
-                bytes: (0..*size)
-                    .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
-                    .collect::<Vec<_>>()
-                    .into(),
+                bytes: SymBytes::exprs(
+                    (0..*size)
+                        .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
+                        .collect(),
+                ),
                 size: *size,
             },
             DynSolType::Address => {
@@ -231,19 +232,21 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 let len = self.next_dynamic_length(&name, &aliases, DynamicKind::Bytes)?;
                 SymbolicAbiValue::Bytes {
                     len: SymExpr::constant(U256::from(len)),
-                    bytes: (0..len)
-                        .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
-                        .collect::<Vec<_>>()
-                        .into(),
+                    bytes: SymBytes::exprs(
+                        (0..len)
+                            .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
+                            .collect(),
+                    ),
                 }
             }
             DynSolType::String => {
                 let len = self.next_dynamic_length(&name, &aliases, DynamicKind::String)?;
                 SymbolicAbiValue::String {
-                    bytes: (0..len)
-                        .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), true))
-                        .collect::<Vec<_>>()
-                        .into(),
+                    bytes: SymBytes::exprs(
+                        (0..len)
+                            .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), true))
+                            .collect(),
+                    ),
                 }
             }
             DynSolType::Array(inner) => {
@@ -301,10 +304,11 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     let mut builder = builder.clone();
                     let value = SymbolicAbiValue::Bytes {
                         len: SymExpr::constant(U256::from(len)),
-                        bytes: (0..len as usize)
-                            .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), false))
-                            .collect::<Vec<_>>()
-                            .into(),
+                        bytes: SymBytes::exprs(
+                            (0..len as usize)
+                                .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), false))
+                                .collect(),
+                        ),
                     };
                     push_variant(&mut variants, (builder, value), limit)?;
                 }
@@ -319,10 +323,11 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 for len in lengths {
                     let mut builder = builder.clone();
                     let value = SymbolicAbiValue::String {
-                        bytes: (0..len as usize)
-                            .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), true))
-                            .collect::<Vec<_>>()
-                            .into(),
+                        bytes: SymBytes::exprs(
+                            (0..len as usize)
+                                .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), true))
+                                .collect(),
+                        ),
                     };
                     push_variant(&mut variants, (builder, value), limit)?;
                 }
@@ -602,10 +607,10 @@ pub(super) enum SymbolicAbiValue {
     Bool { word: SymExpr },
     Uint { bits: usize, word: SymExpr },
     Int { bits: usize, word: SymExpr },
-    FixedBytes { bytes: Arc<[SymExpr]>, size: usize },
+    FixedBytes { bytes: SymBytes, size: usize },
     Address { word: SymExpr },
-    Bytes { len: SymExpr, bytes: Arc<[SymExpr]> },
-    String { bytes: Arc<[SymExpr]> },
+    Bytes { len: SymExpr, bytes: SymBytes },
+    String { bytes: SymBytes },
     Array { elements: Vec<Self> },
     FixedArray { elements: Vec<Self> },
     Tuple { elements: Vec<Self> },
@@ -652,7 +657,7 @@ impl SymbolicAbiValue {
             | Self::Int { word, .. }
             | Self::Address { word } => word.clone().into_bytes(),
             Self::FixedBytes { bytes, .. } => {
-                let mut out = bytes.to_vec();
+                let mut out = bytes.materialize();
                 out.resize(32, SymExpr::zero());
                 out
             }
@@ -667,9 +672,9 @@ impl SymbolicAbiValue {
 
     pub(super) fn encode_dynamic_body(&self) -> Vec<SymExpr> {
         match self {
-            Self::Bytes { len, bytes } => encode_packed_bytes_with_len(len.clone(), bytes),
+            Self::Bytes { len, bytes } => encode_packed_symbytes_with_len(len.clone(), bytes),
             Self::String { bytes } => {
-                encode_packed_bytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
+                encode_packed_symbytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
             }
             Self::Array { elements } => {
                 let mut out = SymExpr::constant(U256::from(elements.len())).into_bytes();
@@ -701,8 +706,8 @@ impl SymbolicAbiValue {
             }
             Self::FixedBytes { bytes, size } => {
                 let mut word = [0u8; 32];
-                for (idx, byte) in bytes.iter().enumerate() {
-                    word[idx] = byte.eval_model(model)?.to::<u8>();
+                for (idx, out) in word.iter_mut().enumerate().take(bytes.len()) {
+                    *out = bytes.byte(idx).eval_model(model)?.to::<u8>();
                 }
                 DynSolValue::FixedBytes(B256::from(word), *size)
             }
@@ -715,12 +720,12 @@ impl SymbolicAbiValue {
                     .ok()
                     .filter(|len| *len <= bytes.len())
                     .ok_or_else(|| SymbolicError::Solver("invalid symbolic bytes length".into()))?;
-                let mut bytes = bytes.eval_model(model)?;
+                let mut bytes = bytes.materialize().eval_model(model)?;
                 bytes.truncate(len);
                 DynSolValue::Bytes(bytes)
             }
             Self::String { bytes } => {
-                let bytes = bytes.eval_model(model)?;
+                let bytes = bytes.materialize().eval_model(model)?;
                 let value = String::from_utf8(bytes).map_err(|err| {
                     SymbolicError::Solver(format!("invalid symbolic string model: {err}"))
                 })?;
@@ -769,9 +774,17 @@ pub(super) fn encode_sequence<'a>(
     head
 }
 
+#[cfg(test)]
 pub(super) fn encode_packed_bytes_with_len(len: SymExpr, bytes: &[SymExpr]) -> Vec<SymExpr> {
     let mut out = len.into_bytes();
     out.extend(bytes.iter().cloned());
+    out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
+    out
+}
+
+fn encode_packed_symbytes_with_len(len: SymExpr, bytes: &SymBytes) -> Vec<SymExpr> {
+    let mut out = len.into_bytes();
+    out.extend(bytes.materialize());
     out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
     out
 }
