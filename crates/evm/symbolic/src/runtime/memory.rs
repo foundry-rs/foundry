@@ -208,6 +208,13 @@ impl SymMemory {
         size: SymExpr,
         max_size: usize,
     ) -> Vec<SymExpr> {
+        if let Some(size) = size.eval() {
+            let size = usize::try_from(size).map_or(max_size, |size| size.min(max_size));
+            let mut bytes = self.read_bytes_offset(offset, size);
+            bytes.resize_with(max_size, SymExpr::zero);
+            return bytes;
+        }
+
         let zero = SymExpr::constant(U256::ZERO);
         self.read_bytes_offset(offset, max_size)
             .into_iter()
@@ -309,6 +316,14 @@ impl SymMemory {
         if src.is_empty() {
             return Ok(());
         }
+        if let Some(size) = size.eval() {
+            let size = usize::try_from(size).map_or(src.len(), |size| size.min(src.len()));
+            if size != 0 {
+                self.store_bytes_offset(dest, src.into_iter().take(size).collect());
+            }
+            return Ok(());
+        }
+
         if let Some(dest) = dest.as_const() {
             if let Ok(dest) = usize::try_from(dest) {
                 let bytes = src

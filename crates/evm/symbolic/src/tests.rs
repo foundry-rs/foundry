@@ -524,6 +524,35 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
 }
 
 #[test]
+fn memory_copies_folded_symbolic_size_prefix_only() {
+    let mut memory = SymMemory::default();
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
+    memory.copy_symbolic_size(
+        0,
+        SymExpr::constant(U256::from(2)),
+        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
+    );
+
+    assert_eq!(
+        memory.read_bytes(0, 4).eval_model(&BTreeMap::new()).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
+}
+
+#[test]
+fn memory_skips_folded_zero_symbolic_size_copy() {
+    let mut memory = SymMemory::default();
+    memory.copy_symbolic_size(
+        0,
+        SymExpr::zero(),
+        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
+    );
+
+    assert_eq!(memory.size_word(), SymExpr::zero());
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&BTreeMap::new()).unwrap(), vec![0, 0, 0, 0]);
+}
+
+#[test]
 fn memory_reads_symbolic_size_with_zero_guarded_tail() {
     let mut memory = SymMemory::default();
     memory.store_bytes(32, (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
@@ -536,6 +565,20 @@ fn memory_reads_symbolic_size_with_zero_guarded_tail() {
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
     assert_eq!(bytes.eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
+}
+
+#[test]
+fn memory_reads_folded_symbolic_size_prefix_only() {
+    let mut memory = SymMemory::default();
+    memory.store_bytes(32, (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
+
+    let bytes = memory.read_bytes_symbolic_size(
+        SymExpr::constant(U256::from(32)),
+        SymExpr::constant(U256::from(2)),
+        4,
+    );
+
+    assert_eq!(bytes.eval_model(&BTreeMap::new()).unwrap(), vec![1, 2, 0, 0]);
 }
 
 #[test]
