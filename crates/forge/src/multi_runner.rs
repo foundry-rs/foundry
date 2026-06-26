@@ -108,18 +108,23 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             contract_id,
             func,
             symbolic_entrypoints_enabled(
-                self.config.symbolic.enabled,
+                self.contract_symbolic_enabled(contract_id),
                 self.tcfg.symbolic_artifact_replay.as_ref(),
             ),
         )
     }
 
+    fn contract_symbolic_enabled(&self, contract_id: &str) -> bool {
+        contract_symbolic_enabled(&self.config, &self.inline_config, contract_id)
+    }
+
     fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
+        let identifier = id.identifier();
         matches_artifact(
             filter,
             id,
             abi,
-            self.config.symbolic.enabled,
+            self.contract_symbolic_enabled(&identifier),
             self.tcfg.symbolic_artifact_replay.as_ref(),
         )
     }
@@ -153,13 +158,14 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         self.contracts
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| {
-                func.is_any_test()
-                    || (symbolic_entrypoints_enabled(
-                        self.config.symbolic.enabled,
-                        self.tcfg.symbolic_artifact_replay.as_ref(),
-                    ) && is_symbolic_entrypoint(func))
+            .flat_map(move |(id, c)| {
+                let symbolic_enabled = symbolic_entrypoints_enabled(
+                    self.contract_symbolic_enabled(&id.identifier()),
+                    self.tcfg.symbolic_artifact_replay.as_ref(),
+                );
+                c.abi.functions().filter(move |func| {
+                    func.is_any_test() || (symbolic_enabled && is_symbolic_entrypoint(func))
+                })
             })
     }
 
@@ -683,19 +689,22 @@ impl MultiContractRunnerBuilder {
         )?;
 
         let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
+        let inline_config = Arc::new(InlineConfig::new_parsed(output, &self.config)?);
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
+            let symbolic_enabled =
+                contract_symbolic_enabled(&self.config, &inline_config, &id.identifier());
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
                 && abi.functions().any(|func| {
                     func.name.is_any_test()
                         || symbolic_entrypoints_enabled(
-                            self.config.symbolic.enabled,
+                            symbolic_enabled,
                             self.symbolic_artifact_replay.as_ref(),
                         ) && is_symbolic_entrypoint(func)
                 })
@@ -781,7 +790,7 @@ impl MultiContractRunnerBuilder {
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
-                inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
+                inline_config,
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
@@ -822,6 +831,17 @@ pub fn symbolic_entrypoints_enabled(
         || symbolic_artifact_replay.is_some_and(|artifact| {
             artifact.artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall
         })
+}
+
+fn contract_symbolic_enabled(
+    config: &Config,
+    inline_config: &InlineConfig,
+    contract_id: &str,
+) -> bool {
+    config
+        .merge_inline_provider(inline_config.provide(contract_id, ""))
+        .map(|config| config.symbolic.enabled)
+        .unwrap_or(config.symbolic.enabled)
 }
 
 pub(crate) fn matches_contract(

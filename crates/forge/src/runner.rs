@@ -672,35 +672,17 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let start = Instant::now();
         let mut warnings = Vec::new();
 
-        // Filter out functions sequentially since it's very fast and there is no need to do it
-        // in parallel. In fuzz-only mode, use this pre-setup list to drop suites with no
-        // runnable fuzz or invariant tests before executing `setUp`.
-        let find_timer = Instant::now();
-        let symbolic_enabled = symbolic_entrypoints_enabled(
-            self.config.symbolic.enabled,
-            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
-        );
-        let functions = self
-            .contract
-            .abi
-            .functions()
-            .filter(|func| {
-                if symbolic_enabled && is_symbolic_entrypoint(func) {
-                    filter.matches_test(&func.signature())
-                } else {
-                    filter.matches_test_function_in_contract(self.name, func)
-                }
-            })
-            .filter(|func| self.function_matches_network_pass(func))
-            .collect::<Vec<_>>();
-        debug!(
-            "Found {} test functions out of {} in {:?}",
-            functions.len(),
-            self.contract.abi.functions().count(),
-            find_timer.elapsed(),
-        );
+        // In fuzz-only mode, drop suites with no runnable fuzz or invariant tests before
+        // executing `setUp`. The full function list is built after setup so contract-level
+        // inline config can still affect symbolic entrypoint discovery.
         if self.mcr.tcfg.fuzz_only
-            && !functions.iter().any(|func| func.is_fuzz_test() || func.is_invariant_test())
+            && !self
+                .contract
+                .abi
+                .functions()
+                .filter(|func| filter.matches_test_function_in_contract(self.name, func))
+                .filter(|func| self.function_matches_network_pass(func))
+                .any(|func| func.is_fuzz_test() || func.is_invariant_test())
         {
             return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
         }
@@ -826,6 +808,33 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 warnings,
             );
         }
+
+        // Filter out functions sequentially since it's very fast and there is no need to do it
+        // in parallel.
+        let find_timer = Instant::now();
+        let symbolic_enabled = symbolic_entrypoints_enabled(
+            self.config.symbolic.enabled,
+            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+        );
+        let functions = self
+            .contract
+            .abi
+            .functions()
+            .filter(|func| {
+                if symbolic_enabled && is_symbolic_entrypoint(func) {
+                    filter.matches_test(&func.signature())
+                } else {
+                    filter.matches_test_function_in_contract(self.name, func)
+                }
+            })
+            .filter(|func| self.function_matches_network_pass(func))
+            .collect::<Vec<_>>();
+        debug!(
+            "Found {} test functions out of {} in {:?}",
+            functions.len(),
+            self.contract.abi.functions().count(),
+            find_timer.elapsed(),
+        );
 
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
