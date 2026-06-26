@@ -223,16 +223,28 @@ pub enum EventType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use snapbox::prelude::*;
 
     #[test]
     fn test_serialize_empty_file() {
         let file = SpeedscopeFile::new("test");
-        let json = serde_json::to_string(&file).unwrap();
-        assert!(
-            json.contains("\"$schema\":\"https://www.speedscope.app/file-format-schema.json\"")
+        let json = serde_json::to_string_pretty(&file).unwrap();
+
+        snapbox::assert_data_eq!(
+            json.is_json(),
+            (snapbox::str![[r#"
+{
+  "$schema": "https://www.speedscope.app/file-format-schema.json",
+  "shared": {
+    "frames": []
+  },
+  "profiles": [],
+  "name": "test",
+  "exporter": "foundry"
+}
+"#]])
+            .is_json(),
         );
-        assert!(json.contains("\"name\":\"test\""));
-        assert!(json.contains("\"exporter\":\"foundry\""));
     }
 
     #[test]
@@ -251,7 +263,58 @@ mod tests {
         file.add_profile(Profile::Evented(profile));
 
         let json = serde_json::to_string_pretty(&file).unwrap();
-        assert!(json.contains("\"type\": \"evented\""));
-        assert!(json.contains("\"unit\": \"nanoseconds\""));
+
+        snapbox::assert_data_eq!(
+            json.is_json(),
+            (snapbox::str![[r#"
+{
+  "$schema": "https://www.speedscope.app/file-format-schema.json",
+  "shared": {
+    "frames": [
+      {
+        "name": "a"
+      },
+      {
+        "name": "b"
+      }
+    ]
+  },
+  "profiles": [
+    {
+      "type": "evented",
+      "name": "main",
+      "unit": "nanoseconds",
+      "startValue": 0,
+      "endValue": 200,
+      "events": [
+        {
+          "type": "O",
+          "frame": 0,
+          "at": 0
+        },
+        {
+          "type": "O",
+          "frame": 1,
+          "at": 0
+        },
+        {
+          "type": "C",
+          "frame": 1,
+          "at": 100
+        },
+        {
+          "type": "C",
+          "frame": 0,
+          "at": 200
+        }
+      ]
+    }
+  ],
+  "name": "test",
+  "exporter": "foundry"
+}
+"#]])
+            .is_json(),
+        );
     }
 }

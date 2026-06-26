@@ -171,6 +171,7 @@ mod tests {
     use super::*;
     use crate::{CallKind, CallTrace, DecodedCallData, DecodedCallTrace};
     use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
+    use snapbox::prelude::*;
 
     fn trace_step(gas_cost: u64) -> CallTraceStep {
         CallTraceStep {
@@ -203,13 +204,47 @@ mod tests {
     fn test_empty_profile() {
         let arena = CallTraceArena::default();
         let profile = build(&arena, "testExample", "TestContract", false);
-        let json = serde_json::to_string(&profile).unwrap();
+        let json = serde_json::to_string_pretty(&profile).unwrap();
 
-        assert!(
-            json.contains("\"$schema\":\"https://www.speedscope.app/file-format-schema.json\"")
+        snapbox::assert_data_eq!(
+            json.is_json(),
+            (snapbox::str![[r#"
+{
+  "$schema": "https://www.speedscope.app/file-format-schema.json",
+  "shared": {
+    "frames": [
+      {
+        "name": "fallback"
+      }
+    ]
+  },
+  "profiles": [
+    {
+      "type": "evented",
+      "name": "TestContract::testExample",
+      "unit": "none",
+      "startValue": 0,
+      "endValue": 0,
+      "events": [
+        {
+          "type": "O",
+          "frame": 0,
+          "at": 0
+        },
+        {
+          "type": "C",
+          "frame": 0,
+          "at": 0
+        }
+      ]
+    }
+  ],
+  "name": "TestContract::testExample",
+  "exporter": "foundry"
+}
+"#]])
+            .is_json(),
         );
-        assert!(json.contains("\"name\":\"TestContract::testExample\""));
-        assert!(json.contains("\"exporter\":\"foundry\""));
     }
 
     #[test]
@@ -271,8 +306,8 @@ mod tests {
         let json = serde_json::to_string_pretty(&file).unwrap();
 
         snapbox::assert_data_eq!(
-            json,
-            snapbox::str![[r#"
+            json.is_json(),
+            (snapbox::str![[r#"
 {
   "$schema": "https://www.speedscope.app/file-format-schema.json",
   "shared": {
@@ -332,7 +367,8 @@ mod tests {
   "name": "Test::test",
   "exporter": "foundry"
 }
-"#]],
+"#]])
+            .is_json(),
         );
     }
 
