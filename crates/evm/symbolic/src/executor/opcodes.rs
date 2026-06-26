@@ -745,7 +745,8 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let end = Expr::op(ExprOp::Add, offset.into_expr(), size.into_expr());
-        let in_bounds = BoolExpr::cmp(BoolExprOp::Ule, end, state.return_data.len_expr());
+        let in_bounds =
+            BoolExpr::cmp_arc(BoolExprOp::Ule, Arc::new(end), state.return_data.len_arc_expr());
         match in_bounds {
             BoolExpr::Const(value) => Ok(value),
             in_bounds => {

@@ -756,10 +756,10 @@ pub(crate) fn expected_revert_match_condition(
             if return_data.len() < prefix.len() {
                 return None;
             }
-            conditions.push(BoolExpr::cmp(
+            conditions.push(BoolExpr::cmp_arc(
                 BoolExprOp::Uge,
-                return_data.len_expr(),
-                Expr::Const(U256::from(prefix.len())),
+                return_data.len_arc_expr(),
+                Arc::new(Expr::Const(U256::from(prefix.len()))),
             ));
             conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
@@ -770,8 +770,10 @@ pub(crate) fn expected_revert_match_condition(
             if return_data.len() < data.len() {
                 return None;
             }
-            conditions
-                .push(BoolExpr::eq(return_data.len_expr(), Expr::Const(U256::from(data.len()))));
+            conditions.push(BoolExpr::eq_arc(
+                return_data.len_arc_expr(),
+                Arc::new(Expr::Const(U256::from(data.len()))),
+            ));
             conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
                 BoolExpr::eq_words(&actual, expected)

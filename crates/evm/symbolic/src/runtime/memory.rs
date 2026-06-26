@@ -546,7 +546,7 @@ impl SymMemory {
                 }
             }
             BoundedCopySize::Symbolic { size, max_size } => {
-                let output_size = size.clone().into_expr();
+                let output_size = size.clone_arc_expr();
                 let max_size = (*max_size).min(return_data.len());
                 if max_size != 0 {
                     let bytes = (0..max_size)
@@ -566,22 +566,22 @@ impl SymMemory {
         &self,
         dest: &SymWord,
         idx: usize,
-        output_size: Option<&Expr>,
+        output_size: Option<&Arc<Expr>>,
         return_data: &SymReturnData,
     ) -> SymWord {
         let mut guards = Vec::new();
         if let Some(output_size) = output_size {
-            guards.push(BoolExpr::cmp(
+            guards.push(BoolExpr::cmp_arc(
                 BoolExprOp::Ult,
-                Expr::Const(U256::from(idx)),
-                output_size.clone(),
+                Arc::new(Expr::Const(U256::from(idx))),
+                Arc::clone(output_size),
             ));
         }
         if return_data.has_symbolic_len() {
-            guards.push(BoolExpr::cmp(
+            guards.push(BoolExpr::cmp_arc(
                 BoolExprOp::Ult,
-                Expr::Const(U256::from(idx)),
-                return_data.len_expr(),
+                Arc::new(Expr::Const(U256::from(idx))),
+                return_data.len_arc_expr(),
             ));
         }
         let guard = BoolExpr::and(guards);
@@ -896,9 +896,9 @@ impl SymReturnData {
         self.bytes.len()
     }
 
-    /// Implements the `len_expr` symbolic memory helper.
-    pub(crate) fn len_expr(&self) -> Expr {
-        self.len_word.clone().into_expr()
+    /// Implements the `len_arc_expr` symbolic memory helper.
+    pub(crate) fn len_arc_expr(&self) -> Arc<Expr> {
+        self.len_word.clone_arc_expr()
     }
 
     /// Returns whether `has_symbolic_len` holds.
