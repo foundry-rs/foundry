@@ -252,8 +252,7 @@ impl SymbolicExecutor {
                 match state.constrained_usize_checked(&size) {
                     Some(Ok(size)) => {
                         if size != 0 {
-                            let calldata = state.calldata.clone();
-                            state.memory.copy_calldata_to_offset(dest, offset, size, &calldata)?;
+                            state.copy_calldata_to_offset(dest, offset, size)?;
                         }
                     }
                     Some(Err(_)) => {
@@ -274,10 +273,7 @@ impl SymbolicExecutor {
                                 )
                             })?;
                         if max_size != 0 {
-                            let calldata = state.calldata.clone();
-                            state.memory.copy_calldata_symbolic_size(
-                                dest, offset, size, max_size, &calldata,
-                            )?;
+                            state.copy_calldata_symbolic_size(dest, offset, size, max_size)?;
                         }
                     }
                 }

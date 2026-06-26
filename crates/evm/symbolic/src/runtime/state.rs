@@ -145,6 +145,27 @@ impl PathState {
         memory.copy_call_output_offset(dest, size, return_data)
     }
 
+    pub(crate) fn copy_calldata_to_offset(
+        &mut self,
+        dest: SymExpr,
+        offset: SymExpr,
+        size: usize,
+    ) -> Result<(), SymbolicError> {
+        let CallFrame { memory, calldata, .. } = &mut self.frame;
+        memory.copy_calldata_to_offset(dest, offset, size, calldata)
+    }
+
+    pub(crate) fn copy_calldata_symbolic_size(
+        &mut self,
+        dest: SymExpr,
+        offset: SymExpr,
+        size: SymExpr,
+        max_size: usize,
+    ) -> Result<(), SymbolicError> {
+        let CallFrame { memory, calldata, .. } = &mut self.frame;
+        memory.copy_calldata_symbolic_size(dest, offset, size, max_size, calldata)
+    }
+
     pub(crate) fn copy_return_data_to_offset(
         &mut self,
         dest: SymExpr,
