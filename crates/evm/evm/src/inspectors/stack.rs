@@ -853,8 +853,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     let mut state = journal.state.clone();
 
                     for (addr, acc_mut) in &mut state {
-                        // mark all accounts cold, besides preloaded addresses
-                        if journal.warm_addresses.is_cold(addr) {
+                        // Preserve revm's per-transaction creation flag for accounts created in
+                        // the parent context. A cold load in the nested context clears local
+                        // flags, which would incorrectly disable EIP-6780 cleanup.
+                        if journal.warm_addresses.is_cold(addr) && !acc_mut.is_created_locally() {
                             acc_mut.mark_cold();
                         }
 
