@@ -70,7 +70,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
@@ -238,6 +238,8 @@ pub(crate) enum CorpusInsertionMode {
 struct ReplayOutcome {
     keep_entry: bool,
     new_coverage: bool,
+    /// Whether replay hit a first-time edge (advances the per-worker "time since new edge" timer).
+    new_edge: bool,
     cmp_seq: Vec<Vec<CmpOperands>>,
     failed_replays: usize,
 }
@@ -271,6 +273,9 @@ pub(crate) struct WorkerCorpusSeed {
     failed_replays: usize,
     optimization_best_value: Option<I256>,
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Set if persisted-corpus replay hit a first-time edge, so the timer starts at the baseline
+    /// load instead of reading "never" while `cumulative_edges_seen` is non-zero.
+    last_new_edge_at: Option<Instant>,
 }
 
 impl WorkerCorpusSeed {
@@ -328,6 +333,7 @@ impl WorkerCorpusSeed {
             failed_replays: self.failed_replays,
             optimization_best_value: self.optimization_best_value,
             optimization_best_sequence: self.optimization_best_sequence.clone(),
+            last_new_edge_at: self.last_new_edge_at,
         }
     }
 
@@ -375,9 +381,13 @@ impl WorkerCorpusSeed {
                 sancov_history_map: &mut seed.sancov_history_map,
                 metrics: Some(&mut seed.metrics),
             };
-            let ReplayOutcome { keep_entry, cmp_seq, failed_replays, .. } =
+            let ReplayOutcome { keep_entry, new_edge, cmp_seq, failed_replays, .. } =
                 replay_corpus_sequence(&tx_seq, executor, target, coverage)?;
             seed.failed_replays += failed_replays;
+            // Start the timer at the baseline load if replay hit a first-time edge.
+            if new_edge {
+                seed.last_new_edge_at = Some(Instant::now());
+            }
             if !keep_entry {
                 continue;
             }
@@ -555,6 +565,12 @@ pub struct WorkerCorpus {
     optimization_best_value: Option<I256>,
     /// Optimization mode: the call sequence that produced the best value.
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// Monotonic time the worker's local map last gained a first-time edge; `None` until then.
+    ///
+    /// Updated wherever the map grows: live fuzzing, startup replay, and cross-worker sync. Tracks
+    /// *local* discovery (an edge new to this worker), not globally unique discovery. Kept out of
+    /// [`CorpusMetrics`] since a timestamp is neither additive across workers nor serializable.
+    last_new_edge_at: Option<Instant>,
 }
 
 /// Refs used during corpus replay to register contracts deployed mid-sequence as fuzz targets,
@@ -648,6 +664,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     let mut cmp_seq = Vec::with_capacity(tx_seq.len());
     let mut failed_replays = 0;
     let mut new_coverage_for_entry = false;
+    let mut new_edge_for_entry = false;
     let mut created: Vec<Address> = Vec::new();
 
     for tx in tx_seq {
@@ -661,6 +678,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
             );
             if new_coverage {
                 new_coverage_for_entry = true;
+                new_edge_for_entry |= is_edge;
                 if let Some(metrics) = coverage.metrics.as_deref_mut() {
                     metrics.update_seen(is_edge);
                 }
@@ -695,6 +713,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
                 return Ok(ReplayOutcome {
                     keep_entry: false,
                     new_coverage: new_coverage_for_entry,
+                    new_edge: new_edge_for_entry,
                     cmp_seq,
                     failed_replays,
                 });
@@ -706,6 +725,7 @@ fn replay_corpus_sequence_with_executor<FEN: FoundryEvmNetwork>(
     Ok(ReplayOutcome {
         keep_entry: true,
         new_coverage: new_coverage_for_entry,
+        new_edge: new_edge_for_entry,
         cmp_seq,
         failed_replays,
     })
@@ -800,6 +820,7 @@ impl WorkerCorpus {
             last_sync_metrics: Default::default(),
             optimization_best_value: seed.optimization_best_value,
             optimization_best_sequence: seed.optimization_best_sequence,
+            last_new_edge_at: seed.last_new_edge_at,
         })
     }
 
@@ -992,8 +1013,19 @@ impl WorkerCorpus {
         );
         if new_coverage {
             self.metrics.update_seen(is_edge);
+            // Only a first-time edge (not a new hitcount bucket, i.e. a "feature") resets the
+            // timer.
+            if is_edge {
+                self.last_new_edge_at = Some(Instant::now());
+            }
         }
         new_coverage
+    }
+
+    /// Time since this worker last gained a first-time edge; `None` until it has seen one. See
+    /// [`WorkerCorpus::last_new_edge_at`] for the local-vs-global caveat.
+    pub(crate) fn time_since_new_edge(&self) -> Option<Duration> {
+        self.last_new_edge_at.map(|at| at.elapsed())
     }
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
@@ -1632,7 +1664,7 @@ impl WorkerCorpus {
                 sancov_history_map: &mut self.sancov_history_map,
                 metrics: Some(&mut self.metrics),
             };
-            let ReplayOutcome { keep_entry, new_coverage, cmp_seq, .. } =
+            let ReplayOutcome { keep_entry, new_coverage, new_edge, cmp_seq, .. } =
                 replay_corpus_sequence_with_executor(
                     &tx_seq,
                     &mut executor,
@@ -1641,6 +1673,11 @@ impl WorkerCorpus {
                     true,
                     false,
                 )?;
+
+            // A synced edge is new to this worker's local map, so it advances the timer.
+            if new_edge {
+                self.last_new_edge_at = Some(Instant::now());
+            }
 
             let sync_path = &entry.path;
             if keep_entry && new_coverage {
@@ -1975,6 +2012,7 @@ fn unique_corpus_entries<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inspectors::{EdgeCovHit, EdgeCoverage, EdgeKey};
     use alloy_dyn_abi::DynSolValue;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::prelude::Just;
@@ -2272,6 +2310,47 @@ mod tests {
         assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
     }
 
+    /// `RawCallResult` carrying a single edge hit, to drive `merge_edge_coverage` without the EVM.
+    fn edge_call(edge: EdgeKey, count: u8) -> RawCallResult {
+        RawCallResult {
+            edge_coverage: Some(EdgeCoverage::CollisionFree(vec![EdgeCovHit { edge, count }])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_edge_coverage_advances_timer_only_for_new_edges() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = empty_worker_corpus(1, corpus_root);
+
+        // No edge seen yet.
+        assert!(manager.time_since_new_edge().is_none());
+        assert_eq!(manager.metrics.cumulative_edges_seen, 0);
+
+        let edge =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+
+        // First-time edge starts the timer.
+        assert!(manager.merge_edge_coverage(&mut edge_call(edge, 1)));
+        let first = manager.last_new_edge_at.expect("timer set after first new edge");
+        assert_eq!(manager.metrics.cumulative_edges_seen, 1);
+
+        // Same edge, higher bucket = a feature, not an edge: timer must not advance.
+        assert!(manager.merge_edge_coverage(&mut edge_call(edge, 8)));
+        assert_eq!(manager.last_new_edge_at, Some(first));
+        assert_eq!(manager.metrics.cumulative_edges_seen, 1);
+        assert_eq!(manager.metrics.cumulative_features_seen, 1);
+
+        // A distinct edge advances the timer.
+        let other =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 1, jump_dest: U256::from(20) };
+        assert!(manager.merge_edge_coverage(&mut edge_call(other, 1)));
+        let second = manager.last_new_edge_at.expect("timer present");
+        assert!(second >= first);
+        assert_eq!(manager.metrics.cumulative_edges_seen, 2);
+        assert!(manager.time_since_new_edge().is_some());
+    }
+
     #[test]
     fn empty_input_sequence_with_new_coverage_does_not_panic_or_insert() {
         // A run where every executed call was discarded (magic assume) or popped (reverts
@@ -2415,6 +2494,7 @@ mod tests {
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: tx_seq,
+            last_new_edge_at: None,
         };
 
         let manager =
@@ -2457,6 +2537,7 @@ mod tests {
             failed_replays: 13,
             optimization_best_value: Some(I256::try_from(17).unwrap()),
             optimization_best_sequence: vec![basic_tx()],
+            last_new_edge_at: None,
         };
 
         let worker_count = 3;
