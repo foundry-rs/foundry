@@ -133,8 +133,7 @@ pub(crate) fn hard_arith_fallback_model(constraints: &[SymBoolExpr]) -> Option<S
     search.model(0, &mut model, &mut assignments)
 }
 
-/// Selects direct symbolic inputs for bounded fallback search.
-pub(crate) fn fallback_search_vars(vars: SymbolicVars) -> Vec<Symbol> {
+fn fallback_search_vars(vars: SymbolicVars) -> Vec<Symbol> {
     if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
         return vars.into_iter().collect();
     }
@@ -151,8 +150,7 @@ pub(crate) fn fallback_search_vars(vars: SymbolicVars) -> Vec<Symbol> {
         .collect()
 }
 
-/// Returns deterministic local-search candidates for one symbolic variable.
-pub(crate) fn fallback_candidates_for_var(
+fn fallback_candidates_for_var(
     var: &str,
     constraints: &[SymBoolExpr],
     constants: &[U256],
@@ -198,7 +196,6 @@ pub(crate) fn fallback_candidates_for_var(
     Some(candidates)
 }
 
-/// Holds immutable state for recursive hard-arithmetic fallback search.
 struct FallbackSearch<'a> {
     constraints: &'a [SymBoolExpr],
     constraint_vars: &'a [SymbolicVars],
@@ -208,7 +205,6 @@ struct FallbackSearch<'a> {
 }
 
 impl FallbackSearch<'_> {
-    /// Searches the bounded candidate product for a satisfying assignment.
     fn model(
         &self,
         index: usize,
@@ -244,16 +240,14 @@ impl FallbackSearch<'_> {
     }
 }
 
-/// Checks all constraints before returning a hard-arithmetic fallback witness.
-pub(crate) fn fallback_model_satisfies_all_constraints(
+fn fallback_model_satisfies_all_constraints(
     constraints: &[SymBoolExpr],
     model: &(impl SymbolicModelLookup + ?Sized),
 ) -> bool {
     constraints.iter().all(|constraint| constraint.eval(model).unwrap_or(false))
 }
 
-/// Checks constraints that depend only on already-assigned fallback variables.
-pub(crate) fn fallback_partial_model_satisfies_known_constraints(
+fn fallback_partial_model_satisfies_known_constraints(
     constraints: &[SymBoolExpr],
     constraint_vars: &[SymbolicVars],
     searched_vars: &SymbolicVars,
@@ -266,8 +260,7 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
     })
 }
 
-/// Collects variables that local hard-arithmetic search can assign directly.
-pub(crate) fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
+fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit_exprs(&mut |expr| {
         if let SymExprKind::Var(var) = expr.kind() {
             vars.insert(*var);
@@ -333,15 +326,11 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     None
 }
 
-pub(crate) fn push_fallback_candidate(
-    candidates: &mut HashSet<U256>,
-    candidate: U256,
-    hints: MaskHints,
-) {
+fn push_fallback_candidate(candidates: &mut HashSet<U256>, candidate: U256, hints: MaskHints) {
     candidates.insert((candidate | hints.one) & !hints.zero);
 }
 
-pub(crate) fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet<U256>) {
+fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet<U256>) {
     let _ = expr.visit_exprs(&mut |expr| {
         if let SymExprKind::Const(value) = expr.kind() {
             constants.insert(*value);
@@ -351,13 +340,13 @@ pub(crate) fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct MaskHints {
-    pub(crate) one: U256,
-    pub(crate) zero: U256,
+struct MaskHints {
+    one: U256,
+    zero: U256,
 }
 
 impl MaskHints {
-    pub(crate) fn for_var(var: &str, constraints: &[SymBoolExpr]) -> Self {
+    fn for_var(var: &str, constraints: &[SymBoolExpr]) -> Self {
         let mut hints = Self::default();
         for constraint in constraints {
             hints.apply_bool(var, constraint, false);
@@ -365,7 +354,7 @@ impl MaskHints {
         hints
     }
 
-    pub(crate) fn apply_bool(&mut self, var: &str, expr: &SymBoolExpr, inverted: bool) {
+    fn apply_bool(&mut self, var: &str, expr: &SymBoolExpr, inverted: bool) {
         match expr.kind() {
             SymBoolExprKind::Const(_) => {}
             SymBoolExprKind::Not(value) => self.apply_bool(var, value, !inverted),
@@ -379,13 +368,7 @@ impl MaskHints {
         }
     }
 
-    pub(crate) fn apply_equality(
-        &mut self,
-        var: &str,
-        left: &SymExpr,
-        right: &SymExpr,
-        inverted: bool,
-    ) {
+    fn apply_equality(&mut self, var: &str, left: &SymExpr, right: &SymExpr, inverted: bool) {
         if let Some(mask) =
             zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
         {
@@ -398,7 +381,7 @@ impl MaskHints {
     }
 }
 
-pub(crate) fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) -> Option<U256> {
+fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) -> Option<U256> {
     if !zero.as_const().is_some_and(|value| value.is_zero()) {
         return None;
     }
