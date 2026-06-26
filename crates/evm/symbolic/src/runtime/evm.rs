@@ -21,11 +21,18 @@ pub(crate) fn pow_mod(base: U256, exponent: U256) -> U256 {
 }
 
 pub(crate) fn exp_expr_for_concrete_exponent(base: SymExpr, exponent: usize) -> SymExpr {
-    let mut expr = SymExpr::constant(U256::from(1));
-    for _ in 0..exponent {
+    if exponent == 0 {
+        return SymExpr::constant(U256::from(1));
+    }
+    if let Some(base) = base.as_const() {
+        return SymExpr::constant(pow_mod(base, U256::from(exponent)));
+    }
+
+    let mut expr = base.clone();
+    for _ in 1..exponent {
         expr = SymExpr::op(SymExprOp::Mul, expr, base.clone());
     }
-    expr.eval_const().map(SymExpr::constant).unwrap_or(expr)
+    expr
 }
 
 pub(crate) fn slt(left: U256, right: U256) -> bool {
@@ -97,7 +104,7 @@ pub(crate) fn signextend_word_dynamic(byte_index: SymExpr, value: SymExpr) -> Sy
     }
 
     let mut result = value.clone();
-    for idx in (0..32).rev() {
+    for idx in (0..31).rev() {
         result = SymExpr::ite(
             SymBoolExpr::eq(byte_index.clone(), SymExpr::constant(U256::from(idx))),
             signextend_word(U256::from(idx), value.clone()),
