@@ -306,16 +306,6 @@ pub(crate) fn storage_layout_key(key: &SymExpr) -> Option<(SymExpr, SymExpr)> {
     }
 }
 
-/// Computes the exact EVM `ADDMOD` semantics without truncating the intermediate sum.
-pub(crate) fn addmod_word(left: U256, right: U256, modulus: U256) -> U256 {
-    left.add_mod(right, modulus)
-}
-
-/// Computes the exact EVM `MULMOD` semantics without truncating the intermediate product.
-pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
-    left.mul_mod(right, modulus)
-}
-
 fn masked_expr_matches(candidate: &SymExprKind, target: &SymExpr) -> Option<U256> {
     match candidate {
         SymExprKind::Op(SymExprOp::And, left, right) if left == target => right.eval(),
@@ -605,10 +595,10 @@ impl SymExpr {
             SymExprKind::Not(value) => Some(!value.eval()?),
             SymExprKind::Op(op, left, right) => Some(op.eval(left.eval()?, right.eval()?)),
             SymExprKind::AddMod { left, right, modulus } => {
-                Some(addmod_word(left.eval()?, right.eval()?, modulus.eval()?))
+                Some(left.eval()?.add_mod(right.eval()?, modulus.eval()?))
             }
             SymExprKind::MulMod { left, right, modulus } => {
-                Some(mulmod_word(left.eval()?, right.eval()?, modulus.eval()?))
+                Some(left.eval()?.mul_mod(right.eval()?, modulus.eval()?))
             }
             SymExprKind::Ite(cond, then_expr, else_expr) => {
                 if cond.eval()? {
@@ -655,16 +645,12 @@ impl SymExpr {
             SymExprKind::Op(op, left, right) => {
                 op.eval(left.eval_model(model)?, right.eval_model(model)?)
             }
-            SymExprKind::AddMod { left, right, modulus } => addmod_word(
-                left.eval_model(model)?,
-                right.eval_model(model)?,
-                modulus.eval_model(model)?,
-            ),
-            SymExprKind::MulMod { left, right, modulus } => mulmod_word(
-                left.eval_model(model)?,
-                right.eval_model(model)?,
-                modulus.eval_model(model)?,
-            ),
+            SymExprKind::AddMod { left, right, modulus } => left
+                .eval_model(model)?
+                .add_mod(right.eval_model(model)?, modulus.eval_model(model)?),
+            SymExprKind::MulMod { left, right, modulus } => left
+                .eval_model(model)?
+                .mul_mod(right.eval_model(model)?, modulus.eval_model(model)?),
             SymExprKind::Ite(cond, then_expr, else_expr) => {
                 if cond.eval_model(model)? {
                     then_expr.eval_model(model)?
@@ -1285,7 +1271,7 @@ impl SymExpr {
                 Self::constant(U256::ZERO)
             }
             (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
-                Self::constant(addmod_word(left, right, modulus))
+                Self::constant(left.add_mod(right, modulus))
             }
             (left, right, modulus) => Self::from_kind(SymExprKind::AddMod {
                 left: Self::from_kind(left),
@@ -1304,7 +1290,7 @@ impl SymExpr {
                 Self::constant(U256::ZERO)
             }
             (SymExprKind::Const(left), SymExprKind::Const(right), SymExprKind::Const(modulus)) => {
-                Self::constant(mulmod_word(left, right, modulus))
+                Self::constant(left.mul_mod(right, modulus))
             }
             (left, right, modulus) => Self::from_kind(SymExprKind::MulMod {
                 left: Self::from_kind(left),

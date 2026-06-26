@@ -2072,11 +2072,11 @@ fn bool_comparison_folds_unsigned_boundaries() {
 
 #[test]
 fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
-    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::ZERO), U256::ZERO);
-    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::ZERO), U256::ZERO);
+    assert_eq!(U256::MAX.add_mod(U256::from(2), U256::ZERO), U256::ZERO);
+    assert_eq!(U256::MAX.mul_mod(U256::MAX, U256::ZERO), U256::ZERO);
 
-    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::MAX), U256::from(2));
-    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::MAX), U256::ZERO);
+    assert_eq!(U256::MAX.add_mod(U256::from(2), U256::MAX), U256::from(2));
+    assert_eq!(U256::MAX.mul_mod(U256::MAX, U256::MAX), U256::ZERO);
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
     assert_eq!(
