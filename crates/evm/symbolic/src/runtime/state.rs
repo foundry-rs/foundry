@@ -1292,6 +1292,19 @@ impl StorageWrite {
         Self { address, key, value }
     }
 
+    pub(crate) fn select_from(
+        writes: &[Self],
+        address: Address,
+        key: SymExpr,
+        base: SymExpr,
+    ) -> SymExpr {
+        let mut value = base;
+        for write in writes.iter().filter(|write| write.address == address) {
+            value = write.select(key.clone(), value);
+        }
+        value
+    }
+
     pub(crate) const fn address(&self) -> Address {
         self.address
     }
@@ -1400,7 +1413,7 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         let base = self.storage_base(executor, address, &key, concrete_key)?;
         let read_key = concrete_key.map(SymExpr::constant).unwrap_or(key);
-        Ok(read_storage_writes(&self.storage, address, read_key, base))
+        Ok(StorageWrite::select_from(&self.storage, address, read_key, base))
     }
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
@@ -1408,7 +1421,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn tload(&self, address: Address, key: SymExpr) -> SymExpr {
-        read_storage_writes(&self.transient_storage, address, key, SymExpr::zero())
+        StorageWrite::select_from(&self.transient_storage, address, key, SymExpr::zero())
     }
 
     pub(crate) fn tstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {

@@ -221,19 +221,6 @@ pub(crate) fn symbolic_create2_address_word(
     word
 }
 
-pub(crate) fn read_storage_writes(
-    writes: &[StorageWrite],
-    address: Address,
-    key: SymExpr,
-    base: SymExpr,
-) -> SymExpr {
-    let mut value = base;
-    for write in writes.iter().filter(|write| write.address() == address) {
-        value = write.select(key.clone(), value);
-    }
-    value
-}
-
 impl SymExpr {
     pub(crate) fn select_storage_write(
         self,

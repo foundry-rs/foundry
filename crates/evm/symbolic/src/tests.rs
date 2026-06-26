@@ -1656,7 +1656,7 @@ fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
     let value = SymExpr::var("value");
     let writes = vec![StorageWrite::new(address, key.clone(), value.clone())];
 
-    assert_eq!(read_storage_writes(&writes, address, key, SymExpr::zero()), value);
+    assert_eq!(StorageWrite::select_from(&writes, address, key, SymExpr::zero()), value);
 }
 
 #[test]
@@ -1668,7 +1668,7 @@ fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
     let writes = vec![StorageWrite::new(address, write_key.clone(), value.clone())];
 
     assert_eq!(
-        read_storage_writes(&writes, address, read_key.clone(), SymExpr::zero()),
+        StorageWrite::select_from(&writes, address, read_key.clone(), SymExpr::zero()),
         SymExpr::ite(SymBoolExpr::eq(read_key, write_key), value, SymExpr::constant(U256::ZERO),)
     );
 }
