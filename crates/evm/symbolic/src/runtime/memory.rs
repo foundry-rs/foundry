@@ -785,6 +785,10 @@ impl SymCode {
         self.bytes.read_offset(offset, size)
     }
 
+    pub(crate) fn push_data_word(&self, offset: usize, len: usize) -> SymExpr {
+        self.bytes.right_aligned_word(offset, len)
+    }
+
     pub(crate) fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
         self.concrete_range(0, self.len(), reason)
     }

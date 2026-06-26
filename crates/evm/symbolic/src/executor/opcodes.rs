@@ -24,12 +24,9 @@ impl SymbolicExecutor {
                 if end > code.len() {
                     return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
                 }
-                let bytes = std::iter::repeat_with(SymExpr::zero)
-                    .take(32 - n)
-                    .chain(code.read_byte_exprs(state.pc, n))
-                    .collect::<Vec<_>>();
+                let value = code.push_data_word(state.pc, n);
                 state.pc = end;
-                state.stack.push(SymExpr::from_bytes(bytes))?;
+                state.stack.push(value)?;
             }
             opcode::DUP1..=opcode::DUP16 => {
                 let n = (op - opcode::DUP1 + 1) as usize;

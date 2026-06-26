@@ -304,6 +304,20 @@ impl SymBytes {
         }
     }
 
+    pub(crate) fn right_aligned_word(&self, offset: usize, len: usize) -> SymExpr {
+        debug_assert!(len <= 32);
+        let len = len.min(32);
+        if let Some(word) = self.word_fragment_at(offset, len, 32 - len) {
+            return word;
+        }
+
+        SymExpr::from_bytes(
+            std::iter::repeat_with(SymExpr::zero)
+                .take(32 - len)
+                .chain((0..len).map(|idx| self.byte(offset + idx))),
+        )
+    }
+
     fn word_fragment_at(&self, offset: usize, len: usize, out_offset: usize) -> Option<SymExpr> {
         debug_assert!(len <= 32);
         debug_assert!(out_offset <= 32);

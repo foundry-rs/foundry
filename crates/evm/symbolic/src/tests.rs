@@ -466,6 +466,24 @@ fn byte_concat_word_load_assembles_word_fragments() {
 }
 
 #[test]
+fn byte_concat_right_aligned_word_assembles_push_fragments() {
+    let immediate = SymExpr::var("push_data");
+    let bytes = SymBytes::concat([
+        SymBytes::concrete(vec![opcode::PUSH32]),
+        immediate.clone().into_bytes(),
+    ]);
+
+    assert_eq!(bytes.right_aligned_word(1, 32), immediate);
+    assert_eq!(
+        bytes
+            .right_aligned_word(29, 4)
+            .eval_model(&BTreeMap::from([("push_data".to_string(), U256::from(0x12345678))]))
+            .unwrap(),
+        U256::from(0x12345678)
+    );
+}
+
+#[test]
 fn calldata_load_accepts_symbolic_offsets() {
     let calldata = SymCalldata::from_bytes(SymBytes::exprs(
         (0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
@@ -1559,11 +1577,20 @@ fn symbolic_push_data_reconstructs_symbolic_word() {
         SymExpr::var("immutable_lo"),
     ]));
 
-    let word = SymExpr::from_bytes(
-        std::iter::repeat_with(SymExpr::zero).take(30).chain(code.read_bytes(1, 2).materialize()),
-    );
+    let word = code.push_data_word(1, 2);
 
     assert!(word.as_const().is_none());
+}
+
+#[test]
+fn symbolic_push32_preserves_structural_word() {
+    let immediate = SymExpr::var("immutable");
+    let code = SymCode::from_bytes(SymBytes::concat([
+        SymBytes::concrete(vec![opcode::PUSH32]),
+        immediate.clone().into_bytes(),
+    ]));
+
+    assert_eq!(code.push_data_word(1, 32), immediate);
 }
 
 #[test]
