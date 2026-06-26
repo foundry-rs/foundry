@@ -347,7 +347,7 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymExpr>) -> SymEx
         return SymExpr::constant(U256::from_be_bytes(word));
     }
 
-    if let Some(expr) = word_from_extracted_bytes(&bytes) {
+    if let Some(expr) = bytes.word_from_extracted_bytes() {
         return expr;
     }
 
@@ -365,62 +365,10 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymExpr>) -> SymEx
     expr
 }
 
-pub(crate) fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
-    if bytes.len() < 32 {
-        return None;
-    }
-
-    let source = bytes
-        .iter()
-        .take(32)
-        .enumerate()
-        .find_map(|(idx, byte)| extracted_byte_source(byte, idx))?;
-
-    for (idx, byte) in bytes.iter().take(32).enumerate() {
-        if let Some(byte_source) = extracted_byte_source(byte, idx) {
-            if byte_source != source {
-                return None;
-            }
-            continue;
-        }
-
-        let byte = byte.as_const()?;
-        if source.known_byte(idx) != Some(byte.to::<u8>()) {
-            return None;
-        }
-    }
-    Some(source)
-}
-
-pub(crate) fn extracted_byte_source(byte: &SymExpr, index: usize) -> Option<SymExpr> {
-    let expr = byte;
-    let expr = strip_low_byte_mask(expr)?;
-    if index == 31 {
-        return Some(expr.clone());
-    }
-    let SymExprKind::Op(SymExprOp::Shr, source, shift) = expr.kind() else { return None };
-    let shift = shift.as_const()?;
-    (shift == U256::from((31 - index) * 8)).then(|| source.clone())
-}
-
-pub(crate) fn strip_low_byte_mask(expr: &SymExpr) -> Option<&SymExpr> {
-    match expr.kind() {
-        SymExprKind::Op(SymExprOp::And, left, right)
-            if right.as_const() == Some(U256::from(0xff)) =>
-        {
-            Some(strip_low_byte_mask(left).unwrap_or(left))
-        }
-        SymExprKind::Op(SymExprOp::And, left, right)
-            if left.as_const() == Some(U256::from(0xff)) =>
-        {
-            Some(strip_low_byte_mask(right).unwrap_or(right))
-        }
-        _ => Some(expr),
-    }
-}
-
 pub(crate) trait SymExprSliceExt {
     fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError>;
+
+    fn word_from_extracted_bytes(&self) -> Option<SymExpr>;
 
     fn calldata_prefix_condition(
         &self,
@@ -442,6 +390,33 @@ impl SymExprSliceExt for [SymExpr] {
                 None => Err(SymbolicError::Unsupported(reason)),
             })
             .collect()
+    }
+
+    fn word_from_extracted_bytes(&self) -> Option<SymExpr> {
+        if self.len() < 32 {
+            return None;
+        }
+
+        let source = self
+            .iter()
+            .take(32)
+            .enumerate()
+            .find_map(|(idx, byte)| byte.extracted_byte_source(idx))?;
+
+        for (idx, byte) in self.iter().take(32).enumerate() {
+            if let Some(byte_source) = byte.extracted_byte_source(idx) {
+                if byte_source != source {
+                    return None;
+                }
+                continue;
+            }
+
+            let byte = byte.as_const()?;
+            if source.known_byte(idx) != Some(byte.to::<u8>()) {
+                return None;
+            }
+        }
+        Some(source)
     }
 
     fn calldata_prefix_condition(
@@ -854,6 +829,32 @@ impl SymExpr {
             Self::op(SymExprOp::Shr, self.clone(), Self::constant(U256::from((31 - index) * 8))),
             Self::constant(U256::from(0xff)),
         )
+    }
+
+    pub(crate) fn extracted_byte_source(&self, index: usize) -> Option<Self> {
+        let expr = self.strip_low_byte_mask();
+        if index == 31 {
+            return Some(expr.clone());
+        }
+        let SymExprKind::Op(SymExprOp::Shr, source, shift) = expr.kind() else { return None };
+        let shift = shift.as_const()?;
+        (shift == U256::from((31 - index) * 8)).then(|| source.clone())
+    }
+
+    pub(crate) fn strip_low_byte_mask(&self) -> &Self {
+        match self.kind() {
+            SymExprKind::Op(SymExprOp::And, left, right)
+                if right.as_const() == Some(U256::from(0xff)) =>
+            {
+                left.strip_low_byte_mask()
+            }
+            SymExprKind::Op(SymExprOp::And, left, right)
+                if left.as_const() == Some(U256::from(0xff)) =>
+            {
+                right.strip_low_byte_mask()
+            }
+            _ => self,
+        }
     }
 
     pub(crate) fn byte_term(&self, index: usize) -> Option<Self> {

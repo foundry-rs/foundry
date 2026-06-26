@@ -301,7 +301,7 @@ impl SymExpr {
     }
 
     fn extracted_unshifted_byte_source(&self, index: usize) -> Option<Self> {
-        let expr = strip_low_byte_mask(self)?;
+        let expr = self.strip_low_byte_mask();
         if index == 31 {
             return Some(expr.clone());
         }
@@ -494,7 +494,7 @@ impl SymBoolExpr {
 
 impl SymExpr {
     fn normalized_bool_word_condition(&self) -> Option<SymBoolExpr> {
-        strip_low_byte_mask(self)?.bool_word_condition().map(normalize_bool_for_solver)
+        self.strip_low_byte_mask().bool_word_condition().map(normalize_bool_for_solver)
     }
 
     fn add_overflow_check(&self, right: &Self) -> bool {
