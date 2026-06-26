@@ -194,19 +194,15 @@ fn precompile_call_notice(
     trace: &CallTrace,
     precompile_labels: &AddressHashMap<String>,
 ) -> Option<String> {
-    decoded_precompile_call_notice(&trace.decoded, trace.maybe_precompile.unwrap_or(false))
-        .or_else(|| known_precompile_call_notice(trace))
+    decoded_precompile_call_notice(&trace.decoded)
         .or_else(|| labeled_precompile_call_notice(trace, precompile_labels))
-        .or_else(|| marked_precompile_call_notice(trace))
+        .or_else(|| known_precompile_call_notice(trace))
 }
 
-fn decoded_precompile_call_notice(
-    decoded: &Option<Box<DecodedCallTrace>>,
-    is_precompile: bool,
-) -> Option<String> {
+fn decoded_precompile_call_notice(decoded: &Option<Box<DecodedCallTrace>>) -> Option<String> {
     let decoded = decoded.as_ref()?;
     let label = decoded.label.as_deref()?;
-    if label != PRECOMPILES_TRACE_LABEL && !is_precompile {
+    if label != PRECOMPILES_TRACE_LABEL {
         return None;
     }
 
@@ -245,14 +241,6 @@ fn labeled_precompile_call_notice(
     Some(notice)
 }
 
-fn marked_precompile_call_notice(trace: &CallTrace) -> Option<String> {
-    trace.maybe_precompile.unwrap_or(false).then(|| {
-        let mut notice = format!("precompile: {}", trace.address);
-        append_raw_precompile_io(&mut notice, trace);
-        notice
-    })
-}
-
 fn known_precompile_call_notice(trace: &CallTrace) -> Option<String> {
     let name = known_precompile_name(trace.address)?;
     let mut notice = format!("precompile: {name} @ {}", trace.address);
@@ -271,7 +259,7 @@ fn append_raw_precompile_io(notice: &mut String, trace: &CallTrace) {
     }
 }
 
-// Standard EVM fallback for traces that have no decoded precompile metadata or execution marker.
+// Standard EVM fallback for traces that have no decoded precompile metadata.
 const fn known_precompile_name(address: Address) -> Option<&'static str> {
     match address {
         precompiles::EC_RECOVER => Some("ecrecover"),
@@ -370,10 +358,9 @@ mod tests {
         arena
     }
 
-    fn decoded_fee_manager_trace(maybe_precompile: Option<bool>) -> CallTrace {
+    fn decoded_fee_manager_trace() -> CallTrace {
         CallTrace {
             address: Address::from([0x42; 20]),
-            maybe_precompile,
             decoded: Some(Box::new(DecodedCallTrace {
                 label: Some("FeeManager".to_string()),
                 call_data: Some(DecodedCallData {
@@ -536,22 +523,9 @@ mod tests {
     }
 
     #[test]
-    fn flatten_annotates_marked_precompile_child_calls_with_decoded_label() {
-        let arena = arena_with_child_after_staticcall(decoded_fee_manager_trace(Some(true)));
-
-        let mut flattened = Vec::new();
-        flatten_call_trace(arena, &mut flattened);
-
-        assert_eq!(
-            assert_precompile_notice(&flattened[0].steps[0]),
-            "precompile: FeeManager::userTokens(0x0000000000000000000000000000000000000000) -> 0x0000000000000000000000000000000000000000"
-        );
-    }
-
-    #[test]
     fn flatten_annotates_chain_labeled_precompile_child_calls_with_decoded_label() {
         let address = Address::from([0x42; 20]);
-        let arena = arena_with_child_after_staticcall(decoded_fee_manager_trace(None));
+        let arena = arena_with_child_after_staticcall(decoded_fee_manager_trace());
         let precompile_labels = AddressHashMap::from_iter([(address, "FeeManager".to_string())]);
 
         let mut flattened = Vec::new();
@@ -564,27 +538,8 @@ mod tests {
     }
 
     #[test]
-    fn flatten_marks_marked_precompile_child_calls_without_decoded_trace() {
-        let arena = arena_with_child_after_staticcall(CallTrace {
-            address: Address::from([0x99; 20]),
-            maybe_precompile: Some(true),
-            data: Bytes::from_static(&[0x12, 0x34]),
-            output: Bytes::from_static(&[0x56]),
-            ..Default::default()
-        });
-
-        let mut flattened = Vec::new();
-        flatten_call_trace(arena, &mut flattened);
-
-        assert_eq!(
-            assert_precompile_notice(&flattened[0].steps[0]),
-            "precompile: 0x9999999999999999999999999999999999999999 input=0x1234 output=0x56"
-        );
-    }
-
-    #[test]
-    fn flatten_skips_decoded_label_without_precompile_marker() {
-        let arena = arena_with_child_after_staticcall(decoded_fee_manager_trace(None));
+    fn flatten_skips_decoded_label_without_active_precompile_label() {
+        let arena = arena_with_child_after_staticcall(decoded_fee_manager_trace());
 
         let mut flattened = Vec::new();
         flatten_call_trace(arena, &mut flattened);
