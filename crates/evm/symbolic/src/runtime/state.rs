@@ -496,6 +496,29 @@ impl PathState {
         value
     }
 
+    pub(crate) fn fresh_bytes(&mut self, len: usize) -> Vec<SymExpr> {
+        (0..len).map(|_| self.fresh_bounded_uint(U256::from(8))).collect()
+    }
+
+    pub(crate) fn fresh_printable_ascii_bytes(&mut self, len: usize) -> Vec<SymExpr> {
+        (0..len)
+            .map(|_| {
+                let byte = self.fresh_bounded_uint(U256::from(8));
+                self.constraints.push(SymBoolExpr::cmp_word_const(
+                    SymBoolExprOp::Uge,
+                    &byte,
+                    U256::from(0x20),
+                ));
+                self.constraints.push(SymBoolExpr::cmp_word_const(
+                    SymBoolExprOp::Ule,
+                    &byte,
+                    U256::from(0x7e),
+                ));
+                byte
+            })
+            .collect()
+    }
+
     pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymExpr {
         let value = self.fresh_word("symbolic");
         if bits.is_zero() {

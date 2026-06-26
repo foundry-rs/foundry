@@ -187,43 +187,91 @@ mod symbolic_vm_calls {
     }
 }
 
-struct SymbolicVmSelectors {
-    create_address: [u8; 4],
-    create_bool: [u8; 4],
-    create_bytes: [u8; 4],
-    create_bytes_sized: [u8; 4],
-    create_bytes32: [u8; 4],
-    create_bytes4: [u8; 4],
-    create_calldata: [u8; 4],
-    create_int: [u8; 4],
-    create_int256: [u8; 4],
-    create_string: [u8; 4],
-    create_string_sized: [u8; 4],
-    create_uint: [u8; 4],
-    create_uint256: [u8; 4],
-    enable_symbolic_storage: [u8; 4],
-    snapshot_storage: [u8; 4],
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SymbolicVmCheatcode {
+    CreateAddress,
+    CreateBool,
+    CreateBytes,
+    CreateBytesSized,
+    CreateBytesFixed(usize),
+    CreateCalldata,
+    CreateInt,
+    CreateIntBits(usize),
+    CreateString,
+    CreateStringSized,
+    CreateUint,
+    CreateUintBits(usize),
+    EnableSymbolicStorage,
+    SnapshotStorage,
+    SnapshotState,
 }
 
-fn symbolic_vm_selectors() -> &'static SymbolicVmSelectors {
-    static SELECTORS: SymbolicVmSelectors = SymbolicVmSelectors {
-        create_address: symbolic_vm_calls::SymbolicVm::createAddressCall::SELECTOR,
-        create_bool: symbolic_vm_calls::SymbolicVm::createBoolCall::SELECTOR,
-        create_bytes: symbolic_vm_calls::SymbolicVm::createBytes_0Call::SELECTOR,
-        create_bytes_sized: symbolic_vm_calls::SymbolicVm::createBytes_1Call::SELECTOR,
-        create_bytes32: symbolic_vm_calls::SymbolicVm::createBytes32Call::SELECTOR,
-        create_bytes4: symbolic_vm_calls::SymbolicVm::createBytes4Call::SELECTOR,
-        create_calldata: symbolic_vm_calls::SymbolicVm::createCalldataCall::SELECTOR,
-        create_int: symbolic_vm_calls::SymbolicVm::createIntCall::SELECTOR,
-        create_int256: symbolic_vm_calls::SymbolicVm::createInt256Call::SELECTOR,
-        create_string: symbolic_vm_calls::SymbolicVm::createString_0Call::SELECTOR,
-        create_string_sized: symbolic_vm_calls::SymbolicVm::createString_1Call::SELECTOR,
-        create_uint: symbolic_vm_calls::SymbolicVm::createUintCall::SELECTOR,
-        create_uint256: symbolic_vm_calls::SymbolicVm::createUint256Call::SELECTOR,
-        enable_symbolic_storage: symbolic_vm_calls::SymbolicVm::enableSymbolicStorageCall::SELECTOR,
-        snapshot_storage: symbolic_vm_calls::SymbolicVm::snapshotStorageCall::SELECTOR,
-    };
-    &SELECTORS
+impl SymbolicVmCheatcode {
+    fn from_selector(selector: [u8; 4]) -> Option<Self> {
+        match selector {
+            symbolic_vm_calls::SymbolicVm::createAddressCall::SELECTOR => Some(Self::CreateAddress),
+            symbolic_vm_calls::SymbolicVm::createBoolCall::SELECTOR => Some(Self::CreateBool),
+            symbolic_vm_calls::SymbolicVm::createBytes_0Call::SELECTOR => Some(Self::CreateBytes),
+            symbolic_vm_calls::SymbolicVm::createBytes_1Call::SELECTOR => {
+                Some(Self::CreateBytesSized)
+            }
+            symbolic_vm_calls::SymbolicVm::createCalldataCall::SELECTOR => {
+                Some(Self::CreateCalldata)
+            }
+            symbolic_vm_calls::SymbolicVm::createIntCall::SELECTOR => Some(Self::CreateInt),
+            symbolic_vm_calls::SymbolicVm::createString_0Call::SELECTOR => Some(Self::CreateString),
+            symbolic_vm_calls::SymbolicVm::createString_1Call::SELECTOR => {
+                Some(Self::CreateStringSized)
+            }
+            symbolic_vm_calls::SymbolicVm::createUintCall::SELECTOR => Some(Self::CreateUint),
+            symbolic_vm_calls::SymbolicVm::enableSymbolicStorageCall::SELECTOR
+            | foundry_cheatcodes_spec::Vm::setArbitraryStorage_0Call::SELECTOR => {
+                Some(Self::EnableSymbolicStorage)
+            }
+            symbolic_vm_calls::SymbolicVm::snapshotStorageCall::SELECTOR => {
+                Some(Self::SnapshotStorage)
+            }
+            foundry_cheatcodes_spec::Vm::snapshotStateCall::SELECTOR => Some(Self::SnapshotState),
+            _ => {
+                for &(bits, candidate) in symbolic_create_uint_selectors() {
+                    if selector == candidate {
+                        return Some(Self::CreateUintBits(bits));
+                    }
+                }
+                for &(bits, candidate) in symbolic_create_int_selectors() {
+                    if selector == candidate {
+                        return Some(Self::CreateIntBits(bits));
+                    }
+                }
+                for &(bytes, candidate) in symbolic_create_bytes_selectors() {
+                    if selector == candidate {
+                        return Some(Self::CreateBytesFixed(bytes));
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    const fn min_input_words(self) -> usize {
+        match self {
+            Self::CreateUint
+            | Self::CreateInt
+            | Self::CreateBytesSized
+            | Self::CreateStringSized
+            | Self::EnableSymbolicStorage
+            | Self::SnapshotStorage => 1,
+            Self::CreateAddress
+            | Self::CreateBool
+            | Self::CreateBytes
+            | Self::CreateBytesFixed(_)
+            | Self::CreateCalldata
+            | Self::CreateIntBits(_)
+            | Self::CreateString
+            | Self::CreateUintBits(_)
+            | Self::SnapshotState => 0,
+        }
+    }
 }
 
 fn symbolic_create_uint_selectors() -> &'static [(usize, [u8; 4]); 32] {

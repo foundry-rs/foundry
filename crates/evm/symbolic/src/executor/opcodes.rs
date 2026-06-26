@@ -18,7 +18,7 @@ impl SymbolicExecutor {
             opcode::PUSH0 => {
                 state.stack.push(SymExpr::zero())?;
             }
-            op if (opcode::PUSH1..=opcode::PUSH32).contains(&op) => {
+            opcode::PUSH1..=opcode::PUSH32 => {
                 let n = (op - opcode::PUSH1 + 1) as usize;
                 let end = state.pc.saturating_add(n);
                 if end > code.len() {
@@ -31,12 +31,12 @@ impl SymbolicExecutor {
                 state.pc = end;
                 state.stack.push(word_from_bytes(bytes))?;
             }
-            op if (opcode::DUP1..=opcode::DUP16).contains(&op) => {
+            opcode::DUP1..=opcode::DUP16 => {
                 let n = (op - opcode::DUP1 + 1) as usize;
                 let value = state.stack.peek(n - 1)?.clone();
                 state.stack.push(value)?;
             }
-            op if (opcode::SWAP1..=opcode::SWAP16).contains(&op) => {
+            opcode::SWAP1..=opcode::SWAP16 => {
                 let n = (op - opcode::SWAP1 + 1) as usize;
                 state.stack.swap(n)?;
             }

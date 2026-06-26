@@ -260,59 +260,12 @@ pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Optio
 }
 
 pub(crate) fn symbolic_vm_cheatcode_min_input_size(selector: [u8; 4]) -> Option<usize> {
-    let selectors = symbolic_vm_selectors();
-    if selector_in(
-        selector,
-        &[
-            selectors.create_uint256,
-            selectors.create_int256,
-            selectors.create_bytes32,
-            selectors.create_address,
-            selectors.create_bool,
-            selectors.create_bytes,
-            selectors.create_string,
-            selectors.create_bytes4,
-            selectors.create_calldata,
-            snapshotStateCall::SELECTOR,
-        ],
-    ) || symbolic_create_uint_selectors().iter().any(|(_, candidate)| selector == *candidate)
-        || symbolic_create_int_selectors().iter().any(|(_, candidate)| selector == *candidate)
-        || symbolic_create_bytes_selectors().iter().any(|(_, candidate)| selector == *candidate)
-    {
-        return Some(abi_static_input_size(0));
-    }
-
-    if selector_in(
-        selector,
-        &[
-            selectors.enable_symbolic_storage,
-            setArbitraryStorage_0Call::SELECTOR,
-            selectors.snapshot_storage,
-        ],
-    ) {
-        return Some(abi_static_input_size(1));
-    }
-    if selector_in(
-        selector,
-        &[
-            selectors.create_uint,
-            selectors.create_int,
-            selectors.create_bytes_sized,
-            selectors.create_string_sized,
-        ],
-    ) {
-        return Some(abi_static_input_size(1));
-    }
-
-    None
+    SymbolicVmCheatcode::from_selector(selector)
+        .map(|cheatcode| abi_static_input_size(cheatcode.min_input_words()))
 }
 
 pub(crate) const fn abi_static_input_size(words: usize) -> usize {
     4 + words * 32
-}
-
-pub(crate) fn selector_in(selector: [u8; 4], selectors: &[[u8; 4]]) -> bool {
-    selectors.contains(&selector)
 }
 
 pub(crate) fn abi_bytes_return(bytes: Vec<SymExpr>) -> SymReturnData {

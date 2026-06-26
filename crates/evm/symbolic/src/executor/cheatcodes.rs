@@ -2660,8 +2660,10 @@ impl SymbolicExecutor {
                             "symbolic randomBytes length",
                         )
                     })?;
-                let bytes = (0..max_len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
-                return Ok(CheatcodeOutcome::ContinueData(abi_bytes_return_with_len(len, bytes)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_bytes_return_with_len(
+                    len,
+                    state.fresh_bytes(max_len),
+                )));
             }
             randomBytes4Call::SELECTOR => {
                 let value = state.fresh_bounded_uint(U256::from(32));
@@ -2684,167 +2686,117 @@ impl SymbolicExecutor {
         selector: [u8; 4],
         in_offset: usize,
     ) -> Result<SymReturnData, SymbolicError> {
-        let selectors = symbolic_vm_selectors();
-        if selector_in(
-            selector,
-            &[selectors.create_uint256, selectors.create_int256, selectors.create_bytes32],
-        ) {
-            return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
-        }
-        for &(bits, candidate) in symbolic_create_uint_selectors() {
-            if selector == candidate {
-                if bits == 256 {
-                    return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
-                }
-                return Ok(SymReturnData::from_words(vec![
-                    state.fresh_bounded_uint(U256::from(bits)),
-                ]));
-            }
-        }
-        for &(bits, candidate) in symbolic_create_int_selectors() {
-            if selector == candidate {
-                if bits == 256 {
-                    return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
-                }
-                return Ok(SymReturnData::from_words(vec![
-                    state.fresh_bounded_int(U256::from(bits)),
-                ]));
-            }
-        }
-        for &(bytes, candidate) in symbolic_create_bytes_selectors() {
-            if selector == candidate {
-                let value = state.fresh_bounded_uint(U256::from(bytes * 8));
-                let value = if bytes == 32 { value } else { shift_left(value, (32 - bytes) * 8) };
-                return Ok(SymReturnData::from_words(vec![value]));
-            }
-        }
-        if selector == selectors.create_uint {
-            let bits = read_abi_constrained_word_arg(
-                state,
-                in_offset + 4,
-                0,
-                "symbolic svm.create integer bits",
-            )?;
-            Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
-            return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(bits)]));
-        }
-        if selector == selectors.create_int {
-            let bits = read_abi_constrained_word_arg(
-                state,
-                in_offset + 4,
-                0,
-                "symbolic svm.create integer bits",
-            )?;
-            Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
-            return Ok(SymReturnData::from_words(vec![state.fresh_bounded_int(bits)]));
-        }
-        if selector == selectors.create_address {
-            return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(160))]));
-        }
-        if selector == selectors.create_bool {
-            return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(1))]));
-        }
-        if selector == selectors.create_bytes {
-            let len = self.config.default_dynamic_length as usize;
-            let bytes = (0..len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
-            return Ok(abi_bytes_return(bytes));
-        }
-        if selector == selectors.create_bytes_sized {
-            let len = read_abi_constrained_word_arg(
-                state,
-                in_offset + 4,
-                0,
-                "symbolic svm.createBytes length",
-            )?;
-            let len = usize::try_from(len)
-                .ok()
-                .filter(|len| *len <= self.config.max_calldata_bytes as usize)
-                .ok_or(SymbolicError::Unsupported("symbolic svm.createBytes length"))?;
-            let bytes = (0..len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
-            return Ok(abi_bytes_return(bytes));
-        }
-        if selector == selectors.create_string {
-            let len = self.config.default_dynamic_length as usize;
-            let bytes = (0..len)
-                .map(|_| {
-                    let byte = state.fresh_bounded_uint(U256::from(8));
-                    state.constraints.push(SymBoolExpr::cmp_word_const(
-                        SymBoolExprOp::Uge,
-                        &byte,
-                        U256::from(0x20),
-                    ));
-                    state.constraints.push(SymBoolExpr::cmp_word_const(
-                        SymBoolExprOp::Ule,
-                        &byte,
-                        U256::from(0x7e),
-                    ));
-                    byte
-                })
-                .collect();
-            return Ok(abi_bytes_return(bytes));
-        }
-        if selector == selectors.create_string_sized {
-            let len = read_abi_constrained_word_arg(
-                state,
-                in_offset + 4,
-                0,
-                "symbolic svm.createString length",
-            )?;
-            let len = usize::try_from(len)
-                .ok()
-                .filter(|len| *len <= self.config.max_calldata_bytes as usize)
-                .ok_or(SymbolicError::Unsupported("symbolic svm.createString length"))?;
-            let bytes = (0..len)
-                .map(|_| {
-                    let byte = state.fresh_bounded_uint(U256::from(8));
-                    state.constraints.push(SymBoolExpr::cmp_word_const(
-                        SymBoolExprOp::Uge,
-                        &byte,
-                        U256::from(0x20),
-                    ));
-                    state.constraints.push(SymBoolExpr::cmp_word_const(
-                        SymBoolExprOp::Ule,
-                        &byte,
-                        U256::from(0x7e),
-                    ));
-                    byte
-                })
-                .collect();
-            return Ok(abi_bytes_return(bytes));
-        }
-        if selector == selectors.create_bytes4 {
-            return Ok(SymReturnData::from_words(vec![shift_left(
-                state.fresh_bounded_uint(U256::from(32)),
-                224,
-            )]));
-        }
-        if selector == selectors.create_calldata {
-            let max = self.config.max_calldata_bytes as usize;
-            let len = if max < 4 {
-                max
-            } else {
-                (self.config.default_dynamic_length as usize).max(4).min(max)
-            };
-            let bytes = (0..len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
-            return Ok(abi_bytes_return(bytes));
-        }
-        if selector == selectors.enable_symbolic_storage
-            || selector == setArbitraryStorage_0Call::SELECTOR
-        {
-            let target = read_abi_address_or_symbolic_slot_arg(state, in_offset + 4, 0)?;
-            state.world.enable_arbitrary_storage(target);
-            return Ok(SymReturnData::default());
-        }
-        if selector == selectors.snapshot_storage {
-            let _target = read_abi_address_or_symbolic_slot_arg(state, in_offset + 4, 0)?;
-            let id = state.world.snapshot_state();
-            return Ok(SymReturnData::from_words(vec![SymExpr::constant(id)]));
-        }
-        if selector == snapshotStateCall::SELECTOR {
-            let id = state.world.snapshot_state();
-            return Ok(SymReturnData::from_words(vec![SymExpr::constant(id)]));
-        }
+        let Some(cheatcode) = SymbolicVmCheatcode::from_selector(selector) else {
+            return Err(SymbolicError::Unsupported("symbolic VM compatibility cheatcode"));
+        };
+        let args_offset = in_offset + 4;
 
-        Err(SymbolicError::Unsupported("symbolic VM compatibility cheatcode"))
+        match cheatcode {
+            SymbolicVmCheatcode::CreateUintBits(bits) => {
+                let value = if bits == 256 {
+                    state.fresh_word("svm")
+                } else {
+                    state.fresh_bounded_uint(U256::from(bits))
+                };
+                Ok(SymReturnData::from_words(vec![value]))
+            }
+            SymbolicVmCheatcode::CreateIntBits(bits) => {
+                let value = if bits == 256 {
+                    state.fresh_word("svm")
+                } else {
+                    state.fresh_bounded_int(U256::from(bits))
+                };
+                Ok(SymReturnData::from_words(vec![value]))
+            }
+            SymbolicVmCheatcode::CreateBytesFixed(bytes) => {
+                let value = if bytes == 32 {
+                    state.fresh_word("svm")
+                } else {
+                    shift_left(state.fresh_bounded_uint(U256::from(bytes * 8)), (32 - bytes) * 8)
+                };
+                Ok(SymReturnData::from_words(vec![value]))
+            }
+            SymbolicVmCheatcode::CreateUint => {
+                let bits = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic svm.create integer bits",
+                )?;
+                Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
+                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(bits)]))
+            }
+            SymbolicVmCheatcode::CreateInt => {
+                let bits = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic svm.create integer bits",
+                )?;
+                Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
+                Ok(SymReturnData::from_words(vec![state.fresh_bounded_int(bits)]))
+            }
+            SymbolicVmCheatcode::CreateAddress => {
+                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(160))]))
+            }
+            SymbolicVmCheatcode::CreateBool => {
+                Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(1))]))
+            }
+            SymbolicVmCheatcode::CreateBytes => {
+                Ok(abi_bytes_return(state.fresh_bytes(self.config.default_dynamic_length as usize)))
+            }
+            SymbolicVmCheatcode::CreateBytesSized => {
+                let len = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic svm.createBytes length",
+                )?;
+                let len = usize::try_from(len)
+                    .ok()
+                    .filter(|len| *len <= self.config.max_calldata_bytes as usize)
+                    .ok_or(SymbolicError::Unsupported("symbolic svm.createBytes length"))?;
+                Ok(abi_bytes_return(state.fresh_bytes(len)))
+            }
+            SymbolicVmCheatcode::CreateString => Ok(abi_bytes_return(
+                state.fresh_printable_ascii_bytes(self.config.default_dynamic_length as usize),
+            )),
+            SymbolicVmCheatcode::CreateStringSized => {
+                let len = read_abi_constrained_word_arg(
+                    state,
+                    args_offset,
+                    0,
+                    "symbolic svm.createString length",
+                )?;
+                let len = usize::try_from(len)
+                    .ok()
+                    .filter(|len| *len <= self.config.max_calldata_bytes as usize)
+                    .ok_or(SymbolicError::Unsupported("symbolic svm.createString length"))?;
+                Ok(abi_bytes_return(state.fresh_printable_ascii_bytes(len)))
+            }
+            SymbolicVmCheatcode::CreateCalldata => {
+                let max = self.config.max_calldata_bytes as usize;
+                let len = if max < 4 {
+                    max
+                } else {
+                    (self.config.default_dynamic_length as usize).max(4).min(max)
+                };
+                Ok(abi_bytes_return(state.fresh_bytes(len)))
+            }
+            SymbolicVmCheatcode::EnableSymbolicStorage => {
+                let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                state.world.enable_arbitrary_storage(target);
+                Ok(SymReturnData::default())
+            }
+            SymbolicVmCheatcode::SnapshotStorage => {
+                let _target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let id = state.world.snapshot_state();
+                Ok(SymReturnData::from_words(vec![SymExpr::constant(id)]))
+            }
+            SymbolicVmCheatcode::SnapshotState => {
+                let id = state.world.snapshot_state();
+                Ok(SymReturnData::from_words(vec![SymExpr::constant(id)]))
+            }
+        }
     }
 }
