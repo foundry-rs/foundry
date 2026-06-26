@@ -68,38 +68,34 @@ impl SymCalldata {
     }
 }
 
-pub(crate) fn call_input_from_memory(
-    memory: &SymMemory,
-    offset: SymExpr,
-    size: &BoundedCopySize,
-) -> Vec<SymExpr> {
-    match size {
-        BoundedCopySize::Concrete(size) => memory.read_bytes_offset(offset, *size),
-        BoundedCopySize::Symbolic { size, max_size } => {
-            memory.read_bytes_symbolic_size(offset, size.clone(), *max_size)
+impl BoundedCopySize {
+    pub(crate) fn read_from_memory(&self, memory: &SymMemory, offset: SymExpr) -> Vec<SymExpr> {
+        match self {
+            Self::Concrete(size) => memory.read_bytes_offset(offset, *size),
+            Self::Symbolic { size, max_size } => {
+                memory.read_bytes_symbolic_size(offset, size.clone(), *max_size)
+            }
         }
     }
-}
 
-pub(crate) fn bounded_copy_size_word(size: &BoundedCopySize) -> SymExpr {
-    match size {
-        BoundedCopySize::Concrete(size) => SymExpr::constant(U256::from(*size)),
-        BoundedCopySize::Symbolic { size, .. } => size.clone(),
+    pub(crate) fn size_word(&self) -> SymExpr {
+        match self {
+            Self::Concrete(size) => SymExpr::constant(U256::from(*size)),
+            Self::Symbolic { size, .. } => size.clone(),
+        }
     }
-}
 
-pub(crate) fn bounded_copy_size_parts(size: &BoundedCopySize) -> (SymExpr, usize, bool) {
-    match size {
-        BoundedCopySize::Concrete(size) => (SymExpr::constant(U256::from(*size)), *size, false),
-        BoundedCopySize::Symbolic { size, max_size } => (size.clone(), *max_size, true),
+    pub(crate) fn parts(&self) -> (SymExpr, usize, bool) {
+        match self {
+            Self::Concrete(size) => (SymExpr::constant(U256::from(*size)), *size, false),
+            Self::Symbolic { size, max_size } => (size.clone(), *max_size, true),
+        }
     }
-}
 
-pub(crate) fn calldata_from_call_input(input: Vec<SymExpr>, size: &BoundedCopySize) -> SymCalldata {
-    match size {
-        BoundedCopySize::Concrete(_) => SymCalldata::new(input),
-        BoundedCopySize::Symbolic { size, .. } => {
-            SymCalldata::new_symbolic_size(input, size.clone())
+    pub(crate) fn calldata(&self, input: Vec<SymExpr>) -> SymCalldata {
+        match self {
+            Self::Concrete(_) => SymCalldata::new(input),
+            Self::Symbolic { size, .. } => SymCalldata::new_symbolic_size(input, size.clone()),
         }
     }
 }

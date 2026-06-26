@@ -87,7 +87,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
-        let call_input = call_input_from_memory(&state.memory, in_offset.clone(), &in_size);
+        let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
         if call_input.iter().any(SymExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
@@ -801,7 +801,7 @@ impl SymbolicExecutor {
             if !state.constrained_word(&value).is_some_and(|value| value.is_zero()) {
                 return Err(SymbolicError::Unsupported("value-bearing cheatcode CALL"));
             }
-            let (in_size_word, in_size, has_symbolic_in_size) = bounded_copy_size_parts(&in_size);
+            let (in_size_word, in_size, has_symbolic_in_size) = in_size.parts();
             if in_size < 4 {
                 return Err(SymbolicError::Unsupported("short cheatcode CALL"));
             }
@@ -888,7 +888,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        let call_input = call_input_from_memory(&state.memory, in_offset.clone(), &in_size);
+        let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
         if !state.expected_calls.is_empty() {
             let concrete_value = state.constrained_word(&value);
             if !self.observe_expected_call(state, to, concrete_value, &gas, &call_input)? {
@@ -926,8 +926,8 @@ impl SymbolicExecutor {
 
         let spec_id: SpecId = executor.spec_id().into();
         if is_supported_precompile(code_address, spec_id) {
-            let input_len = bounded_copy_size_word(&in_size);
-            let input = call_input_from_memory(&state.memory, in_offset, &in_size);
+            let input_len = in_size.size_word();
+            let input = in_size.read_from_memory(&state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {
                 return self.execute_kzg_precompile_call(
                     executor, state, worklist, kind, to, value, out_offset, &out_size, input,
@@ -963,7 +963,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Continue);
         }
 
-        let calldata = calldata_from_call_input(call_input, &in_size);
+        let calldata = in_size.calldata(call_input);
         let callee_address_word = state
             .world
             .symbolic_word_for_address(to)

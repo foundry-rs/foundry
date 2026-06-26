@@ -456,8 +456,8 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
     );
     let size = SymExpr::var("size");
     let bounded_size = BoundedCopySize::Symbolic { size, max_size: 4 };
-    let input = call_input_from_memory(&memory, SymExpr::constant(U256::ZERO), &bounded_size);
-    let calldata = calldata_from_call_input(input, &bounded_size);
+    let input = bounded_size.read_from_memory(&memory, SymExpr::constant(U256::ZERO));
+    let calldata = bounded_size.calldata(input);
     let model = BTreeMap::from([("size".to_string(), U256::from(2))]);
 
     assert_eq!(calldata.size_word().eval(&model).unwrap(), U256::from(2));
