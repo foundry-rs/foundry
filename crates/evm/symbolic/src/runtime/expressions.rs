@@ -1281,41 +1281,74 @@ impl Expr {
     }
 
     /// Implements the `smt` symbolic expression helper.
+    #[cfg(test)]
     pub(crate) fn smt(&self) -> String {
+        let mut smt = String::new();
+        self.write_smt(&mut smt);
+        smt
+    }
+
+    fn write_smt(&self, out: &mut String) {
         match self {
-            Self::Const(value) => format!("(_ bv{value} 256)"),
-            Self::Var(var) => var.to_string(),
-            Self::GasLeft(id) => format!("gasleft_{id}"),
-            Self::Keccak(hash) => hash.name.to_string(),
-            Self::Hash(hash) => hash.name.to_string(),
-            Self::Not(value) => format!("(bvnot {})", value.smt()),
-            Self::Op(op, left, right) => format!("({} {} {})", op.smt(), left.smt(), right.smt()),
+            Self::Const(value) => {
+                let _ = write!(out, "(_ bv{value} 256)");
+            }
+            Self::Var(var) => out.push_str(var),
+            Self::GasLeft(id) => {
+                let _ = write!(out, "gasleft_{id}");
+            }
+            Self::Keccak(hash) => out.push_str(&hash.name),
+            Self::Hash(hash) => out.push_str(&hash.name),
+            Self::Not(value) => {
+                out.push_str("(bvnot ");
+                value.write_smt(out);
+                out.push(')');
+            }
+            Self::Op(op, left, right) => {
+                let _ = write!(out, "({} ", op.smt());
+                left.write_smt(out);
+                out.push(' ');
+                right.write_smt(out);
+                out.push(')');
+            }
             Self::AddMod { left, right, modulus } => {
-                smt_wide_modular_arithmetic("bvadd", left, right, modulus)
+                write_smt_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
             }
             Self::MulMod { left, right, modulus } => {
-                smt_wide_modular_arithmetic("bvmul", left, right, modulus)
+                write_smt_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
             }
             Self::Ite(cond, left, right) => {
-                format!("(ite {} {} {})", cond.smt(), left.smt(), right.smt())
+                out.push_str("(ite ");
+                cond.write_smt(out);
+                out.push(' ');
+                left.write_smt(out);
+                out.push(' ');
+                right.write_smt(out);
+                out.push(')');
             }
         }
     }
 }
 
 /// Encodes EVM `ADDMOD`/`MULMOD` by widening operands before modular reduction.
-fn smt_wide_modular_arithmetic(
+fn write_smt_wide_modular_arithmetic(
+    out: &mut String,
     op: &'static str,
     left: &Expr,
     right: &Expr,
     modulus: &Expr,
-) -> String {
-    let left = left.smt();
-    let right = right.smt();
-    let modulus = modulus.smt();
-    format!(
-        "(ite (= {modulus} (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvurem ({op} ((_ zero_extend 256) {left}) ((_ zero_extend 256) {right})) ((_ zero_extend 256) {modulus}))))"
-    )
+) {
+    out.push_str("(ite (= ");
+    modulus.write_smt(out);
+    out.push_str(" (_ bv0 256)) (_ bv0 256) ((_ extract 255 0) (bvurem (");
+    out.push_str(op);
+    out.push_str(" ((_ zero_extend 256) ");
+    left.write_smt(out);
+    out.push_str(") ((_ zero_extend 256) ");
+    right.write_smt(out);
+    out.push_str(")) ((_ zero_extend 256) ");
+    modulus.write_smt(out);
+    out.push_str("))))");
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1550,20 +1583,41 @@ impl BoolExpr {
 
     /// Implements the `smt` symbolic expression helper.
     pub(crate) fn smt(&self) -> String {
+        let mut smt = String::new();
+        self.write_smt(&mut smt);
+        smt
+    }
+
+    fn write_smt(&self, out: &mut String) {
         match self {
-            Self::Const(value) => value.to_string(),
-            Self::Not(value) => format!("(not {})", value.smt()),
-            Self::And(values) => {
-                let mut smt = String::from("(and");
-                for value in values.iter() {
-                    smt.push(' ');
-                    smt.push_str(&value.smt());
-                }
-                smt.push(')');
-                smt
+            Self::Const(value) => out.push_str(if *value { "true" } else { "false" }),
+            Self::Not(value) => {
+                out.push_str("(not ");
+                value.write_smt(out);
+                out.push(')');
             }
-            Self::Eq(left, right) => format!("(= {} {})", left.smt(), right.smt()),
-            Self::Cmp(op, left, right) => format!("({} {} {})", op.smt(), left.smt(), right.smt()),
+            Self::And(values) => {
+                out.push_str("(and");
+                for value in values.iter() {
+                    out.push(' ');
+                    value.write_smt(out);
+                }
+                out.push(')');
+            }
+            Self::Eq(left, right) => {
+                out.push_str("(= ");
+                left.write_smt(out);
+                out.push(' ');
+                right.write_smt(out);
+                out.push(')');
+            }
+            Self::Cmp(op, left, right) => {
+                let _ = write!(out, "({} ", op.smt());
+                left.write_smt(out);
+                out.push(' ');
+                right.write_smt(out);
+                out.push(')');
+            }
         }
     }
 }
