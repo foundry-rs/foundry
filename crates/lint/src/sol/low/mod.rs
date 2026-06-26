@@ -32,6 +32,9 @@ mod payable_loop;
 mod reentrancy_events;
 use reentrancy_events::REENTRANCY_EVENTS;
 
+mod require_revert_in_loop;
+use require_revert_in_loop::REQUIRE_REVERT_IN_LOOP;
+
 register_lints!(
     (BlockTimestamp, late, (BLOCK_TIMESTAMP)),
     (CallsLoop, late, (CALLS_LOOP)),
@@ -43,4 +46,5 @@ register_lints!(
     (MissingZeroCheck, late, (MISSING_ZERO_CHECK)),
     (ReturnBomb, late, (RETURN_BOMB)),
     (ReentrancyEvents, late, (REENTRANCY_EVENTS)),
+    (RequireRevertInLoop, late, (REQUIRE_REVERT_IN_LOOP)),
 );
