@@ -8,11 +8,6 @@ pub(crate) struct SymCalldata {
 }
 
 impl SymCalldata {
-    #[cfg(test)]
-    pub(crate) fn from_byte_exprs(bytes: Vec<SymExpr>) -> Self {
-        Self::from_bytes(SymBytes::exprs(bytes))
-    }
-
     pub(crate) fn from_bytes(bytes: SymBytes) -> Self {
         let size = bytes.len();
         Self { size_word: SymExpr::constant(U256::from(size)), size, bytes }
@@ -39,11 +34,6 @@ impl SymCalldata {
 
     pub(crate) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
         Ok(self.bytes.word_at(offset))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn byte(&self, offset: usize) -> SymExpr {
-        self.bytes.byte(offset)
     }
 
     pub(crate) fn load_dynamic(&self, offset: &SymExpr) -> Result<SymExpr, SymbolicError> {

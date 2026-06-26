@@ -355,28 +355,8 @@ impl SymMemory {
         size
     }
 
-    #[cfg(test)]
-    pub(crate) fn copy_byte_exprs(&mut self, dest: usize, src: Vec<SymExpr>) {
-        self.store_bytes(dest, SymBytes::exprs(src));
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_bytes(&mut self, dest: usize, src: SymBytes) {
-        self.store_bytes(dest, src);
-    }
-
     pub(crate) fn copy_bytes_offset(&mut self, dest: SymExpr, src: SymBytes) {
         self.store_bytes_offset(dest, src);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_byte_exprs_size(&mut self, dest: usize, size: SymExpr, src: Vec<SymExpr>) {
-        self.copy_bytes_size_offset(
-            SymExpr::constant(U256::from(dest)),
-            size,
-            SymBytes::exprs(src),
-        )
-        .expect("concrete symbolic-size memory copy cannot fail");
     }
 
     pub(crate) fn copy_bytes_size_offset(
@@ -415,32 +395,6 @@ impl SymMemory {
             self.store_symbolic_bytes(dest, bytes);
         }
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_calldata(
-        &mut self,
-        dest: usize,
-        offset: usize,
-        size: usize,
-        calldata: &SymCalldata,
-    ) -> Result<(), SymbolicError> {
-        self.store_bytes(
-            dest,
-            SymBytes::exprs((0..size).map(|idx| calldata.byte(offset + idx)).collect()),
-        );
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_calldata_offset(
-        &mut self,
-        dest: usize,
-        offset: SymExpr,
-        size: usize,
-        calldata: &SymCalldata,
-    ) -> Result<(), SymbolicError> {
-        self.copy_calldata_to_offset(SymExpr::constant(U256::from(dest)), offset, size, calldata)
     }
 
     pub(crate) fn copy_calldata_to_offset(
@@ -626,16 +580,6 @@ impl SymMemory {
         } else {
             self.byte_dynamic_with_delta(dest, idx)
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn copy_memory_offset(
-        &mut self,
-        dest: usize,
-        src: SymExpr,
-        size: usize,
-    ) -> Result<(), SymbolicError> {
-        self.copy_memory_to_offset(SymExpr::constant(U256::from(dest)), src, size)
     }
 
     pub(crate) fn copy_memory_to_offset(
@@ -872,11 +816,6 @@ impl SymReturnData {
         Self::from_bytes(SymBytes::exprs(bytes))
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_byte_exprs_with_len(bytes: Vec<SymExpr>, len_word: SymExpr) -> Self {
-        Self::from_bytes_with_len(SymBytes::exprs(bytes), len_word)
-    }
-
     pub(crate) fn from_bytes(bytes: SymBytes) -> Self {
         let len = bytes.len();
         Self { len_word: SymExpr::constant(U256::from(len)), bytes }
@@ -904,11 +843,6 @@ impl SymReturnData {
 
     pub(crate) fn byte(&self, offset: usize) -> SymExpr {
         self.bytes.byte(offset)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn read_byte_exprs_offset(&self, offset: SymExpr, size: usize) -> Vec<SymExpr> {
-        self.read_bytes_offset(offset, size).materialize()
     }
 
     pub(crate) fn read_bytes_offset(&self, offset: SymExpr, size: usize) -> SymBytes {

@@ -8,22 +8,6 @@ pub(super) struct SymbolicCalldata {
 }
 
 impl SymbolicCalldata {
-    /// Constructs a raw symbolic calldata fixture.
-    #[cfg(test)]
-    pub(super) fn from_raw(
-        bytes: Vec<SymExpr>,
-        inputs: Vec<SymbolicInput>,
-        constraints: Vec<SymBoolExpr>,
-    ) -> Self {
-        Self { bytes: SymBytes::exprs(bytes), inputs, constraints }
-    }
-
-    /// Constructs a new instance.
-    #[cfg(test)]
-    pub(super) fn new(function: &Function, config: &SymbolicConfig) -> Result<Self, SymbolicError> {
-        Ok(Self::variants(function, config)?.remove(0))
-    }
-
     pub(super) fn variants(
         function: &Function,
         config: &SymbolicConfig,
@@ -94,16 +78,6 @@ impl SymbolicCalldata {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(super) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(self.bytes.word_at(offset))
-    }
-
-    #[cfg(test)]
-    pub(super) fn byte(&self, offset: usize) -> SymExpr {
-        self.bytes.byte(offset)
-    }
-
     pub(super) fn call_data(&self) -> SymCalldata {
         SymCalldata::from_bytes(self.bytes.clone())
     }
@@ -116,18 +90,6 @@ impl SymbolicCalldata {
     /// Consumes this symbolic calldata into its constraints.
     pub(super) fn into_constraints(self) -> Vec<SymBoolExpr> {
         self.constraints
-    }
-
-    /// Returns the encoded symbolic calldata length.
-    #[cfg(test)]
-    pub(super) fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    /// Returns symbolic ABI inputs.
-    #[cfg(test)]
-    pub(super) fn inputs(&self) -> &[SymbolicInput] {
-        &self.inputs
     }
 
     pub(super) fn model_to_args(
@@ -144,12 +106,6 @@ pub(super) struct SymbolicInput {
 }
 
 impl SymbolicInput {
-    /// Returns this symbolic input value.
-    #[cfg(test)]
-    pub(super) const fn value(&self) -> &SymbolicAbiValue {
-        &self.value
-    }
-
     pub(super) fn variants<'a>(
         builder: SymbolicAbiBuilder<'a>,
         prefix: &str,
@@ -769,12 +725,7 @@ pub(super) fn encode_sequence<'a>(
     SymBytes::concat(head.into_iter().chain(tail))
 }
 
-#[cfg(test)]
-pub(super) fn encode_packed_byte_exprs_with_len(len: SymExpr, bytes: &[SymExpr]) -> Vec<SymExpr> {
-    encode_packed_bytes_with_len(len, &SymBytes::exprs(bytes.to_vec())).materialize()
-}
-
-fn encode_packed_bytes_with_len(len: SymExpr, bytes: &SymBytes) -> SymBytes {
+pub(super) fn encode_packed_bytes_with_len(len: SymExpr, bytes: &SymBytes) -> SymBytes {
     let padded_len = bytes.len().next_multiple_of(32);
     SymBytes::concat([
         len.into_bytes(),

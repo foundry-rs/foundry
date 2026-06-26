@@ -5,7 +5,7 @@ fn empty_state() -> PathState {
         Address::ZERO,
         Address::ZERO,
         U256::ZERO,
-        SymbolicCalldata::from_raw(vec![SymExpr::zero(); 4], Vec::new(), Vec::new()),
+        SymbolicCalldata::selector_only(&Function::parse("empty()").unwrap()).unwrap(),
         false,
     )
 }
@@ -352,7 +352,8 @@ fn selector_equality_folds_known_word_expressions() {
 #[test]
 fn calldata_selector_load_simplifies_to_concrete_word() {
     let function = Function::parse("check(bytes32)").unwrap();
-    let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
+    let calldata =
+        SymbolicCalldata::variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
     let selector = U256::from_be_slice(function.selector().as_slice());
     let loaded = calldata.call_data().load_word(SymExpr::zero()).unwrap();
     let selector_expr = SymExpr::op(SymExprOp::Shr, loaded, SymExpr::constant(U256::from(224)));
@@ -384,12 +385,16 @@ fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
 fn dynamic_calldata_encodes_bounded_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
-    let calldata = SymbolicCalldata::new(&function, &config).unwrap();
+    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
+    let call_data = calldata.call_data();
 
-    assert_eq!(calldata.len(), 100);
-    assert_eq!(calldata.load(4).unwrap(), SymExpr::constant(U256::from(32)));
-    assert_eq!(calldata.load(36).unwrap(), SymExpr::constant(U256::from(3)));
-    assert_eq!(calldata.byte(71), SymExpr::zero());
+    assert_eq!(call_data.size_word(), SymExpr::constant(U256::from(100)));
+    assert_eq!(call_data.load(4).unwrap(), SymExpr::constant(U256::from(32)));
+    assert_eq!(call_data.load(36).unwrap(), SymExpr::constant(U256::from(3)));
+    assert_eq!(
+        call_data.read_bytes_offset(SymExpr::constant(U256::from(71)), 1).byte(0),
+        SymExpr::zero()
+    );
 
     let model = BTreeMap::from([
         ("calldata_0_0".to_string(), U256::from(1)),
@@ -402,17 +407,20 @@ fn dynamic_calldata_encodes_bounded_bytes() {
 #[test]
 fn calldata_word_loads_preserve_structural_words() {
     let function = Function::parse("check(uint256,bool,address)").unwrap();
-    let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
+    let calldata =
+        SymbolicCalldata::variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
+    let call_data = calldata.call_data();
 
-    assert_eq!(calldata.load(4).unwrap(), SymExpr::var("calldata_0"));
-    assert_eq!(calldata.load(36).unwrap(), SymExpr::var("calldata_1"));
-    assert_eq!(calldata.load(68).unwrap(), SymExpr::var("calldata_2"));
+    assert_eq!(call_data.load(4).unwrap(), SymExpr::var("calldata_0"));
+    assert_eq!(call_data.load(36).unwrap(), SymExpr::var("calldata_1"));
+    assert_eq!(call_data.load(68).unwrap(), SymExpr::var("calldata_2"));
 }
 
 #[test]
 fn calldata_copy_to_memory_preserves_structural_words() {
     let function = Function::parse("check(uint256,uint256)").unwrap();
-    let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
+    let calldata =
+        SymbolicCalldata::variants(&function, &SymbolicConfig::default()).unwrap().remove(0);
     let mut memory = SymMemory::default();
 
     memory
@@ -459,9 +467,9 @@ fn byte_concat_word_load_assembles_word_fragments() {
 
 #[test]
 fn calldata_load_accepts_symbolic_offsets() {
-    let calldata = SymCalldata::from_byte_exprs(
+    let calldata = SymCalldata::from_bytes(SymBytes::exprs(
         (0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
-    );
+    ));
     let loaded = calldata.load_word(SymExpr::var("offset")).unwrap();
     let expected = SymExpr::from_bytes((1u8..33).map(|idx| SymExpr::constant(U256::from(idx + 1))));
 
@@ -478,14 +486,14 @@ fn calldata_load_accepts_symbolic_offsets() {
 #[test]
 fn calldata_preserves_symbolic_size_for_call_frames() {
     let mut memory = SymMemory::default();
-    memory.copy_byte_exprs(
+    memory.store_bytes(
         0,
-        vec![
+        SymBytes::exprs(vec![
             SymExpr::constant(U256::from(0xaa)),
             SymExpr::constant(U256::from(0xbb)),
             SymExpr::constant(U256::from(0xcc)),
             SymExpr::constant(U256::from(0xdd)),
-        ],
+        ]),
     );
     let size = SymExpr::var("size");
     let bounded_size = BoundedCopySize::Symbolic { size, max_size: 4 };
@@ -494,20 +502,28 @@ fn calldata_preserves_symbolic_size_for_call_frames() {
     let model = BTreeMap::from([("size".to_string(), U256::from(2))]);
 
     assert_eq!(calldata.size_word().eval_model(&model).unwrap(), U256::from(2));
-    assert_eq!(calldata.byte(0).eval_model(&model).unwrap(), U256::from(0xaa));
-    assert_eq!(calldata.byte(1).eval_model(&model).unwrap(), U256::from(0xbb));
-    assert_eq!(calldata.byte(2).eval_model(&model).unwrap(), U256::ZERO);
-    assert_eq!(calldata.byte(3).eval_model(&model).unwrap(), U256::ZERO);
+    let bytes = calldata.read_bytes_offset(SymExpr::zero(), 4);
+    assert_eq!(bytes.byte(0).eval_model(&model).unwrap(), U256::from(0xaa));
+    assert_eq!(bytes.byte(1).eval_model(&model).unwrap(), U256::from(0xbb));
+    assert_eq!(bytes.byte(2).eval_model(&model).unwrap(), U256::ZERO);
+    assert_eq!(bytes.byte(3).eval_model(&model).unwrap(), U256::ZERO);
 }
 
 #[test]
 fn memory_copies_unaligned_symbolic_calldata_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
-    let calldata = SymbolicCalldata::new(&function, &config).unwrap();
+    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
     let mut memory = SymMemory::default();
 
-    memory.copy_calldata(1, 68, 3, &calldata.call_data()).unwrap();
+    memory
+        .copy_calldata_to_offset(
+            SymExpr::constant(U256::from(1)),
+            SymExpr::constant(U256::from(68)),
+            3,
+            &calldata.call_data(),
+        )
+        .unwrap();
     let word = memory.load_word(0).unwrap();
 
     let model = BTreeMap::from([
@@ -522,12 +538,12 @@ fn memory_copies_unaligned_symbolic_calldata_bytes() {
 
 #[test]
 fn memory_copies_symbolic_calldata_offset() {
-    let calldata = SymCalldata::from_byte_exprs(
+    let calldata = SymCalldata::from_bytes(SymBytes::exprs(
         (0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
-    );
+    ));
     let mut memory = SymMemory::default();
 
-    memory.copy_calldata_offset(0, SymExpr::var("offset"), 2, &calldata).unwrap();
+    memory.copy_calldata_to_offset(SymExpr::zero(), SymExpr::var("offset"), 2, &calldata).unwrap();
     let word = memory.load_word(0).unwrap();
 
     let mut expected = [0u8; 32];
@@ -544,9 +560,9 @@ fn memory_copies_symbolic_calldata_offset() {
 
 #[test]
 fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
-    let calldata = SymCalldata::from_byte_exprs(
+    let calldata = SymCalldata::from_bytes(SymBytes::exprs(
         (0u8..8).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
-    );
+    ));
     let mut memory = SymMemory::default();
     memory.store_bytes(0, SymBytes::exprs(vec![SymExpr::constant(U256::from(0xaa)); 4]));
 
@@ -561,41 +577,57 @@ fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_two).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_four).unwrap(),
+        vec![1, 2, 3, 4]
+    );
 }
 
 #[test]
 fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
     let mut memory = SymMemory::default();
     memory.store_bytes(0, SymBytes::exprs(vec![SymExpr::constant(U256::from(0xaa)); 4]));
-    memory.copy_byte_exprs_size(
-        0,
-        SymExpr::var("size"),
-        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
-    );
+    memory
+        .copy_bytes_size_offset(
+            SymExpr::zero(),
+            SymExpr::var("size"),
+            SymBytes::exprs((0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect()),
+        )
+        .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_two).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_four).unwrap(),
+        vec![1, 2, 3, 4]
+    );
 }
 
 #[test]
 fn memory_copies_folded_symbolic_size_prefix_only() {
     let mut memory = SymMemory::default();
     memory.store_bytes(0, SymBytes::exprs(vec![SymExpr::constant(U256::from(0xaa)); 4]));
-    memory.copy_byte_exprs_size(
-        0,
-        SymExpr::constant(U256::from(2)),
-        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
-    );
+    memory
+        .copy_bytes_size_offset(
+            SymExpr::zero(),
+            SymExpr::constant(U256::from(2)),
+            SymBytes::exprs((0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect()),
+        )
+        .unwrap();
 
     assert_eq!(
-        memory.read_byte_exprs(0, 4).eval_model(&BTreeMap::new()).unwrap(),
+        memory.read_bytes(0, 4).materialize().eval_model(&BTreeMap::new()).unwrap(),
         vec![1, 2, 0xaa, 0xaa]
     );
 }
@@ -603,15 +635,17 @@ fn memory_copies_folded_symbolic_size_prefix_only() {
 #[test]
 fn memory_skips_folded_zero_symbolic_size_copy() {
     let mut memory = SymMemory::default();
-    memory.copy_byte_exprs_size(
-        0,
-        SymExpr::zero(),
-        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
-    );
+    memory
+        .copy_bytes_size_offset(
+            SymExpr::zero(),
+            SymExpr::zero(),
+            SymBytes::exprs((0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect()),
+        )
+        .unwrap();
 
     assert_eq!(memory.size_word(), SymExpr::zero());
     assert_eq!(
-        memory.read_byte_exprs(0, 4).eval_model(&BTreeMap::new()).unwrap(),
+        memory.read_bytes(0, 4).materialize().eval_model(&BTreeMap::new()).unwrap(),
         vec![0, 0, 0, 0]
     );
 }
@@ -624,11 +658,9 @@ fn memory_reads_symbolic_size_with_zero_guarded_tail() {
         SymBytes::exprs((0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect()),
     );
 
-    let bytes = memory.read_byte_exprs_symbolic_size(
-        SymExpr::constant(U256::from(32)),
-        SymExpr::var("size"),
-        4,
-    );
+    let bytes = memory
+        .read_bytes_symbolic_size(SymExpr::constant(U256::from(32)), SymExpr::var("size"), 4)
+        .materialize();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
     assert_eq!(bytes.eval_model(&size_two).unwrap(), vec![1, 2, 0, 0]);
@@ -645,11 +677,13 @@ fn memory_reads_folded_symbolic_size_prefix_only() {
         SymBytes::exprs((0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect()),
     );
 
-    let bytes = memory.read_byte_exprs_symbolic_size(
-        SymExpr::constant(U256::from(32)),
-        SymExpr::constant(U256::from(2)),
-        4,
-    );
+    let bytes = memory
+        .read_bytes_symbolic_size(
+            SymExpr::constant(U256::from(32)),
+            SymExpr::constant(U256::from(2)),
+            4,
+        )
+        .materialize();
 
     assert_eq!(bytes.eval_model(&BTreeMap::new()).unwrap(), vec![1, 2, 0, 0]);
 }
@@ -673,10 +707,16 @@ fn memory_copies_symbolic_memory_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_two).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_four).unwrap(),
+        vec![1, 2, 3, 4]
+    );
 }
 
 #[test]
@@ -701,7 +741,10 @@ fn memory_copies_symbolic_size_to_symbolic_dest() {
         ("dest".to_string(), U256::from(0x80)),
         ("size".to_string(), U256::from(2)),
     ]);
-    assert_eq!(memory.read_byte_exprs(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0x80, 4).materialize().eval_model(&model).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 }
 
 #[test]
@@ -721,16 +764,22 @@ fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_two).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_four).unwrap(),
+        vec![1, 2, 3, 4]
+    );
 }
 
 #[test]
 fn returndata_reads_symbolic_offset() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
-    let bytes = return_data.read_byte_exprs_offset(SymExpr::var("offset"), 2);
+    let bytes = return_data.read_bytes_offset(SymExpr::var("offset"), 2).materialize();
 
     let offset_one = BTreeMap::from([("offset".to_string(), U256::from(1))]);
     assert_eq!(bytes.eval_model(&offset_one).unwrap(), vec![2, 3]);
@@ -761,8 +810,10 @@ fn memory_return_data_accepts_symbolic_size() {
 
 #[test]
 fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
-    let return_data = SymReturnData::from_byte_exprs_with_len(
-        vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
+    let return_data = SymReturnData::from_bytes_with_len(
+        SymBytes::exprs(
+            vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
+        ),
         SymExpr::var("len"),
     );
     let mut memory = SymMemory::default();
@@ -777,23 +828,30 @@ fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
         .unwrap();
 
     let len_two = BTreeMap::from([("len".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&len_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&len_two).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 
     let len_four = BTreeMap::from([("len".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&len_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&len_four).unwrap(),
+        vec![1, 2, 3, 4]
+    );
 }
 
 #[test]
 fn nested_dynamic_calldata_uses_preorder_lengths() {
     let function = Function::parse("check((uint256[],bytes))").unwrap();
     let config = SymbolicConfig { array_lengths: vec![2, 3], ..Default::default() };
-    let calldata = SymbolicCalldata::new(&function, &config).unwrap();
+    let calldata = SymbolicCalldata::variants(&function, &config).unwrap().remove(0);
+    let call_data = calldata.call_data();
 
-    assert_eq!(calldata.load(4).unwrap(), SymExpr::constant(U256::from(32)));
-    assert_eq!(calldata.load(36).unwrap(), SymExpr::constant(U256::from(64)));
-    assert_eq!(calldata.load(68).unwrap(), SymExpr::constant(U256::from(160)));
-    assert_eq!(calldata.load(100).unwrap(), SymExpr::constant(U256::from(2)));
-    assert_eq!(calldata.load(196).unwrap(), SymExpr::constant(U256::from(3)));
+    assert_eq!(call_data.load(4).unwrap(), SymExpr::constant(U256::from(32)));
+    assert_eq!(call_data.load(36).unwrap(), SymExpr::constant(U256::from(64)));
+    assert_eq!(call_data.load(68).unwrap(), SymExpr::constant(U256::from(160)));
+    assert_eq!(call_data.load(100).unwrap(), SymExpr::constant(U256::from(2)));
+    assert_eq!(call_data.load(196).unwrap(), SymExpr::constant(U256::from(3)));
 }
 
 #[test]
@@ -932,7 +990,8 @@ fn memory_read_bytes_accepts_symbolic_offsets() {
     let value = SymExpr::var("word");
 
     memory.store_word(7, value);
-    let loaded = SymExpr::from_bytes(memory.read_byte_exprs_offset(SymExpr::var("offset"), 32));
+    let loaded =
+        SymExpr::from_bytes(memory.read_bytes_offset(SymExpr::var("offset"), 32).materialize());
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
@@ -969,7 +1028,9 @@ fn memory_copy_accepts_symbolic_source_offsets() {
     let value = SymExpr::var("word");
 
     memory.store_word(7, value);
-    memory.copy_memory_offset(64, SymExpr::var("src"), 32).unwrap();
+    memory
+        .copy_memory_to_offset(SymExpr::constant(U256::from(64)), SymExpr::var("src"), 32)
+        .unwrap();
     let loaded = memory.load_word(64).unwrap();
 
     let model = BTreeMap::from([
@@ -1006,7 +1067,7 @@ fn memory_copy_accepts_symbolic_destination_offsets() {
 #[test]
 fn memory_call_output_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
-    let return_data = SymReturnData::from_byte_exprs(SymExpr::var("word").into_byte_exprs());
+    let return_data = SymReturnData::from_bytes(SymExpr::var("word").into_bytes());
 
     memory
         .copy_call_output_offset(SymExpr::var("dest"), &BoundedCopySize::Concrete(32), &return_data)
@@ -1035,10 +1096,16 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_two).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(memory.read_byte_exprs(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(
+        memory.read_bytes(0, 4).materialize().eval_model(&size_four).unwrap(),
+        vec![1, 2, 3, 4]
+    );
 }
 
 #[test]
@@ -1059,13 +1126,18 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
         ("dest".to_string(), U256::from(0x80)),
         ("size".to_string(), U256::from(2)),
     ]);
-    assert_eq!(memory.read_byte_exprs(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0x80, 4).materialize().eval_model(&model).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 }
 
 #[test]
 fn memory_call_output_accepts_symbolic_destination_and_return_len() {
-    let return_data = SymReturnData::from_byte_exprs_with_len(
-        vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
+    let return_data = SymReturnData::from_bytes_with_len(
+        SymBytes::exprs(
+            vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
+        ),
         SymExpr::var("len"),
     );
     let mut memory = SymMemory::default();
@@ -1079,7 +1151,10 @@ fn memory_call_output_accepts_symbolic_destination_and_return_len() {
         ("dest".to_string(), U256::from(0x80)),
         ("len".to_string(), U256::from(2)),
     ]);
-    assert_eq!(memory.read_byte_exprs(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(
+        memory.read_bytes(0x80, 4).materialize().eval_model(&model).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
 }
 
 #[test]
@@ -1253,18 +1328,18 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
 
 #[test]
 fn abi_bytes_encoding_accepts_symbolic_length() {
-    let encoded = encode_packed_byte_exprs_with_len(
-        SymExpr::var("len"),
-        &[
-            SymExpr::constant(U256::from(0x22)),
-            SymExpr::constant(U256::from(0x33)),
-            SymExpr::constant(U256::from(0x44)),
-        ],
-    );
-    let length = SymExpr::from_bytes(encoded[..32].iter().cloned());
+    let bytes = SymBytes::exprs(vec![
+        SymExpr::constant(U256::from(0x22)),
+        SymExpr::constant(U256::from(0x33)),
+        SymExpr::constant(U256::from(0x44)),
+    ]);
+    let encoded = encode_packed_bytes_with_len(SymExpr::var("len"), &bytes);
 
     assert_eq!(
-        length.eval_model(&BTreeMap::from([("len".to_string(), U256::from(2))])).unwrap(),
+        encoded
+            .word_at(0)
+            .eval_model(&BTreeMap::from([("len".to_string(), U256::from(2))]))
+            .unwrap(),
         U256::from(2)
     );
 }
@@ -1303,17 +1378,17 @@ fn symbolic_create2_accepts_symbolic_salt() {
 
 #[test]
 fn symbolic_return_data_can_be_installed_as_runtime_code() {
-    let data = SymReturnData::from_byte_exprs(vec![SymExpr::var("runtime_byte")]);
+    let data = SymReturnData::from_bytes(SymBytes::exprs(vec![SymExpr::var("runtime_byte")]));
 
     let code = data.to_code().unwrap();
 
-    assert_eq!(code.read_byte_exprs(0, 1), vec![SymExpr::var("runtime_byte")]);
+    assert_eq!(code.read_bytes(0, 1).materialize(), vec![SymExpr::var("runtime_byte")]);
 }
 
 #[test]
 fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
-    let data = SymReturnData::from_byte_exprs_with_len(
-        vec![SymExpr::constant(U256::from(opcode::STOP))],
+    let data = SymReturnData::from_bytes_with_len(
+        SymBytes::exprs(vec![SymExpr::constant(U256::from(opcode::STOP))]),
         SymExpr::var("runtime_len"),
     );
 
@@ -1338,12 +1413,12 @@ fn symbolic_world_tracks_created_code_and_nonce_overlay() {
 #[test]
 fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
     let mut memory = SymMemory::default();
-    let initcode = SymCode::from_byte_exprs(vec![
+    let initcode = SymCode::from_bytes(SymBytes::exprs(vec![
         SymExpr::constant(U256::from(opcode::STOP)),
         SymExpr::var("constructor_arg_byte"),
-    ]);
+    ]));
 
-    memory.copy_byte_exprs(0, initcode.read_byte_exprs(0, 2));
+    memory.store_bytes(0, initcode.read_bytes(0, 2));
 
     assert_eq!(memory.byte(0), SymExpr::constant(U256::from(opcode::STOP)));
     assert_eq!(memory.byte(1), SymExpr::var("constructor_arg_byte"));
@@ -1351,12 +1426,12 @@ fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
 
 #[test]
 fn symbolic_codecopy_accepts_symbolic_offsets() {
-    let code = SymCode::from_byte_exprs(
+    let code = SymCode::from_bytes(SymBytes::exprs(
         (0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
-    );
+    ));
     let mut memory = SymMemory::default();
 
-    memory.copy_bytes(0, code.read_bytes_offset(SymExpr::var("offset"), 2));
+    memory.store_bytes(0, code.read_bytes_offset(SymExpr::var("offset"), 2));
     let word = memory.load_word(0).unwrap();
 
     let mut expected = [0u8; 32];
@@ -1375,12 +1450,15 @@ fn symbolic_codecopy_accepts_symbolic_offsets() {
 fn symbolic_initcode_accepts_symbolic_memory_offsets() {
     let mut memory = SymMemory::default();
 
-    memory
-        .copy_byte_exprs(7, vec![SymExpr::constant(U256::from(opcode::STOP)), SymExpr::var("arg")]);
+    memory.store_bytes(
+        7,
+        SymBytes::exprs(vec![SymExpr::constant(U256::from(opcode::STOP)), SymExpr::var("arg")]),
+    );
     let initcode = SymCode::from_memory_offset(&memory, SymExpr::var("offset"), 2);
     let word = SymExpr::from_bytes(
         initcode
-            .read_byte_exprs(0, 2)
+            .read_bytes(0, 2)
+            .materialize()
             .into_iter()
             .chain(std::iter::repeat_with(SymExpr::zero).take(30)),
     );
@@ -1475,14 +1553,14 @@ fn path_state_evaluates_compound_constrained_symbolic_word() {
 
 #[test]
 fn symbolic_push_data_reconstructs_symbolic_word() {
-    let code = SymCode::from_byte_exprs(vec![
+    let code = SymCode::from_bytes(SymBytes::exprs(vec![
         SymExpr::constant(U256::from(opcode::PUSH2)),
         SymExpr::var("immutable_hi"),
         SymExpr::var("immutable_lo"),
-    ]);
+    ]));
 
     let word = SymExpr::from_bytes(
-        std::iter::repeat_with(SymExpr::zero).take(30).chain(code.read_byte_exprs(1, 2)),
+        std::iter::repeat_with(SymExpr::zero).take(30).chain(code.read_bytes(1, 2).materialize()),
     );
 
     assert!(word.as_const().is_none());
@@ -1869,7 +1947,7 @@ fn extra_dynamic_lengths_are_rejected() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![1, 2], ..Default::default() };
 
-    let err = SymbolicCalldata::new(&function, &config).unwrap_err();
+    let err = SymbolicCalldata::variants(&function, &config).unwrap_err();
 
     assert!(err.to_string().contains("symbolic.array_lengths has 2 entries"));
 }
@@ -1888,9 +1966,14 @@ fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
     assert_eq!(variants.len(), 2);
     let element_counts = variants
         .iter()
-        .map(|calldata| match calldata.inputs()[0].value() {
-            SymbolicAbiValue::Array { elements } => elements.len(),
-            value => panic!("expected array input, got {value:?}"),
+        .map(|calldata| {
+            calldata
+                .call_data()
+                .load(36)
+                .unwrap()
+                .as_const()
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap()
         })
         .collect::<Vec<_>>();
     assert_eq!(element_counts, vec![1, 2]);
