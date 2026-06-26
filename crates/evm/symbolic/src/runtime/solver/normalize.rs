@@ -56,25 +56,23 @@ fn normalize_bool_node_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
         return normalized;
     }
 
-    match expr.kind() {
-        SymBoolExprKind::Not(value) => value.clone().not(),
+    match expr.into_kind() {
+        SymBoolExprKind::Not(value) => value.not(),
         SymBoolExprKind::And(values) => SymBoolExpr::and(values.iter().cloned().collect()),
         SymBoolExprKind::Eq(left, right) => {
-            let normalized = SymBoolExpr::eq(
-                normalize_expr_for_solver(left.clone()),
-                normalize_expr_for_solver(right.clone()),
-            );
+            let normalized =
+                SymBoolExpr::eq(normalize_expr_for_solver(left), normalize_expr_for_solver(right));
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
         SymBoolExprKind::Cmp(op, left, right) => {
             let normalized = SymBoolExpr::cmp(
-                *op,
-                normalize_expr_for_solver(left.clone()),
-                normalize_expr_for_solver(right.clone()),
+                op,
+                normalize_expr_for_solver(left),
+                normalize_expr_for_solver(right),
             );
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
-        SymBoolExprKind::Const(_) => expr,
+        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
     }
 }
 
@@ -189,10 +187,12 @@ fn normalize_expr_node_for_solver(expr: SymExpr) -> SymExpr {
                 SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor
             ) && right < left =>
         {
-            SymExpr::op(*op, right.clone(), left.clone())
+            let SymExprKind::Op(op, left, right) = expr.into_kind() else { unreachable!() };
+            SymExpr::op(op, right, left)
         }
-        SymExprKind::Ite(cond, left, right) => {
-            normalize_ite_expr_for_solver(cond.clone(), left.clone(), right.clone())
+        SymExprKind::Ite(_, _, _) => {
+            let SymExprKind::Ite(cond, left, right) = expr.into_kind() else { unreachable!() };
+            normalize_ite_expr_for_solver(cond, left, right)
         }
         _ => expr,
     }
