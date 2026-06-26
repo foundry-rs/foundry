@@ -1838,6 +1838,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         .and_modify(|entry| {
                             // Extend the ABI's function list with the new functions.
                             entry.abi.functions.extend(abi.functions.clone());
+                            entry.rebuild_function_lookups();
                         })
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {

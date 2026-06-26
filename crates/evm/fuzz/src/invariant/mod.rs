@@ -18,12 +18,13 @@ mod filters;
 use crate::BasicTxDetails;
 pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::utils::{StateChangeset, get_function};
+use foundry_evm_core::utils::StateChangeset;
 
 type DynamicTargetCacheKey = (Address, B256);
 type DynamicTargetArtifactMatchCache =
     Rc<RefCell<HashMap<DynamicTargetCacheKey, Option<CachedTargetContract>>>>;
 type FuzzedFunction = (Address, Function);
+type FunctionLookup = HashMap<Selector, Function>;
 
 /// Returns true if the function returns `int256`, indicating optimization mode.
 /// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
@@ -188,14 +189,14 @@ struct CachedTargetContract {
 
 impl CachedTargetContract {
     fn into_targeted_contract(self) -> TargetedContract {
-        TargetedContract {
-            identifier: self.identifier,
-            abi: self.abi,
-            targeted_functions: self.targeted_functions,
-            excluded_functions: Vec::new(),
-            storage_layout: self.storage_layout,
-            event_lookup: self.event_lookup,
-        }
+        TargetedContract::from_parts(
+            self.identifier,
+            self.abi,
+            self.targeted_functions,
+            Vec::new(),
+            self.storage_layout,
+            self.event_lookup,
+        )
     }
 }
 
@@ -225,7 +226,9 @@ impl TargetedContracts {
                     .call_details
                     .calldata
                     .get(..4)
-                    .and_then(|selector| c.abi.functions().find(|f| f.selector() == selector));
+                    .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+                    .map(Selector::from)
+                    .and_then(|selector| c.function_by_selector(selector));
                 (Some(c), function)
             }
             None => (None, None),
@@ -244,11 +247,13 @@ impl TargetedContracts {
     /// Returns whether the given transaction can be replayed or not with known contracts.
     pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
         match self.inner.get(&tx.call_details.target) {
-            Some(c) => {
-                tx.call_details.calldata.get(..4).is_some_and(|selector| {
-                    c.abi_fuzzed_functions().any(|f| f.selector() == selector)
-                })
-            }
+            Some(c) => tx
+                .call_details
+                .calldata
+                .get(..4)
+                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+                .map(Selector::from)
+                .is_some_and(|selector| c.fuzzed_function_by_selector(selector).is_some()),
             None => false,
         }
     }
@@ -275,9 +280,7 @@ impl TargetedContracts {
     ) -> Option<String> {
         self.inner.get(&target).and_then(|contract| {
             contract
-                .abi
-                .functions()
-                .find(|f| f.selector() == selector)
+                .function_by_selector(selector)
                 .map(|function| format!("{}.{}", contract.identifier.as_str(), function.name))
         })
     }
@@ -312,20 +315,37 @@ pub struct TargetedContract {
     pub storage_layout: Option<Arc<StorageLayout>>,
     /// Contract events indexed by topic0 and indexed-topic count for log dictionary decoding.
     pub event_lookup: Arc<TargetedContractEvents>,
+    functions_by_selector: FunctionLookup,
+    fuzzed_functions_by_selector: FunctionLookup,
 }
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
     pub fn new(identifier: String, abi: JsonAbi) -> Self {
         let event_lookup = Arc::new(TargetedContractEvents::new(&abi));
-        Self {
+        Self::from_parts(identifier, abi, Vec::new(), Vec::new(), None, event_lookup)
+    }
+
+    fn from_parts(
+        identifier: String,
+        abi: JsonAbi,
+        targeted_functions: Vec<Function>,
+        excluded_functions: Vec<Function>,
+        storage_layout: Option<Arc<StorageLayout>>,
+        event_lookup: Arc<TargetedContractEvents>,
+    ) -> Self {
+        let mut contract = Self {
             identifier,
             abi,
-            targeted_functions: Vec::new(),
-            excluded_functions: Vec::new(),
-            storage_layout: None,
+            targeted_functions,
+            excluded_functions,
+            storage_layout,
             event_lookup,
-        }
+            functions_by_selector: FunctionLookup::default(),
+            fuzzed_functions_by_selector: FunctionLookup::default(),
+        };
+        contract.rebuild_function_lookups();
+        contract
     }
 
     /// Determines contract storage layout from project contracts. Needs `storageLayout` to be
@@ -357,9 +377,37 @@ impl TargetedContract {
         }
     }
 
+    pub fn rebuild_function_lookups(&mut self) {
+        let functions_by_selector =
+            self.abi.functions().fold(FunctionLookup::default(), |mut functions, function| {
+                functions.entry(function.selector()).or_insert_with(|| function.clone());
+                functions
+            });
+        let fuzzed_functions_by_selector = self.abi_fuzzed_functions().fold(
+            FunctionLookup::default(),
+            |mut functions, function| {
+                functions.entry(function.selector()).or_insert_with(|| function.clone());
+                functions
+            },
+        );
+        self.functions_by_selector = functions_by_selector;
+        self.fuzzed_functions_by_selector = fuzzed_functions_by_selector;
+    }
+
+    /// Returns any ABI function for the given selector.
+    pub fn function_by_selector(&self, selector: Selector) -> Option<&Function> {
+        self.functions_by_selector.get(&selector)
+    }
+
+    /// Returns a fuzzable function for the given selector.
+    pub fn fuzzed_function_by_selector(&self, selector: Selector) -> Option<&Function> {
+        self.fuzzed_functions_by_selector.get(&selector)
+    }
+
     /// Returns the function for the given selector.
     pub fn get_function(&self, selector: Selector) -> eyre::Result<&Function> {
-        get_function(&self.identifier, selector, &self.abi)
+        self.function_by_selector(selector)
+            .ok_or_else(|| eyre::eyre!("{} does not have the selector {selector}", self.identifier))
     }
 
     /// Adds the specified selectors to the targeted functions.
@@ -375,6 +423,7 @@ impl TargetedContract {
                 self.targeted_functions.push(self.get_function(selector)?.clone());
             }
         }
+        self.rebuild_function_lookups();
         Ok(())
     }
 }
@@ -704,6 +753,31 @@ mod tests {
         assert!(!targets.can_replay(&tx));
         assert!(targets.fuzzed_artifacts(&tx).1.is_none());
         assert!(targets.fuzzed_metric_key(&tx).is_none());
+    }
+
+    #[test]
+    fn targeted_contracts_refresh_selector_lookup_after_filters() {
+        let target = Address::from([0x42; 20]);
+        let foo = Function::parse("foo()").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+
+        let mut excluded = targeted_contracts_with_functions(target, &["foo()", "bar()"]);
+        excluded.inner.get_mut(&target).unwrap().add_selectors([foo.selector()], true).unwrap();
+        assert!(!excluded.can_replay(&tx(target, foo.selector().to_vec())));
+        assert!(excluded.can_replay(&tx(target, bar.selector().to_vec())));
+        assert_eq!(
+            excluded.fuzzed_artifacts(&tx(target, foo.selector().to_vec())).1.unwrap().name,
+            "foo"
+        );
+
+        let mut targeted = targeted_contracts_with_functions(target, &["foo()", "bar()"]);
+        targeted.inner.get_mut(&target).unwrap().add_selectors([foo.selector()], false).unwrap();
+        assert!(targeted.can_replay(&tx(target, foo.selector().to_vec())));
+        assert!(!targeted.can_replay(&tx(target, bar.selector().to_vec())));
+        assert_eq!(
+            targeted.fuzzed_metric_key_for_selector(target, bar.selector()).unwrap(),
+            "Target.bar"
+        );
     }
 
     #[test]
