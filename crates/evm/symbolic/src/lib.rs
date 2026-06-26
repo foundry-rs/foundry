@@ -35,7 +35,7 @@ use std::{
     fmt::{self, Write as _},
     io::{Read, Write},
     num::NonZeroU32,
-    ops::{Deref, DerefMut},
+    ops::{ControlFlow, Deref, DerefMut},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{

@@ -656,10 +656,10 @@ impl SymbolicExecutor {
         state: &PathState,
         condition: BoolExpr,
     ) -> Result<(Vec<BoolExpr>, bool), SymbolicError> {
-        match condition {
-            BoolExpr::Const(true) => Ok((state.constraints.clone(), true)),
-            BoolExpr::Const(false) => Ok((state.constraints.clone(), false)),
-            condition => {
+        match condition.as_const() {
+            Some(true) => Ok((state.constraints.clone(), true)),
+            Some(false) => Ok((state.constraints.clone(), false)),
+            None => {
                 if bool_contains_gasleft(&condition) {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
@@ -1298,16 +1298,16 @@ impl SymbolicExecutor {
 
         let balance = state.world.balance_word_for_address(executor, state.address);
         let can_pay = BoolExpr::cmp(BoolExprOp::Uge, balance.into_expr(), value.into_expr());
-        match can_pay {
-            BoolExpr::Const(true) => Ok(true),
-            BoolExpr::Const(false) => {
+        match can_pay.as_const() {
+            Some(true) => Ok(true),
+            Some(false) => {
                 state.return_data = SymReturnData::default();
                 let return_data = state.return_data.clone();
                 state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
                 state.stack.push(SymWord::zero())?;
                 Ok(false)
             }
-            can_pay => {
+            None => {
                 let mut success_constraints = state.constraints.clone();
                 success_constraints.push(can_pay.clone());
                 let success_sat = self.solver.is_sat(&success_constraints)?;
@@ -1364,14 +1364,14 @@ impl SymbolicExecutor {
 
         let balance = state.world.balance_word_for_address(executor, state.address);
         let can_pay = BoolExpr::cmp(BoolExprOp::Uge, balance.into_expr(), value.into_expr());
-        match can_pay {
-            BoolExpr::Const(true) => Ok(true),
-            BoolExpr::Const(false) => {
+        match can_pay.as_const() {
+            Some(true) => Ok(true),
+            Some(false) => {
                 state.return_data = SymReturnData::default();
                 state.stack.push(SymWord::zero())?;
                 Ok(false)
             }
-            can_pay => {
+            None => {
                 let mut success_constraints = state.constraints.clone();
                 success_constraints.push(can_pay.clone());
                 let success_sat = self.solver.is_sat(&success_constraints)?;
@@ -1677,23 +1677,23 @@ fn word_ne_condition(word: &SymWord, value: usize) -> BoolExpr {
 fn byte_eq_condition(input: &[SymWord], offset: usize, value: u8) -> BoolExpr {
     match input.get(offset) {
         Some(word) => word_eq_condition(word, value as usize),
-        None => BoolExpr::Const(false),
+        None => BoolExpr::constant(false),
     }
 }
 
 fn byte_ne_condition(input: &[SymWord], offset: usize, value: u8) -> BoolExpr {
     match input.get(offset) {
         Some(word) => word_ne_condition(word, value as usize),
-        None => BoolExpr::Const(false),
+        None => BoolExpr::constant(false),
     }
 }
 
 fn bytes_eq_condition(input: &[SymWord], offset: usize, bytes: &[u8]) -> BoolExpr {
     let Some(end) = offset.checked_add(bytes.len()) else {
-        return BoolExpr::Const(false);
+        return BoolExpr::constant(false);
     };
     if end > input.len() {
-        return BoolExpr::Const(false);
+        return BoolExpr::constant(false);
     }
     BoolExpr::and(
         input[offset..end]
@@ -1706,10 +1706,10 @@ fn bytes_eq_condition(input: &[SymWord], offset: usize, bytes: &[u8]) -> BoolExp
 
 fn bytes_ne_condition(input: &[SymWord], offset: usize, bytes: &[u8]) -> BoolExpr {
     let Some(end) = offset.checked_add(bytes.len()) else {
-        return BoolExpr::Const(false);
+        return BoolExpr::constant(false);
     };
     if end > input.len() {
-        return BoolExpr::Const(false);
+        return BoolExpr::constant(false);
     }
     BoolExpr::or(
         input[offset..end]

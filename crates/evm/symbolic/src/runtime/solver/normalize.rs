@@ -6,7 +6,7 @@ pub(crate) fn normalize_constraints_for_solver(constraints: &[BoolExpr]) -> Vec<
         constraints.iter().cloned().map(normalize_bool_for_solver),
         constraints.len(),
     );
-    if matches!(normalized.as_slice(), [BoolExpr::Const(false)]) {
+    if matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)) {
         return normalized;
     }
 
@@ -24,8 +24,8 @@ fn normalize_constraint_batch(
 ) -> Vec<BoolExpr> {
     let mut normalized = Vec::with_capacity(capacity);
     for constraint in constraints {
-        if matches!(constraint, BoolExpr::Const(false)) {
-            return vec![BoolExpr::Const(false)];
+        if constraint.as_const() == Some(false) {
+            return vec![BoolExpr::constant(false)];
         }
         collect_normalized_conjunct(constraint, &mut normalized);
     }
@@ -36,8 +36,8 @@ fn normalize_constraint_batch(
 
 fn collect_normalized_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
     match expr.as_inner() {
-        BoolExprRef::Const(true) => {}
-        BoolExprRef::And(values) => {
+        BoolExprInner::Const(true) => {}
+        BoolExprInner::And(values) => {
             for value in values.iter().cloned() {
                 collect_normalized_conjunct(value, out);
             }
@@ -53,17 +53,17 @@ pub(crate) fn normalize_bool_for_solver(expr: BoolExpr) -> BoolExpr {
     }
 
     match expr.into_inner() {
-        BoolExprOwned::Const(value) => BoolExpr::Const(value),
-        BoolExprOwned::Not(value) => normalize_bool_for_solver(value).not(),
-        BoolExprOwned::And(values) => {
+        BoolExprInner::Const(value) => BoolExpr::constant(value),
+        BoolExprInner::Not(value) => normalize_bool_for_solver(value).not(),
+        BoolExprInner::And(values) => {
             BoolExpr::and(values.iter().cloned().map(normalize_bool_for_solver).collect())
         }
-        BoolExprOwned::Eq(left, right) => {
+        BoolExprInner::Eq(left, right) => {
             let normalized =
                 BoolExpr::eq(normalize_expr_for_solver(left), normalize_expr_for_solver(right));
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
-        BoolExprOwned::Cmp(op, left, right) => {
+        BoolExprInner::Cmp(op, left, right) => {
             let normalized = BoolExpr::cmp(
                 op,
                 normalize_expr_for_solver(left),
@@ -96,13 +96,13 @@ impl ConstraintContext {
     fn normalize_bool(&self, expr: BoolExpr) -> BoolExpr {
         match expr.as_inner() {
             _ if zero_check_operand(&expr).is_some_and(|left| self.word_bool_always_true(left)) => {
-                BoolExpr::Const(false)
+                BoolExpr::constant(false)
             }
-            BoolExprRef::Not(value)
+            BoolExprInner::Not(value)
                 if zero_check_operand(value)
                     .is_some_and(|left| self.word_bool_always_true(left)) =>
             {
-                BoolExpr::Const(true)
+                BoolExpr::constant(true)
             }
             _ => expr,
         }
@@ -123,12 +123,12 @@ impl ConstraintContext {
 
     fn upper_bound_constraint<'a>(&self, constraint: &'a BoolExpr) -> Option<(&'a Expr, U256)> {
         match constraint.as_inner() {
-            BoolExprRef::Eq(left, right) => match (left.as_const(), right.as_const()) {
+            BoolExprInner::Eq(left, right) => match (left.as_const(), right.as_const()) {
                 (_, Some(value)) => Some((left, value)),
                 (Some(value), _) => Some((right, value)),
                 _ => None,
             },
-            BoolExprRef::Cmp(op, left, right) => match (op, left.as_const(), right.as_const()) {
+            BoolExprInner::Cmp(op, left, right) => match (*op, left.as_const(), right.as_const()) {
                 (BoolExprOp::Ult, _, Some(bound)) => {
                     (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
                 }
@@ -139,9 +139,9 @@ impl ConstraintContext {
                 (BoolExprOp::Uge, Some(bound), _) => Some((right, bound)),
                 _ => None,
             },
-            BoolExprRef::Not(value) => match value.as_inner() {
-                BoolExprRef::Cmp(op, left, right) => {
-                    match (op, left.as_const(), right.as_const()) {
+            BoolExprInner::Not(value) => match value.as_inner() {
+                BoolExprInner::Cmp(op, left, right) => {
+                    match (*op, left.as_const(), right.as_const()) {
                         (BoolExprOp::Ugt, _, Some(bound)) => Some((left, bound)),
                         (BoolExprOp::Uge, _, Some(bound)) => {
                             (!bound.is_zero()).then(|| (left, bound - U256::from(1)))
@@ -155,7 +155,7 @@ impl ConstraintContext {
                 }
                 _ => None,
             },
-            BoolExprRef::Const(_) | BoolExprRef::And(_) => None,
+            BoolExprInner::Const(_) | BoolExprInner::And(_) => None,
         }
     }
 }
@@ -336,61 +336,65 @@ pub(crate) fn extracted_unshifted_byte_source(term: &Expr, index: usize) -> Opti
 /// Rewrites exact EVM unsigned-division zero/nonzero predicates without `bvudiv`.
 pub(crate) fn normalize_udiv_bool_for_solver(expr: &BoolExpr) -> Option<BoolExpr> {
     match expr.as_inner() {
-        BoolExprRef::Eq(left, right) if right.as_const().is_some_and(|value| value.is_zero()) => {
+        BoolExprInner::Eq(left, right) if right.as_const().is_some_and(|value| value.is_zero()) => {
             bool_from_word_expr(left).map(BoolExpr::not).or_else(|| {
                 if word_bool_always_true(left) {
-                    Some(BoolExpr::Const(false))
+                    Some(BoolExpr::constant(false))
                 } else {
                     normalize_udiv_eq_zero(left, &Expr::constant(U256::ZERO))
                 }
             })
         }
-        BoolExprRef::Eq(left, right) if left.as_const().is_some_and(|value| value.is_zero()) => {
+        BoolExprInner::Eq(left, right) if left.as_const().is_some_and(|value| value.is_zero()) => {
             bool_from_word_expr(right).map(BoolExpr::not).or_else(|| {
                 if word_bool_always_true(right) {
-                    Some(BoolExpr::Const(false))
+                    Some(BoolExpr::constant(false))
                 } else {
                     normalize_udiv_eq_zero(&Expr::constant(U256::ZERO), right)
                 }
             })
         }
-        BoolExprRef::Eq(left, right) if right.as_const() == Some(U256::from(1)) => {
+        BoolExprInner::Eq(left, right) if right.as_const() == Some(U256::from(1)) => {
             bool_from_word_expr(left)
         }
-        BoolExprRef::Eq(left, right) if left.as_const() == Some(U256::from(1)) => {
+        BoolExprInner::Eq(left, right) if left.as_const() == Some(U256::from(1)) => {
             bool_from_word_expr(right)
         }
-        BoolExprRef::Not(value) => match value.as_inner() {
-            BoolExprRef::Cmp(op, left, right) => {
-                normalize_add_overflow_cmp_for_solver(op, left, right)
+        BoolExprInner::Not(value) => match value.as_inner() {
+            BoolExprInner::Cmp(op, left, right) => {
+                normalize_add_overflow_cmp_for_solver(*op, left, right)
                     .map(BoolExpr::not)
-                    .or_else(|| normalize_udiv_cmp_for_solver(op, left, right).map(BoolExpr::not))
+                    .or_else(|| normalize_udiv_cmp_for_solver(*op, left, right).map(BoolExpr::not))
             }
-            BoolExprRef::Eq(left, right)
+            BoolExprInner::Eq(left, right)
                 if right.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 if word_bool_always_true(left) {
-                    Some(BoolExpr::Const(true))
+                    Some(BoolExpr::constant(true))
                 } else {
                     normalize_udiv_eq_zero(left, &Expr::constant(U256::ZERO)).map(BoolExpr::not)
                 }
             }
-            BoolExprRef::Eq(left, right)
+            BoolExprInner::Eq(left, right)
                 if left.as_const().is_some_and(|value| value.is_zero()) =>
             {
                 if word_bool_always_true(right) {
-                    Some(BoolExpr::Const(true))
+                    Some(BoolExpr::constant(true))
                 } else {
                     normalize_udiv_eq_zero(&Expr::constant(U256::ZERO), right).map(BoolExpr::not)
                 }
             }
-            BoolExprRef::Eq(left, right) => normalize_udiv_eq_zero(left, right).map(BoolExpr::not),
+            BoolExprInner::Eq(left, right) => {
+                normalize_udiv_eq_zero(left, right).map(BoolExpr::not)
+            }
             _ => None,
         },
-        BoolExprRef::Eq(left, right) => normalize_udiv_eq_zero(left, right),
-        BoolExprRef::Cmp(op, left, right) => normalize_add_overflow_cmp_for_solver(op, left, right)
-            .or_else(|| normalize_udiv_cmp_for_solver(op, left, right)),
-        BoolExprRef::Const(_) | BoolExprRef::And(_) => None,
+        BoolExprInner::Eq(left, right) => normalize_udiv_eq_zero(left, right),
+        BoolExprInner::Cmp(op, left, right) => {
+            normalize_add_overflow_cmp_for_solver(*op, left, right)
+                .or_else(|| normalize_udiv_cmp_for_solver(*op, left, right))
+        }
+        BoolExprInner::Const(_) | BoolExprInner::And(_) => None,
     }
 }
 
@@ -415,23 +419,27 @@ pub(crate) fn bool_from_word_expr(expr: &Expr) -> Option<BoolExpr> {
 
 /// Returns whether a word expression syntactically contains unsigned division.
 pub(crate) fn expr_contains_udiv(expr: &Expr) -> bool {
-    let mut contains = false;
     expr.visit(&mut |expr| {
-        contains |= matches!(expr.as_inner(), ExprInner::Op(ExprOp::UDiv, _, _))
-    });
-    contains
+        if matches!(expr.as_inner(), ExprInner::Op(ExprOp::UDiv, _, _)) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })
+    .is_break()
 }
 
 /// Returns whether a boolean expression syntactically contains unsigned division.
 pub(crate) fn bool_contains_udiv(expr: &BoolExpr) -> bool {
-    let mut contains = false;
     expr.visit(&mut |expr| match expr.as_inner() {
-        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
-            contains |= expr_contains_udiv(left) || expr_contains_udiv(right);
+        BoolExprInner::Eq(left, right) | BoolExprInner::Cmp(_, left, right)
+            if expr_contains_udiv(left) || expr_contains_udiv(right) =>
+        {
+            ControlFlow::Break(())
         }
-        BoolExprRef::Const(_) | BoolExprRef::Not(_) | BoolExprRef::And(_) => {}
-    });
-    contains
+        _ => ControlFlow::Continue(()),
+    })
+    .is_break()
 }
 
 /// Rewrites exact unsigned-addition overflow checks when operand bounds preclude overflow.
@@ -441,8 +449,8 @@ pub(crate) fn normalize_add_overflow_cmp_for_solver(
     right: &Expr,
 ) -> Option<BoolExpr> {
     match op {
-        BoolExprOp::Ugt if add_overflow_check(left, right) => Some(BoolExpr::Const(false)),
-        BoolExprOp::Ult if add_overflow_check(right, left) => Some(BoolExpr::Const(false)),
+        BoolExprOp::Ugt if add_overflow_check(left, right) => Some(BoolExpr::constant(false)),
+        BoolExprOp::Ult if add_overflow_check(right, left) => Some(BoolExpr::constant(false)),
         _ => None,
     }
 }
@@ -491,10 +499,10 @@ pub(crate) fn word_bool_term(expr: &Expr) -> Option<&BoolExpr> {
 /// Returns the operand tested by `operand == 0`.
 pub(crate) fn zero_check_operand(expr: &BoolExpr) -> Option<&Expr> {
     match expr.as_inner() {
-        BoolExprRef::Eq(left, right) if right.as_const().is_some_and(|value| value.is_zero()) => {
+        BoolExprInner::Eq(left, right) if right.as_const().is_some_and(|value| value.is_zero()) => {
             Some(left)
         }
-        BoolExprRef::Eq(left, right) if left.as_const().is_some_and(|value| value.is_zero()) => {
+        BoolExprInner::Eq(left, right) if left.as_const().is_some_and(|value| value.is_zero()) => {
             Some(right)
         }
         _ => None,
@@ -527,7 +535,7 @@ impl ConstraintContext {
     }
 
     fn checked_mul_guard_for_operand(&self, expr: &BoolExpr, zero_operand: &Expr) -> bool {
-        let BoolExprRef::Eq(left, right) = expr.as_inner() else { return false };
+        let BoolExprInner::Eq(left, right) = expr.as_inner() else { return false };
         self.checked_mul_guard_side(left, right, zero_operand)
             || self.checked_mul_guard_side(right, left, zero_operand)
     }

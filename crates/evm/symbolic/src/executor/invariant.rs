@@ -82,10 +82,10 @@ impl SymbolicExecutor {
 
         let pass = return_data.load_word(0)?.nonzero_bool();
         let fail = pass.clone().not();
-        match fail {
-            BoolExpr::Const(true) => Ok(true),
-            BoolExpr::Const(false) => Ok(false),
-            fail => {
+        match fail.as_const() {
+            Some(true) => Ok(true),
+            Some(false) => Ok(false),
+            None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(fail);
                 if self.solver.is_sat(&constraints)? {

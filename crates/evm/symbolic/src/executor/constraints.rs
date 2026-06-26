@@ -24,10 +24,10 @@ impl SymbolicExecutor {
         state: &mut PathState,
         condition: BoolExpr,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
-        match condition {
-            BoolExpr::Const(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
-            BoolExpr::Const(false) => Ok(CheatcodeOutcome::AssumeRejected),
-            condition => {
+        match condition.as_const() {
+            Some(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
+            Some(false) => Ok(CheatcodeOutcome::AssumeRejected),
+            None => {
                 if bool_contains_gasleft(&condition) {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
@@ -82,9 +82,9 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let condition = BoolExpr::cmp_word_const(BoolExprOp::Uge, word, U256::from(min));
-        match condition {
-            BoolExpr::Const(value) => Ok(value),
-            condition => {
+        match condition.as_const() {
+            Some(value) => Ok(value),
+            None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
                 if self.solver.is_sat(&constraints)? {

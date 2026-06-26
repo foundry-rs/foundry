@@ -39,7 +39,7 @@ pub(crate) fn symbolic_address_key(word: &SymWord) -> String {
 
 pub(crate) fn address_match_condition(word: &SymWord, address: Address) -> BoolExpr {
     if let Some(word) = word.as_const() {
-        return BoolExpr::Const(word == address_word(address));
+        return BoolExpr::constant(word == address_word(address));
     }
     let expr = word.as_expr();
     let Some(terms) = address_byte_terms(expr) else {

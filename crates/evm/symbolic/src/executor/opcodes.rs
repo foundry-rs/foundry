@@ -743,9 +743,9 @@ impl SymbolicExecutor {
         }
         let end = Expr::op(ExprOp::Add, offset.into_expr(), size.into_expr());
         let in_bounds = BoolExpr::cmp(BoolExprOp::Ule, end, state.return_data.len_expr());
-        match in_bounds {
-            BoolExpr::Const(value) => Ok(value),
-            in_bounds => {
+        match in_bounds.as_const() {
+            Some(value) => Ok(value),
+            None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(in_bounds);
                 if self.solver.is_sat(&constraints)? {

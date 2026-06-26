@@ -29,34 +29,34 @@ pub(crate) fn collect_order_facts(
     positive: &mut HashSet<Expr>,
 ) {
     match expr.as_inner() {
-        BoolExprRef::And(values) => {
-            for value in values {
+        BoolExprInner::And(values) => {
+            for value in values.iter() {
                 collect_order_facts(value, less_than, positive);
             }
         }
-        BoolExprRef::Cmp(BoolExprOp::Ult, left, right) => {
+        BoolExprInner::Cmp(BoolExprOp::Ult, left, right) => {
             less_than.insert((left.clone(), right.clone()));
             if left.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(right.clone());
             }
         }
-        BoolExprRef::Cmp(BoolExprOp::Ugt, left, right) => {
+        BoolExprInner::Cmp(BoolExprOp::Ugt, left, right) => {
             less_than.insert((right.clone(), left.clone()));
             if right.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(left.clone());
             }
         }
-        BoolExprRef::Const(_)
-        | BoolExprRef::Not(_)
-        | BoolExprRef::Eq(_, _)
-        | BoolExprRef::Cmp(_, _, _) => {}
+        BoolExprInner::Const(_)
+        | BoolExprInner::Not(_)
+        | BoolExprInner::Eq(_, _)
+        | BoolExprInner::Cmp(_, _, _) => {}
     }
 }
 
 /// Extracts `!(a * b < c * d)` as product operands.
 pub(crate) fn product_less_than_negation(expr: &BoolExpr) -> Option<(&Expr, &Expr, &Expr, &Expr)> {
-    let BoolExprRef::Not(value) = expr.as_inner() else { return None };
-    let BoolExprRef::Cmp(BoolExprOp::Ult, left, right) = value.as_inner() else {
+    let BoolExprInner::Not(value) = expr.as_inner() else { return None };
+    let BoolExprInner::Cmp(BoolExprOp::Ult, left, right) = value.as_inner() else {
         return None;
     };
     let (left_a, left_b) = mul_operands(left)?;

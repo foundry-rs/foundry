@@ -19,10 +19,10 @@ impl SymbolicExecutor {
         pass: BoolExpr,
     ) -> Result<CheatcodeOutcome, SymbolicError> {
         let fail = pass.clone().not();
-        match fail {
-            BoolExpr::Const(true) => return Ok(CheatcodeOutcome::Failure),
-            BoolExpr::Const(false) => return Ok(CheatcodeOutcome::Continue(Vec::new())),
-            _ => {}
+        match fail.as_const() {
+            Some(true) => return Ok(CheatcodeOutcome::Failure),
+            Some(false) => return Ok(CheatcodeOutcome::Continue(Vec::new())),
+            None => {}
         }
 
         if bool_contains_gasleft(&pass) {
@@ -2267,7 +2267,7 @@ impl SymbolicExecutor {
             )?;
             return self.handle_assertion(
                 state,
-                BoolExpr::Const(dyn_string(&values[0])? == dyn_string(&values[1])?),
+                BoolExpr::constant(dyn_string(&values[0])? == dyn_string(&values[1])?),
             );
         }
         if selector == assertEq_12Call::SELECTOR || selector == assertEq_13Call::SELECTOR {
@@ -2283,7 +2283,7 @@ impl SymbolicExecutor {
             )?;
             return self.handle_assertion(
                 state,
-                BoolExpr::Const(dyn_bytes(&values[0])? == dyn_bytes(&values[1])?),
+                BoolExpr::constant(dyn_bytes(&values[0])? == dyn_bytes(&values[1])?),
             );
         }
         if selector == assertEq_14Call::SELECTOR
@@ -2319,7 +2319,7 @@ impl SymbolicExecutor {
                     ]
                 },
             )?;
-            return self.handle_assertion(state, BoolExpr::Const(values[0] == values[1]));
+            return self.handle_assertion(state, BoolExpr::constant(values[0] == values[1]));
         }
         if selector == assertEqDecimal_0Call::SELECTOR
             || selector == assertEqDecimal_1Call::SELECTOR
@@ -2359,7 +2359,7 @@ impl SymbolicExecutor {
             )?;
             return self.handle_assertion(
                 state,
-                BoolExpr::Const(dyn_string(&values[0])? != dyn_string(&values[1])?),
+                BoolExpr::constant(dyn_string(&values[0])? != dyn_string(&values[1])?),
             );
         }
         if selector == assertNotEq_12Call::SELECTOR || selector == assertNotEq_13Call::SELECTOR {
@@ -2375,7 +2375,7 @@ impl SymbolicExecutor {
             )?;
             return self.handle_assertion(
                 state,
-                BoolExpr::Const(dyn_bytes(&values[0])? != dyn_bytes(&values[1])?),
+                BoolExpr::constant(dyn_bytes(&values[0])? != dyn_bytes(&values[1])?),
             );
         }
         if selector == assertNotEq_14Call::SELECTOR
@@ -2411,7 +2411,7 @@ impl SymbolicExecutor {
                     ]
                 },
             )?;
-            return self.handle_assertion(state, BoolExpr::Const(values[0] != values[1]));
+            return self.handle_assertion(state, BoolExpr::constant(values[0] != values[1]));
         }
         if selector == assertLt_0Call::SELECTOR || selector == assertLt_1Call::SELECTOR {
             let left = read_abi_word_arg(&state.memory, args_offset, 0)?;

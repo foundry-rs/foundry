@@ -1577,21 +1577,24 @@ impl Default for SymbolicBlock {
 
 /// Collects the symbolic variables needed to concretely evaluate an expression.
 fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
-    expr.visit(&mut |expr| match expr.as_inner() {
-        ExprInner::Var(var) => {
-            vars.insert(*var);
+    let _ = expr.visit(&mut |expr| {
+        match expr.as_inner() {
+            ExprInner::Var(var) => {
+                vars.insert(*var);
+            }
+            ExprInner::Hash(hash) => {
+                vars.insert(hash.name());
+            }
+            ExprInner::Const(_)
+            | ExprInner::GasLeft(_)
+            | ExprInner::Keccak(_)
+            | ExprInner::Not(_)
+            | ExprInner::Op(_, _, _)
+            | ExprInner::AddMod(_)
+            | ExprInner::MulMod(_)
+            | ExprInner::Ite(_, _, _) => {}
         }
-        ExprInner::Hash(hash) => {
-            vars.insert(hash.name());
-        }
-        ExprInner::Const(_)
-        | ExprInner::GasLeft(_)
-        | ExprInner::Keccak(_)
-        | ExprInner::Not(_)
-        | ExprInner::Op(_, _, _)
-        | ExprInner::AddMod(_)
-        | ExprInner::MulMod(_)
-        | ExprInner::Ite(_, _, _) => {}
+        ControlFlow::<()>::Continue(())
     });
 }
 

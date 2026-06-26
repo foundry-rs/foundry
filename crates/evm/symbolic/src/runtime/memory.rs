@@ -521,10 +521,10 @@ impl SymMemory {
             ));
         }
         let guard = BoolExpr::and(guards);
-        match guard {
-            BoolExpr::Const(true) => return_data.byte(idx),
-            BoolExpr::Const(false) => self.call_output_existing_byte(dest, idx),
-            guard => SymWord::expr(Expr::ite(
+        match guard.as_const() {
+            Some(true) => return_data.byte(idx),
+            Some(false) => self.call_output_existing_byte(dest, idx),
+            None => SymWord::expr(Expr::ite(
                 guard,
                 return_data.byte(idx).into_expr(),
                 self.call_output_existing_byte(dest, idx).into_expr(),

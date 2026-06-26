@@ -354,9 +354,9 @@ fn selector_equality_folds_known_word_expressions() {
 
     assert_eq!(
         BoolExpr::eq(selector_expr.clone(), Expr::constant(selector)),
-        BoolExpr::Const(true)
+        BoolExpr::constant(true)
     );
-    assert_eq!(BoolExpr::eq(selector_expr, Expr::constant(other)), BoolExpr::Const(false));
+    assert_eq!(BoolExpr::eq(selector_expr, Expr::constant(other)), BoolExpr::constant(false));
 }
 
 #[test]
@@ -369,7 +369,7 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
     let selector_expr = Expr::op(ExprOp::Shr, loaded.into_expr(), Expr::constant(U256::from(224)));
 
     assert_eq!(expr_known_word(&selector_expr), Some(selector));
-    assert_eq!(BoolExpr::eq(selector_expr, Expr::constant(selector)), BoolExpr::Const(true));
+    assert_eq!(BoolExpr::eq(selector_expr, Expr::constant(selector)), BoolExpr::constant(true));
 }
 
 #[test]
@@ -1762,7 +1762,10 @@ fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let owner = SymWord::expr(Expr::var("owner"));
     let layout_key = add_words(keccak_word(word_bytes(owner)), SymWord::constant(U256::ZERO));
 
-    assert_eq!(storage_key_eq(layout_key, SymWord::constant(U256::ZERO)), BoolExpr::Const(false));
+    assert_eq!(
+        storage_key_eq(layout_key, SymWord::constant(U256::ZERO)),
+        BoolExpr::constant(false)
+    );
 }
 
 #[test]
@@ -1792,7 +1795,7 @@ fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
     ]);
     let condition = storage_key_eq(balance_key, allowance_key);
 
-    assert_eq!(condition, BoolExpr::Const(false));
+    assert_eq!(condition, BoolExpr::constant(false));
     assert!(!condition.eval(&model).unwrap());
 }
 
@@ -2050,12 +2053,12 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
 fn bool_comparison_folds_reflexive_operands() {
     let x = || Expr::var("x");
 
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ult, x(), x()), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ugt, x(), x()), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, x(), x()), BoolExpr::Const(true));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, x(), x()), BoolExpr::Const(true));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Slt, x(), x()), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Sgt, x(), x()), BoolExpr::Const(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ult, x(), x()), BoolExpr::constant(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ugt, x(), x()), BoolExpr::constant(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, x(), x()), BoolExpr::constant(true));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, x(), x()), BoolExpr::constant(true));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Slt, x(), x()), BoolExpr::constant(false));
+    assert_eq!(BoolExpr::cmp(BoolExprOp::Sgt, x(), x()), BoolExpr::constant(false));
 }
 
 #[test]
@@ -2065,35 +2068,35 @@ fn bool_comparison_folds_unsigned_boundaries() {
 
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Ugt, Expr::constant(U256::ZERO), x()),
-        BoolExpr::Const(false)
+        BoolExpr::constant(false)
     );
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Ule, Expr::constant(U256::ZERO), x()),
-        BoolExpr::Const(true)
+        BoolExpr::constant(true)
     );
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Ult, x(), Expr::constant(U256::ZERO)),
-        BoolExpr::Const(false)
+        BoolExpr::constant(false)
     );
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Uge, x(), Expr::constant(U256::ZERO)),
-        BoolExpr::Const(true)
+        BoolExpr::constant(true)
     );
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Ult, Expr::constant(U256::MAX), x()),
-        BoolExpr::Const(false)
+        BoolExpr::constant(false)
     );
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Uge, Expr::constant(U256::MAX), x()),
-        BoolExpr::Const(true)
+        BoolExpr::constant(true)
     );
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Ugt, x(), Expr::constant(U256::MAX)),
-        BoolExpr::Const(false)
+        BoolExpr::constant(false)
     );
     assert_eq!(
         BoolExpr::cmp(BoolExprOp::Ule, x(), Expr::constant(U256::MAX)),
-        BoolExpr::Const(true)
+        BoolExpr::constant(true)
     );
 }
 
@@ -2215,7 +2218,7 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     let a = BoolExpr::cmp(BoolExprOp::Ult, x.clone(), Expr::constant(U256::from(10)));
     let b = BoolExpr::eq(y.clone(), Expr::constant(U256::from(3)));
     let grouped = vec![
-        BoolExpr::raw_and(vec![b.clone(), BoolExpr::Const(true), a.clone()]),
+        BoolExpr::raw_and(vec![b.clone(), BoolExpr::constant(true), a.clone()]),
         a.clone(),
         BoolExpr::raw_and(vec![b.clone()]),
     ];
@@ -2226,10 +2229,10 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
 
     let unsat = normalize_constraints_for_solver(&[
         BoolExpr::eq(x, y),
-        BoolExpr::Const(false),
-        BoolExpr::Const(true),
+        BoolExpr::constant(false),
+        BoolExpr::constant(true),
     ]);
-    assert_eq!(unsat, vec![BoolExpr::Const(false)]);
+    assert_eq!(unsat, vec![BoolExpr::constant(false)]);
 }
 
 #[test]
@@ -2286,7 +2289,7 @@ fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
 
     assert_eq!(
         normalize_bool_for_solver(BoolExpr::eq(guard, Expr::constant(U256::ZERO))),
-        BoolExpr::Const(false)
+        BoolExpr::constant(false)
     );
 }
 
@@ -2303,7 +2306,7 @@ fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
     ];
     let normalized = normalize_constraints_for_solver(&constraints);
 
-    assert_eq!(normalized, vec![BoolExpr::Const(false)]);
+    assert_eq!(normalized, vec![BoolExpr::constant(false)]);
 
     for value in [U256::ZERO, U256::from(1), U256::from(1000)] {
         let model = BTreeMap::from([("a".to_string(), value)]);
@@ -2330,7 +2333,7 @@ fn solver_normalizes_guarded_self_division_guard() {
     let original = BoolExpr::eq(guard, Expr::constant(U256::ZERO));
     let normalized = normalize_bool_for_solver(original.clone());
 
-    assert_eq!(normalized, BoolExpr::Const(false));
+    assert_eq!(normalized, BoolExpr::constant(false));
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
@@ -2391,7 +2394,7 @@ fn solver_normalizes_guarded_self_division_add_overflow_guard() {
             checked_quotient.clone(),
             Expr::op(ExprOp::Add, Expr::constant(U256::from(1)), checked_quotient),
         )),
-        BoolExpr::Const(false)
+        BoolExpr::constant(false)
     );
 }
 
@@ -2407,7 +2410,7 @@ fn solver_normalizes_checked_mul_guard_with_context_bound() {
         BoolExpr::eq(guard, Expr::constant(U256::ZERO)),
     ];
 
-    assert_eq!(normalize_constraints_for_solver(&constraints), vec![BoolExpr::Const(false)]);
+    assert_eq!(normalize_constraints_for_solver(&constraints), vec![BoolExpr::constant(false)]);
 }
 
 #[test]
@@ -2420,14 +2423,14 @@ fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
 
     assert_ne!(
         normalize_constraints_for_solver(std::slice::from_ref(&guard_is_zero)),
-        vec![BoolExpr::Const(false)]
+        vec![BoolExpr::constant(false)]
     );
     assert_ne!(
         normalize_constraints_for_solver(&[
             BoolExpr::cmp(BoolExprOp::Ule, a, Expr::constant(U256::MAX)),
             guard_is_zero.clone(),
         ]),
-        vec![BoolExpr::Const(false)]
+        vec![BoolExpr::constant(false)]
     );
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
@@ -2442,7 +2445,7 @@ fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
     let original = BoolExpr::eq(checked_mul_guard_word(&a, &b), Expr::constant(U256::ZERO));
     let normalized = normalize_bool_for_solver(original.clone());
 
-    assert_ne!(normalized, BoolExpr::Const(false));
+    assert_ne!(normalized, BoolExpr::constant(false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(2))]);
     assert!(original.eval(&model).unwrap());
@@ -2460,7 +2463,7 @@ fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
         original.clone(),
     ]);
 
-    assert!(!matches!(normalized.as_slice(), [BoolExpr::Const(false)]));
+    assert!(!matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
     assert!(original.eval(&model).unwrap());
@@ -2487,7 +2490,7 @@ fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
             a.clone(),
             Expr::op(ExprOp::Add, a, b),
         )),
-        BoolExpr::Const(false)
+        BoolExpr::constant(false)
     );
 }
 
@@ -2499,7 +2502,7 @@ fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
     let original = BoolExpr::cmp(BoolExprOp::Ugt, a.clone(), Expr::op(ExprOp::Add, a, b));
     let normalized = normalize_bool_for_solver(original.clone());
 
-    assert_ne!(normalized, BoolExpr::Const(false));
+    assert_ne!(normalized, BoolExpr::constant(false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(1))]);
     assert!(original.eval(&model).unwrap());
@@ -2999,7 +3002,7 @@ fn sat_cache_reuses_normalized_is_sat_results() {
     let x = Expr::var("x");
     let y = Expr::var("y");
     let constraints = vec![
-        BoolExpr::Const(true),
+        BoolExpr::constant(true),
         BoolExpr::eq(x.clone(), Expr::constant(U256::from(1))),
         BoolExpr::eq(y.clone(), Expr::constant(U256::from(2))),
     ];
@@ -3183,7 +3186,7 @@ fn model_cache_reuses_normalized_model_results() {
     let x = Expr::var("x");
     let y = Expr::var("y");
     let constraints = vec![
-        BoolExpr::Const(true),
+        BoolExpr::constant(true),
         BoolExpr::eq(x.clone(), Expr::constant(U256::from(1))),
         BoolExpr::eq(y.clone(), Expr::constant(U256::from(2))),
     ];

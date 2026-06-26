@@ -2,10 +2,10 @@ use super::*;
 
 pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
     match expr.as_inner() {
-        BoolExprRef::Const(_) => false,
-        BoolExprRef::Not(value) => bool_contains_hard_arith(value),
-        BoolExprRef::And(values) => values.iter().any(bool_contains_hard_arith),
-        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
+        BoolExprInner::Const(_) => false,
+        BoolExprInner::Not(value) => bool_contains_hard_arith(value),
+        BoolExprInner::And(values) => values.iter().any(bool_contains_hard_arith),
+        BoolExprInner::Eq(left, right) | BoolExprInner::Cmp(_, left, right) => {
             expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
         }
     }
@@ -43,30 +43,39 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
 
 /// Returns whether the expression contains symbolic hash variables that local search should avoid.
 pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
-    let mut contains = false;
-    expr.visit(&mut |expr| contains |= matches!(expr.as_inner(), ExprInner::Hash(_)));
-    contains
+    expr.visit(&mut |expr| {
+        if matches!(expr.as_inner(), ExprInner::Hash(_)) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })
+    .is_break()
 }
 
 /// Returns whether the boolean expression contains symbolic hash variables.
 pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
-    let mut contains = false;
     expr.visit(&mut |expr| match expr.as_inner() {
-        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
-            contains |= expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right);
+        BoolExprInner::Eq(left, right) | BoolExprInner::Cmp(_, left, right)
+            if expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right) =>
+        {
+            ControlFlow::Break(())
         }
-        BoolExprRef::Const(_) | BoolExprRef::Not(_) | BoolExprRef::And(_) => {}
-    });
-    contains
+        _ => ControlFlow::Continue(()),
+    })
+    .is_break()
 }
 
 pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
-    let mut contains = false;
     expr.visit(&mut |expr| {
-        contains |=
-            matches!(expr.as_inner(), ExprInner::Var(_) | ExprInner::Keccak(_) | ExprInner::Hash(_))
-    });
-    contains
+        if matches!(expr.as_inner(), ExprInner::Var(_) | ExprInner::Keccak(_) | ExprInner::Hash(_))
+        {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })
+    .is_break()
 }
 
 /// Returns whether local hard-arithmetic search should run before asking the solver.
@@ -266,14 +275,14 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
 /// Collects variables that local hard-arithmetic search can assign directly.
 pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut SymbolicVars) {
     match expr.as_inner() {
-        BoolExprRef::Const(_) => {}
-        BoolExprRef::Not(value) => collect_bool_fallback_vars(value, vars),
-        BoolExprRef::And(values) => {
-            for value in values {
+        BoolExprInner::Const(_) => {}
+        BoolExprInner::Not(value) => collect_bool_fallback_vars(value, vars),
+        BoolExprInner::And(values) => {
+            for value in values.iter() {
                 collect_bool_fallback_vars(value, vars);
             }
         }
-        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
+        BoolExprInner::Eq(left, right) | BoolExprInner::Cmp(_, left, right) => {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
@@ -378,14 +387,14 @@ pub(crate) fn push_fallback_candidate(
 
 pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut HashSet<U256>) {
     match expr.as_inner() {
-        BoolExprRef::Const(_) => {}
-        BoolExprRef::Not(value) => collect_bool_constants(value, constants),
-        BoolExprRef::And(values) => {
-            for value in values {
+        BoolExprInner::Const(_) => {}
+        BoolExprInner::Not(value) => collect_bool_constants(value, constants),
+        BoolExprInner::And(values) => {
+            for value in values.iter() {
                 collect_bool_constants(value, constants);
             }
         }
-        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
+        BoolExprInner::Eq(left, right) | BoolExprInner::Cmp(_, left, right) => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
         }
@@ -433,15 +442,15 @@ impl MaskHints {
 
     pub(crate) fn apply_bool(&mut self, var: &str, expr: &BoolExpr, inverted: bool) {
         match expr.as_inner() {
-            BoolExprRef::Const(_) => {}
-            BoolExprRef::Not(value) => self.apply_bool(var, value, !inverted),
-            BoolExprRef::And(values) if !inverted => {
-                for value in values {
+            BoolExprInner::Const(_) => {}
+            BoolExprInner::Not(value) => self.apply_bool(var, value, !inverted),
+            BoolExprInner::And(values) if !inverted => {
+                for value in values.iter() {
                     self.apply_bool(var, value, false);
                 }
             }
-            BoolExprRef::Eq(left, right) => self.apply_equality(var, left, right, inverted),
-            BoolExprRef::Cmp(_, _, _) | BoolExprRef::And(_) => {}
+            BoolExprInner::Eq(left, right) => self.apply_equality(var, left, right, inverted),
+            BoolExprInner::Cmp(_, _, _) | BoolExprInner::And(_) => {}
         }
     }
 
