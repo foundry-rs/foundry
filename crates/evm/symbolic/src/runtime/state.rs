@@ -224,7 +224,7 @@ impl PathState {
         }
 
         let mut vars = SymbolicVars::default();
-        collect_eval_vars(expr, &mut vars);
+        expr.collect_eval_vars(&mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
             let var_expr = SymExpr::var_symbol(var);
@@ -1947,29 +1947,6 @@ impl Default for SymbolicBlock {
             blob_hashes: Vec::new(),
         }
     }
-}
-
-/// Collects the symbolic variables needed to concretely evaluate an expression.
-fn collect_eval_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
-    let _ = expr.visit(&mut |expr| {
-        match expr.kind() {
-            SymExprKind::Var(var) => {
-                vars.insert(*var);
-            }
-            SymExprKind::Hash { name, .. } => {
-                vars.insert(*name);
-            }
-            SymExprKind::Const(_)
-            | SymExprKind::GasLeft(_)
-            | SymExprKind::Keccak { .. }
-            | SymExprKind::Not(_)
-            | SymExprKind::Op(_, _, _)
-            | SymExprKind::AddMod { .. }
-            | SymExprKind::MulMod { .. }
-            | SymExprKind::Ite(_, _, _) => {}
-        }
-        ControlFlow::<()>::Continue(())
-    });
 }
 
 impl SymbolicBlock {

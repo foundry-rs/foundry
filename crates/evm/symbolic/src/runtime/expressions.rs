@@ -775,6 +775,18 @@ impl SymExpr {
         .is_break()
     }
 
+    pub(crate) fn collect_eval_vars(&self, vars: &mut SymbolicVars) {
+        let _ = self.visit(&mut |expr| {
+            match expr.kind() {
+                SymExprKind::Var(var) | SymExprKind::Hash { name: var, .. } => {
+                    vars.insert(*var);
+                }
+                _ => {}
+            }
+            ControlFlow::<()>::Continue(())
+        });
+    }
+
     pub(crate) fn known_byte(&self, index: usize) -> Option<u8> {
         debug_assert!(index < 32);
         match self.kind() {
