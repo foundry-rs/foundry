@@ -330,6 +330,31 @@ contract RecordAccountAccessesTest is Test {
         );
     }
 
+    /// @notice Test that cold writes to existing storage record the actual previous value
+    function testStorageAccessColdWriteRecordsPreviousValue() public {
+        StorageAccessor accessor = test1;
+        bytes32 slot = bytes32(uint256(123));
+        accessor.write(slot, bytes32(uint256(456)));
+
+        vm.startStateDiffRecording();
+        accessor.write(slot, bytes32(uint256(789)));
+
+        Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(vm.stopAndReturnStateDiff());
+        assertEq(called.length, 1, "incorrect length");
+        assertEq(called[0].storageAccesses.length, 1, "incorrect storage length");
+        assertEq(
+            called[0].storageAccesses[0],
+            Vm.StorageAccess({
+                account: address(accessor),
+                slot: slot,
+                isWrite: true,
+                previousValue: bytes32(uint256(456)),
+                newValue: bytes32(uint256(789)),
+                reverted: false
+            })
+        );
+    }
+
     /// @notice Test that basic account accesses are correctly recorded
     function testRecordAccountAccesses() public {
         vm.startStateDiffRecording();
