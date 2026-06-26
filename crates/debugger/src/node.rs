@@ -188,7 +188,7 @@ fn known_precompile_call_notice(trace: &CallTrace) -> Option<String> {
     Some(notice)
 }
 
-fn known_precompile_name(address: Address) -> Option<&'static str> {
+const fn known_precompile_name(address: Address) -> Option<&'static str> {
     match address {
         precompiles::EC_RECOVER => Some("ecrecover"),
         precompiles::SHA_256 => Some("sha256"),

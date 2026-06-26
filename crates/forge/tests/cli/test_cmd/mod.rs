@@ -55,73 +55,61 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     drop(dotenv);
 }
 
-fn collect_debug_dump_internal_calls<'a>(
+fn collect_debug_dump_values<'a, T>(
     value: &'a serde_json::Value,
-    calls: &mut Vec<&'a serde_json::Value>,
+    collected: &mut Vec<T>,
+    collect_from_object: &mut impl FnMut(&'a serde_json::Map<String, serde_json::Value>, &mut Vec<T>),
 ) {
     match value {
         serde_json::Value::Array(values) => {
             for value in values {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         serde_json::Value::Object(map) => {
-            if let Some(call) = map
-                .get("InternalCall")
-                .and_then(|value| value.as_array())
-                .and_then(|values| values.first())
-            {
-                calls.push(call);
-            }
+            collect_from_object(map, collected);
             for value in map.values() {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         _ => {}
     }
 }
 
+fn collect_debug_dump_internal_calls<'a>(
+    value: &'a serde_json::Value,
+    calls: &mut Vec<&'a serde_json::Value>,
+) {
+    collect_debug_dump_values(value, calls, &mut |map, calls| {
+        if let Some(call) = map
+            .get("InternalCall")
+            .and_then(|value| value.as_array())
+            .and_then(|values| values.first())
+        {
+            calls.push(call);
+        }
+    });
+}
+
 fn collect_debug_dump_decoded_lines<'a>(value: &'a serde_json::Value, lines: &mut Vec<&'a str>) {
-    match value {
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_debug_dump_decoded_lines(value, lines);
-            }
+    collect_debug_dump_values(value, lines, &mut |map, lines| {
+        if let Some(line) = map.get("Line").and_then(|value| value.as_str()) {
+            lines.push(line);
         }
-        serde_json::Value::Object(map) => {
-            if let Some(line) = map.get("Line").and_then(|value| value.as_str()) {
-                lines.push(line);
-            }
-            for value in map.values() {
-                collect_debug_dump_decoded_lines(value, lines);
-            }
-        }
-        _ => {}
-    }
+    });
 }
 
 fn collect_debug_dump_storage_changes<'a>(
     value: &'a serde_json::Value,
     changes: &mut Vec<&'a serde_json::Value>,
 ) {
-    match value {
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_debug_dump_storage_changes(value, changes);
-            }
+    collect_debug_dump_values(value, changes, &mut |map, changes| {
+        if let Some(change) = map.get("storage_change")
+            && !change.is_null()
+        {
+            changes.push(change);
         }
-        serde_json::Value::Object(map) => {
-            if let Some(change) = map.get("storage_change")
-                && !change.is_null()
-            {
-                changes.push(change);
-            }
-            for value in map.values() {
-                collect_debug_dump_storage_changes(value, changes);
-            }
-        }
-        _ => {}
-    }
+    });
 }
 
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
