@@ -21,12 +21,12 @@ use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
     FuzzFixtures, FuzzRunMetadata, FuzzTestResult,
-    strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
+    strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state, fuzz_msg_value},
 };
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::{
-    strategy::Strategy,
+    strategy::{Just, Strategy},
     test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -451,16 +451,22 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // Prepare
         let fuzz_state = shared_state.state.fork();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
-        let strategy = proptest::prop_oneof![
+        let calldata_strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state),
-        ]
-        .prop_map(move |calldata| BasicTxDetails {
-            warp: None,
-            roll: None,
-            sender: Default::default(),
-            call_details: CallDetails { target: Default::default(), calldata, value: None },
-        });
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state, fuzz_fixtures),
+        ];
+        let value_strategy = if func.state_mutability == alloy_json_abi::StateMutability::Payable {
+            fuzz_msg_value(self.config.corpus.payable_value_weight).boxed()
+        } else {
+            Just(None).boxed()
+        };
+        let strategy =
+            (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender: Default::default(),
+                call_details: CallDetails { target: Default::default(), calldata, value },
+            });
 
         let mut corpus = WorkerCorpus::new(
             worker_id,

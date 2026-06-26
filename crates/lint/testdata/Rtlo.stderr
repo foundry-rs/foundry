@@ -190,3 +190,123 @@ LL │     string public marks = unicode"left‎right‏end";
    │
    ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public lre = unicode"�_�";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public rle = unicode"�_�";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public pdf = unicode"��";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public lro = unicode"�_�";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public rlo = unicode"�_�";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public lri = unicode"�_�";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public rli = unicode"�_�";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public fsi = unicode"�_�";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public pdi = unicode"��";
+   │                   ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public suppressedLine = unicode"�_�";
+   │                   ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public suppressedA = unicode"�_�";
+   │                   ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public suppressedB = unicode"�_�";
+   │                   ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public clean = "no bidi here";
+   │                   ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[could-be-constant]: state variable could be declared constant
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     string public marks = unicode"left‎right‏end";
+   │                   ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
+   │
+LL │     /* hidden� /* text � */ uint256 inBlockComment;
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
+

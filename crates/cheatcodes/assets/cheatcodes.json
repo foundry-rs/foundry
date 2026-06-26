@@ -514,7 +514,7 @@
     },
     {
       "name": "Gas",
-      "description": "Gas used. Returned by `lastCallGas`.",
+      "description": "Gas used. Returned by `lastCallGas` and `lastFrameGas`.",
       "fields": [
         {
           "name": "gasLimit",
@@ -7029,7 +7029,7 @@
     {
       "func": {
         "id": "lastCallGas",
-        "description": "Gets the gas used in the last call from the callee perspective.",
+        "description": "DEPRECATED: use `lastFrameGas` instead.\nGets the gas used in the last call from the callee perspective.",
         "declaration": "function lastCallGas() external view returns (Gas memory gas);",
         "visibility": "external",
         "mutability": "view",
@@ -7040,6 +7040,28 @@
           88,
           155,
           40
+        ]
+      },
+      "group": "evm",
+      "status": {
+        "deprecated": "replaced by `lastFrameGas`"
+      },
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "lastFrameGas",
+        "description": "Gets the gas used in the last call or create from the callee perspective.",
+        "declaration": "function lastFrameGas() external view returns (Gas memory gas);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "lastFrameGas()",
+        "selector": "0x995d5b03",
+        "selectorBytes": [
+          153,
+          93,
+          91,
+          3
         ]
       },
       "group": "evm",
@@ -10695,7 +10717,7 @@
     {
       "func": {
         "id": "snapshotGasLastCall_0",
-        "description": "Snapshot capture the gas usage of the last call by name from the callee perspective.",
+        "description": "DEPRECATED: use `snapshotGasLastFrame` instead.\nSnapshot capture the gas usage of the last call by name from the callee perspective.",
         "declaration": "function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
@@ -10709,13 +10731,15 @@
         ]
       },
       "group": "evm",
-      "status": "stable",
+      "status": {
+        "deprecated": "replaced by `snapshotGasLastFrame`"
+      },
       "safety": "unsafe"
     },
     {
       "func": {
         "id": "snapshotGasLastCall_1",
-        "description": "Snapshot capture the gas usage of the last call by name in a group from the callee perspective.",
+        "description": "DEPRECATED: use `snapshotGasLastFrame` instead.\nSnapshot capture the gas usage of the last call by name in a group from the callee perspective.",
         "declaration": "function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);",
         "visibility": "external",
         "mutability": "",
@@ -10726,6 +10750,48 @@
           12,
           103,
           114
+        ]
+      },
+      "group": "evm",
+      "status": {
+        "deprecated": "replaced by `snapshotGasLastFrame`"
+      },
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotGasLastFrame_0",
+        "description": "Snapshot capture the gas usage of the last call or create by name from the callee perspective.",
+        "declaration": "function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGasLastFrame(string)",
+        "selector": "0xb95207cc",
+        "selectorBytes": [
+          185,
+          82,
+          7,
+          204
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "snapshotGasLastFrame_1",
+        "description": "Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.",
+        "declaration": "function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "snapshotGasLastFrame(string,string)",
+        "selector": "0x04eedcdf",
+        "selectorBytes": [
+          4,
+          238,
+          220,
+          223
         ]
       },
       "group": "evm",

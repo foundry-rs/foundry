@@ -27,7 +27,7 @@ use foundry_evm::{
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder, ShowmapDomain},
     fork::CreateFork,
-    fuzz::strategies::LiteralsDictionary,
+    fuzz::strategies::{EnumBounds, LiteralsDictionary},
     inspectors::CheatsConfig,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
@@ -72,6 +72,10 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     pub analysis: Arc<solar::sema::Compiler>,
     /// Literals dictionary for fuzzing.
     pub fuzz_literals: LiteralsDictionary,
+    /// Literals dictionary for invariant fuzzing.
+    pub invariant_literals: LiteralsDictionary,
+    /// Variant counts for project enums, used to constrain fuzzed enum inputs.
+    pub enum_bounds: EnumBounds,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -721,11 +725,24 @@ impl MultiContractRunnerBuilder {
         })?;
 
         let analysis = Arc::new(analysis);
+        // Enum variant counts used to constrain fuzzed enum inputs to valid values.
+        let enum_bounds = EnumBounds::collect(&analysis);
+        let fuzz_max_literals = self.config.fuzz.dictionary.max_fuzz_dictionary_literals;
+        let invariant_max_literals = self.config.invariant.dictionary.max_fuzz_dictionary_literals;
         let fuzz_literals = LiteralsDictionary::new(
             Some(analysis.clone()),
             Some(self.config.project_paths()),
-            self.config.fuzz.dictionary.max_fuzz_dictionary_literals,
+            fuzz_max_literals,
         );
+        let invariant_literals = if invariant_max_literals == fuzz_max_literals {
+            fuzz_literals.clone()
+        } else {
+            LiteralsDictionary::new(
+                Some(analysis.clone()),
+                Some(self.config.project_paths()),
+                invariant_max_literals,
+            )
+        };
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -735,6 +752,8 @@ impl MultiContractRunnerBuilder {
             libraries,
             analysis,
             fuzz_literals,
+            invariant_literals,
+            enum_bounds,
 
             tcfg: TestRunnerConfig {
                 evm_opts,

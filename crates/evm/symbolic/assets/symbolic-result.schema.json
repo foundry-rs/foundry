@@ -505,6 +505,14 @@
         "minimized_calldata_bytes": {
           "type": "integer",
           "minimum": 0
+        },
+        "original_sequence_len": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimized_sequence_len": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }
