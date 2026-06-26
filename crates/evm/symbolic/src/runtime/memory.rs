@@ -617,6 +617,7 @@ pub(crate) fn symbolic_copy_size_byte(
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SymCode {
     bytes: Arc<[SymExpr]>,
+    jump_table: JumpTable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -631,18 +632,30 @@ impl SymCode {
         Self::from_shared_bytes(bytes.into())
     }
 
-    pub(crate) const fn from_shared_bytes(bytes: Arc<[SymExpr]>) -> Self {
-        Self { bytes }
+    pub(crate) fn from_shared_bytes(bytes: Arc<[SymExpr]>) -> Self {
+        let analysis = bytes
+            .iter()
+            .map(|byte| byte.as_const().map_or(opcode::STOP, |value| value.to::<u8>()))
+            .collect::<Vec<_>>();
+        let analyzed = Bytecode::new_legacy(Bytes::from(analysis));
+        let jump_table = analyzed.legacy_jump_table().cloned().unwrap_or_default();
+        Self { bytes, jump_table }
     }
 
     pub(crate) fn concrete(bytes: Vec<u8>) -> Self {
-        Self {
-            bytes: bytes
-                .into_iter()
-                .map(|byte| SymExpr::constant(U256::from(byte)))
-                .collect::<Vec<_>>()
-                .into(),
-        }
+        Self::from_bytecode(&Bytecode::new_legacy(Bytes::from(bytes)))
+    }
+
+    pub(crate) fn from_bytecode(bytecode: &Bytecode) -> Self {
+        let bytes = bytecode
+            .original_byte_slice()
+            .iter()
+            .copied()
+            .map(|byte| SymExpr::constant(U256::from(byte)))
+            .collect::<Vec<_>>()
+            .into();
+        let jump_table = bytecode.legacy_jump_table().cloned().unwrap_or_default();
+        Self { bytes, jump_table }
     }
 
     pub(crate) fn from_memory_offset(memory: &SymMemory, offset: SymExpr, size: usize) -> Self {
@@ -668,6 +681,10 @@ impl SymCode {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.bytes.is_empty()
+    }
+
+    pub(crate) const fn jump_table(&self) -> &JumpTable {
+        &self.jump_table
     }
 
     pub(crate) fn opcode(&self, pc: usize) -> Result<Option<u8>, SymbolicError> {
@@ -703,12 +720,6 @@ impl SymCode {
                 }
             }
         }
-    }
-
-    pub(crate) fn analysis_opcode(&self, pc: usize) -> Option<u8> {
-        self.bytes
-            .get(pc)
-            .map(|byte| byte.as_const().map_or(opcode::STOP, |value| value.to::<u8>()))
     }
 
     pub(crate) fn concrete_range(

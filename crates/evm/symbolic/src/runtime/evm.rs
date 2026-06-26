@@ -247,28 +247,8 @@ pub(crate) fn shift_left(value: SymExpr, bits: usize) -> SymExpr {
     }
 }
 
-pub(crate) fn analyze_jumpdests(code: &SymCode) -> HashSet<usize> {
-    let mut jumpdests = HashSet::default();
-    let mut pc = 0;
-    while pc < code.len() {
-        let op = code.analysis_opcode(pc).unwrap_or(opcode::STOP);
-        if op == opcode::JUMPDEST {
-            jumpdests.insert(pc);
-            pc += 1;
-        } else if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
-            pc += 1 + (op - opcode::PUSH1 + 1) as usize;
-        } else {
-            pc += 1;
-        }
-    }
-    jumpdests
-}
-
-pub(crate) fn ensure_jumpdest(
-    dest: usize,
-    jumpdests: &HashSet<usize>,
-) -> Result<(), SymbolicError> {
-    if jumpdests.contains(&dest) { Ok(()) } else { Err(SymbolicError::InvalidJump(dest)) }
+pub(crate) fn ensure_jumpdest(dest: usize, jumpdests: &JumpTable) -> Result<(), SymbolicError> {
+    if jumpdests.is_valid(dest) { Ok(()) } else { Err(SymbolicError::InvalidJump(dest)) }
 }
 
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {

@@ -113,7 +113,6 @@ impl SymbolicExecutor {
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
         state.world.clear_transaction_scoped_state();
         let code = state.world.extcode(executor, target)?;
-        let jumpdests = analyze_jumpdests(&code);
         state.call_depth = 0;
         state.origin = sender;
         state.origin_word = SymExpr::constant(address_word(sender));
@@ -159,7 +158,7 @@ impl SymbolicExecutor {
                 match self.step(
                     executor,
                     &code,
-                    &jumpdests,
+                    code.jump_table(),
                     &mut state,
                     &mut worklist,
                     completed_paths,

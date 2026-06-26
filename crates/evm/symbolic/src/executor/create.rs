@@ -213,7 +213,6 @@ impl SymbolicExecutor {
         code: &SymCode,
         completed_paths: &mut usize,
     ) -> Result<Vec<ExternalCallOutcome>, SymbolicError> {
-        let jumpdests = analyze_jumpdests(code);
         let mut worklist = VecDeque::from([initial]);
         let mut outcomes = Vec::new();
         let path_limit = self.config.path_width() as usize;
@@ -279,7 +278,7 @@ impl SymbolicExecutor {
                 match self.step(
                     executor,
                     code,
-                    &jumpdests,
+                    code.jump_table(),
                     &mut state,
                     &mut worklist,
                     completed_paths,

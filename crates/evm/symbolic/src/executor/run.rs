@@ -151,10 +151,8 @@ impl SymbolicExecutor {
             .basic_ref(input.target)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?
             .ok_or(SymbolicError::MissingAccount(input.target))?;
-        let code =
-            account.code.ok_or(SymbolicError::MissingCode(input.target))?.original_bytes().to_vec();
-        let code = SymCode::concrete(code);
-        let jumpdests = analyze_jumpdests(&code);
+        let bytecode = account.code.ok_or(SymbolicError::MissingCode(input.target))?;
+        let code = SymCode::from_bytecode(&bytecode);
         let mut worklist = VecDeque::new();
         for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
             let mut root = PathState::new(
@@ -223,7 +221,7 @@ impl SymbolicExecutor {
                 match self.step(
                     input.executor,
                     &code,
-                    &jumpdests,
+                    code.jump_table(),
                     &mut state,
                     &mut worklist,
                     &mut completed_paths,

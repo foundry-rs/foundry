@@ -1372,9 +1372,10 @@ impl SymbolicWorld {
             return Ok(true);
         }
 
-        let code = account.code.map(|code| code.original_bytes().to_vec()).unwrap_or_default();
-        if !code.is_empty() {
-            self.code_cache.insert(address, SymCode::concrete(code));
+        if let Some(code) = account.code.as_ref()
+            && !code.is_empty()
+        {
+            self.code_cache.insert(address, SymCode::from_bytecode(code));
             self.existing_accounts.insert(address);
             return Ok(true);
         }
@@ -1404,16 +1405,15 @@ impl SymbolicWorld {
             .backend()
             .basic_ref(address)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
-        let code = account
-            .as_ref()
-            .and_then(|account| account.code.as_ref().map(|code| code.original_bytes().to_vec()))
-            .unwrap_or_default();
-        if let Some(account) = account
-            && (account.nonce != 0 || !account.balance.is_zero() || !code.is_empty())
+        if let Some(account) = account.as_ref()
+            && (account.nonce != 0
+                || !account.balance.is_zero()
+                || account.code.as_ref().is_some_and(|code| !code.is_empty()))
         {
             self.existing_accounts.insert(address);
         }
-        let code = SymCode::concrete(code);
+        let bytecode = account.as_ref().and_then(|account| account.code.as_ref());
+        let code = bytecode.map(SymCode::from_bytecode).unwrap_or_default();
         self.code_cache.insert(address, code.clone());
         Ok(code)
     }

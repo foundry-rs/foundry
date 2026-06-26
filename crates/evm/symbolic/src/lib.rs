@@ -23,7 +23,7 @@ use foundry_evm::{
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     executors::Executor,
     revm::{
-        bytecode::opcode,
+        bytecode::{Bytecode, JumpTable, opcode},
         context::{Block, Transaction},
         database::DatabaseRef,
         precompile::{blake2, bn254, hash, identity, kzg_point_evaluation, modexp, secp256k1},
