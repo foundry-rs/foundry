@@ -10,11 +10,12 @@ pub(crate) struct SymCalldata {
 impl SymCalldata {
     /// Constructs a new instance.
     pub(crate) fn new(bytes: Vec<SymWord>) -> Self {
-        Self {
-            size_word: SymWord::Concrete(U256::from(bytes.len())),
-            size: bytes.len(),
-            bytes: bytes.into(),
-        }
+        Self::from_shared(bytes.into())
+    }
+
+    /// Constructs a new instance from shared bytes.
+    pub(crate) fn from_shared(bytes: Arc<[SymWord]>) -> Self {
+        Self { size_word: SymWord::Concrete(U256::from(bytes.len())), size: bytes.len(), bytes }
     }
 
     /// Implements the `new_symbolic_size` symbolic calldata helper.

@@ -2,7 +2,7 @@ use super::{runtime::*, *};
 
 #[derive(Clone, Debug)]
 pub(super) struct SymbolicCalldata {
-    bytes: Vec<SymWord>,
+    bytes: Arc<[SymWord]>,
     inputs: Vec<SymbolicInput>,
     constraints: Vec<BoolExpr>,
 }
@@ -10,12 +10,12 @@ pub(super) struct SymbolicCalldata {
 impl SymbolicCalldata {
     /// Constructs a raw symbolic calldata fixture.
     #[cfg(test)]
-    pub(super) const fn from_raw(
+    pub(super) fn from_raw(
         bytes: Vec<SymWord>,
         inputs: Vec<SymbolicInput>,
         constraints: Vec<BoolExpr>,
     ) -> Self {
-        Self { bytes, inputs, constraints }
+        Self { bytes: bytes.into(), inputs, constraints }
     }
 
     /// Constructs a new instance.
@@ -46,7 +46,7 @@ impl SymbolicCalldata {
             .copied()
             .map(|byte| SymWord::Concrete(U256::from(byte)))
             .collect::<Vec<_>>();
-        Ok(Self { bytes, inputs: Vec::new(), constraints: Vec::new() })
+        Ok(Self { bytes: bytes.into(), inputs: Vec::new(), constraints: Vec::new() })
     }
 
     /// Implements the `variants_with_prefix` symbolic ABI helper.
@@ -98,7 +98,7 @@ impl SymbolicCalldata {
                     ));
                 }
 
-                Ok(Self { bytes, inputs, constraints: builder.constraints })
+                Ok(Self { bytes: bytes.into(), inputs, constraints: builder.constraints })
             })
             .collect()
     }
@@ -117,7 +117,7 @@ impl SymbolicCalldata {
 
     /// Implements the `call_data` symbolic ABI helper.
     pub(super) fn call_data(&self) -> SymCalldata {
-        SymCalldata::new(self.bytes.clone())
+        SymCalldata::from_shared(self.bytes.clone())
     }
 
     /// Returns symbolic calldata constraints.
@@ -132,7 +132,7 @@ impl SymbolicCalldata {
 
     /// Returns the encoded symbolic calldata length.
     #[cfg(test)]
-    pub(super) const fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.bytes.len()
     }
 
