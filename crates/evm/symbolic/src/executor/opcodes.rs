@@ -289,7 +289,7 @@ impl SymbolicExecutor {
                     Some(Ok(size)) => {
                         state
                             .memory
-                            .copy_symbolic_offset(dest, code.read_bytes_offset(offset, size));
+                            .copy_symbytes_offset(dest, code.read_symbytes_offset(offset, size));
                     }
                     Some(Err(_)) => {
                         return Ok(StepOutcome::Revert);
@@ -309,10 +309,10 @@ impl SymbolicExecutor {
                                 )
                             })?;
                         if max_size != 0 {
-                            state.memory.copy_symbolic_size_offset(
+                            state.memory.copy_symbytes_size_offset(
                                 dest,
                                 size,
-                                code.read_bytes_offset(offset, max_size),
+                                code.read_symbytes_offset(offset, max_size),
                             )?;
                         }
                     }

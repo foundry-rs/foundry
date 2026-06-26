@@ -4,20 +4,25 @@ use super::*;
 pub(crate) struct SymCalldata {
     size: usize,
     size_word: SymExpr,
-    bytes: Arc<[SymExpr]>,
+    bytes: SymBytes,
 }
 
 impl SymCalldata {
     pub(crate) fn new(bytes: Vec<SymExpr>) -> Self {
-        Self::from_shared(bytes.into())
+        let size = bytes.len();
+        Self { size_word: SymExpr::constant(U256::from(size)), size, bytes: SymBytes::exprs(bytes) }
     }
 
     pub(crate) fn from_shared(bytes: Arc<[SymExpr]>) -> Self {
-        Self { size_word: SymExpr::constant(U256::from(bytes.len())), size: bytes.len(), bytes }
+        Self {
+            size_word: SymExpr::constant(U256::from(bytes.len())),
+            size: bytes.len(),
+            bytes: SymBytes::from_shared_exprs(bytes),
+        }
     }
 
     pub(crate) fn new_symbolic_size(bytes: Vec<SymExpr>, size_word: SymExpr) -> Self {
-        Self { size: bytes.len(), size_word, bytes: bytes.into() }
+        Self { size: bytes.len(), size_word, bytes: SymBytes::exprs(bytes) }
     }
 
     pub(crate) fn size_word(&self) -> SymExpr {
@@ -36,11 +41,12 @@ impl SymCalldata {
     }
 
     pub(crate) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
+        Ok(self.bytes.word_at(offset))
     }
 
+    #[cfg(test)]
     pub(crate) fn byte(&self, offset: usize) -> SymExpr {
-        self.bytes.get(offset).cloned().unwrap_or_else(SymExpr::zero)
+        self.bytes.byte(offset)
     }
 
     pub(crate) fn load_dynamic(&self, offset: &SymExpr) -> Result<SymExpr, SymbolicError> {
@@ -55,16 +61,8 @@ impl SymCalldata {
         Ok(result)
     }
 
-    pub(crate) fn byte_dynamic_with_delta(&self, offset: &SymExpr, delta: usize) -> SymExpr {
-        let mut result = SymExpr::constant(U256::ZERO);
-        for candidate in (delta..self.size).rev() {
-            result = SymExpr::ite(
-                SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(candidate - delta))),
-                self.byte(candidate),
-                result,
-            );
-        }
-        result
+    pub(crate) fn read_symbytes_offset(&self, offset: SymExpr, size: usize) -> SymBytes {
+        self.bytes.read_offset(offset, size)
     }
 }
 

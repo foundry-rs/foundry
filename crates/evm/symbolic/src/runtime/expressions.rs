@@ -1,71 +1,5 @@
 use super::*;
 
-pub(crate) type SymbolicVars = IndexSet<Symbol>;
-
-pub(crate) type SymbolicModel = HashMap<Symbol, U256>;
-
-pub(crate) trait SymbolicModelLookup {
-    fn value(&self, name: Symbol) -> Option<U256>;
-
-    fn contains_name(&self, name: Symbol) -> bool {
-        self.value(name).is_some()
-    }
-}
-
-impl SymbolicModelLookup for SymbolicModel {
-    fn value(&self, name: Symbol) -> Option<U256> {
-        self.get(&name).copied()
-    }
-}
-
-#[cfg(test)]
-impl SymbolicModelLookup for BTreeMap<String, U256> {
-    fn value(&self, name: Symbol) -> Option<U256> {
-        self.get(name.as_str()).copied()
-    }
-}
-
-type SymbolInterner = inturn::Interner<Symbol, DefaultHashBuilder>;
-
-static SYMBOL_INTERNER: LazyLock<SymbolInterner> =
-    LazyLock::new(|| SymbolInterner::with_capacity_and_hasher(1024, DefaultHashBuilder::default()));
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct Symbol(NonZeroU32);
-
-impl Symbol {
-    pub(crate) fn intern(name: &str) -> Self {
-        SYMBOL_INTERNER.intern(name)
-    }
-
-    pub(crate) fn as_str(self) -> &'static str {
-        SYMBOL_INTERNER.resolve(self)
-    }
-}
-
-impl inturn::InternerSymbol for Symbol {
-    fn try_from_usize(id: usize) -> Option<Self> {
-        let id = u32::try_from(id).ok()?.checked_add(1)?;
-        NonZeroU32::new(id).map(Self)
-    }
-
-    fn to_usize(self) -> usize {
-        self.0.get() as usize - 1
-    }
-}
-
-impl fmt::Debug for Symbol {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.as_str(), f)
-    }
-}
-
-impl fmt::Display for Symbol {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 pub(crate) fn keccak_word(bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
     keccak_word_with_len(bytes, SymExpr::constant(U256::from(len)))
@@ -121,7 +55,7 @@ pub(crate) fn create2_address_word(
             Ok((word, address))
         }
         (_, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
-            let initcode_bytes = initcode.bytes().to_vec();
+            let initcode_bytes = initcode.bytes();
             let word = symbolic_create2_address_word(
                 state,
                 format!("{creator:?}"),
@@ -502,14 +436,11 @@ impl SymExpr {
     }
 
     pub(crate) fn into_bytes(self) -> Vec<Self> {
-        if let Some(word) = self.as_const() {
-            return word
-                .to_be_bytes::<32>()
-                .into_iter()
-                .map(|byte| Self::constant(U256::from(byte)))
-                .collect();
-        }
-        (0..32).map(|idx| byte_expr(idx, &self)).collect()
+        SymBytes::word(self).materialize()
+    }
+
+    pub(crate) fn into_symbytes(self) -> SymBytes {
+        SymBytes::word(self)
     }
 
     pub(crate) fn from_bytes(bytes: impl IntoIterator<Item = Self>) -> Self {
