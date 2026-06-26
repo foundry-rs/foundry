@@ -109,16 +109,16 @@ pub(crate) fn signextend_word_dynamic(byte_index: SymWord, value: SymWord) -> Sy
         return signextend_word(byte_index, value);
     }
 
-    let byte_index = byte_index.into_expr();
-    let mut result = value.clone().into_expr();
+    let byte_index = byte_index.into_arc_expr();
+    let mut result = value.clone_arc_expr();
     for idx in (0..32).rev() {
-        result = Expr::ite(
-            BoolExpr::eq(byte_index.clone(), Expr::Const(U256::from(idx))),
-            signextend_word(U256::from(idx), value.clone()).into_expr(),
+        result = Expr::ite_arc(
+            BoolExpr::eq_arc(Arc::clone(&byte_index), Arc::new(Expr::Const(U256::from(idx)))),
+            signextend_word(U256::from(idx), value.clone()).into_arc_expr(),
             result,
         );
     }
-    SymWord::from_expr(result)
+    SymWord::from_arc_expr(result)
 }
 
 /// Returns the `byte_word` EVM semantics helper result.

@@ -1261,21 +1261,22 @@ impl SymbolicWorld {
             return Ok(self.balance_word_for_address(executor, address));
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
-        let mut result = self.balance_word_for_address(executor, representative).into_expr();
+        let expr = word.into_arc_expr();
+        let representative =
+            representative_symbolic_address(&SymWord::from_arc_expr(Arc::clone(&expr)));
+        let mut result = self.balance_word_for_address(executor, representative).into_arc_expr();
         for (address, balance) in &self.balances {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = Expr::ite(
-                BoolExpr::eq(expr.clone(), Expr::Const(address_word(*address))),
-                balance.clone().into_expr(),
+            result = Expr::ite_arc(
+                BoolExpr::eq_arc(Arc::clone(&expr), Arc::new(Expr::Const(address_word(*address)))),
+                balance.clone_arc_expr(),
                 result,
             );
         }
 
-        Ok(SymWord::from_expr(result))
+        Ok(SymWord::from_arc_expr(result))
     }
 
     /// Applies the `set_balance_word` symbolic state helper.
@@ -1577,8 +1578,9 @@ impl SymbolicWorld {
             return Ok(self.extcode(executor, address)?.read_bytes_offset(offset, size));
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
+        let expr = word.into_arc_expr();
+        let representative =
+            representative_symbolic_address(&SymWord::from_arc_expr(Arc::clone(&expr)));
         let mut result =
             self.extcode(executor, representative)?.read_bytes_offset(offset.clone(), size);
         let cached_codes: Vec<_> =
@@ -1589,11 +1591,13 @@ impl SymbolicWorld {
             } else {
                 code.read_bytes_offset(offset.clone(), size)
             };
+            let condition =
+                BoolExpr::eq_arc(Arc::clone(&expr), Arc::new(Expr::Const(address_word(address))));
             for (idx, byte) in bytes.into_iter().enumerate() {
-                result[idx] = SymWord::from_expr(Expr::ite(
-                    BoolExpr::eq(expr.clone(), Expr::Const(address_word(address))),
-                    byte.into_expr(),
-                    result[idx].clone().into_expr(),
+                result[idx] = SymWord::from_arc_expr(Expr::ite_arc(
+                    condition.clone(),
+                    byte.into_arc_expr(),
+                    result[idx].clone_arc_expr(),
                 ));
             }
         }

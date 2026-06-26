@@ -44,9 +44,12 @@ pub(crate) fn symbolic_address_key(word: &SymWord) -> String {
 
 /// Returns the `address_match_condition` address normalization helper result.
 pub(crate) fn address_match_condition(word: &SymWord, address: Address) -> BoolExpr {
-    let expr = word.clone().into_expr();
-    let Some(terms) = address_byte_terms(&expr) else {
-        return BoolExpr::eq(expr, Expr::Const(address_word(address)));
+    let expr = match word {
+        SymWord::Concrete(word) => return BoolExpr::Const(*word == address_word(address)),
+        SymWord::Expr(expr) => expr,
+    };
+    let Some(terms) = address_byte_terms(expr) else {
+        return BoolExpr::eq_arc(Arc::clone(expr), Arc::new(Expr::Const(address_word(address))));
     };
     let bytes = address.as_slice();
     BoolExpr::and(
