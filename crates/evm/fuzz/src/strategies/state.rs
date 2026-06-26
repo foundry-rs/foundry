@@ -12,7 +12,9 @@ use alloy_primitives::{
     map::{AddressIndexSet, AddressMap, B256IndexSet, HashMap, HashSet, IndexSet},
 };
 use foundry_common::{
-    ignore_metadata_hash, mapping_slots::MappingSlots, slot_identifier::SlotIdentifier,
+    ignore_metadata_hash,
+    mapping_slots::MappingSlots,
+    slot_identifier::{SlotIdentifier, SlotInfo},
 };
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::{bytecode::InstIter, utils::StateChangeset};
@@ -248,6 +250,8 @@ pub struct FuzzDictionary {
     samples_seeded: bool,
     /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
     persistent_values: B256IndexSet,
+    /// Parsed storage layout identifiers keyed by the layout allocation.
+    slot_identifiers: HashMap<usize, SlotIdentifier>,
 
     misses: usize,
     hits: usize,
@@ -284,6 +288,7 @@ impl FuzzDictionary {
             sample_values: Default::default(),
             literal_values: Default::default(),
             persistent_values: Default::default(),
+            slot_identifiers: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
         };
@@ -320,7 +325,7 @@ impl FuzzDictionary {
                 let mut values = account.storage.iter().collect::<Vec<_>>();
                 values.sort_unstable_by_key(|(slot, _)| **slot);
                 for (slot, value) in values {
-                    self.insert_storage_value(slot, value, None, None);
+                    self.insert_storage_value(slot, value, None);
                 }
             }
         }
@@ -450,11 +455,14 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let slot_identifier = targets.get(address).and_then(|contract| {
-                    contract
-                        .storage_layout
-                        .as_ref()
-                        .map(|layout| SlotIdentifier::new(Arc::clone(layout)))
+                let slot_identifier_key = targets.get(address).and_then(|contract| {
+                    contract.storage_layout.as_ref().map(|layout| {
+                        let key = Arc::as_ptr(layout) as usize;
+                        self.slot_identifiers
+                            .entry(key)
+                            .or_insert_with(|| SlotIdentifier::new(Arc::clone(layout)));
+                        key
+                    })
                 });
                 trace!(
                     "{address:?} has mapping_slots {}",
@@ -462,12 +470,15 @@ impl FuzzDictionary {
                 );
                 let mapping_slots = mapping_slots.and_then(|m| m.get(address));
                 for (slot, value) in &account.storage {
-                    self.insert_storage_value(
-                        slot,
-                        &value.present_value,
-                        slot_identifier.as_ref(),
-                        mapping_slots,
-                    );
+                    let slot_info = slot_identifier_key.and_then(|key| {
+                        let slot = B256::from(*slot);
+                        let value_word = B256::from(value.present_value);
+                        self.slot_identifiers
+                            .get(&key)
+                            .and_then(|identifier| identifier.identify(&slot, mapping_slots))
+                            .filter(|slot_info| slot_info.decode(value_word).is_some())
+                    });
+                    self.insert_storage_value(slot, &value.present_value, slot_info);
                 }
             }
         }
@@ -514,25 +525,14 @@ impl FuzzDictionary {
 
     /// Insert values from single storage slot and storage value into fuzz dictionary.
     /// Uses [`SlotIdentifier`] to identify storage slots types.
-    fn insert_storage_value(
-        &mut self,
-        slot: &U256,
-        value: &U256,
-        slot_identifier: Option<&SlotIdentifier>,
-        mapping_slots: Option<&MappingSlots>,
-    ) {
+    fn insert_storage_value(&mut self, slot: &U256, value: &U256, slot_info: Option<SlotInfo>) {
         let slot = B256::from(*slot);
         let value_word = B256::from(*value);
 
         // Always insert the slot itself
         self.insert_value(slot);
 
-        // If we have a storage layout, use SlotIdentifier for better type identification.
-        if let Some(slot_identifier) = slot_identifier
-            // Identify slot type.
-            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots)
-            && slot_info.decode(value_word).is_some()
-        {
+        if let Some(slot_info) = slot_info {
             trace!(?slot_info, "inserting typed storage value");
             if !self.samples_seeded {
                 self.seed_samples();
