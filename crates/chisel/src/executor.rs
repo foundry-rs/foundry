@@ -195,7 +195,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 stack
                     .logs(self.config.foundry_config.live_logs)
                     .chisel_state(final_pc)
-                    .trace_requirements(TraceRequirements::default().with_calls(true))
+                    .trace_requirements(TraceRequirements::empty().with_calls(true))
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config.foundry_config,

@@ -46,7 +46,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
-        executor.set_trace_requirements(TraceRequirements::default().with_calls(true));
+        executor.set_trace_requirements(TraceRequirements::empty().with_calls(true));
     }
 
     let mut counterexample_sequence = vec![];

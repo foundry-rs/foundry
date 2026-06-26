@@ -766,7 +766,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         let prev_tracer = should_override_setup_tracing.then(|| {
             let prev_tracer = self.executor.inspector_mut().tracer.take();
-            self.executor.set_trace_requirements(TraceRequirements::default().with_calls(true));
+            self.executor.set_trace_requirements(TraceRequirements::empty().with_calls(true));
             prev_tracer
         });
 

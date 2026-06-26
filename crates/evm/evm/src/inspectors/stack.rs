@@ -96,7 +96,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             gas_price: None,
             cheatcodes: None,
             fuzzer: None,
-            trace_requirements: TraceRequirements::default(),
+            trace_requirements: TraceRequirements::empty(),
             logs: None,
             line_coverage: None,
             print: None,

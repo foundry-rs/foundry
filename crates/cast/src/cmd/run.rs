@@ -240,7 +240,7 @@ impl RunArgs {
             );
         }
 
-        let trace_requirements = TraceRequirements::default()
+        let trace_requirements = TraceRequirements::empty()
             .with_calls(true)
             .with_debug(self.debug)
             .with_decode_internal(if self.decode_internal {
