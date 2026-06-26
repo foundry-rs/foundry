@@ -2479,7 +2479,7 @@ mod tests {
     }
 
     #[test]
-    fn corpus_entry_write_uses_unparseable_temp_file() {
+    fn corpus_entry_write_uses_unparsable_temp_file() {
         let corpus_dir = temp_corpus_dir();
         let corpus = CorpusEntry::new(vec![basic_tx()]);
         let temp_path =
