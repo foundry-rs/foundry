@@ -656,15 +656,61 @@ impl AccessRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedRevert {
-    pub(crate) data: ExpectedRevertData,
-    pub(crate) reverter: Option<SymExpr>,
-    pub(crate) remaining: u64,
+    data: ExpectedRevertData,
+    reverter: Option<SymExpr>,
+    remaining: u64,
 }
 
 impl ExpectedRevert {
+    pub(crate) fn new(data: ExpectedRevertData, reverter: Option<SymExpr>, remaining: u64) -> Self {
+        Self { data, reverter, remaining: remaining.max(1) }
+    }
+
     pub(crate) const fn consume_one(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
         self.remaining == 0
+    }
+
+    pub(crate) fn match_condition(
+        &self,
+        reverter: Address,
+        return_data: &SymReturnData,
+    ) -> Option<SymBoolExpr> {
+        let mut conditions = Vec::new();
+        if let Some(expected_reverter) = &self.reverter {
+            conditions.push(address_match_condition(expected_reverter, reverter));
+        }
+        match &self.data {
+            ExpectedRevertData::Any => {}
+            ExpectedRevertData::Prefix(prefix) => {
+                if return_data.len() < prefix.len() {
+                    return None;
+                }
+                conditions.push(SymBoolExpr::cmp(
+                    SymBoolExprOp::Uge,
+                    return_data.len_expr(),
+                    SymExpr::constant(U256::from(prefix.len())),
+                ));
+                conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
+                    let actual = return_data.byte(offset);
+                    SymBoolExpr::eq_words(&actual, expected)
+                }));
+            }
+            ExpectedRevertData::Exact(data) => {
+                if return_data.len() < data.len() {
+                    return None;
+                }
+                conditions.push(SymBoolExpr::eq(
+                    return_data.len_expr(),
+                    SymExpr::constant(U256::from(data.len())),
+                ));
+                conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
+                    let actual = return_data.byte(offset);
+                    SymBoolExpr::eq_words(&actual, expected)
+                }));
+            }
+        }
+        Some(SymBoolExpr::and(conditions))
     }
 }
 

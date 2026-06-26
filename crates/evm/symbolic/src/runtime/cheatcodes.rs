@@ -654,48 +654,6 @@ pub(crate) fn read_abi_string_arg(
         .map_err(|_| SymbolicError::Unsupported(reason))
 }
 
-pub(crate) fn expected_revert_match_condition(
-    expected: &ExpectedRevert,
-    reverter: Address,
-    return_data: &SymReturnData,
-) -> Option<SymBoolExpr> {
-    let mut conditions = Vec::new();
-    if let Some(expected_reverter) = &expected.reverter {
-        conditions.push(address_match_condition(expected_reverter, reverter));
-    }
-    match &expected.data {
-        ExpectedRevertData::Any => {}
-        ExpectedRevertData::Prefix(prefix) => {
-            if return_data.len() < prefix.len() {
-                return None;
-            }
-            conditions.push(SymBoolExpr::cmp(
-                SymBoolExprOp::Uge,
-                return_data.len_expr(),
-                SymExpr::constant(U256::from(prefix.len())),
-            ));
-            conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
-                let actual = return_data.byte(offset);
-                SymBoolExpr::eq_words(&actual, expected)
-            }));
-        }
-        ExpectedRevertData::Exact(data) => {
-            if return_data.len() < data.len() {
-                return None;
-            }
-            conditions.push(SymBoolExpr::eq(
-                return_data.len_expr(),
-                SymExpr::constant(U256::from(data.len())),
-            ));
-            conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
-                let actual = return_data.byte(offset);
-                SymBoolExpr::eq_words(&actual, expected)
-            }));
-        }
-    }
-    Some(SymBoolExpr::and(conditions))
-}
-
 pub(crate) fn decode_cheatcode_args(
     state: &PathState,
     in_offset: usize,
@@ -817,7 +775,7 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
     } else {
         ExpectedRevertData::exact(revert_data)
     };
-    Ok(ExpectedRevert { data, reverter, remaining: 1 })
+    Ok(ExpectedRevert::new(data, reverter, 1))
 }
 
 pub(crate) fn dyn_potential_reverts(

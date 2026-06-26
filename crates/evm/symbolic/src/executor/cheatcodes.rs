@@ -37,8 +37,7 @@ impl SymbolicExecutor {
         reverter: Option<SymExpr>,
         remaining: u64,
     ) -> CheatcodeOutcome {
-        state.expected_revert =
-            Some(ExpectedRevert { data, reverter, remaining: remaining.max(1) });
+        state.expected_revert = Some(ExpectedRevert::new(data, reverter, remaining));
         CheatcodeOutcome::Continue(Vec::new())
     }
 

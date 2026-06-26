@@ -550,8 +550,7 @@ impl SymbolicExecutor {
         reverter: Address,
         return_data: &SymReturnData,
     ) -> Result<bool, SymbolicError> {
-        let Some(condition) = expected_revert_match_condition(expected, reverter, return_data)
-        else {
+        let Some(condition) = expected.match_condition(reverter, return_data) else {
             return Ok(false);
         };
 
@@ -585,7 +584,7 @@ impl SymbolicExecutor {
 
         let conditions = filters
             .iter()
-            .filter_map(|filter| expected_revert_match_condition(filter, reverter, return_data))
+            .filter_map(|filter| filter.match_condition(reverter, return_data))
             .collect::<Vec<_>>();
         if conditions.is_empty() {
             return Ok(false);
