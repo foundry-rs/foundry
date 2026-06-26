@@ -199,12 +199,20 @@ impl CorpusEntry {
 
     fn write_to_disk_in(&self, dir: &Path, can_gzip: bool) -> foundry_common::fs::Result<PathBuf> {
         let file_name = self.file_name(can_gzip);
-        let path = dir.join(file_name);
+        let path = dir.join(&file_name);
+        let temp_path = dir.join(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+
         if self.should_gzip(can_gzip) {
-            foundry_common::fs::write_json_gzip_file(&path, &self.tx_seq)?;
+            foundry_common::fs::write_json_gzip_file(&temp_path, &self.tx_seq)?;
         } else {
-            foundry_common::fs::write_json_file(&path, &self.tx_seq)?;
+            foundry_common::fs::write_json_file(&temp_path, &self.tx_seq)?;
         }
+
+        if let Err(err) = std::fs::rename(&temp_path, &path) {
+            let _ = foundry_common::fs::remove_file(&temp_path);
+            return Err(foundry_common::errors::FsPathError::write(err, &path));
+        }
+
         Ok(path)
     }
 
@@ -2445,6 +2453,22 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].uuid, corpus.uuid);
+    }
+
+    #[test]
+    fn corpus_entry_write_uses_unparseable_temp_file() {
+        let corpus_dir = temp_corpus_dir();
+        let corpus = CorpusEntry::new(vec![basic_tx()]);
+        let temp_path =
+            corpus_dir.join(format!(".{}.{}.tmp", corpus.file_name(false), Uuid::new_v4()));
+        fs::write(&temp_path, b"{").unwrap();
+
+        let path = corpus.write_to_disk_in(&corpus_dir, false).unwrap();
+        let entries = read_corpus_dir(&corpus_dir).collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, path);
+        assert!(temp_path.exists());
     }
 
     #[test]
