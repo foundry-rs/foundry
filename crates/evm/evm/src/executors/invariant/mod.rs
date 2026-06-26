@@ -633,10 +633,15 @@ struct InvariantCampaignSeed {
 
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     /// Instantiates an invariant test run.
-    fn new(first_input: BasicTxDetails, executor: Executor<FEN>, depth: usize) -> Self {
+    fn new(
+        first_input: BasicTxDetails,
+        executor: Executor<FEN>,
+        depth: usize,
+        collect_cmp_log: bool,
+    ) -> Self {
         Self {
             inputs: vec![first_input],
-            cmp_seq: Vec::with_capacity(depth),
+            cmp_seq: if collect_cmp_log { Vec::with_capacity(depth) } else { Vec::new() },
             executor,
             fuzz_runs: Vec::with_capacity(depth),
             created_contracts: vec![],
@@ -956,6 +961,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = config.corpus.collect_edge_coverage();
+        let collect_cmp_log =
+            invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count);
 
         'stop: while should_continue_invariant_worker(campaign_state, runs, plan) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
@@ -977,6 +984,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // Before each run, we must reset the backend state.
                 executor.clone(),
                 run_depth as usize,
+                collect_cmp_log,
             );
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
@@ -1020,10 +1028,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 if let Some(fuzzer) = current_run.executor.inspector_mut().fuzzer.as_mut() {
                     invariant_test.fuzz_state.collect_fuzzer_values(fuzzer);
                 }
-                // Capture per-call EVM cmp operands for I2S corpus mutation. Kept parallel
-                // to `current_run.inputs`; populated unconditionally so dropped calls (magic
-                // assumes / pops below) get zero-length entries that the corpus side filters out.
-                let call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
+                // Capture per-call EVM cmp operands for I2S corpus mutation only on workers
+                // that can feed cmp mutation. When enabled, keep this parallel to
+                // `current_run.inputs`; dropped calls (magic assumes / pops below) get
+                // zero-length entries that the corpus side filters out.
+                let call_cmp_values =
+                    collect_cmp_log.then(|| call_result.evm_cmp_values.take().unwrap_or_default());
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if config.show_metrics {
                     invariant_test.record_metrics(
@@ -1218,9 +1228,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                     };
 
-                    // Keep `cmp_seq` parallel to `inputs`: only push when the input survived the
-                    // pop branch above.
-                    if current_run.cmp_seq.len() < current_run.inputs.len() {
+                    // Keep `cmp_seq` parallel to `inputs` when cmp mutation is enabled: only push
+                    // when the input survived the pop branch above.
+                    if let Some(call_cmp_values) = call_cmp_values
+                        && current_run.cmp_seq.len() < current_run.inputs.len()
+                    {
                         current_run.cmp_seq.push(call_cmp_values);
                     }
 
