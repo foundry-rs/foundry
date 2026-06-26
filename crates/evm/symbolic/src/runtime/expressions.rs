@@ -808,6 +808,12 @@ pub(super) enum ExprInner {
     Ite(BoolExpr, Expr, Expr),
 }
 
+static EXPR_ZERO: LazyLock<Arc<ExprInner>> =
+    LazyLock::new(|| Arc::new(ExprInner::Const(U256::ZERO)));
+static EXPR_ONE: LazyLock<Arc<ExprInner>> =
+    LazyLock::new(|| Arc::new(ExprInner::Const(U256::from(1))));
+static EXPR_MAX: LazyLock<Arc<ExprInner>> = LazyLock::new(|| Arc::new(ExprInner::Const(U256::MAX)));
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) struct KeccakExpr {
     name: Symbol,
@@ -880,7 +886,10 @@ impl ModularExpr {
 
 impl Expr {
     fn from_inner(expr: ExprInner) -> Self {
-        Self(Arc::new(expr))
+        match expr {
+            ExprInner::Const(value) => Self::constant(value),
+            expr => Self(Arc::new(expr)),
+        }
     }
 
     pub(super) fn as_inner(&self) -> &ExprInner {
@@ -921,7 +930,15 @@ impl Expr {
     }
 
     pub(crate) fn constant(value: U256) -> Self {
-        Self::from_inner(ExprInner::Const(value))
+        if value.is_zero() {
+            Self(EXPR_ZERO.clone())
+        } else if value == U256::from(1) {
+            Self(EXPR_ONE.clone())
+        } else if value == U256::MAX {
+            Self(EXPR_MAX.clone())
+        } else {
+            Self(Arc::new(ExprInner::Const(value)))
+        }
     }
 
     pub(crate) fn as_const(&self) -> Option<U256> {
