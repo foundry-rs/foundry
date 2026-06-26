@@ -595,10 +595,10 @@ fn constraint_cache_key(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
 fn constraints_are_directly_unsat(constraints: &[BoolExpr]) -> bool {
-    constraints.iter().any(|constraint| match constraint {
-        BoolExpr::Const(false) => true,
-        BoolExpr::Not(inner) => constraints.binary_search(inner.as_ref()).is_ok(),
-        constraint => constraints.binary_search(&constraint.clone().not()).is_ok(),
+    constraints.iter().any(|constraint| match constraint.as_inner() {
+        BoolExprRef::Const(false) => true,
+        BoolExprRef::Not(inner) => constraints.binary_search(inner).is_ok(),
+        _ => constraints.binary_search(&constraint.clone().not()).is_ok(),
     })
 }
 
@@ -623,10 +623,10 @@ fn sorted_bool_exprs_are_subset(subset: &[BoolExpr], superset: &[BoolExpr]) -> b
 
 /// Returns a conservative canonical boolean expression for cache-key equality.
 fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
-    match expr {
-        BoolExpr::Const(_) => expr,
-        BoolExpr::Not(value) => cache_key_bool(Arc::unwrap_or_clone(value)).not(),
-        BoolExpr::And(values) => {
+    match expr.into_inner() {
+        BoolExprOwned::Const(value) => BoolExpr::Const(value),
+        BoolExprOwned::Not(value) => cache_key_bool(value).not(),
+        BoolExprOwned::And(values) => {
             let mut conjuncts = Vec::new();
             for value in values.iter().cloned().map(cache_key_bool) {
                 collect_cache_key_conjunct(value, &mut conjuncts);
@@ -635,12 +635,12 @@ fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
             conjuncts.dedup();
             BoolExpr::and(conjuncts)
         }
-        BoolExpr::Eq(left, right) => {
+        BoolExprOwned::Eq(left, right) => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             if left <= right { BoolExpr::eq(left, right) } else { BoolExpr::eq(right, left) }
         }
-        BoolExpr::Cmp(op, left, right) => {
+        BoolExprOwned::Cmp(op, left, right) => {
             cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
         }
     }
@@ -648,14 +648,14 @@ fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
 
 /// Collects cache-key conjuncts, flattening conjunctions because path constraints are conjunctive.
 fn collect_cache_key_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
-    match expr {
-        BoolExpr::Const(true) => {}
-        BoolExpr::And(values) => {
+    match expr.as_inner() {
+        BoolExprRef::Const(true) => {}
+        BoolExprRef::And(values) => {
             for value in values.iter().cloned() {
                 collect_cache_key_conjunct(value, out);
             }
         }
-        value => out.push(value),
+        _ => out.push(expr),
     }
 }
 
@@ -721,7 +721,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
             }
         }
         ExprInner::Ite(cond, left, right) => Expr::ite(
-            cache_key_bool(cond.as_ref().clone()),
+            cache_key_bool(cond.clone()),
             cache_key_expr(left.clone()),
             cache_key_expr(right.clone()),
         ),

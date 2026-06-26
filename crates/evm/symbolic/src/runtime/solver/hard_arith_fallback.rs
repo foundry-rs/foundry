@@ -1,11 +1,11 @@
 use super::*;
 
 pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_hard_arith(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_hard_arith),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+    match expr.as_inner() {
+        BoolExprRef::Const(_) => false,
+        BoolExprRef::Not(value) => bool_contains_hard_arith(value),
+        BoolExprRef::And(values) => values.iter().any(bool_contains_hard_arith),
+        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
             expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
         }
     }
@@ -51,11 +51,11 @@ pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
 /// Returns whether the boolean expression contains symbolic hash variables.
 pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
     let mut contains = false;
-    expr.visit(&mut |expr| match expr {
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+    expr.visit(&mut |expr| match expr.as_inner() {
+        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
             contains |= expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right);
         }
-        BoolExpr::Const(_) | BoolExpr::Not(_) | BoolExpr::And(_) => {}
+        BoolExprRef::Const(_) | BoolExprRef::Not(_) | BoolExprRef::And(_) => {}
     });
     contains
 }
@@ -265,15 +265,15 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
 
 /// Collects variables that local hard-arithmetic search can assign directly.
 pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut SymbolicVars) {
-    match expr {
-        BoolExpr::Const(_) => {}
-        BoolExpr::Not(value) => collect_bool_fallback_vars(value, vars),
-        BoolExpr::And(values) => {
-            for value in values.iter() {
+    match expr.as_inner() {
+        BoolExprRef::Const(_) => {}
+        BoolExprRef::Not(value) => collect_bool_fallback_vars(value, vars),
+        BoolExprRef::And(values) => {
+            for value in values {
                 collect_bool_fallback_vars(value, vars);
             }
         }
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
@@ -378,15 +378,15 @@ pub(crate) fn push_fallback_candidate(
 }
 
 pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut HashSet<U256>) {
-    match expr {
-        BoolExpr::Const(_) => {}
-        BoolExpr::Not(value) => collect_bool_constants(value, constants),
-        BoolExpr::And(values) => {
-            for value in values.iter() {
+    match expr.as_inner() {
+        BoolExprRef::Const(_) => {}
+        BoolExprRef::Not(value) => collect_bool_constants(value, constants),
+        BoolExprRef::And(values) => {
+            for value in values {
                 collect_bool_constants(value, constants);
             }
         }
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+        BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
         }
@@ -433,16 +433,16 @@ impl MaskHints {
     }
 
     pub(crate) fn apply_bool(&mut self, var: &str, expr: &BoolExpr, inverted: bool) {
-        match expr {
-            BoolExpr::Const(_) => {}
-            BoolExpr::Not(value) => self.apply_bool(var, value, !inverted),
-            BoolExpr::And(values) if !inverted => {
-                for value in values.iter() {
+        match expr.as_inner() {
+            BoolExprRef::Const(_) => {}
+            BoolExprRef::Not(value) => self.apply_bool(var, value, !inverted),
+            BoolExprRef::And(values) if !inverted => {
+                for value in values {
                     self.apply_bool(var, value, false);
                 }
             }
-            BoolExpr::Eq(left, right) => self.apply_equality(var, left, right, inverted),
-            BoolExpr::Cmp(_, _, _) | BoolExpr::And(_) => {}
+            BoolExprRef::Eq(left, right) => self.apply_equality(var, left, right, inverted),
+            BoolExprRef::Cmp(_, _, _) | BoolExprRef::And(_) => {}
         }
     }
 

@@ -364,16 +364,16 @@ pub(crate) fn bool_forces_expr_const_with_context(
     expr: &Expr,
     context: &[BoolExpr],
 ) -> Option<U256> {
-    match condition {
-        BoolExpr::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
+    match condition.as_inner() {
+        BoolExprRef::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
             (_, ExprInner::Const(value)) => expr_equality_forces_const(left, *value, expr, context),
             (ExprInner::Const(value), _) => {
                 expr_equality_forces_const(right, *value, expr, context)
             }
             _ => None,
         },
-        BoolExpr::Not(value) => match value.as_ref() {
-            BoolExpr::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
+        BoolExprRef::Not(value) => match value.as_inner() {
+            BoolExprRef::Eq(left, right) => match (left.as_inner(), right.as_inner()) {
                 (left, ExprInner::Const(value)) if value.is_zero() => {
                     expr_nonzero_forces_const_inner(left, expr, context)
                 }
@@ -382,10 +382,10 @@ pub(crate) fn bool_forces_expr_const_with_context(
                 }
                 _ => None,
             },
-            BoolExpr::Not(value) => bool_forces_expr_const_with_context(value, expr, context),
+            BoolExprRef::Not(value) => bool_forces_expr_const_with_context(value, expr, context),
             _ => None,
         },
-        BoolExpr::And(values) => values
+        BoolExprRef::And(values) => values
             .iter()
             .find_map(|value| bool_forces_expr_const_with_context(value, expr, context)),
         _ => None,
@@ -484,12 +484,12 @@ fn masked_expr_matches(candidate: &ExprInner, target: &Expr) -> Option<U256> {
 }
 
 pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, mask: U256) -> bool {
-    context.iter().any(|condition| match condition {
-        BoolExpr::Eq(left, right) => {
+    context.iter().any(|condition| match condition.as_inner() {
+        BoolExprRef::Eq(left, right) => {
             (left == target && masked_expr_matches(right.as_inner(), target) == Some(mask))
                 || (right == target && masked_expr_matches(left.as_inner(), target) == Some(mask))
         }
-        BoolExpr::And(values) => context_forces_masked_expr(values, target, mask),
+        BoolExprRef::And(values) => context_forces_masked_expr(values, target, mask),
         _ => false,
     })
 }
@@ -525,18 +525,18 @@ pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
 }
 
 pub(crate) fn bool_const_value(expr: &BoolExpr) -> Option<bool> {
-    match expr {
-        BoolExpr::Const(value) => Some(*value),
-        BoolExpr::Not(value) => Some(!bool_const_value(value)?),
-        BoolExpr::And(values) => {
+    match expr.as_inner() {
+        BoolExprRef::Const(value) => Some(value),
+        BoolExprRef::Not(value) => Some(!bool_const_value(value)?),
+        BoolExprRef::And(values) => {
             let mut all_true = true;
-            for value in values.iter() {
+            for value in values {
                 all_true &= bool_const_value(value)?;
             }
             Some(all_true)
         }
-        BoolExpr::Eq(left, right) => Some(expr_const_value(left)? == expr_const_value(right)?),
-        BoolExpr::Cmp(op, left, right) => {
+        BoolExprRef::Eq(left, right) => Some(expr_const_value(left)? == expr_const_value(right)?),
+        BoolExprRef::Cmp(op, left, right) => {
             let left = expr_const_value(left)?;
             let right = expr_const_value(right)?;
             Some(match op {
@@ -839,22 +839,22 @@ pub(crate) fn eval_bool_expr(
     expr: &BoolExpr,
     model: &(impl SymbolicModelLookup + ?Sized),
 ) -> Result<bool, SymbolicError> {
-    Ok(match expr {
-        BoolExpr::Const(value) => *value,
-        BoolExpr::Not(value) => !eval_bool_expr(value, model)?,
-        BoolExpr::And(values) => {
-            for value in values.iter() {
+    Ok(match expr.as_inner() {
+        BoolExprRef::Const(value) => value,
+        BoolExprRef::Not(value) => !eval_bool_expr(value, model)?,
+        BoolExprRef::And(values) => {
+            for value in values {
                 if !eval_bool_expr(value, model)? {
                     return Ok(false);
                 }
             }
             true
         }
-        BoolExpr::Eq(left, right) => eval_expr(left, model)? == eval_expr(right, model)?,
-        BoolExpr::Cmp(op, left, right) => {
+        BoolExprRef::Eq(left, right) => eval_expr(left, model)? == eval_expr(right, model)?,
+        BoolExprRef::Cmp(op, left, right) => {
             let left = eval_expr(left, model)?;
             let right = eval_expr(right, model)?;
-            eval_bool_cmp(*op, left, right)
+            eval_bool_cmp(op, left, right)
         }
     })
 }
@@ -919,10 +919,10 @@ impl SymWord {
     }
 
     pub(crate) fn from_bool(value: BoolExpr) -> Self {
-        match value {
-            BoolExpr::Const(value) => Self::constant(U256::from(value)),
+        match value.as_inner() {
+            BoolExprRef::Const(value) => Self::constant(U256::from(value)),
             value => Self::expr(Expr::ite(
-                value,
+                value.to_owned(),
                 Expr::constant(U256::from(1)),
                 Expr::constant(U256::ZERO),
             )),
@@ -942,13 +942,13 @@ impl SymWord {
                 if then_expr.as_const() == Some(U256::from(1))
                     && else_expr.as_const() == Some(U256::ZERO) =>
             {
-                Arc::unwrap_or_clone(cond).not()
+                cond.not()
             }
             ExprInner::Ite(cond, then_expr, else_expr)
                 if then_expr.as_const() == Some(U256::ZERO)
                     && else_expr.as_const() == Some(U256::from(1)) =>
             {
-                Arc::unwrap_or_clone(cond)
+                cond
             }
             expr => BoolExpr::eq(Expr::from_inner(expr), Expr::constant(U256::ZERO)),
         }
@@ -991,7 +991,7 @@ pub(super) enum ExprInner {
     Op(ExprOp, Expr, Expr),
     AddMod(ModularExpr),
     MulMod(ModularExpr),
-    Ite(Arc<BoolExpr>, Expr, Expr),
+    Ite(BoolExpr, Expr, Expr),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1157,7 +1157,7 @@ impl Expr {
                 if then_expr == else_expr {
                     then_expr
                 } else {
-                    Self::from_inner(ExprInner::Ite(Arc::new(cond), then_expr, else_expr))
+                    Self::from_inner(ExprInner::Ite(cond, then_expr, else_expr))
                 }
             }
         }
@@ -1475,24 +1475,101 @@ impl ExprOp {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum BoolExpr {
     Const(bool),
-    Not(Arc<Self>),
-    And(Arc<[Self]>),
+    Inner(Arc<BoolExprInner>),
+}
+
+impl fmt::Debug for BoolExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Const(value) => f.debug_tuple("Const").field(value).finish(),
+            Self::Inner(inner) => inner.fmt(f),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum BoolExprInner {
+    Not(BoolExpr),
+    And(Arc<[BoolExpr]>),
+    Eq(Expr, Expr),
+    Cmp(BoolExprOp, Expr, Expr),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum BoolExprRef<'a> {
+    Const(bool),
+    Not(&'a BoolExpr),
+    And(&'a [BoolExpr]),
+    Eq(&'a Expr, &'a Expr),
+    Cmp(BoolExprOp, &'a Expr, &'a Expr),
+}
+
+impl BoolExprRef<'_> {
+    fn to_owned(self) -> BoolExpr {
+        match self {
+            Self::Const(value) => BoolExpr::Const(value),
+            Self::Not(value) => BoolExpr::from_inner(BoolExprInner::Not(value.clone())),
+            Self::And(values) => {
+                BoolExpr::from_inner(BoolExprInner::And(values.iter().cloned().collect()))
+            }
+            Self::Eq(left, right) => {
+                BoolExpr::from_inner(BoolExprInner::Eq(left.clone(), right.clone()))
+            }
+            Self::Cmp(op, left, right) => {
+                BoolExpr::from_inner(BoolExprInner::Cmp(op, left.clone(), right.clone()))
+            }
+        }
+    }
+}
+
+pub(crate) enum BoolExprOwned {
+    Const(bool),
+    Not(BoolExpr),
+    And(Arc<[BoolExpr]>),
     Eq(Expr, Expr),
     Cmp(BoolExprOp, Expr, Expr),
 }
 
 impl BoolExpr {
+    fn from_inner(expr: BoolExprInner) -> Self {
+        Self::Inner(Arc::new(expr))
+    }
+
+    pub(crate) fn as_inner(&self) -> BoolExprRef<'_> {
+        match self {
+            Self::Const(value) => BoolExprRef::Const(*value),
+            Self::Inner(inner) => match inner.as_ref() {
+                BoolExprInner::Not(value) => BoolExprRef::Not(value),
+                BoolExprInner::And(values) => BoolExprRef::And(values),
+                BoolExprInner::Eq(left, right) => BoolExprRef::Eq(left, right),
+                BoolExprInner::Cmp(op, left, right) => BoolExprRef::Cmp(*op, left, right),
+            },
+        }
+    }
+
+    pub(crate) fn into_inner(self) -> BoolExprOwned {
+        match self {
+            Self::Const(value) => BoolExprOwned::Const(value),
+            Self::Inner(inner) => match Arc::unwrap_or_clone(inner) {
+                BoolExprInner::Not(value) => BoolExprOwned::Not(value),
+                BoolExprInner::And(values) => BoolExprOwned::And(values),
+                BoolExprInner::Eq(left, right) => BoolExprOwned::Eq(left, right),
+                BoolExprInner::Cmp(op, left, right) => BoolExprOwned::Cmp(op, left, right),
+            },
+        }
+    }
+
     /// Visits this boolean expression and all child boolean expressions.
     pub(crate) fn visit(&self, visitor: &mut impl FnMut(&Self)) {
         visitor(self);
-        match self {
-            Self::Const(_) | Self::Eq(_, _) | Self::Cmp(_, _, _) => {}
-            Self::Not(value) => value.visit(visitor),
-            Self::And(values) => {
-                for value in values.iter() {
+        match self.as_inner() {
+            BoolExprRef::Const(_) | BoolExprRef::Eq(_, _) | BoolExprRef::Cmp(_, _, _) => {}
+            BoolExprRef::Not(value) => value.visit(visitor),
+            BoolExprRef::And(values) => {
+                for value in values {
                     value.visit(visitor);
                 }
             }
@@ -1501,15 +1578,15 @@ impl BoolExpr {
 
     /// Visits all word expressions contained in this boolean expression.
     pub(crate) fn visit_exprs(&self, visitor: &mut impl FnMut(&Expr)) {
-        match self {
-            Self::Const(_) => {}
-            Self::Not(value) => value.visit_exprs(visitor),
-            Self::And(values) => {
-                for value in values.iter() {
+        match self.as_inner() {
+            BoolExprRef::Const(_) => {}
+            BoolExprRef::Not(value) => value.visit_exprs(visitor),
+            BoolExprRef::And(values) => {
+                for value in values {
                     value.visit_exprs(visitor);
                 }
             }
-            Self::Eq(left, right) | Self::Cmp(_, left, right) => {
+            BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
                 left.visit(visitor);
                 right.visit(visitor);
             }
@@ -1526,13 +1603,13 @@ impl BoolExpr {
                 if let Some(left_value) = expr_known_word(&left) {
                     return Self::Const(left_value == *right_value);
                 }
-                Self::Eq(left, right)
+                Self::from_inner(BoolExprInner::Eq(left, right))
             }
             (ExprInner::Const(left_value), _) => {
                 if let Some(right_value) = expr_known_word(&right) {
                     return Self::Const(*left_value == right_value);
                 }
-                Self::Eq(left, right)
+                Self::from_inner(BoolExprInner::Eq(left, right))
             }
             (ExprInner::Keccak(left), ExprInner::Keccak(right))
                 if left.bytes.len() == right.bytes.len() =>
@@ -1559,7 +1636,7 @@ impl BoolExpr {
                         .collect(),
                 )
             }
-            _ => Self::Eq(left, right),
+            _ => Self::from_inner(BoolExprInner::Eq(left, right)),
         }
     }
 
@@ -1585,11 +1662,11 @@ impl BoolExpr {
     pub(crate) fn and(values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {
-            match value {
-                Self::Const(true) => {}
-                Self::Const(false) => return Self::Const(false),
-                Self::And(values) => out.extend(values.iter().cloned()),
-                value => out.push(value),
+            match value.as_inner() {
+                BoolExprRef::Const(true) => {}
+                BoolExprRef::Const(false) => return Self::Const(false),
+                BoolExprRef::And(values) => out.extend(values.iter().cloned()),
+                _ => out.push(value),
             }
         }
         if out.is_empty() {
@@ -1597,17 +1674,22 @@ impl BoolExpr {
         } else if out.len() == 1 {
             out.pop().expect("single item exists")
         } else {
-            Self::And(out.into())
+            Self::from_inner(BoolExprInner::And(out.into()))
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn raw_and(values: Vec<Self>) -> Self {
+        Self::from_inner(BoolExprInner::And(values.into()))
     }
 
     pub(crate) fn or(values: Vec<Self>) -> Self {
         let mut out = Vec::new();
         for value in values {
-            match value {
-                Self::Const(false) => {}
-                Self::Const(true) => return Self::Const(true),
-                value => out.push(value),
+            match value.as_inner() {
+                BoolExprRef::Const(false) => {}
+                BoolExprRef::Const(true) => return Self::Const(true),
+                _ => out.push(value),
             }
         }
         if out.is_empty() {
@@ -1653,7 +1735,7 @@ impl BoolExpr {
             }
             _ => {}
         }
-        Self::Cmp(op, left, right)
+        Self::from_inner(BoolExprInner::Cmp(op, left, right))
     }
 
     /// Builds comparison between a symbolic word and a concrete value.
@@ -1671,21 +1753,20 @@ impl BoolExpr {
     }
 
     pub(crate) fn not(self) -> Self {
-        match self {
-            Self::Const(value) => Self::Const(!value),
-            Self::Not(value) => Arc::unwrap_or_clone(value),
-            Self::And(values) => Self::Not(Arc::new(Self::And(values))),
-            value => Self::Not(Arc::new(value)),
+        match self.as_inner() {
+            BoolExprRef::Const(value) => Self::Const(!value),
+            BoolExprRef::Not(value) => value.clone(),
+            _ => Self::from_inner(BoolExprInner::Not(self)),
         }
     }
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
-        self.visit(&mut |expr| match expr {
-            Self::Eq(left, right) | Self::Cmp(_, left, right) => {
+        self.visit(&mut |expr| match expr.as_inner() {
+            BoolExprRef::Eq(left, right) | BoolExprRef::Cmp(_, left, right) => {
                 left.collect_vars(vars);
                 right.collect_vars(vars);
             }
-            Self::Const(_) | Self::Not(_) | Self::And(_) => {}
+            BoolExprRef::Const(_) | BoolExprRef::Not(_) | BoolExprRef::And(_) => {}
         });
     }
 
@@ -1696,29 +1777,29 @@ impl BoolExpr {
     }
 
     fn write_smt(&self, out: &mut String) {
-        match self {
-            Self::Const(value) => out.push_str(if *value { "true" } else { "false" }),
-            Self::Not(value) => {
+        match self.as_inner() {
+            BoolExprRef::Const(value) => out.push_str(if value { "true" } else { "false" }),
+            BoolExprRef::Not(value) => {
                 out.push_str("(not ");
                 value.write_smt(out);
                 out.push(')');
             }
-            Self::And(values) => {
+            BoolExprRef::And(values) => {
                 out.push_str("(and");
-                for value in values.iter() {
+                for value in values {
                     out.push(' ');
                     value.write_smt(out);
                 }
                 out.push(')');
             }
-            Self::Eq(left, right) => {
+            BoolExprRef::Eq(left, right) => {
                 out.push_str("(= ");
                 left.write_smt(out);
                 out.push(' ');
                 right.write_smt(out);
                 out.push(')');
             }
-            Self::Cmp(op, left, right) => {
+            BoolExprRef::Cmp(op, left, right) => {
                 let _ = write!(out, "({} ", op.smt());
                 left.write_smt(out);
                 out.push(' ');
@@ -1757,23 +1838,23 @@ pub(crate) fn u256_to_usize(value: U256) -> Option<usize> {
 }
 
 pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &Expr) -> Option<usize> {
-    match condition {
-        BoolExpr::Const(_) | BoolExpr::Not(_) => None,
-        BoolExpr::And(values) => {
+    match condition.as_inner() {
+        BoolExprRef::Const(_) | BoolExprRef::Not(_) => None,
+        BoolExprRef::And(values) => {
             let mut bound: Option<usize> = None;
-            for value in values.iter() {
+            for value in values {
                 if let Some(candidate) = bool_upper_bound_usize(value, expr) {
                     bound = Some(bound.map_or(candidate, |bound| bound.min(candidate)));
                 }
             }
             bound
         }
-        BoolExpr::Eq(left, right) => match (left == expr, right == expr) {
+        BoolExprRef::Eq(left, right) => match (left == expr, right == expr) {
             (true, _) => expr_const_value(right).and_then(u256_to_usize),
             (_, true) => expr_const_value(left).and_then(u256_to_usize),
             _ => None,
         },
-        BoolExpr::Cmp(op, left, right) => {
+        BoolExprRef::Cmp(op, left, right) => {
             if left == expr {
                 match op {
                     BoolExprOp::Ult => expr_const_value(right)

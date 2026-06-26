@@ -105,7 +105,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
         }
         ExprInner::Not(value) => Some(Expr::not(expr_byte_term(value, index)?)),
         ExprInner::Ite(cond, then_expr, else_expr) => Some(Expr::ite(
-            cond.as_ref().clone(),
+            cond.clone(),
             expr_byte_term(then_expr, index)?,
             expr_byte_term(else_expr, index)?,
         )),

@@ -699,7 +699,7 @@ impl SymCode {
                     match then_expr.as_const() {
                         Some(value) if value.is_zero() => Ok(GuardedOpcode::Concrete(0)),
                         Some(value) => Ok(GuardedOpcode::SymbolicSize {
-                            condition: condition.as_ref().clone(),
+                            condition: condition.clone(),
                             opcode: value.to::<u8>(),
                         }),
                         None => Err(SymbolicError::Unsupported("symbolic bytecode opcode")),
