@@ -179,7 +179,7 @@ impl SymbolicExecutor {
                         kind,
                         &outcome.return_data,
                     )?;
-                    if !parent.world.destroyed_accounts.contains(&created) {
+                    if !parent.world.is_destroyed(created) {
                         parent.world.install_code(created, outcome.return_data.to_code()?);
                         parent.world.set_nonce(created, 1);
                     }

@@ -1204,8 +1204,8 @@ fn symbolic_world_tracks_created_code_and_nonce_overlay() {
     world.install_code(created, SymCode::concrete(vec![opcode::STOP]));
     world.set_nonce(created, 1);
 
-    assert_eq!(world.code_cache.get(&created), Some(&SymCode::concrete(vec![opcode::STOP])));
-    assert_eq!(world.nonces.get(&created), Some(&1));
+    assert_eq!(world.cached_code(created), Some(&SymCode::concrete(vec![opcode::STOP])));
+    assert_eq!(world.cached_nonce(created), Some(1));
 }
 
 #[test]
@@ -1703,8 +1703,8 @@ fn symbolic_world_snapshot_restores_overlay_state() {
     world.sstore(address, SymExpr::constant(U256::from(1)), SymExpr::constant(U256::from(3)));
 
     assert!(world.restore_snapshot(snapshot));
-    assert_eq!(world.storage.len(), 1);
-    assert_eq!(world.storage[0].value(), &SymExpr::constant(U256::from(2)));
+    assert_eq!(world.storage_len(), 1);
+    assert_eq!(world.storage_value(0), Some(&SymExpr::constant(U256::from(2))));
 }
 
 #[test]

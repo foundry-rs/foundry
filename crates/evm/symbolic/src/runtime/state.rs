@@ -1257,18 +1257,18 @@ impl StorageWrite {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymbolicWorldSnapshot {
-    pub(crate) storage: Vec<StorageWrite>,
-    pub(crate) transient_storage: Vec<StorageWrite>,
-    pub(crate) current_transaction_created_accounts: HashSet<Address>,
-    pub(crate) balances: HashMap<Address, SymExpr>,
-    pub(crate) code_cache: HashMap<Address, SymCode>,
-    pub(crate) nonces: HashMap<Address, u64>,
-    pub(crate) existing_accounts: HashSet<Address>,
-    pub(crate) destroyed_accounts: HashSet<Address>,
-    pub(crate) arbitrary_storage_accounts: HashSet<Address>,
-    pub(crate) arbitrary_storage_all: bool,
-    pub(crate) zero_init_symbolic_storage: bool,
-    pub(crate) symbolic_address_aliases: HashMap<SymExpr, Address>,
+    storage: Vec<StorageWrite>,
+    transient_storage: Vec<StorageWrite>,
+    current_transaction_created_accounts: HashSet<Address>,
+    balances: HashMap<Address, SymExpr>,
+    code_cache: HashMap<Address, SymCode>,
+    nonces: HashMap<Address, u64>,
+    existing_accounts: HashSet<Address>,
+    destroyed_accounts: HashSet<Address>,
+    arbitrary_storage_accounts: HashSet<Address>,
+    arbitrary_storage_all: bool,
+    zero_init_symbolic_storage: bool,
+    symbolic_address_aliases: HashMap<SymExpr, Address>,
 }
 
 impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
@@ -1294,23 +1294,47 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymbolicWorld {
-    pub(crate) storage: Vec<StorageWrite>,
-    pub(crate) transient_storage: Vec<StorageWrite>,
-    pub(crate) current_transaction_created_accounts: HashSet<Address>,
-    pub(crate) balances: HashMap<Address, SymExpr>,
-    pub(crate) code_cache: HashMap<Address, SymCode>,
-    pub(crate) nonces: HashMap<Address, u64>,
-    pub(crate) existing_accounts: HashSet<Address>,
-    pub(crate) destroyed_accounts: HashSet<Address>,
-    pub(crate) arbitrary_storage_accounts: HashSet<Address>,
-    pub(crate) arbitrary_storage_all: bool,
-    pub(crate) zero_init_symbolic_storage: bool,
-    pub(crate) symbolic_address_aliases: HashMap<SymExpr, Address>,
-    pub(crate) snapshots: HashMap<U256, SymbolicWorldSnapshot>,
-    pub(crate) next_snapshot_id: u64,
+    storage: Vec<StorageWrite>,
+    transient_storage: Vec<StorageWrite>,
+    current_transaction_created_accounts: HashSet<Address>,
+    balances: HashMap<Address, SymExpr>,
+    code_cache: HashMap<Address, SymCode>,
+    nonces: HashMap<Address, u64>,
+    existing_accounts: HashSet<Address>,
+    destroyed_accounts: HashSet<Address>,
+    arbitrary_storage_accounts: HashSet<Address>,
+    arbitrary_storage_all: bool,
+    zero_init_symbolic_storage: bool,
+    symbolic_address_aliases: HashMap<SymExpr, Address>,
+    snapshots: HashMap<U256, SymbolicWorldSnapshot>,
+    next_snapshot_id: u64,
 }
 
 impl SymbolicWorld {
+    pub(crate) fn is_destroyed(&self, address: Address) -> bool {
+        self.destroyed_accounts.contains(&address)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_code(&self, address: Address) -> Option<&SymCode> {
+        self.code_cache.get(&address)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_nonce(&self, address: Address) -> Option<u64> {
+        self.nonces.get(&address).copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn storage_len(&self) -> usize {
+        self.storage.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn storage_value(&self, index: usize) -> Option<&SymExpr> {
+        self.storage.get(index).map(StorageWrite::value)
+    }
+
     pub(crate) const fn set_storage_layout(&mut self, layout: SymbolicStorageLayout) {
         self.arbitrary_storage_all = matches!(layout, SymbolicStorageLayout::Generic);
         self.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
