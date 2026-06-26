@@ -247,10 +247,11 @@ impl Display for AccountStateDiffs {
 }
 
 impl Cheatcode for addrCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
-        let wallet = super::crypto::parse_wallet(privateKey)?;
-        Ok(wallet.address().abi_encode())
+        super::crypto::with_private_key_signer(state, privateKey, |wallet| {
+            Ok(wallet.address().abi_encode())
+        })
     }
 }
 

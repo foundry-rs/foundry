@@ -27,6 +27,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_rpc_types::AccessList;
+use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
@@ -631,6 +632,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
+    /// Parsed secp256k1 private-key signers for repeated `vm.addr` / `vm.sign` calls.
+    pub private_key_signers: HashMap<U256, PrivateKeySigner>,
     /// Signatures identifier for decoding events and functions
     signatures_identifier: OnceLock<Option<SignaturesIdentifier>>,
     /// Used to determine whether the broadcasted call has dynamic gas limit.
@@ -725,6 +728,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
+            private_key_signers: Default::default(),
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
             execution_evm_version: None,
