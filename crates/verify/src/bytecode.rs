@@ -3,7 +3,7 @@ use crate::{
     etherscan::EtherscanVerificationProvider,
     utils::{
         BytecodeType, JsonResult, check_and_encode_args, check_explorer_args, configure_env_block,
-        maybe_predeploy_contract,
+        load_fork_config_and_evm_opts, maybe_predeploy_contract,
     },
     verify::VerifierArgs,
 };
@@ -290,7 +290,7 @@ impl VerifyBytecodeArgs {
 
             // Deploy at genesis
             let gen_blk_num = 0_u64;
-            let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
+            let (mut fork_config, evm_opts) = load_fork_config_and_evm_opts(&config)?;
             let (mut evm_env, _, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 gen_blk_num,
@@ -497,7 +497,7 @@ impl VerifyBytecodeArgs {
             };
 
             // Fork the chain at `simulation_block`.
-            let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
+            let (mut fork_config, evm_opts) = load_fork_config_and_evm_opts(&config)?;
             let (mut evm_env, _tx_env, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 simulation_block - 1, // env.fork_block_number

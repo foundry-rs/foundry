@@ -55,54 +55,61 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     drop(dotenv);
 }
 
-fn collect_debug_dump_internal_calls<'a>(
+fn collect_debug_dump_values<'a, T>(
     value: &'a serde_json::Value,
-    calls: &mut Vec<&'a serde_json::Value>,
+    collected: &mut Vec<T>,
+    collect_from_object: &mut impl FnMut(&'a serde_json::Map<String, serde_json::Value>, &mut Vec<T>),
 ) {
     match value {
         serde_json::Value::Array(values) => {
             for value in values {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         serde_json::Value::Object(map) => {
-            if let Some(call) = map
-                .get("InternalCall")
-                .and_then(|value| value.as_array())
-                .and_then(|values| values.first())
-            {
-                calls.push(call);
-            }
+            collect_from_object(map, collected);
             for value in map.values() {
-                collect_debug_dump_internal_calls(value, calls);
+                collect_debug_dump_values(value, collected, collect_from_object);
             }
         }
         _ => {}
     }
 }
 
+fn collect_debug_dump_internal_calls<'a>(
+    value: &'a serde_json::Value,
+    calls: &mut Vec<&'a serde_json::Value>,
+) {
+    collect_debug_dump_values(value, calls, &mut |map, calls| {
+        if let Some(call) = map
+            .get("InternalCall")
+            .and_then(|value| value.as_array())
+            .and_then(|values| values.first())
+        {
+            calls.push(call);
+        }
+    });
+}
+
+fn collect_debug_dump_decoded_lines<'a>(value: &'a serde_json::Value, lines: &mut Vec<&'a str>) {
+    collect_debug_dump_values(value, lines, &mut |map, lines| {
+        if let Some(line) = map.get("Line").and_then(|value| value.as_str()) {
+            lines.push(line);
+        }
+    });
+}
+
 fn collect_debug_dump_storage_changes<'a>(
     value: &'a serde_json::Value,
     changes: &mut Vec<&'a serde_json::Value>,
 ) {
-    match value {
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_debug_dump_storage_changes(value, changes);
-            }
+    collect_debug_dump_values(value, changes, &mut |map, changes| {
+        if let Some(change) = map.get("storage_change")
+            && !change.is_null()
+        {
+            changes.push(change);
         }
-        serde_json::Value::Object(map) => {
-            if let Some(change) = map.get("storage_change")
-                && !change.is_null()
-            {
-                changes.push(change);
-            }
-            for value in map.values() {
-                collect_debug_dump_storage_changes(value, changes);
-            }
-        }
-        _ => {}
-    }
+    });
 }
 
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
@@ -2762,6 +2769,45 @@ contract Dummy {
     cmd.assert_success();
 
     assert!(dump_path.exists());
+});
+
+forgetest!(debug_dump_marks_precompile_call_steps, |prj, cmd| {
+    prj.add_test(
+        "PrecompileDebug.t.sol",
+        r#"
+contract PrecompileDebugTest {
+    function testSha256PrecompileDebug() public {
+        (bool ok, bytes memory output) = address(0x02).staticcall(hex"68656c6c6f");
+        require(ok, "sha256 precompile failed");
+        require(output.length == 32, "bad sha256 output");
+    }
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("precompile_dump.json");
+
+    cmd.args([
+        "test",
+        "--mt",
+        "testSha256PrecompileDebug",
+        "--debug",
+        "--dump",
+        dump_path.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dump: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dump_path).unwrap()).unwrap();
+    let mut lines = Vec::new();
+    collect_debug_dump_decoded_lines(&dump, &mut lines);
+
+    assert!(
+        lines.iter().any(|line| {
+            *line == "precompile: sha256 @ 0x0000000000000000000000000000000000000002 input=0x68656c6c6f output=0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        }),
+        "missing decoded precompile line in debugger dump: {lines:?}"
+    );
 });
 
 forgetest!(debug_dump_disambiguates_overloaded_internal_functions, |prj, cmd| {

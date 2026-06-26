@@ -10,6 +10,7 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
 };
+use foundry_cli::utils::LoadConfig;
 use foundry_common::{
     abi::encode_args,
     compile::{PathOrContractInfo, ProjectCompiler},
@@ -276,6 +277,20 @@ pub fn check_args_len(
     Ok(())
 }
 
+pub fn load_fork_config_and_evm_opts(config: &Config) -> Result<(Config, EvmOpts)> {
+    let chain = config.chain;
+    let mut fork_config = config.clone();
+    fork_config.chain = None;
+
+    let (mut fork_config, mut evm_opts) = fork_config.load_config_and_evm_opts()?;
+    fork_config.chain = chain;
+    if let Some(chain) = chain {
+        evm_opts.env.chain_id = Some(chain.id());
+    }
+
+    Ok((fork_config, evm_opts))
+}
+
 pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
@@ -466,6 +481,7 @@ mod tests {
     use crate::verify::VerifierArgs;
     use foundry_cli::opts::EtherscanOpts;
     use foundry_compilers::PathStyle;
+    use foundry_config::NamedChain;
     use foundry_test_utils::TestProject;
 
     #[test]
@@ -502,6 +518,16 @@ contract Counter {
         let artifact = build_project(&args, &config).unwrap();
 
         assert!(artifact.bytecode.and_then(|bytecode| bytecode.into_bytes()).is_some());
+    }
+
+    #[test]
+    fn load_fork_config_and_evm_opts_serializes_chain_as_id() {
+        let config = Config { chain: Some(NamedChain::Mainnet.into()), ..Default::default() };
+
+        let (fork_config, evm_opts) = load_fork_config_and_evm_opts(&config).unwrap();
+
+        assert_eq!(fork_config.chain, Some(NamedChain::Mainnet.into()));
+        assert_eq!(evm_opts.env.chain_id, Some(1));
     }
 
     #[test]
