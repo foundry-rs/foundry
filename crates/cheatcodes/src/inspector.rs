@@ -1327,6 +1327,27 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    #[inline(always)]
+    pub fn has_step_hooks(&self) -> bool {
+        self.broadcast.is_some()
+            || self.gas_metering.paused
+            || self.gas_metering.reset
+            || self.recording_accesses
+            || self.recorded_account_diffs_stack.is_some()
+            || !self.allowed_mem_writes.is_empty()
+            || self.mapping_slots.is_some()
+            || self.gas_metering.recording
+            || !self.env_overrides.is_empty()
+    }
+
+    #[inline(always)]
+    pub fn has_step_end_hooks(&self) -> bool {
+        self.gas_metering.paused
+            || self.gas_metering.touched
+            || self.arbitrary_storage.is_some()
+            || !self.env_overrides.is_empty()
+    }
+
     /// Returns struct definitions from the analysis, if available.
     pub fn struct_defs(&self) -> Option<&foundry_common::fmt::StructDefinitions> {
         self.analysis.as_ref().and_then(|analysis| analysis.struct_defs().ok())
@@ -1361,6 +1382,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.pc = interpreter.bytecode.pc();
+
+        if !self.has_step_hooks() {
+            return;
+        }
 
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interpreter);
@@ -1436,6 +1461,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
+        if !self.has_step_end_hooks() {
+            return;
+        }
+
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -3057,5 +3086,26 @@ mod tests {
     fn flag_on_with_broadcast_depth_match_returns_true() {
         let mut cheats = cheats(true, Some(broadcast_at(1)));
         assert!(cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn default_cheatcodes_have_no_opcode_hooks() {
+        let cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+        assert!(!cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
+    }
+
+    #[test]
+    fn active_cheatcode_state_enables_opcode_hooks() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+
+        cheats.recording_accesses = true;
+        assert!(cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
+
+        cheats.recording_accesses = false;
+        cheats.gas_metering.touched = true;
+        assert!(!cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
     }
 }

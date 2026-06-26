@@ -34,7 +34,7 @@ use revm::{
     handler::FrameResult,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterResult, return_ok,
+        InstructionResult, Interpreter, InterpreterResult, interpreter_types::Jumps, return_ok,
     },
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
@@ -1030,11 +1030,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 &mut self.revert_diag,
                 &mut self.script_execution_inspector,
                 &mut self.tracer,
-                // Keep `cheatcodes` last to make use of the tail call.
-                &mut self.cheatcodes,
             ],
             |inspector| (**inspector).step(interpreter, ecx),
         );
+
+        if let Some(cheats) = self.cheatcodes.as_mut() {
+            cheats.pc = interpreter.bytecode.pc();
+            if cheats.has_step_hooks() {
+                crate::utils::cold_path();
+                cheats.step(interpreter, ecx);
+            }
+        }
     }
 
     #[inline(always)]
@@ -1050,11 +1056,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 &mut self.printer,
                 &mut self.revert_diag,
                 &mut self.tracer,
-                // Keep `cheatcodes` last to make use of the tail call.
-                &mut self.cheatcodes,
             ],
             |inspector| (**inspector).step_end(interpreter, ecx),
         );
+
+        if let Some(cheats) = self.cheatcodes.as_mut()
+            && cheats.has_step_end_hooks()
+        {
+            crate::utils::cold_path();
+            cheats.step_end(interpreter, ecx);
+        }
     }
 }
 
