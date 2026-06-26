@@ -9,18 +9,18 @@ impl fmt::Debug for SymBytes {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum SymBytesKind {
-    Concrete(Arc<[u8]>),
-    Exprs(Arc<[SymExpr]>),
+    Concrete(Vec<u8>),
+    Exprs(Vec<SymExpr>),
     Word(SymExpr),
-    Concat(Arc<[SymBytes]>),
+    Concat(Vec<SymBytes>),
     Slice { bytes: SymBytes, offset: SymExpr, len: usize },
     Sized { bytes: SymBytes, size: SymExpr, max_size: usize },
 }
 
 static BYTES_EMPTY: LazyLock<Arc<SymBytesKind>> =
-    LazyLock::new(|| Arc::new(SymBytesKind::Concrete(Vec::<u8>::new().into())));
+    LazyLock::new(|| Arc::new(SymBytesKind::Concrete(Vec::new())));
 
 impl Default for SymBytes {
     fn default() -> Self {
@@ -41,18 +41,10 @@ impl SymBytes {
     }
 
     pub(crate) fn concrete(bytes: Vec<u8>) -> Self {
-        Self::from_kind(SymBytesKind::Concrete(bytes.into()))
+        Self::from_kind(SymBytesKind::Concrete(bytes))
     }
 
     pub(crate) fn exprs(bytes: Vec<SymExpr>) -> Self {
-        if let Ok(concrete) = bytes.concrete_bytes("symbolic bytes") {
-            Self::concrete(concrete)
-        } else {
-            Self::from_kind(SymBytesKind::Exprs(bytes.into()))
-        }
-    }
-
-    pub(crate) fn from_shared_exprs(bytes: Arc<[SymExpr]>) -> Self {
         if let Ok(concrete) = bytes.concrete_bytes("symbolic bytes") {
             Self::concrete(concrete)
         } else {
@@ -80,7 +72,7 @@ impl SymBytes {
         match out.len() {
             0 => Self::default(),
             1 => out.pop().expect("single item exists"),
-            _ => Self::from_kind(SymBytesKind::Concat(out.into())),
+            _ => Self::from_kind(SymBytesKind::Concat(out)),
         }
     }
 
@@ -145,7 +137,7 @@ impl SymBytes {
             }
             SymBytesKind::Concat(values) => {
                 let mut offset = offset;
-                for bytes in values.iter() {
+                for bytes in values {
                     if offset < bytes.len() {
                         return bytes.byte(offset);
                     }
@@ -240,7 +232,7 @@ impl SymBytes {
 
     pub(crate) fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
         match self.kind() {
-            SymBytesKind::Concrete(bytes) => Ok(bytes.to_vec()),
+            SymBytesKind::Concrete(bytes) => Ok(bytes.clone()),
             _ => self.materialize().concrete_bytes(reason),
         }
     }

@@ -17,7 +17,7 @@ impl SymCalldata {
         Self {
             size_word: SymExpr::constant(U256::from(bytes.len())),
             size: bytes.len(),
-            bytes: SymBytes::from_shared_exprs(bytes),
+            bytes: SymBytes::exprs(bytes.iter().cloned().collect()),
         }
     }
 
