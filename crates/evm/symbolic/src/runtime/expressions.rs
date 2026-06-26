@@ -82,7 +82,7 @@ pub(crate) fn keccak_word_with_len(bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr
 
     let exprs = bytes;
     let name = stable_symbol("keccak", format!("{len:?}:{exprs:?}").as_bytes());
-    SymExpr::keccak(&name, len, exprs)
+    SymExpr::keccak_symbol(name, len, exprs)
 }
 
 pub(crate) fn symbolic_hash_word_with_len(
@@ -95,7 +95,7 @@ pub(crate) fn symbolic_hash_word_with_len(
     let mut identity = Vec::with_capacity(exprs.len() + 1);
     identity.push(len);
     identity.extend(exprs);
-    SymExpr::hash(&name, algorithm, identity)
+    SymExpr::hash_symbol(name, algorithm, identity)
 }
 
 pub(crate) fn create2_address_word(
@@ -193,7 +193,7 @@ pub(crate) fn symbolic_create_address_word(
     nonce: SymExpr,
 ) -> SymExpr {
     let name = stable_symbol("create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
-    let word = SymExpr::var(&name);
+    let word = SymExpr::var_symbol(name);
     state.constraints.push(SymBoolExpr::cmp_word_const(
         SymBoolExprOp::Ult,
         &word,
@@ -212,7 +212,7 @@ pub(crate) fn symbolic_create2_address_word(
         "create2_address",
         format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
     );
-    let word = SymExpr::var(&name);
+    let word = SymExpr::var_symbol(name);
     state.constraints.push(SymBoolExpr::cmp_word_const(
         SymBoolExprOp::Ult,
         &word,
@@ -1051,16 +1051,8 @@ impl SymExpr {
         Self::from_kind(SymExprKind::GasLeft(id))
     }
 
-    pub(crate) fn keccak(name: &str, len: Self, bytes: Vec<Self>) -> Self {
-        Self::keccak_symbol(Symbol::intern(name), len, bytes)
-    }
-
     pub(crate) fn keccak_symbol(name: Symbol, len: Self, bytes: Vec<Self>) -> Self {
         Self::from_kind(SymExprKind::Keccak { name, len, bytes: bytes.into() })
-    }
-
-    pub(crate) fn hash(name: &str, algorithm: &'static str, bytes: Vec<Self>) -> Self {
-        Self::hash_symbol(Symbol::intern(name), algorithm, bytes)
     }
 
     pub(crate) fn hash_symbol(name: Symbol, algorithm: &'static str, bytes: Vec<Self>) -> Self {

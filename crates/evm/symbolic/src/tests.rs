@@ -2644,7 +2644,7 @@ fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
 #[test]
 fn hard_arithmetic_fallback_skips_symbolic_hashes() {
     let x = SymExpr::var("x");
-    let hash = SymExpr::hash("hash", "sha256", vec![x.clone()]);
+    let hash = SymExpr::hash_symbol(Symbol::intern("hash"), "sha256", vec![x.clone()]);
     let constraints = vec![SymBoolExpr::eq(
         SymExpr::op(SymExprOp::Mul, x, hash),
         SymExpr::constant(U256::from(1)),

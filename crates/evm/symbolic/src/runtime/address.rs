@@ -101,7 +101,7 @@ pub(crate) fn is_shift_96(expr: &SymExpr) -> bool {
     expr.as_const() == Some(U256::from(96))
 }
 
-pub(crate) fn stable_symbol(prefix: &'static str, input: &[u8]) -> String {
+pub(crate) fn stable_symbol(prefix: &'static str, input: &[u8]) -> Symbol {
     let digest = keccak256(input);
     let mut symbol = String::with_capacity(prefix.len() + 17);
     symbol.push_str(prefix);
@@ -109,5 +109,5 @@ pub(crate) fn stable_symbol(prefix: &'static str, input: &[u8]) -> String {
     for byte in &digest[..8] {
         let _ = write!(symbol, "{byte:02x}");
     }
-    symbol
+    Symbol::intern(&symbol)
 }

@@ -1502,7 +1502,7 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
             let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            return Ok(SymExpr::var(&name));
+            return Ok(SymExpr::var_symbol(name));
         }
         if let Some(key) = concrete_key {
             return executor
@@ -1521,7 +1521,7 @@ impl SymbolicWorld {
             Ok(SymExpr::zero())
         } else {
             let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
-            Ok(SymExpr::var(&name))
+            Ok(SymExpr::var_symbol(name))
         }
     }
 
