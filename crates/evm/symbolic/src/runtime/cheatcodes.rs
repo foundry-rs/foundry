@@ -366,8 +366,8 @@ pub(crate) fn accesses_return_data(
     record: Option<&AccessRecord>,
     target: Address,
 ) -> SymReturnData {
-    let reads = record.and_then(|record| record.reads.get(&target)).cloned().unwrap_or_default();
-    let writes = record.and_then(|record| record.writes.get(&target)).cloned().unwrap_or_default();
+    let reads = record.map(|record| record.read_slots(target)).unwrap_or_default();
+    let writes = record.map(|record| record.write_slots(target)).unwrap_or_default();
     let values = [storage_slots_abi_array(reads), storage_slots_abi_array(writes)];
     SymReturnData::from_symbolic_bytes(encode_sequence(values.iter()))
 }

@@ -2,15 +2,6 @@ use foundry_cheatcodes_spec::Vm::*;
 
 use super::*;
 
-fn sorted_access_record_addresses(record: &AccessRecord) -> Vec<Address> {
-    let mut addresses = HashSet::<Address>::default();
-    addresses.extend(record.reads.keys().copied());
-    addresses.extend(record.writes.keys().copied());
-    let mut addresses = addresses.into_iter().collect::<Vec<_>>();
-    addresses.sort_unstable();
-    addresses
-}
-
 impl SymbolicExecutor {
     pub(super) fn handle_assertion(
         &mut self,
@@ -74,17 +65,7 @@ impl SymbolicExecutor {
         data: Vec<SymExpr>,
         count: Option<u64>,
     ) -> CheatcodeOutcome {
-        let (gas, min_gas) = adjust_expected_call_gas_for_value(value, gas, min_gas);
-        state.expected_calls.push(ExpectedCall {
-            callee,
-            value,
-            gas,
-            min_gas,
-            data: data.into(),
-            expected: count.unwrap_or(1).max(1),
-            observed: 0,
-            exact: count.is_some(),
-        });
+        state.expected_calls.push(ExpectedCall::new(callee, value, gas, min_gas, data, count));
         CheatcodeOutcome::Continue(Vec::new())
     }
 
@@ -375,7 +356,7 @@ impl SymbolicExecutor {
             return Ok(None);
         }
 
-        let addresses = sorted_access_record_addresses(&record);
+        let addresses = record.addresses();
         if addresses.is_empty() {
             return Ok(None);
         }
@@ -433,7 +414,7 @@ impl SymbolicExecutor {
             return Ok(accesses_return_data(Some(&record), word_to_address(target)));
         }
 
-        let addresses = sorted_access_record_addresses(&record);
+        let addresses = record.addresses();
         if addresses.is_empty() {
             return Ok(accesses_return_data(Some(&record), Address::ZERO));
         }

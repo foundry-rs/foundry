@@ -617,38 +617,40 @@ pub(crate) struct SymbolicLog {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
-    pub(crate) reads: HashMap<Address, Vec<SymExpr>>,
-    pub(crate) writes: HashMap<Address, Vec<SymExpr>>,
+    reads: HashMap<Address, Vec<SymExpr>>,
+    writes: HashMap<Address, Vec<SymExpr>>,
 }
 
 impl AccessRecord {
     pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
-        push_unique_slot(self.reads.entry(address).or_default(), slot);
+        Self::push_unique_slot(self.reads.entry(address).or_default(), slot);
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
-        push_unique_slot(self.writes.entry(address).or_default(), slot);
+        Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
     }
-}
 
-pub(crate) fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
-    if !slots.iter().any(|existing| existing == &slot) {
-        slots.push(slot);
+    pub(crate) fn addresses(&self) -> Vec<Address> {
+        let mut addresses = HashSet::<Address>::default();
+        addresses.extend(self.reads.keys().copied());
+        addresses.extend(self.writes.keys().copied());
+        let mut addresses = addresses.into_iter().collect::<Vec<_>>();
+        addresses.sort_unstable();
+        addresses
     }
-}
 
-pub(crate) fn adjust_expected_call_gas_for_value(
-    value: Option<U256>,
-    gas: Option<u64>,
-    min_gas: Option<u64>,
-) -> (Option<u64>, Option<u64>) {
-    if value.is_some_and(|value| !value.is_zero()) {
-        (
-            gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
-            min_gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
-        )
-    } else {
-        (gas, min_gas)
+    pub(crate) fn read_slots(&self, address: Address) -> Vec<SymExpr> {
+        self.reads.get(&address).cloned().unwrap_or_default()
+    }
+
+    pub(crate) fn write_slots(&self, address: Address) -> Vec<SymExpr> {
+        self.writes.get(&address).cloned().unwrap_or_default()
+    }
+
+    fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
+        if !slots.iter().any(|existing| existing == &slot) {
+            slots.push(slot);
+        }
     }
 }
 
@@ -709,6 +711,34 @@ pub(crate) struct ExpectedCreate {
 }
 
 impl ExpectedCall {
+    pub(crate) fn new(
+        callee: SymExpr,
+        value: Option<U256>,
+        gas: Option<u64>,
+        min_gas: Option<u64>,
+        data: Vec<SymExpr>,
+        count: Option<u64>,
+    ) -> Self {
+        let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
+            (
+                gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
+                min_gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
+            )
+        } else {
+            (gas, min_gas)
+        };
+        Self {
+            callee,
+            value,
+            gas,
+            min_gas,
+            data: data.into(),
+            expected: count.unwrap_or(1).max(1),
+            observed: 0,
+            exact: count.is_some(),
+        }
+    }
+
     pub(crate) fn static_parts_match(
         &self,
         value: Option<U256>,
