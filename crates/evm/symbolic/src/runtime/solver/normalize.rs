@@ -27,28 +27,30 @@ fn normalize_constraint_batch(
         if constraint.as_const() == Some(false) {
             return vec![SymBoolExpr::constant(false)];
         }
-        collect_normalized_conjunct(constraint, &mut normalized);
+        constraint.push_normalized_conjuncts(&mut normalized);
     }
     normalized.sort();
     normalized.dedup();
     normalized
 }
 
-fn collect_normalized_conjunct(expr: SymBoolExpr, out: &mut Vec<SymBoolExpr>) {
-    match expr.kind() {
-        SymBoolExprKind::Const(true) => {}
-        SymBoolExprKind::And(values) => {
-            for value in values.iter().cloned() {
-                collect_normalized_conjunct(value, out);
-            }
-        }
-        _ => out.push(expr),
-    }
-}
-
 /// Normalizes one boolean expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_bool_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
     expr.fold(&mut normalize_bool_node_for_solver)
+}
+
+impl SymBoolExpr {
+    fn push_normalized_conjuncts(self, out: &mut Vec<Self>) {
+        match self.kind() {
+            SymBoolExprKind::Const(true) => {}
+            SymBoolExprKind::And(values) => {
+                for value in values.iter().cloned() {
+                    value.push_normalized_conjuncts(out);
+                }
+            }
+            _ => out.push(self),
+        }
+    }
 }
 
 fn normalize_bool_node_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
