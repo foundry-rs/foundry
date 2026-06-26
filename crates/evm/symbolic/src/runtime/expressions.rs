@@ -1736,16 +1736,12 @@ impl SymBoolExpr {
     pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {
         let expr = match self.into_kind() {
             SymBoolExprKind::Const(value) => Self::constant(value),
-            SymBoolExprKind::Not(value) => {
-                Self::from_kind(SymBoolExprKind::Not(value.fold(folder)))
+            SymBoolExprKind::Not(value) => value.fold(folder).not(),
+            SymBoolExprKind::And(values) => {
+                Self::and(values.iter().cloned().map(|value| value.fold(folder)).collect())
             }
-            SymBoolExprKind::And(values) => Self::from_kind(SymBoolExprKind::And(
-                values.iter().cloned().map(|value| value.fold(folder)).collect::<Vec<_>>().into(),
-            )),
-            SymBoolExprKind::Eq(left, right) => Self::from_kind(SymBoolExprKind::Eq(left, right)),
-            SymBoolExprKind::Cmp(op, left, right) => {
-                Self::from_kind(SymBoolExprKind::Cmp(op, left, right))
-            }
+            SymBoolExprKind::Eq(left, right) => Self::eq(left, right),
+            SymBoolExprKind::Cmp(op, left, right) => Self::cmp(op, left, right),
         };
         folder(expr)
     }
