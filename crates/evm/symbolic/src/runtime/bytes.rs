@@ -44,6 +44,13 @@ impl SymBytes {
         Self::from_kind(SymBytesKind::Concrete(bytes))
     }
 
+    pub(crate) fn as_concrete_slice(&self) -> Option<&[u8]> {
+        match self.kind() {
+            SymBytesKind::Concrete(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
     pub(crate) fn exprs(bytes: Vec<SymExpr>) -> Self {
         if let Ok(concrete) = bytes.concrete_bytes("symbolic bytes") {
             Self::concrete(concrete)
@@ -86,6 +93,10 @@ impl SymBytes {
             };
             return bytes.slice_concrete(offset, len);
         }
+        Self::slice_node(bytes, offset, len)
+    }
+
+    fn slice_node(bytes: Self, offset: SymExpr, len: usize) -> Self {
         Self::from_kind(SymBytesKind::Slice { bytes, offset, len })
     }
 
@@ -148,6 +159,14 @@ impl SymBytes {
             SymBytesKind::Slice { bytes, offset: base_offset, len } => {
                 if offset >= *len {
                     SymExpr::zero()
+                } else if let Some(base_offset) = base_offset.eval() {
+                    let Ok(base_offset) = usize::try_from(base_offset) else {
+                        return SymExpr::zero();
+                    };
+                    let Some(offset) = base_offset.checked_add(offset) else {
+                        return SymExpr::zero();
+                    };
+                    bytes.byte(offset)
                 } else {
                     bytes.byte_dynamic_with_delta(base_offset, offset)
                 }
@@ -186,6 +205,9 @@ impl SymBytes {
         if len == 0 {
             return Self::default();
         }
+        if offset == 0 && len == self.len() {
+            return self.clone();
+        }
         match self.kind() {
             SymBytesKind::Concrete(bytes) => {
                 let out = (0..len)
@@ -199,7 +221,49 @@ impl SymBytes {
                     .collect(),
             ),
             SymBytesKind::Word(word) if offset == 0 && len == 32 => Self::word(word.clone()),
-            _ => Self::exprs((0..len).map(|idx| self.byte(offset + idx)).collect()),
+            SymBytesKind::Word(_) | SymBytesKind::Sized { .. } => {
+                Self::slice_node(self.clone(), SymExpr::constant(U256::from(offset)), len)
+            }
+            SymBytesKind::Slice { bytes, offset: base_offset, .. } => {
+                if let Some(base_offset) = base_offset.eval()
+                    && let Ok(base_offset) = usize::try_from(base_offset)
+                    && let Some(offset) = base_offset.checked_add(offset)
+                {
+                    bytes.slice_concrete(offset, len)
+                } else {
+                    Self::slice_node(self.clone(), SymExpr::constant(U256::from(offset)), len)
+                }
+            }
+            SymBytesKind::Concat(values) => {
+                let mut offset = offset;
+                let mut len = len;
+                let mut out = Vec::new();
+                for bytes in values {
+                    if len == 0 {
+                        break;
+                    }
+
+                    let bytes_len = bytes.len();
+                    if offset >= bytes_len {
+                        offset -= bytes_len;
+                        continue;
+                    }
+
+                    let take = (bytes_len - offset).min(len);
+                    if offset == 0 && take == bytes_len {
+                        out.push(bytes.clone());
+                    } else {
+                        out.push(bytes.slice_concrete(offset, take));
+                    }
+                    len -= take;
+                    offset = 0;
+                }
+
+                if len != 0 {
+                    out.push(Self::concrete(vec![0; len]));
+                }
+                Self::concat(out)
+            }
         }
     }
 
@@ -210,17 +274,15 @@ impl SymBytes {
     pub(crate) fn word_at(&self, offset: usize) -> SymExpr {
         match self.kind() {
             SymBytesKind::Word(word) if offset == 0 => word.clone(),
-            SymBytesKind::Slice { bytes, offset: base_offset, len }
-                if offset == 0 && *len >= 32 =>
-            {
-                if let Some(base_offset) = base_offset.eval()
+            SymBytesKind::Slice { bytes, offset: base_offset, len } => {
+                if offset.checked_add(32).is_some_and(|end| end <= *len)
+                    && let Some(base_offset) = base_offset.eval()
                     && let Ok(base_offset) = usize::try_from(base_offset)
+                    && let Some(base_offset) = base_offset.checked_add(offset)
                 {
                     return bytes.word_at(base_offset);
                 }
-                SymExpr::from_bytes(
-                    (0..32).map(|idx| bytes.byte_dynamic_with_delta(base_offset, idx)),
-                )
+                SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx)))
             }
             _ => SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))),
         }
@@ -233,6 +295,23 @@ impl SymBytes {
     pub(crate) fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
         match self.kind() {
             SymBytesKind::Concrete(bytes) => Ok(bytes.clone()),
+            SymBytesKind::Exprs(bytes) => bytes.concrete_bytes(reason),
+            SymBytesKind::Concat(values) => {
+                let mut out = Vec::with_capacity(self.len());
+                for bytes in values {
+                    out.extend(bytes.concrete_bytes(reason)?);
+                }
+                Ok(out)
+            }
+            SymBytesKind::Slice { bytes, offset, len } => {
+                if let Some(offset) = offset.eval()
+                    && let Ok(offset) = usize::try_from(offset)
+                {
+                    bytes.slice_concrete(offset, *len).concrete_bytes(reason)
+                } else {
+                    self.materialize().concrete_bytes(reason)
+                }
+            }
             _ => self.materialize().concrete_bytes(reason),
         }
     }

@@ -649,9 +649,15 @@ impl SymCode {
     }
 
     pub(crate) fn from_symbytes(bytes: SymBytes) -> Self {
-        let analysis = (0..bytes.len())
-            .map(|idx| bytes.byte(idx).as_const().map_or(opcode::STOP, |value| value.to::<u8>()))
-            .collect::<Vec<_>>();
+        let analysis = if let Some(bytes) = bytes.as_concrete_slice() {
+            bytes.to_vec()
+        } else {
+            (0..bytes.len())
+                .map(|idx| {
+                    bytes.byte(idx).as_const().map_or(opcode::STOP, |value| value.to::<u8>())
+                })
+                .collect::<Vec<_>>()
+        };
         let analyzed = Bytecode::new_legacy(Bytes::from(analysis));
         let jump_table = analyzed.legacy_jump_table().cloned().unwrap_or_default();
         Self { bytes, jump_table }
@@ -738,6 +744,16 @@ impl SymCode {
         size: usize,
         reason: &'static str,
     ) -> Result<Vec<u8>, SymbolicError> {
+        if let Some(bytes) = self.bytes.as_concrete_slice() {
+            let mut out = Vec::with_capacity(size);
+            let end = offset.saturating_add(size).min(bytes.len());
+            if offset < end {
+                out.extend_from_slice(&bytes[offset..end]);
+            }
+            out.resize(size, 0);
+            return Ok(out);
+        }
+
         let mut out = Vec::with_capacity(size);
         for idx in 0..size {
             if offset + idx >= self.len() {
