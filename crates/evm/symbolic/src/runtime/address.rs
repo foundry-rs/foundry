@@ -100,9 +100,10 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
         ExprInner::Const(value) => {
             Some(Expr::constant(U256::from(value.to_be_bytes::<32>()[index])))
         }
-        ExprInner::Var(_) | ExprInner::GasLeft(_) | ExprInner::Keccak(_) | ExprInner::Hash(_) => {
-            Some(extracted_byte_expr(expr, index))
-        }
+        ExprInner::Var(_)
+        | ExprInner::GasLeft(_)
+        | ExprInner::Keccak { .. }
+        | ExprInner::Hash { .. } => Some(extracted_byte_expr(expr, index)),
         ExprInner::Not(value) => Some(Expr::not(expr_byte_term(value, index)?)),
         ExprInner::Ite(cond, then_expr, else_expr) => Some(Expr::ite(
             cond.clone(),
@@ -165,7 +166,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
             | ExprOp::SRem
             | ExprOp::Sar => None,
         },
-        ExprInner::AddMod(_) | ExprInner::MulMod(_) => None,
+        ExprInner::AddMod { .. } | ExprInner::MulMod { .. } => None,
     }
 }
 

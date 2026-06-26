@@ -226,11 +226,10 @@ impl PathState {
             ExprInner::Const(value) => u256_to_usize(*value),
             ExprInner::Var(_)
             | ExprInner::GasLeft(_)
-            | ExprInner::Keccak(_)
-            | ExprInner::Hash(_) => None,
+            | ExprInner::Keccak { .. }
+            | ExprInner::Hash { .. } => None,
             ExprInner::Not(_) => None,
-            ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
-                let modulus = expr.modulus();
+            ExprInner::AddMod { modulus, .. } | ExprInner::MulMod { modulus, .. } => {
                 match modulus.eval_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => u256_to_usize(modulus - U256::from(1)),
@@ -1602,16 +1601,16 @@ fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
             ExprInner::Var(var) => {
                 vars.insert(*var);
             }
-            ExprInner::Hash(hash) => {
-                vars.insert(hash.name());
+            ExprInner::Hash { name, .. } => {
+                vars.insert(*name);
             }
             ExprInner::Const(_)
             | ExprInner::GasLeft(_)
-            | ExprInner::Keccak(_)
+            | ExprInner::Keccak { .. }
             | ExprInner::Not(_)
             | ExprInner::Op(_, _, _)
-            | ExprInner::AddMod(_)
-            | ExprInner::MulMod(_)
+            | ExprInner::AddMod { .. }
+            | ExprInner::MulMod { .. }
             | ExprInner::Ite(_, _, _) => {}
         }
         ControlFlow::<()>::Continue(())

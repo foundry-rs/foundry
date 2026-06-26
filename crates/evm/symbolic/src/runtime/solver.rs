@@ -674,16 +674,12 @@ fn cache_key_expr(expr: Expr) -> Expr {
     }
 
     match expr.into_inner() {
-        ExprInner::Keccak(hash) => {
-            let (name, len, bytes) = hash.into_parts();
-            Expr::keccak_symbol(
-                name,
-                cache_key_expr(len),
-                bytes.iter().cloned().map(cache_key_expr).collect(),
-            )
-        }
-        ExprInner::Hash(hash) => {
-            let (name, algorithm, bytes) = hash.into_parts();
+        ExprInner::Keccak { name, len, bytes } => Expr::keccak_symbol(
+            name,
+            cache_key_expr(len),
+            bytes.iter().cloned().map(cache_key_expr).collect(),
+        ),
+        ExprInner::Hash { name, algorithm, bytes } => {
             Expr::hash_symbol(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
         }
         ExprInner::Not(value) => Expr::not(cache_key_expr(value)),
@@ -696,8 +692,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::op(op, left, right)
             }
         }
-        ExprInner::AddMod(expr) => {
-            let (left, right, modulus) = expr.into_parts();
+        ExprInner::AddMod { left, right, modulus } => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -707,8 +702,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::addmod(left, right, modulus)
             }
         }
-        ExprInner::MulMod(expr) => {
-            let (left, right, modulus) = expr.into_parts();
+        ExprInner::MulMod { left, right, modulus } => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);

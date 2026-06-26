@@ -16,8 +16,8 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
         ExprInner::Const(_)
         | ExprInner::Var(_)
         | ExprInner::GasLeft(_)
-        | ExprInner::Keccak(_)
-        | ExprInner::Hash(_) => false,
+        | ExprInner::Keccak { .. }
+        | ExprInner::Hash { .. } => false,
         ExprInner::Not(value) => expr_contains_hard_arith(value),
         ExprInner::Op(ExprOp::Mul, left, right) => {
             expr_contains_var(left) && expr_contains_var(right)
@@ -25,10 +25,8 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
         ExprInner::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
             expr_contains_var(left) || expr_contains_var(right)
         }
-        ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
-            expr_contains_var(expr.left())
-                || expr_contains_var(expr.right())
-                || expr_contains_var(expr.modulus())
+        ExprInner::AddMod { left, right, modulus } | ExprInner::MulMod { left, right, modulus } => {
+            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
         }
         ExprInner::Op(_, left, right) => {
             expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
@@ -44,7 +42,7 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
 /// Returns whether the expression contains symbolic hash variables that local search should avoid.
 pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
     expr.visit(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::Hash(_)) {
+        if matches!(expr.as_inner(), ExprInner::Hash { .. }) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -68,8 +66,10 @@ pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
 
 pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
     expr.visit(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::Var(_) | ExprInner::Keccak(_) | ExprInner::Hash(_))
-        {
+        if matches!(
+            expr.as_inner(),
+            ExprInner::Var(_) | ExprInner::Keccak { .. } | ExprInner::Hash { .. }
+        ) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -292,13 +292,13 @@ pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut SymbolicVar
 /// Collects assignable variables from an expression, recursing into recomputable hashes.
 pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
     match expr.as_inner() {
-        ExprInner::Const(_) | ExprInner::GasLeft(_) | ExprInner::Hash(_) => {}
+        ExprInner::Const(_) | ExprInner::GasLeft(_) | ExprInner::Hash { .. } => {}
         ExprInner::Var(var) => {
             vars.insert(*var);
         }
-        ExprInner::Keccak(hash) => {
-            collect_expr_fallback_vars(hash.len(), vars);
-            for byte in hash.bytes() {
+        ExprInner::Keccak { len, bytes, .. } => {
+            collect_expr_fallback_vars(len, vars);
+            for byte in bytes.iter() {
                 collect_expr_fallback_vars(byte, vars);
             }
         }
@@ -307,10 +307,10 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
-        ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
-            collect_expr_fallback_vars(expr.left(), vars);
-            collect_expr_fallback_vars(expr.right(), vars);
-            collect_expr_fallback_vars(expr.modulus(), vars);
+        ExprInner::AddMod { left, right, modulus } | ExprInner::MulMod { left, right, modulus } => {
+            collect_expr_fallback_vars(left, vars);
+            collect_expr_fallback_vars(right, vars);
+            collect_expr_fallback_vars(modulus, vars);
         }
         ExprInner::Ite(cond, left, right) => {
             collect_bool_fallback_vars(cond, vars);
@@ -406,16 +406,19 @@ pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut HashSet<U256>)
         ExprInner::Const(value) => {
             constants.insert(*value);
         }
-        ExprInner::Var(_) | ExprInner::GasLeft(_) | ExprInner::Keccak(_) | ExprInner::Hash(_) => {}
+        ExprInner::Var(_)
+        | ExprInner::GasLeft(_)
+        | ExprInner::Keccak { .. }
+        | ExprInner::Hash { .. } => {}
         ExprInner::Not(value) => collect_expr_constants(value, constants),
         ExprInner::Op(_, left, right) => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
         }
-        ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
-            collect_expr_constants(expr.left(), constants);
-            collect_expr_constants(expr.right(), constants);
-            collect_expr_constants(expr.modulus(), constants);
+        ExprInner::AddMod { left, right, modulus } | ExprInner::MulMod { left, right, modulus } => {
+            collect_expr_constants(left, constants);
+            collect_expr_constants(right, constants);
+            collect_expr_constants(modulus, constants);
         }
         ExprInner::Ite(cond, left, right) => {
             collect_bool_constants(cond, constants);

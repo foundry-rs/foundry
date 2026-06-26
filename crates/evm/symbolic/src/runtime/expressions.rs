@@ -278,22 +278,22 @@ pub(crate) fn storage_key_eq(read_key: SymWord, write_key: SymWord) -> BoolExpr 
 
 /// Returns the root Solidity storage slot for a mapping-style keccak key.
 pub(crate) fn storage_mapping_root_slot(key: &Expr) -> Option<U256> {
-    let ExprInner::Keccak(hash) = key.as_inner() else { return None };
-    if hash.len.as_const() != Some(U256::from(64)) || hash.bytes.len() < 64 {
+    let ExprInner::Keccak { len, bytes, .. } = key.as_inner() else { return None };
+    if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
         return None;
     }
 
-    let slot = word_from_bytes(hash.bytes[32..64].iter().cloned().map(SymWord::expr)).into_expr();
+    let slot = word_from_bytes(bytes[32..64].iter().cloned().map(SymWord::expr)).into_expr();
     match slot.as_inner() {
         ExprInner::Const(slot) => Some(*slot),
-        ExprInner::Keccak(_) => storage_mapping_root_slot(&slot),
+        ExprInner::Keccak { .. } => storage_mapping_root_slot(&slot),
         _ => None,
     }
 }
 
 pub(crate) fn storage_layout_key(key: &Expr) -> Option<(Expr, Expr)> {
     match key.as_inner() {
-        ExprInner::Keccak(_) => Some((key.clone(), Expr::constant(U256::ZERO))),
+        ExprInner::Keccak { .. } => Some((key.clone(), Expr::constant(U256::ZERO))),
         ExprInner::Op(ExprOp::Add, left, right) => {
             if let Some((base, offset)) = storage_layout_key(left)
                 && !expr_contains_keccak(right)
@@ -348,7 +348,7 @@ pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
 
 pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
     expr.visit(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::Keccak(_)) {
+        if matches!(expr.as_inner(), ExprInner::Keccak { .. }) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -444,8 +444,8 @@ fn expr_nonzero_forces_const_inner(
         ExprInner::Const(_)
         | ExprInner::Var(_)
         | ExprInner::GasLeft(_)
-        | ExprInner::Keccak(_)
-        | ExprInner::Hash(_)
+        | ExprInner::Keccak { .. }
+        | ExprInner::Hash { .. }
         | ExprInner::Not(_) => None,
         ExprInner::Ite(cond, then_expr, else_expr) => {
             if then_expr.eval_const().is_some_and(|value| !value.is_zero())
@@ -479,7 +479,7 @@ fn expr_nonzero_forces_const_inner(
         {
             expr_nonzero_forces_const(value, target, context)
         }
-        ExprInner::AddMod(_) | ExprInner::MulMod(_) => None,
+        ExprInner::AddMod { .. } | ExprInner::MulMod { .. } => None,
         ExprInner::Op(_, _, _) => None,
     }
 }
@@ -505,7 +505,7 @@ pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, ma
 
 pub(crate) fn bool_contains_keccak(expr: &BoolExpr) -> bool {
     expr.visit_exprs(&mut |expr| {
-        if matches!(expr.as_inner(), ExprInner::Keccak(_)) {
+        if matches!(expr.as_inner(), ExprInner::Keccak { .. }) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -799,12 +799,12 @@ pub(super) enum ExprInner {
     Const(U256),
     Var(Symbol),
     GasLeft(usize),
-    Keccak(KeccakExpr),
-    Hash(HashExpr),
+    Keccak { name: Symbol, len: Expr, bytes: Arc<[Expr]> },
+    Hash { name: Symbol, algorithm: &'static str, bytes: Arc<[Expr]> },
     Not(Expr),
     Op(ExprOp, Expr, Expr),
-    AddMod(ModularExpr),
-    MulMod(ModularExpr),
+    AddMod { left: Expr, right: Expr, modulus: Expr },
+    MulMod { left: Expr, right: Expr, modulus: Expr },
     Ite(BoolExpr, Expr, Expr),
 }
 
@@ -813,76 +813,6 @@ static EXPR_ZERO: LazyLock<Arc<ExprInner>> =
 static EXPR_ONE: LazyLock<Arc<ExprInner>> =
     LazyLock::new(|| Arc::new(ExprInner::Const(U256::from(1))));
 static EXPR_MAX: LazyLock<Arc<ExprInner>> = LazyLock::new(|| Arc::new(ExprInner::Const(U256::MAX)));
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) struct KeccakExpr {
-    name: Symbol,
-    len: Expr,
-    bytes: Arc<[Expr]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) struct HashExpr {
-    name: Symbol,
-    algorithm: &'static str,
-    bytes: Arc<[Expr]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(super) struct ModularExpr {
-    left: Expr,
-    right: Expr,
-    modulus: Expr,
-}
-
-impl KeccakExpr {
-    pub(super) const fn len(&self) -> &Expr {
-        &self.len
-    }
-
-    pub(super) fn bytes(&self) -> &[Expr] {
-        &self.bytes
-    }
-
-    pub(super) fn into_parts(self) -> (Symbol, Expr, Arc<[Expr]>) {
-        let Self { name, len, bytes } = self;
-        (name, len, bytes)
-    }
-}
-
-impl HashExpr {
-    pub(super) const fn name(&self) -> Symbol {
-        self.name
-    }
-
-    pub(super) fn into_parts(self) -> (Symbol, &'static str, Arc<[Expr]>) {
-        let Self { name, algorithm, bytes } = self;
-        (name, algorithm, bytes)
-    }
-}
-
-impl ModularExpr {
-    const fn new(left: Expr, right: Expr, modulus: Expr) -> Self {
-        Self { left, right, modulus }
-    }
-
-    pub(super) const fn left(&self) -> &Expr {
-        &self.left
-    }
-
-    pub(super) const fn right(&self) -> &Expr {
-        &self.right
-    }
-
-    pub(super) const fn modulus(&self) -> &Expr {
-        &self.modulus
-    }
-
-    pub(super) fn into_parts(self) -> (Expr, Expr, Expr) {
-        let Self { left, right, modulus } = self;
-        (left, right, modulus)
-    }
-}
 
 impl Expr {
     fn from_inner(expr: ExprInner) -> Self {
@@ -906,13 +836,13 @@ impl Expr {
 
     #[cfg(test)]
     pub(crate) fn is_keccak(&self) -> bool {
-        matches!(self.as_inner(), ExprInner::Keccak(_))
+        matches!(self.as_inner(), ExprInner::Keccak { .. })
     }
 
     #[cfg(test)]
     pub(crate) fn keccak_len_and_byte_count(&self) -> Option<(&Self, usize)> {
         match self.as_inner() {
-            ExprInner::Keccak(hash) => Some((hash.len(), hash.bytes().len())),
+            ExprInner::Keccak { len, bytes, .. } => Some((len, bytes.len())),
             _ => None,
         }
     }
@@ -920,7 +850,7 @@ impl Expr {
     #[cfg(test)]
     pub(crate) fn hash_algorithm(&self) -> Option<&'static str> {
         match self.as_inner() {
-            ExprInner::Hash(hash) => Some(hash.algorithm),
+            ExprInner::Hash { algorithm, .. } => Some(algorithm),
             _ => None,
         }
     }
@@ -953,22 +883,18 @@ impl Expr {
             ExprInner::Const(value) => Some(*value),
             ExprInner::Var(_)
             | ExprInner::GasLeft(_)
-            | ExprInner::Keccak(_)
-            | ExprInner::Hash(_) => None,
+            | ExprInner::Keccak { .. }
+            | ExprInner::Hash { .. } => None,
             ExprInner::Not(value) => Some(!value.eval_const()?),
             ExprInner::Op(op, left, right) => {
                 Some(op.eval(left.eval_const()?, right.eval_const()?))
             }
-            ExprInner::AddMod(expr) => Some(addmod_word(
-                expr.left().eval_const()?,
-                expr.right().eval_const()?,
-                expr.modulus().eval_const()?,
-            )),
-            ExprInner::MulMod(expr) => Some(mulmod_word(
-                expr.left().eval_const()?,
-                expr.right().eval_const()?,
-                expr.modulus().eval_const()?,
-            )),
+            ExprInner::AddMod { left, right, modulus } => {
+                Some(addmod_word(left.eval_const()?, right.eval_const()?, modulus.eval_const()?))
+            }
+            ExprInner::MulMod { left, right, modulus } => {
+                Some(mulmod_word(left.eval_const()?, right.eval_const()?, modulus.eval_const()?))
+            }
             ExprInner::Ite(cond, then_expr, else_expr) => {
                 if cond.eval_const()? {
                     then_expr.eval_const()
@@ -989,34 +915,30 @@ impl Expr {
             ExprInner::GasLeft(_) => {
                 return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
             }
-            ExprInner::Keccak(hash) => {
-                let len = hash.len.eval(model)?;
-                if len > U256::from(hash.bytes.len()) {
+            ExprInner::Keccak { len, bytes, .. } => {
+                let len = len.eval(model)?;
+                if len > U256::from(bytes.len()) {
                     return Err(SymbolicError::Solver(
                         "solver model uses an invalid keccak length".to_string(),
                     ));
                 }
 
                 let mut input = Vec::with_capacity(len.to::<usize>());
-                for byte in hash.bytes.iter().take(len.to::<usize>()) {
+                for byte in bytes.iter().take(len.to::<usize>()) {
                     input.push((byte.eval(model)? & U256::from(0xff)).to::<u8>());
                 }
 
                 U256::from_be_bytes(keccak256(input).0)
             }
-            ExprInner::Hash(hash) => model.value(hash.name).unwrap_or_default(),
+            ExprInner::Hash { name, .. } => model.value(*name).unwrap_or_default(),
             ExprInner::Not(value) => !value.eval(model)?,
             ExprInner::Op(op, left, right) => op.eval(left.eval(model)?, right.eval(model)?),
-            ExprInner::AddMod(expr) => addmod_word(
-                expr.left().eval(model)?,
-                expr.right().eval(model)?,
-                expr.modulus().eval(model)?,
-            ),
-            ExprInner::MulMod(expr) => mulmod_word(
-                expr.left().eval(model)?,
-                expr.right().eval(model)?,
-                expr.modulus().eval(model)?,
-            ),
+            ExprInner::AddMod { left, right, modulus } => {
+                addmod_word(left.eval(model)?, right.eval(model)?, modulus.eval(model)?)
+            }
+            ExprInner::MulMod { left, right, modulus } => {
+                mulmod_word(left.eval(model)?, right.eval(model)?, modulus.eval(model)?)
+            }
             ExprInner::Ite(cond, then_expr, else_expr) => {
                 if cond.eval(model)? {
                     then_expr.eval(model)?
@@ -1044,7 +966,7 @@ impl Expr {
     }
 
     pub(crate) fn keccak_symbol(name: Symbol, len: Self, bytes: Vec<Self>) -> Self {
-        Self::from_inner(ExprInner::Keccak(KeccakExpr { name, len, bytes: bytes.into() }))
+        Self::from_inner(ExprInner::Keccak { name, len, bytes: bytes.into() })
     }
 
     pub(crate) fn hash(name: impl AsRef<str>, algorithm: &'static str, bytes: Vec<Self>) -> Self {
@@ -1052,7 +974,7 @@ impl Expr {
     }
 
     pub(crate) fn hash_symbol(name: Symbol, algorithm: &'static str, bytes: Vec<Self>) -> Self {
-        Self::from_inner(ExprInner::Hash(HashExpr { name, algorithm, bytes: bytes.into() }))
+        Self::from_inner(ExprInner::Hash { name, algorithm, bytes: bytes.into() })
     }
 
     pub(crate) fn ite(cond: BoolExpr, then_expr: Self, else_expr: Self) -> Self {
@@ -1095,14 +1017,14 @@ impl Expr {
         visitor(self)?;
         match self.as_inner() {
             ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_) => {}
-            ExprInner::Keccak(hash) => {
-                hash.len.visit(visitor)?;
-                for byte in hash.bytes.iter() {
+            ExprInner::Keccak { len, bytes, .. } => {
+                len.visit(visitor)?;
+                for byte in bytes.iter() {
                     byte.visit(visitor)?;
                 }
             }
-            ExprInner::Hash(hash) => {
-                for byte in hash.bytes.iter() {
+            ExprInner::Hash { bytes, .. } => {
+                for byte in bytes.iter() {
                     byte.visit(visitor)?;
                 }
             }
@@ -1111,10 +1033,11 @@ impl Expr {
                 left.visit(visitor)?;
                 right.visit(visitor)?;
             }
-            ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
-                expr.left().visit(visitor)?;
-                expr.right().visit(visitor)?;
-                expr.modulus().visit(visitor)?;
+            ExprInner::AddMod { left, right, modulus }
+            | ExprInner::MulMod { left, right, modulus } => {
+                left.visit(visitor)?;
+                right.visit(visitor)?;
+                modulus.visit(visitor)?;
             }
             ExprInner::Ite(cond, left, right) => {
                 cond.visit_exprs(visitor)?;
@@ -1200,7 +1123,7 @@ impl Expr {
         {
             return Self::constant(addmod_word(left, right, modulus));
         }
-        Self::from_inner(ExprInner::AddMod(ModularExpr::new(left, right, modulus)))
+        Self::from_inner(ExprInner::AddMod { left, right, modulus })
     }
 
     /// Builds an exact EVM `MULMOD` expression.
@@ -1213,7 +1136,7 @@ impl Expr {
         {
             return Self::constant(mulmod_word(left, right, modulus));
         }
-        Self::from_inner(ExprInner::MulMod(ModularExpr::new(left, right, modulus)))
+        Self::from_inner(ExprInner::MulMod { left, right, modulus })
     }
 
     fn and_const(expr: Self, mask: U256) -> Self {
@@ -1249,18 +1172,18 @@ impl Expr {
                 ExprInner::Var(var) => {
                     vars.insert(*var);
                 }
-                ExprInner::Keccak(hash) => {
-                    vars.insert(hash.name);
+                ExprInner::Keccak { name, .. } => {
+                    vars.insert(*name);
                 }
-                ExprInner::Hash(hash) => {
-                    vars.insert(hash.name);
+                ExprInner::Hash { name, .. } => {
+                    vars.insert(*name);
                 }
                 ExprInner::Const(_)
                 | ExprInner::GasLeft(_)
                 | ExprInner::Not(_)
                 | ExprInner::Op(_, _, _)
-                | ExprInner::AddMod(_)
-                | ExprInner::MulMod(_)
+                | ExprInner::AddMod { .. }
+                | ExprInner::MulMod { .. }
                 | ExprInner::Ite(_, _, _) => {}
             }
             ControlFlow::<()>::Continue(())
@@ -1283,8 +1206,8 @@ impl Expr {
             ExprInner::GasLeft(id) => {
                 let _ = write!(out, "gasleft_{id}");
             }
-            ExprInner::Keccak(hash) => out.push_str(hash.name.as_str()),
-            ExprInner::Hash(hash) => out.push_str(hash.name.as_str()),
+            ExprInner::Keccak { name, .. } => out.push_str(name.as_str()),
+            ExprInner::Hash { name, .. } => out.push_str(name.as_str()),
             ExprInner::Not(value) => {
                 out.push_str("(bvnot ");
                 value.write_smt(out);
@@ -1297,23 +1220,11 @@ impl Expr {
                 right.write_smt(out);
                 out.push(')');
             }
-            ExprInner::AddMod(expr) => {
-                write_smt_wide_modular_arithmetic(
-                    out,
-                    "bvadd",
-                    expr.left(),
-                    expr.right(),
-                    expr.modulus(),
-                );
+            ExprInner::AddMod { left, right, modulus } => {
+                write_smt_wide_modular_arithmetic(out, "bvadd", left, right, modulus);
             }
-            ExprInner::MulMod(expr) => {
-                write_smt_wide_modular_arithmetic(
-                    out,
-                    "bvmul",
-                    expr.left(),
-                    expr.right(),
-                    expr.modulus(),
-                );
+            ExprInner::MulMod { left, right, modulus } => {
+                write_smt_wide_modular_arithmetic(out, "bvmul", left, right, modulus);
             }
             ExprInner::Ite(cond, left, right) => {
                 out.push_str("(ite ");
@@ -1579,27 +1490,29 @@ impl BoolExpr {
                 }
                 Self::from_inner(BoolExprInner::Eq(left, right))
             }
-            (ExprInner::Keccak(left), ExprInner::Keccak(right))
-                if left.bytes.len() == right.bytes.len() =>
-            {
-                let mut conditions = vec![Self::eq(left.len.clone(), right.len.clone())];
+            (
+                ExprInner::Keccak { len: left_len, bytes: left_bytes, .. },
+                ExprInner::Keccak { len: right_len, bytes: right_bytes, .. },
+            ) if left_bytes.len() == right_bytes.len() => {
+                let mut conditions = vec![Self::eq(left_len.clone(), right_len.clone())];
                 conditions.extend(
-                    left.bytes
+                    left_bytes
                         .iter()
                         .cloned()
-                        .zip(right.bytes.iter().cloned())
+                        .zip(right_bytes.iter().cloned())
                         .map(|(left, right)| Self::eq(left, right)),
                 );
                 Self::and(conditions)
             }
-            (ExprInner::Hash(left), ExprInner::Hash(right))
-                if left.algorithm == right.algorithm && left.bytes.len() == right.bytes.len() =>
-            {
+            (
+                ExprInner::Hash { algorithm: left_algorithm, bytes: left_bytes, .. },
+                ExprInner::Hash { algorithm: right_algorithm, bytes: right_bytes, .. },
+            ) if left_algorithm == right_algorithm && left_bytes.len() == right_bytes.len() => {
                 Self::and(
-                    left.bytes
+                    left_bytes
                         .iter()
                         .cloned()
-                        .zip(right.bytes.iter().cloned())
+                        .zip(right_bytes.iter().cloned())
                         .map(|(left, right)| Self::eq(left, right))
                         .collect(),
                 )

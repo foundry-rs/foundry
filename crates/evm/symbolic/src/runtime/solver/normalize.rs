@@ -173,8 +173,8 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
         ExprInner::Const(_)
             | ExprInner::Var(_)
             | ExprInner::GasLeft(_)
-            | ExprInner::Keccak(_)
-            | ExprInner::Hash(_)
+            | ExprInner::Keccak { .. }
+            | ExprInner::Hash { .. }
     ) {
         return expr;
     }
@@ -192,28 +192,22 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
                 Expr::op(op, left, right)
             }
         }
-        ExprInner::AddMod(expr) => {
-            let (left, right, modulus) = expr.into_parts();
-            Expr::addmod(
-                normalize_expr_for_solver(left),
-                normalize_expr_for_solver(right),
-                normalize_expr_for_solver(modulus),
-            )
-        }
-        ExprInner::MulMod(expr) => {
-            let (left, right, modulus) = expr.into_parts();
-            Expr::mulmod(
-                normalize_expr_for_solver(left),
-                normalize_expr_for_solver(right),
-                normalize_expr_for_solver(modulus),
-            )
-        }
+        ExprInner::AddMod { left, right, modulus } => Expr::addmod(
+            normalize_expr_for_solver(left),
+            normalize_expr_for_solver(right),
+            normalize_expr_for_solver(modulus),
+        ),
+        ExprInner::MulMod { left, right, modulus } => Expr::mulmod(
+            normalize_expr_for_solver(left),
+            normalize_expr_for_solver(right),
+            normalize_expr_for_solver(modulus),
+        ),
         ExprInner::Ite(cond, left, right) => normalize_ite_expr_for_solver(cond, left, right),
         ExprInner::Const(_)
         | ExprInner::Var(_)
         | ExprInner::GasLeft(_)
-        | ExprInner::Keccak(_)
-        | ExprInner::Hash(_) => unreachable!(),
+        | ExprInner::Keccak { .. }
+        | ExprInner::Hash { .. } => unreachable!(),
     }
 }
 
@@ -579,8 +573,8 @@ impl ConstraintContext {
             ExprInner::Const(_)
             | ExprInner::Var(_)
             | ExprInner::GasLeft(_)
-            | ExprInner::Keccak(_)
-            | ExprInner::Hash(_)
+            | ExprInner::Keccak { .. }
+            | ExprInner::Hash { .. }
             | ExprInner::Not(_) => expr_unsigned_bits(expr),
             ExprInner::Op(ExprOp::And, left, right) => {
                 if let Some(mask) = right.as_const() {
@@ -636,7 +630,9 @@ pub(crate) fn expr_unsigned_bits(expr: &Expr) -> usize {
             expr_unsigned_bits(left).saturating_add(expr_unsigned_bits(right)).min(256)
         }
         ExprInner::Op(ExprOp::UDiv, left, _) => expr_unsigned_bits(left),
-        ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => expr_unsigned_bits(expr.modulus()),
+        ExprInner::AddMod { modulus, .. } | ExprInner::MulMod { modulus, .. } => {
+            expr_unsigned_bits(modulus)
+        }
         ExprInner::Ite(_, left, right) => expr_unsigned_bits(left).max(expr_unsigned_bits(right)),
         _ => 256,
     }

@@ -168,9 +168,10 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
     debug_assert!(index < 32);
     match expr.as_inner() {
         ExprInner::Const(value) => Some(value.to_be_bytes::<32>()[index]),
-        ExprInner::Var(_) | ExprInner::GasLeft(_) | ExprInner::Keccak(_) | ExprInner::Hash(_) => {
-            None
-        }
+        ExprInner::Var(_)
+        | ExprInner::GasLeft(_)
+        | ExprInner::Keccak { .. }
+        | ExprInner::Hash { .. } => None,
         ExprInner::Not(value) => expr_known_byte(value, index).map(|byte| !byte),
         ExprInner::Ite(_, then_expr, else_expr) => {
             let then_byte = expr_known_byte(then_expr, index)?;
@@ -218,7 +219,7 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
             | ExprOp::SRem
             | ExprOp::Sar => None,
         },
-        ExprInner::AddMod(_) | ExprInner::MulMod(_) => None,
+        ExprInner::AddMod { .. } | ExprInner::MulMod { .. } => None,
     }
 }
 
