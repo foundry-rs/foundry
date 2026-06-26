@@ -74,7 +74,7 @@ impl SymbolicExecutor {
         deployer: SymExpr,
         kind: CreateKind,
     ) -> CheatcodeOutcome {
-        state.expected_creates.push(ExpectedCreate { bytecode, deployer, kind });
+        state.expected_creates.push(ExpectedCreate::new(bytecode, deployer, kind));
         CheatcodeOutcome::Continue(Vec::new())
     }
 
@@ -306,11 +306,9 @@ impl SymbolicExecutor {
         let mut mismatch_constraints = None;
         for idx in 0..state.expected_creates.len() {
             let expected = state.expected_creates[idx].clone();
-            if expected.kind != kind || expected.bytecode != bytecode {
+            let Some(condition) = expected.match_condition(deployer, kind, &bytecode) else {
                 continue;
-            }
-
-            let condition = address_match_condition(&expected.deployer, deployer);
+            };
             let (match_constraints, match_sat) =
                 self.constraints_with_condition(state, condition.clone())?;
             let (candidate_mismatch_constraints, mismatch_sat) =

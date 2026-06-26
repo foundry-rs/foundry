@@ -751,9 +751,25 @@ pub(crate) struct ExpectedCall {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedCreate {
-    pub(crate) bytecode: Vec<u8>,
-    pub(crate) deployer: SymExpr,
-    pub(crate) kind: CreateKind,
+    bytecode: Vec<u8>,
+    deployer: SymExpr,
+    kind: CreateKind,
+}
+
+impl ExpectedCreate {
+    pub(crate) const fn new(bytecode: Vec<u8>, deployer: SymExpr, kind: CreateKind) -> Self {
+        Self { bytecode, deployer, kind }
+    }
+
+    pub(crate) fn match_condition(
+        &self,
+        deployer: Address,
+        kind: CreateKind,
+        bytecode: &[u8],
+    ) -> Option<SymBoolExpr> {
+        (self.kind == kind && self.bytecode == bytecode)
+            .then(|| address_match_condition(&self.deployer, deployer))
+    }
 }
 
 impl ExpectedCall {
