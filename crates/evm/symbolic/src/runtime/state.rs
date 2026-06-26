@@ -26,7 +26,7 @@ pub(crate) struct PathState {
     pub(crate) call_mocks: Vec<CallMock>,
     pub(crate) function_mocks: Vec<FunctionMock>,
     pub(crate) persistent_accounts: HashSet<Address>,
-    pub(crate) wallets: BTreeSet<Address>,
+    pub(crate) wallets: IndexSet<Address>,
     pub(crate) labels: HashMap<Address, String>,
 }
 
@@ -74,7 +74,7 @@ impl PathState {
             call_mocks: Vec::new(),
             function_mocks: Vec::new(),
             persistent_accounts: HashSet::default(),
-            wallets: BTreeSet::new(),
+            wallets: IndexSet::default(),
             labels: HashMap::default(),
         }
     }
@@ -114,7 +114,7 @@ impl PathState {
             call_mocks: Vec::new(),
             function_mocks: Vec::new(),
             persistent_accounts: HashSet::default(),
-            wallets: BTreeSet::new(),
+            wallets: IndexSet::default(),
             labels: HashMap::default(),
         }
     }

@@ -31,7 +31,7 @@ use foundry_evm::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::{self, Write as _},
     io::{Read, Write},
     ops::{Deref, DerefMut},
