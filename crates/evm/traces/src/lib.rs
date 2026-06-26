@@ -392,10 +392,6 @@ pub enum TraceMode {
     ///
     /// Same as `JumpSimple`, but tracks memory snapshots as well.
     Jump,
-    /// Call trace with complete steps tracing, without debugger snapshots.
-    ///
-    /// Used by EVM profile generation, which needs every opcode step's gas cost.
-    AllSteps,
     /// Call trace with complete steps tracing.
     ///
     /// Used by debugger.
@@ -405,6 +401,161 @@ pub enum TraceMode {
     /// Records JUMP/JUMPDEST steps (like `Steps`) plus storage diffs on SLOAD/SSTORE.
     /// Does not enable memory/stack snapshots or unfiltered opcode recording.
     RecordStateDiff,
+}
+
+/// Opcode step recording granularity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum StepRecording {
+    /// No opcode steps.
+    #[default]
+    None,
+    /// Record only JUMP/JUMPDEST steps.
+    Jumps,
+    /// Record all opcode steps.
+    All,
+}
+
+/// Trace data requirements composed across independent feature axes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TraceRequirements {
+    calls: bool,
+    steps: StepRecording,
+    memory_snapshots: bool,
+    stack_snapshots: bool,
+    returndata_snapshots: bool,
+    immediate_bytes: bool,
+    state_diff: bool,
+}
+
+impl TraceRequirements {
+    pub const fn with_calls(mut self, yes: bool) -> Self {
+        self.calls |= yes;
+        self
+    }
+
+    pub fn merge(mut self, other: Self) -> Self {
+        self.calls |= other.calls;
+        self.steps = std::cmp::max(self.steps, other.steps);
+        self.memory_snapshots |= other.memory_snapshots;
+        self.stack_snapshots |= other.stack_snapshots;
+        self.returndata_snapshots |= other.returndata_snapshots;
+        self.immediate_bytes |= other.immediate_bytes;
+        self.state_diff |= other.state_diff;
+        self
+    }
+
+    pub fn with_steps(mut self, steps: StepRecording) -> Self {
+        self.steps = std::cmp::max(self.steps, steps);
+        self
+    }
+
+    pub const fn with_memory_snapshots(mut self, yes: bool) -> Self {
+        self.memory_snapshots |= yes;
+        self
+    }
+
+    pub const fn with_stack_snapshots(mut self, yes: bool) -> Self {
+        self.stack_snapshots |= yes;
+        self
+    }
+
+    pub const fn with_debug(mut self, yes: bool) -> Self {
+        if yes {
+            self.calls = true;
+            self.steps = StepRecording::All;
+            self.memory_snapshots = true;
+            self.stack_snapshots = true;
+            self.returndata_snapshots = true;
+            self.immediate_bytes = true;
+            self.state_diff = true;
+        }
+        self
+    }
+
+    pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
+        match mode {
+            InternalTraceMode::None => self,
+            InternalTraceMode::Simple => {
+                self.with_calls(true).with_steps(StepRecording::Jumps).with_stack_snapshots(true)
+            }
+            InternalTraceMode::Full => self
+                .with_calls(true)
+                .with_steps(StepRecording::Jumps)
+                .with_memory_snapshots(true)
+                .with_stack_snapshots(true),
+        }
+    }
+
+    pub fn with_all_steps(self, yes: bool) -> Self {
+        if yes { self.with_calls(true).with_steps(StepRecording::All) } else { self }
+    }
+
+    pub const fn with_state_changes(mut self, yes: bool) -> Self {
+        self.state_diff |= yes;
+        if yes {
+            self.calls = true;
+        }
+        self
+    }
+
+    pub const fn with_verbosity(self, verbosity: u8) -> Self {
+        match verbosity {
+            0..3 => self,
+            3..=4 => self.with_calls(true),
+            _ if matches!(self.steps, StepRecording::All) => self.with_calls(true),
+            _ => self.with_state_changes(true),
+        }
+    }
+
+    pub fn into_config(self) -> Option<TracingInspectorConfig> {
+        if !self.calls && self.steps == StepRecording::None && !self.state_diff {
+            return None;
+        }
+
+        let steps = if self.state_diff { StepRecording::All } else { self.steps };
+        TracingInspectorConfig {
+            record_steps: steps != StepRecording::None,
+            record_memory_snapshots: self.memory_snapshots,
+            record_stack_snapshots: if self.stack_snapshots {
+                StackSnapshotType::Full
+            } else {
+                StackSnapshotType::None
+            },
+            record_logs: true,
+            record_state_diff: self.state_diff,
+            record_returndata_snapshots: self.returndata_snapshots,
+            record_opcodes_filter: match steps {
+                StepRecording::None | StepRecording::All => None,
+                StepRecording::Jumps => {
+                    Some(OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST))
+                }
+            },
+            exclude_precompile_calls: false,
+            record_immediate_bytes: self.immediate_bytes,
+        }
+        .into()
+    }
+}
+
+impl From<TraceMode> for TraceRequirements {
+    fn from(mode: TraceMode) -> Self {
+        match mode {
+            TraceMode::None => Self::default(),
+            TraceMode::Call => Self::default().with_calls(true),
+            TraceMode::Steps => Self::default().with_calls(true).with_steps(StepRecording::Jumps),
+            TraceMode::JumpSimple => Self::default()
+                .with_calls(true)
+                .with_steps(StepRecording::Jumps)
+                .with_stack_snapshots(true),
+            TraceMode::Jump => Self::default()
+                .with_calls(true)
+                .with_steps(StepRecording::Jumps)
+                .with_memory_snapshots(true)
+                .with_stack_snapshots(true),
+            TraceMode::Debug => Self::default().with_debug(true),
+            TraceMode::RecordStateDiff => Self::default().with_state_changes(true),
+        }
+    }
 }
 
 impl TraceMode {
@@ -428,10 +579,6 @@ impl TraceMode {
         matches!(self, Self::Jump)
     }
 
-    pub const fn is_all_steps(self) -> bool {
-        matches!(self, Self::AllSteps)
-    }
-
     pub const fn record_state_diff(self) -> bool {
         matches!(self, Self::RecordStateDiff)
     }
@@ -448,10 +595,6 @@ impl TraceMode {
         std::cmp::max(self, mode.into())
     }
 
-    pub fn with_all_steps(self, yes: bool) -> Self {
-        if yes && !self.is_debug() { std::cmp::max(self, Self::AllSteps) } else { self }
-    }
-
     pub fn with_state_changes(self, yes: bool) -> Self {
         if yes && !self.is_debug() { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
@@ -462,46 +605,13 @@ impl TraceMode {
             3..=4 => std::cmp::max(self, Self::Call),
             // Enable step recording and state diff recording when verbosity is 5 or higher.
             // This includes backtraces (JUMP/JUMPDEST steps) and storage changes.
-            _ if self.is_debug() || self.is_all_steps() => self,
+            _ if self.is_debug() => self,
             _ => std::cmp::max(self, Self::RecordStateDiff),
         }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {
-        if self.is_none() {
-            None
-        } else {
-            // RecordStateDiff is Steps + state diff recording, not Debug + state diff.
-            // It should not enable memory/stack snapshots.
-            // State diff recording requires all opcodes (no filter) since it needs
-            // SLOAD/SSTORE steps, not just JUMP/JUMPDEST.
-            let record_state_diff = self.record_state_diff() || self.is_debug();
-            let effective = if self.record_state_diff() { Self::Steps } else { self };
-            TracingInspectorConfig {
-                record_steps: self >= Self::Steps,
-                record_memory_snapshots: effective >= Self::Jump && !effective.is_all_steps(),
-                record_stack_snapshots: if effective > Self::Steps && !effective.is_all_steps() {
-                    StackSnapshotType::Full
-                } else {
-                    StackSnapshotType::None
-                },
-                record_logs: true,
-                record_state_diff,
-                record_returndata_snapshots: effective.is_debug(),
-                // State diff needs all opcodes recorded to capture SLOAD/SSTORE.
-                record_opcodes_filter: if record_state_diff || effective.is_all_steps() {
-                    None
-                } else {
-                    (effective.is_steps() || effective.is_jump() || effective.is_jump_simple())
-                        .then(|| {
-                            OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)
-                        })
-                },
-                exclude_precompile_calls: false,
-                record_immediate_bytes: effective.is_debug(),
-            }
-            .into()
-        }
+        TraceRequirements::from(self).into_config()
     }
 }
 
@@ -614,21 +724,42 @@ mod tests {
     }
 
     #[test]
-    fn config_all_steps_avoids_debug_snapshots() {
-        let mode = TraceMode::None.with_all_steps(true).with_verbosity(5);
-        assert_eq!(mode, TraceMode::AllSteps);
+    fn requirements_preserve_internal_decode_with_state_diff() {
+        let cfg = TraceRequirements::default()
+            .with_decode_internal(InternalTraceMode::Full)
+            .with_state_changes(true)
+            .into_config()
+            .unwrap();
 
-        let cfg = mode.into_config().unwrap();
-        assert!(cfg.record_steps, "AllSteps must record opcode steps");
-        assert!(cfg.record_opcodes_filter.is_none(), "AllSteps must record every opcode step");
-        assert!(!cfg.record_memory_snapshots, "AllSteps should not record memory snapshots");
+        assert!(cfg.record_steps, "requirements should record opcode steps");
+        assert!(cfg.record_memory_snapshots, "Full internal decoding needs memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::Full,
+            "internal decoding needs stack snapshots"
+        );
+        assert!(cfg.record_state_diff, "state changes should be recorded");
+        assert!(cfg.record_opcodes_filter.is_none(), "state diff needs unfiltered opcodes");
+    }
+
+    #[test]
+    fn requirements_all_steps_avoid_debug_snapshots() {
+        let cfg = TraceRequirements::default()
+            .with_all_steps(true)
+            .with_verbosity(5)
+            .into_config()
+            .unwrap();
+
+        assert!(cfg.record_steps, "all steps must record opcode steps");
+        assert!(cfg.record_opcodes_filter.is_none(), "all steps must record every opcode step");
+        assert!(!cfg.record_memory_snapshots, "all steps should not record memory snapshots");
         assert_eq!(
             cfg.record_stack_snapshots,
             StackSnapshotType::None,
-            "AllSteps should not record stack snapshots"
+            "all steps should not record stack snapshots"
         );
-        assert!(!cfg.record_returndata_snapshots, "AllSteps should not record returndata");
-        assert!(!cfg.record_immediate_bytes, "AllSteps should not record immediate bytes");
-        assert!(!cfg.record_state_diff, "AllSteps should not record state diffs");
+        assert!(!cfg.record_returndata_snapshots, "all steps should not record returndata");
+        assert!(!cfg.record_immediate_bytes, "all steps should not record immediate bytes");
+        assert!(!cfg.record_state_diff, "all steps should not record state diffs");
     }
 }
