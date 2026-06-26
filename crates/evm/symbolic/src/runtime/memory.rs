@@ -228,11 +228,9 @@ impl SymMemory {
 
     pub(crate) fn byte(&self, offset: usize) -> SymExpr {
         let (base, base_epoch) = self.base_byte(offset);
-        let mut result = base.clone();
-        let mut has_symbolic_match = false;
+        let mut result = base;
         for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
             for (idx, byte) in write.bytes.iter().enumerate() {
-                has_symbolic_match = true;
                 result = SymExpr::ite(
                     SymBoolExpr::eq(
                         SymExpr::add_const(write.offset.clone(), U256::from(idx)),
@@ -243,7 +241,7 @@ impl SymMemory {
                 );
             }
         }
-        if has_symbolic_match { result } else { base }
+        result
     }
 
     pub(crate) fn base_byte(&self, offset: usize) -> (SymExpr, u64) {
