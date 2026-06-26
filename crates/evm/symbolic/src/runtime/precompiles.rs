@@ -77,7 +77,7 @@ pub(crate) fn execute_symbolic_precompile(
     if let Some(input_len) = input_len.as_const()
         && let Ok(input_len) = usize::try_from(input_len)
         && input_len <= input.len()
-        && let Ok(input) = concrete_bytes(&input[..input_len], "symbolic precompile input")
+        && let Ok(input) = input[..input_len].concrete_bytes("symbolic precompile input")
     {
         return execute_precompile(address, &input, spec_id);
     }
@@ -169,12 +169,10 @@ pub(crate) fn execute_symbolic_precompile(
         Some(10) => Err(SymbolicError::Unsupported("KZG handled by execute_kzg_precompile_call")),
         _ => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
-            let input = concrete_bytes(
-                input
-                    .get(..input_len)
-                    .ok_or(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"))?,
-                "symbolic precompile input",
-            )?;
+            let input = input
+                .get(..input_len)
+                .ok_or(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"))?
+                .concrete_bytes("symbolic precompile input")?;
             execute_precompile(address, &input, spec_id)
         }
     }

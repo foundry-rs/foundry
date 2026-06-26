@@ -404,7 +404,7 @@ pub(crate) fn push_hex_word(out: &mut Vec<SymExpr>, word: SymExpr) {
 }
 
 pub(crate) fn push_hex_byte(out: &mut Vec<SymExpr>, byte: SymExpr) {
-    let byte = low_byte(byte);
+    let byte = byte.low_byte();
     let (high, low) = if let Some(value) = byte.as_const() {
         (
             SymExpr::constant(U256::from(value.to::<u8>() >> 4)),
@@ -422,7 +422,7 @@ pub(crate) fn push_hex_byte(out: &mut Vec<SymExpr>, byte: SymExpr) {
 }
 
 pub(crate) fn hex_nibble_ascii(nibble: SymExpr) -> SymExpr {
-    let nibble = low_byte(nibble);
+    let nibble = nibble.low_byte();
     if let Some(value) = nibble.as_const() {
         let nibble = value.to::<u8>() & 0x0f;
         let byte = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };

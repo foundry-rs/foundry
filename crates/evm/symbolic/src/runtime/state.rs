@@ -855,7 +855,7 @@ impl ExpectedCall {
             return Ok(None);
         }
         let Some(data_condition) =
-            calldata_prefix_condition(calldata, &self.data, "symbolic expected call calldata")?
+            calldata.calldata_prefix_condition(&self.data, "symbolic expected call calldata")?
         else {
             return Ok(None);
         };
@@ -938,7 +938,7 @@ impl CallMock {
             return Ok(None);
         }
         let Some(data_condition) =
-            calldata_prefix_condition(calldata, &self.data, "symbolic mocked call calldata")?
+            calldata.calldata_prefix_condition(&self.data, "symbolic mocked call calldata")?
         else {
             return Ok(None);
         };
@@ -1008,7 +1008,7 @@ impl FunctionMock {
         calldata: &[SymExpr],
         reason: &'static str,
     ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        let Some(data_condition) = calldata_prefix_condition(calldata, &self.data, reason)? else {
+        let Some(data_condition) = calldata.calldata_prefix_condition(&self.data, reason)? else {
             return Ok(None);
         };
         Ok(Some(SymBoolExpr::and(vec![

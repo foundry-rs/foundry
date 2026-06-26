@@ -75,7 +75,7 @@ pub(crate) fn keccak_word_with_len(bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr
     if let Some(len) = len.as_const()
         && let Ok(len) = usize::try_from(len)
         && len <= bytes.len()
-        && let Ok(bytes) = concrete_bytes(&bytes[..len], "symbolic keccak input")
+        && let Ok(bytes) = bytes[..len].concrete_bytes("symbolic keccak input")
     {
         return SymExpr::constant(U256::from_be_bytes(keccak256(bytes).0));
     }
@@ -349,7 +349,7 @@ pub(crate) fn word_bytes(word: SymExpr) -> Vec<SymExpr> {
 
 pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymExpr>) -> SymExpr {
     let bytes = bytes.into_iter().collect::<Vec<_>>();
-    if let Ok(concrete) = concrete_bytes(&bytes, "symbolic word bytes") {
+    if let Ok(concrete) = bytes.concrete_bytes("symbolic word bytes") {
         let mut word = [0u8; 32];
         for (idx, byte) in concrete.into_iter().take(32).enumerate() {
             word[idx] = byte;
@@ -364,7 +364,7 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymExpr>) -> SymEx
     let mut expr = SymExpr::constant(U256::ZERO);
     for (idx, byte) in bytes.into_iter().take(32).enumerate() {
         let shift = (31 - idx) * 8;
-        let byte = low_byte(byte);
+        let byte = byte.low_byte();
         let byte = if shift == 0 {
             byte
         } else {
@@ -429,52 +429,15 @@ pub(crate) fn strip_low_byte_mask(expr: &SymExpr) -> Option<&SymExpr> {
     }
 }
 
-pub(crate) fn low_byte(word: SymExpr) -> SymExpr {
-    if let Some(word) = word.as_const() {
-        return SymExpr::constant(U256::from(word.to::<u8>()));
-    }
-    SymExpr::op(SymExprOp::And, word, SymExpr::constant(U256::from(0xff)))
-}
-
-pub(crate) fn concrete_bytes(
-    bytes: &[SymExpr],
-    reason: &'static str,
-) -> Result<Vec<u8>, SymbolicError> {
-    bytes
-        .iter()
-        .map(|byte| match byte.as_const() {
-            Some(value) => Ok(value.to::<u8>()),
-            None => Err(SymbolicError::Unsupported(reason)),
-        })
-        .collect()
-}
-
-pub(crate) fn calldata_prefix_condition(
-    calldata: &[SymExpr],
-    prefix: &[SymExpr],
-    _reason: &'static str,
-) -> Result<Option<SymBoolExpr>, SymbolicError> {
-    if prefix.len() > calldata.len() {
-        return Ok(None);
-    }
-    let mut conditions = Vec::new();
-    for (actual, expected) in calldata.iter().zip(prefix) {
-        if actual == expected {
-            continue;
-        }
-        match (actual, expected) {
-            _ if actual
-                .as_const()
-                .zip(expected.as_const())
-                .is_some_and(|(actual, expected)| actual.to::<u8>() == expected.to::<u8>()) => {}
-            _ if actual.as_const().is_some() && expected.as_const().is_some() => return Ok(None),
-            _ => conditions.push(SymBoolExpr::eq_words(actual, expected)),
-        }
-    }
-    Ok(Some(SymBoolExpr::and(conditions)))
-}
-
 pub(crate) trait SymExprSliceExt {
+    fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError>;
+
+    fn calldata_prefix_condition(
+        &self,
+        prefix: &[SymExpr],
+        reason: &'static str,
+    ) -> Result<Option<SymBoolExpr>, SymbolicError>;
+
     fn eval_model<M: SymbolicModelLookup + ?Sized>(
         &self,
         model: &M,
@@ -482,6 +445,43 @@ pub(crate) trait SymExprSliceExt {
 }
 
 impl SymExprSliceExt for [SymExpr] {
+    fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
+        self.iter()
+            .map(|byte| match byte.as_const() {
+                Some(value) => Ok(value.to::<u8>()),
+                None => Err(SymbolicError::Unsupported(reason)),
+            })
+            .collect()
+    }
+
+    fn calldata_prefix_condition(
+        &self,
+        prefix: &[SymExpr],
+        _reason: &'static str,
+    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
+        if prefix.len() > self.len() {
+            return Ok(None);
+        }
+        let mut conditions = Vec::new();
+        for (actual, expected) in self.iter().zip(prefix) {
+            if actual == expected {
+                continue;
+            }
+            match (actual, expected) {
+                _ if actual
+                    .as_const()
+                    .zip(expected.as_const())
+                    .is_some_and(|(actual, expected)| actual.to::<u8>() == expected.to::<u8>()) => {
+                }
+                _ if actual.as_const().is_some() && expected.as_const().is_some() => {
+                    return Ok(None);
+                }
+                _ => conditions.push(SymBoolExpr::eq_words(actual, expected)),
+            }
+        }
+        Ok(Some(SymBoolExpr::and(conditions)))
+    }
+
     fn eval_model<M: SymbolicModelLookup + ?Sized>(
         &self,
         model: &M,
@@ -579,6 +579,13 @@ impl SymExpr {
         } else {
             Self(Arc::new(SymExprKind::Const(value)))
         }
+    }
+
+    pub(crate) fn low_byte(self) -> Self {
+        if let Some(word) = self.as_const() {
+            return Self::constant(U256::from(word.to::<u8>()));
+        }
+        Self::op(SymExprOp::And, self, Self::constant(U256::from(0xff)))
     }
 
     pub(crate) fn as_const(&self) -> Option<U256> {

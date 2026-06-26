@@ -110,7 +110,7 @@ impl SymMemory {
     }
 
     pub(crate) fn store_byte(&mut self, offset: usize, value: SymExpr) {
-        self.store_bytes(offset, vec![low_byte(value)]);
+        self.store_bytes(offset, vec![value.low_byte()]);
     }
 
     pub(crate) fn store_byte_offset(&mut self, offset: SymExpr, value: SymExpr) {
@@ -119,7 +119,7 @@ impl SymMemory {
                 self.store_byte(offset, value);
             }
         } else {
-            self.store_symbolic_bytes(offset, vec![low_byte(value)]);
+            self.store_symbolic_bytes(offset, vec![value.low_byte()]);
         }
     }
 
