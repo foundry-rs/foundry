@@ -311,7 +311,7 @@ where
         (evm_env.clone(), tx_env.clone()),
         fork,
         Some(fork_config.evm_version),
-        TraceRequirements::empty().with_calls(true),
+        TraceRequirements::none().with_calls(true),
         networks,
         create2_deployer,
         None,

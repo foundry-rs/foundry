@@ -1354,7 +1354,7 @@ impl Cheatcode for startDebugTraceRecordingCall {
 
         // turn on tracer debug configuration for recording
         *tracer.config_mut() =
-            TraceRequirements::empty().with_debug(true).into_config().expect("cannot be None");
+            TraceRequirements::none().with_debug(true).into_config().expect("cannot be None");
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {

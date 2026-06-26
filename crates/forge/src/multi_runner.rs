@@ -518,7 +518,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     }
 
     const fn trace_requirements(&self) -> TraceRequirements {
-        TraceRequirements::empty()
+        TraceRequirements::none()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)

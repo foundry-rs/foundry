@@ -395,7 +395,7 @@ pub struct TraceRequirements {
 }
 
 impl TraceRequirements {
-    pub const fn empty() -> Self {
+    pub const fn none() -> Self {
         Self {
             calls: false,
             steps: StepRecording::None,
@@ -538,18 +538,18 @@ mod tests {
     fn verbosity_0_through_2_is_noop() {
         for v in 0..=2 {
             assert_eq!(
-                TraceRequirements::empty().with_verbosity(v),
-                TraceRequirements::empty(),
+                TraceRequirements::none().with_verbosity(v),
+                TraceRequirements::none(),
                 "v={v}"
             );
             assert_eq!(
-                TraceRequirements::empty().with_calls(true).with_verbosity(v),
-                TraceRequirements::empty().with_calls(true),
+                TraceRequirements::none().with_calls(true).with_verbosity(v),
+                TraceRequirements::none().with_calls(true),
                 "v={v}"
             );
             assert_eq!(
-                TraceRequirements::empty().with_debug(true).with_verbosity(v),
-                TraceRequirements::empty().with_debug(true),
+                TraceRequirements::none().with_debug(true).with_verbosity(v),
+                TraceRequirements::none().with_debug(true),
                 "v={v}"
             );
         }
@@ -559,18 +559,18 @@ mod tests {
     fn verbosity_3_and_4_raises_to_call() {
         for v in 3..=4 {
             assert_eq!(
-                TraceRequirements::empty().with_verbosity(v),
-                TraceRequirements::empty().with_calls(true),
+                TraceRequirements::none().with_verbosity(v),
+                TraceRequirements::none().with_calls(true),
                 "v={v}"
             );
             assert_eq!(
-                TraceRequirements::empty().with_debug(true).with_verbosity(v),
-                TraceRequirements::empty().with_debug(true),
+                TraceRequirements::none().with_debug(true).with_verbosity(v),
+                TraceRequirements::none().with_debug(true),
                 "v={v}"
             );
             assert_eq!(
-                TraceRequirements::empty().with_state_changes(true).with_verbosity(v),
-                TraceRequirements::empty().with_state_changes(true),
+                TraceRequirements::none().with_state_changes(true).with_verbosity(v),
+                TraceRequirements::none().with_state_changes(true),
                 "v={v}"
             );
         }
@@ -578,11 +578,11 @@ mod tests {
 
     #[test]
     fn verbosity_5_raises_to_record_state_diff() {
-        let state_changes = TraceRequirements::empty().with_state_changes(true);
+        let state_changes = TraceRequirements::none().with_state_changes(true);
 
-        assert_eq!(TraceRequirements::empty().with_verbosity(5), state_changes);
-        assert_eq!(TraceRequirements::empty().with_calls(true).with_verbosity(5), state_changes);
-        let cfg = TraceRequirements::empty()
+        assert_eq!(TraceRequirements::none().with_verbosity(5), state_changes);
+        assert_eq!(TraceRequirements::none().with_calls(true).with_verbosity(5), state_changes);
+        let cfg = TraceRequirements::none()
             .with_calls(true)
             .with_steps(StepRecording::Jumps)
             .with_verbosity(5)
@@ -591,23 +591,23 @@ mod tests {
         assert!(cfg.record_state_diff);
         assert!(cfg.record_opcodes_filter.is_none());
         assert_eq!(
-            TraceRequirements::empty().with_debug(true).with_verbosity(5),
-            TraceRequirements::empty().with_debug(true)
+            TraceRequirements::none().with_debug(true).with_verbosity(5),
+            TraceRequirements::none().with_debug(true)
         );
         assert_eq!(
-            TraceRequirements::empty().with_state_changes(true).with_verbosity(5),
+            TraceRequirements::none().with_state_changes(true).with_verbosity(5),
             state_changes
         );
     }
 
     #[test]
     fn config_at_verbosity_0_is_none() {
-        assert!(TraceRequirements::empty().with_verbosity(0).into_config().is_none());
+        assert!(TraceRequirements::none().with_verbosity(0).into_config().is_none());
     }
 
     #[test]
     fn config_at_verbosity_3_records_calls_only() {
-        let cfg = TraceRequirements::empty().with_verbosity(3).into_config().unwrap();
+        let cfg = TraceRequirements::none().with_verbosity(3).into_config().unwrap();
         assert!(!cfg.record_steps, "verbosity 3 should not record steps");
         assert!(!cfg.record_state_diff, "verbosity 3 should not record state diff");
         assert!(cfg.record_logs, "verbosity 3 should record logs");
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn config_at_verbosity_5_records_steps_and_state_diff() {
-        let cfg = TraceRequirements::empty().with_verbosity(5).into_config().unwrap();
+        let cfg = TraceRequirements::none().with_verbosity(5).into_config().unwrap();
         assert!(cfg.record_steps, "verbosity 5 must record steps for backtraces");
         assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
         assert!(cfg.record_logs, "verbosity 5 must record logs");
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn config_debug_mode_unchanged() {
         // Debug mode must still enable full recording for the debugger.
-        let cfg = TraceRequirements::empty().with_debug(true).into_config().unwrap();
+        let cfg = TraceRequirements::none().with_debug(true).into_config().unwrap();
         assert!(cfg.record_steps);
         assert!(cfg.record_memory_snapshots, "Debug must record memory snapshots");
         assert_eq!(
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn requirements_preserve_internal_decode_with_state_diff() {
-        let cfg = TraceRequirements::empty()
+        let cfg = TraceRequirements::none()
             .with_decode_internal(InternalTraceMode::Full)
             .with_state_changes(true)
             .into_config()
@@ -671,11 +671,8 @@ mod tests {
 
     #[test]
     fn requirements_all_steps_avoid_debug_snapshots() {
-        let cfg = TraceRequirements::empty()
-            .with_all_steps(true)
-            .with_verbosity(5)
-            .into_config()
-            .unwrap();
+        let cfg =
+            TraceRequirements::none().with_all_steps(true).with_verbosity(5).into_config().unwrap();
 
         assert!(cfg.record_steps, "all steps must record opcode steps");
         assert!(cfg.record_opcodes_filter.is_none(), "all steps must record every opcode step");

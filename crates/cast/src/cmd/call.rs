@@ -336,7 +336,7 @@ impl CallArgs {
                 }
             }
 
-            let trace_requirements = TraceRequirements::empty()
+            let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
                 .with_debug(debug)
                 .with_decode_internal(if decode_internal {
