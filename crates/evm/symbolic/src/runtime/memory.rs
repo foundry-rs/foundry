@@ -51,7 +51,7 @@ pub(crate) struct SymMemory {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct SymbolicMemoryWrite {
+struct SymbolicMemoryWrite {
     epoch: u64,
     offset: SymExpr,
     bytes: Arc<[SymExpr]>,
