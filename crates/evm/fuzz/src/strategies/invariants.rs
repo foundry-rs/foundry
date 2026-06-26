@@ -27,9 +27,9 @@ pub fn override_call_strat(
     let contracts_ref = contracts.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
-        20 => any::<prop::sample::Selector>()
-            .prop_map(move |selector| {
-                let (target, _) = selector.select(contracts_ref.iter());
+        20 => any::<prop::sample::Index>()
+            .prop_map(move |index| {
+                let (target, _) = index.get(contracts_ref.as_ref());
                 *target
             }),
     ]
@@ -100,19 +100,21 @@ pub fn invariant_strat(
         if cond { any::<U256>().prop_map(Some).boxed() } else { Just(None).boxed() }
     };
 
-    any::<prop::sample::Selector>()
-        .prop_flat_map(move |selector| {
-            let contracts = contracts.targets();
-            let functions = contracts.fuzzed_functions();
-            let (target_address, target_function) = selector.select(functions);
+    any::<prop::sample::Index>()
+        .prop_flat_map(move |index| {
+            let (target_address, target_function) = {
+                let functions = contracts.fuzzed_functions();
+                let (target_address, target_function) = index.get(&*functions);
+                (*target_address, target_function.clone())
+            };
 
             let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
 
             let call_details = fuzz_contract_with_calldata(
                 &fuzz_state,
                 &fuzz_fixtures,
-                *target_address,
-                target_function.clone(),
+                target_address,
+                target_function,
                 dictionary_weight,
                 payable_value_weight,
             );

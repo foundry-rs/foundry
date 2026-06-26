@@ -23,6 +23,7 @@ use foundry_evm_core::utils::{StateChangeset, get_function};
 type DynamicTargetCacheKey = (Address, B256);
 type DynamicTargetArtifactMatchCache =
     Rc<RefCell<HashMap<DynamicTargetCacheKey, Option<CachedTargetContract>>>>;
+type FuzzedFunction = (Address, Function);
 
 /// Returns true if the function returns `int256`, indicating optimization mode.
 /// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
@@ -37,7 +38,9 @@ pub fn is_optimization_invariant(func: &Function) -> bool {
 #[derive(Clone, Debug)]
 pub struct FuzzRunIdentifiedContracts {
     /// Contracts identified as targets during a fuzz run.
-    pub targets: Rc<RefCell<TargetedContracts>>,
+    targets: Rc<RefCell<TargetedContracts>>,
+    /// Flat cache of all currently fuzzable target functions.
+    fuzzed_functions: Rc<RefCell<Vec<FuzzedFunction>>>,
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
     artifact_matches: DynamicTargetArtifactMatchCache,
@@ -46,8 +49,10 @@ pub struct FuzzRunIdentifiedContracts {
 impl FuzzRunIdentifiedContracts {
     /// Creates a new `FuzzRunIdentifiedContracts` instance.
     pub fn new(targets: TargetedContracts, is_updatable: bool) -> Self {
+        let fuzzed_functions = Self::flatten_fuzzed_functions(&targets);
         Self {
             targets: Rc::new(RefCell::new(targets)),
+            fuzzed_functions: Rc::new(RefCell::new(fuzzed_functions)),
             is_updatable,
             artifact_matches: Rc::new(RefCell::new(HashMap::default())),
         }
@@ -56,6 +61,23 @@ impl FuzzRunIdentifiedContracts {
     /// Borrows the current targeted contracts.
     pub fn targets(&self) -> Ref<'_, TargetedContracts> {
         self.targets.borrow()
+    }
+
+    /// Borrows the current flat list of fuzzed target functions.
+    pub fn fuzzed_functions(&self) -> Ref<'_, [FuzzedFunction]> {
+        Ref::map(self.fuzzed_functions.borrow(), Vec::as_slice)
+    }
+
+    fn refresh_fuzzed_functions(&self) {
+        let fuzzed_functions = {
+            let targets = self.targets.borrow();
+            Self::flatten_fuzzed_functions(&targets)
+        };
+        *self.fuzzed_functions.borrow_mut() = fuzzed_functions;
+    }
+
+    fn flatten_fuzzed_functions(targets: &TargetedContracts) -> Vec<FuzzedFunction> {
+        targets.fuzzed_functions().map(|(address, function)| (*address, function.clone())).collect()
     }
 
     /// If targets are updatable, collect all contracts created during an invariant run (which
@@ -72,6 +94,7 @@ impl FuzzRunIdentifiedContracts {
             return Ok(());
         }
 
+        let mut targets_changed = false;
         for (address, account) in state_changeset {
             if setup_contracts.contains_key(address) {
                 continue;
@@ -99,6 +122,10 @@ impl FuzzRunIdentifiedContracts {
             };
             created_contracts.push(*address);
             self.targets.borrow_mut().insert(*address, contract.into_targeted_contract());
+            targets_changed = true;
+        }
+        if targets_changed {
+            self.refresh_fuzzed_functions();
         }
         Ok(())
     }
@@ -137,11 +164,15 @@ impl FuzzRunIdentifiedContracts {
 
     /// Clears targeted contracts created during an invariant run.
     pub fn clear_created_contracts(&self, created_contracts: Vec<Address>) {
+        let mut targets_changed = false;
         if !created_contracts.is_empty() {
             let mut targets = self.targets.borrow_mut();
             for addr in &created_contracts {
-                targets.remove(addr);
+                targets_changed |= targets.remove(addr).is_some();
             }
+        }
+        if targets_changed {
+            self.refresh_fuzzed_functions();
         }
     }
 }
@@ -585,6 +616,24 @@ mod tests {
     };
     use revm::{bytecode::Bytecode, state::Account};
 
+    fn abi_with_functions(functions: &[&str]) -> JsonAbi {
+        let mut abi = JsonAbi::new();
+        for function in functions {
+            let function = Function::parse(function).unwrap();
+            abi.functions.entry(function.name.clone()).or_default().push(function);
+        }
+        abi
+    }
+
+    fn targeted_contracts_with_functions(target: Address, functions: &[&str]) -> TargetedContracts {
+        let mut targets = TargetedContracts::new();
+        targets.inner.insert(
+            target,
+            TargetedContract::new("Target".to_string(), abi_with_functions(functions)),
+        );
+        targets
+    }
+
     fn targeted_contracts_with_function(target: Address, function: Function) -> TargetedContracts {
         let mut abi = JsonAbi::new();
         abi.functions.entry(function.name.clone()).or_default().push(function);
@@ -614,6 +663,14 @@ mod tests {
     }
 
     fn project_contracts_with_runtime_code(name: &str, code: Bytes) -> ContractsByArtifact {
+        project_contracts_with_runtime_code_and_abi(name, code, JsonAbi::new())
+    }
+
+    fn project_contracts_with_runtime_code_and_abi(
+        name: &str,
+        code: Bytes,
+        abi: JsonAbi,
+    ) -> ContractsByArtifact {
         let deployed_bytecode = CompactDeployedBytecode {
             bytecode: Some(CompactBytecode {
                 object: BytecodeObject::Bytecode(code),
@@ -623,7 +680,7 @@ mod tests {
             immutable_references: Default::default(),
         };
         let artifact = CompactContractBytecode {
-            abi: Some(JsonAbi::new()),
+            abi: Some(abi),
             bytecode: None,
             deployed_bytecode: Some(deployed_bytecode),
         };
@@ -647,6 +704,33 @@ mod tests {
         assert!(!targets.can_replay(&tx));
         assert!(targets.fuzzed_artifacts(&tx).1.is_none());
         assert!(targets.fuzzed_metric_key(&tx).is_none());
+    }
+
+    #[test]
+    fn fuzz_run_identified_contracts_cache_fuzzed_functions_in_target_order() {
+        let first = Address::from([0x01; 20]);
+        let second = Address::from([0x02; 20]);
+        let mut targets = targeted_contracts_with_functions(second, &["bar()", "baz(uint256)"]);
+        targets.inner.insert(
+            first,
+            TargetedContract::new(
+                "First".to_string(),
+                abi_with_functions(&["foo()", "qux(address)"]),
+            ),
+        );
+        let expected = targets
+            .fuzzed_functions()
+            .map(|(address, function)| (*address, function.selector()))
+            .collect::<Vec<_>>();
+
+        let identified = FuzzRunIdentifiedContracts::new(targets, true);
+        let actual = identified
+            .fuzzed_functions()
+            .iter()
+            .map(|(address, function)| (*address, function.selector()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -707,5 +791,63 @@ mod tests {
 
         created_contracts.sort_unstable();
         assert_eq!(created_contracts, vec![existing, existing, created, created]);
+    }
+
+    #[test]
+    fn collect_and_clear_created_contracts_refresh_fuzzed_function_cache() {
+        let existing = Address::from([0x42; 20]);
+        let created = Address::from([0x43; 20]);
+        let runtime_code = Bytes::from_static(&[0x60, 0x00, 0x56]);
+        let project_contracts = project_contracts_with_runtime_code_and_abi(
+            "DynamicTarget",
+            runtime_code.clone(),
+            abi_with_functions(&["dynamic(uint256)"]),
+        );
+        let identified = FuzzRunIdentifiedContracts::new(
+            targeted_contracts_with_functions(existing, &["existing()"]),
+            true,
+        );
+
+        let initial = identified
+            .fuzzed_functions()
+            .iter()
+            .map(|(address, function)| (*address, function.selector()))
+            .collect::<Vec<_>>();
+        assert_eq!(initial, vec![(existing, Function::parse("existing()").unwrap().selector())]);
+
+        let mut state_changeset = StateChangeset::default();
+        state_changeset.insert(created, touched_account_with_code(runtime_code));
+        let mut created_contracts = Vec::new();
+
+        identified
+            .collect_created_contracts(
+                &state_changeset,
+                &project_contracts,
+                &ContractsByAddress::default(),
+                &ArtifactFilters::default(),
+                &mut created_contracts,
+            )
+            .unwrap();
+
+        let with_created = identified
+            .fuzzed_functions()
+            .iter()
+            .map(|(address, function)| (*address, function.selector()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            with_created,
+            vec![
+                (existing, Function::parse("existing()").unwrap().selector()),
+                (created, Function::parse("dynamic(uint256)").unwrap().selector()),
+            ]
+        );
+
+        identified.clear_created_contracts(created_contracts);
+        let cleared = identified
+            .fuzzed_functions()
+            .iter()
+            .map(|(address, function)| (*address, function.selector()))
+            .collect::<Vec<_>>();
+        assert_eq!(cleared, initial);
     }
 }
