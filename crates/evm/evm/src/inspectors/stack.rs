@@ -23,7 +23,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::NetworkConfigs;
-use foundry_evm_traces::{SparsedTraceArena, TraceMode};
+use foundry_evm_traces::{SparsedTraceArena, TraceMode, TraceRequirements};
 use revm::{
     Inspector,
     context::{
@@ -64,7 +64,7 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
     /// Whether to enable tracing and revert diagnostics.
-    pub trace_mode: TraceMode,
+    pub trace_requirements: TraceRequirements,
     /// Whether logs should be collected.
     /// - None for no log collection.
     /// - Some(true) for realtime console.log-ing.
@@ -96,7 +96,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             gas_price: None,
             cheatcodes: None,
             fuzzer: None,
-            trace_mode: TraceMode::None,
+            trace_requirements: TraceRequirements::default(),
             logs: None,
             line_coverage: None,
             print: None,
@@ -189,10 +189,14 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
     /// Set whether to enable the tracer.
     /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
     #[inline]
-    pub fn trace_mode(mut self, mode: TraceMode) -> Self {
-        if self.trace_mode < mode {
-            self.trace_mode = mode
-        }
+    pub fn trace_mode(self, mode: TraceMode) -> Self {
+        self.trace_requirements(TraceRequirements::from(mode))
+    }
+
+    /// Set trace data requirements.
+    #[inline]
+    pub fn trace_requirements(mut self, requirements: TraceRequirements) -> Self {
+        self.trace_requirements = self.trace_requirements.merge(requirements);
         self
     }
 
@@ -227,7 +231,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             gas_price,
             cheatcodes,
             fuzzer,
-            trace_mode,
+            trace_requirements,
             logs,
             line_coverage,
             print,
@@ -263,7 +267,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
         stack.collect_logs(logs);
         stack.print(print.unwrap_or(false));
-        stack.tracing(trace_mode);
+        stack.tracing_requirements(trace_requirements);
 
         stack.enable_isolation(enable_isolation);
         stack.networks(networks);
@@ -631,9 +635,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
     #[inline]
     pub fn tracing(&mut self, mode: TraceMode) {
-        self.revert_diag = (!mode.is_none()).then(RevertDiagnostic::default).map(Into::into);
+        self.tracing_requirements(TraceRequirements::from(mode));
+    }
 
-        if let Some(config) = mode.into_config() {
+    /// Set trace data requirements.
+    #[inline]
+    pub fn tracing_requirements(&mut self, requirements: TraceRequirements) {
+        let config = requirements.into_config();
+        self.revert_diag = config.is_some().then(RevertDiagnostic::default).map(Into::into);
+
+        if let Some(config) = config {
             *self.tracer.get_or_insert_with(Default::default).config_mut() = config;
         } else {
             self.tracer = None;

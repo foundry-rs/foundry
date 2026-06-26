@@ -30,7 +30,7 @@ use foundry_evm::{
     fuzz::strategies::{EnumBounds, LiteralsDictionary},
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
 
@@ -471,7 +471,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             cheatcodes.config =
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
         }
-        inspector.tracing(self.trace_mode());
+        inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.networks(self.evm_opts.networks);
@@ -504,7 +504,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                 stack
                     .logs(self.config.live_logs)
                     .cheatcodes(cheats_config)
-                    .trace_mode(self.trace_mode())
+                    .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .networks(self.evm_opts.networks)
@@ -517,8 +517,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             .build(self.evm_env.clone(), self.tx_env.clone(), db)
     }
 
-    fn trace_mode(&self) -> TraceMode {
-        TraceMode::default()
+    fn trace_requirements(&self) -> TraceRequirements {
+        TraceRequirements::default()
             .with_debug(self.debug)
             .with_decode_internal(self.decode_internal)
             .with_verbosity(self.evm_opts.verbosity)
