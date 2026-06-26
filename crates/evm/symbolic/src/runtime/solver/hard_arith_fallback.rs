@@ -88,11 +88,13 @@ pub(crate) fn hard_arith_fallback_model(constraints: &[BoolExpr]) -> Option<Symb
     }
 
     let mut vars = SymbolicVars::default();
-    let mut constants = BTreeSet::new();
+    let mut constants = HashSet::<U256>::default();
     for constraint in constraints {
         collect_bool_fallback_vars(constraint, &mut vars);
         collect_bool_constants(constraint, &mut constants);
     }
+    let mut constants = constants.into_iter().collect::<Vec<_>>();
+    constants.sort_unstable();
     let vars = fallback_search_vars(vars);
     if vars.is_empty() || vars.len() > HARD_ARITH_FALLBACK_MAX_VARS {
         return None;
@@ -144,14 +146,14 @@ pub(crate) fn fallback_search_vars(vars: SymbolicVars) -> Vec<Arc<str>> {
 pub(crate) fn fallback_candidates_for_var(
     var: &str,
     constraints: &[BoolExpr],
-    constants: &BTreeSet<U256>,
+    constants: &[U256],
 ) -> Option<Vec<U256>> {
     let hints = MaskHints::for_var(var, constraints);
     if (hints.one & hints.zero) != U256::ZERO {
         return None;
     }
 
-    let mut candidates = BTreeSet::new();
+    let mut candidates = HashSet::<U256>::default();
     for candidate in [
         U256::ZERO,
         U256::from(1),
@@ -181,7 +183,10 @@ pub(crate) fn fallback_candidates_for_var(
         }
     }
 
-    Some(candidates.into_iter().take(HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR).collect())
+    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+    candidates.sort_unstable();
+    candidates.truncate(HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR);
+    Some(candidates)
 }
 
 /// Holds immutable state for recursive hard-arithmetic fallback search.
@@ -304,11 +309,13 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
 #[cfg(test)]
 pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<SymbolicModel> {
     let mut vars = SymbolicVars::default();
-    let mut constants = BTreeSet::new();
+    let mut constants = HashSet::<U256>::default();
     for constraint in constraints {
         constraint.collect_vars(&mut vars);
         collect_bool_constants(constraint, &mut constants);
     }
+    let mut constants = constants.into_iter().collect::<Vec<_>>();
+    constants.sort_unstable();
 
     let var = if vars.len() == 1 { vars.iter().next()?.clone() } else { return None };
     let hints = MaskHints::for_var(&var, constraints);
@@ -316,7 +323,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<Symb
         return None;
     }
 
-    let mut candidates = BTreeSet::new();
+    let mut candidates = HashSet::<U256>::default();
     for candidate in [
         U256::ZERO,
         U256::from(1),
@@ -343,6 +350,8 @@ pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<Symb
         }
     }
 
+    let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+    candidates.sort_unstable();
     for candidate in candidates {
         let mut model = SymbolicModel::default();
         model.insert(Arc::clone(&var), candidate);
@@ -357,7 +366,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<Symb
 
 /// Applies the `push_fallback_candidate` solver helper.
 pub(crate) fn push_fallback_candidate(
-    candidates: &mut BTreeSet<U256>,
+    candidates: &mut HashSet<U256>,
     candidate: U256,
     hints: MaskHints,
 ) {
@@ -365,7 +374,7 @@ pub(crate) fn push_fallback_candidate(
 }
 
 /// Implements the `collect_bool_constants` solver helper.
-pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut BTreeSet<U256>) {
+pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut HashSet<U256>) {
     match expr {
         BoolExpr::Const(_) => {}
         BoolExpr::Not(value) => collect_bool_constants(value, constants),
@@ -382,7 +391,7 @@ pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut BTreeSet<U
 }
 
 /// Implements the `collect_expr_constants` solver helper.
-pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut BTreeSet<U256>) {
+pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut HashSet<U256>) {
     match expr {
         Expr::Const(value) => {
             constants.insert(*value);
