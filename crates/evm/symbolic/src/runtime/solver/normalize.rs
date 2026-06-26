@@ -672,9 +672,10 @@ pub(crate) fn normalize_expr_eq_zero_for_solver(expr: &Expr) -> Option<BoolExpr>
         if bool_contains_udiv(&then_zero) || bool_contains_udiv(&else_zero) {
             return None;
         }
+        let condition = normalize_bool_for_solver(condition.clone());
         return Some(BoolExpr::or(vec![
-            BoolExpr::and(vec![normalize_bool_for_solver(condition.clone()), then_zero]),
-            BoolExpr::and(vec![normalize_bool_for_solver(condition.clone()).not(), else_zero]),
+            BoolExpr::and(vec![condition.clone(), then_zero]),
+            BoolExpr::and(vec![condition.not(), else_zero]),
         ]));
     }
     None
@@ -697,9 +698,10 @@ pub(crate) fn normalize_expr_ne_zero_for_solver(expr: &Expr) -> Option<BoolExpr>
         if bool_contains_udiv(&then_nonzero) || bool_contains_udiv(&else_nonzero) {
             return None;
         }
+        let condition = normalize_bool_for_solver(condition.clone());
         return Some(BoolExpr::or(vec![
-            BoolExpr::and(vec![normalize_bool_for_solver(condition.clone()), then_nonzero]),
-            BoolExpr::and(vec![normalize_bool_for_solver(condition.clone()).not(), else_nonzero]),
+            BoolExpr::and(vec![condition.clone(), then_nonzero]),
+            BoolExpr::and(vec![condition.not(), else_nonzero]),
         ]));
     }
     None
@@ -750,25 +752,20 @@ pub(crate) fn udiv_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
 
 /// Builds the exact condition for EVM `udiv(numerator, denominator) == 0`.
 pub(crate) fn udiv_zero_condition(numerator: &Expr, denominator: &Expr) -> BoolExpr {
+    let numerator = normalize_expr_for_solver(numerator.clone());
+    let denominator = normalize_expr_for_solver(denominator.clone());
     BoolExpr::or(vec![
-        BoolExpr::eq(normalize_expr_for_solver(denominator.clone()), Expr::constant(U256::ZERO)),
-        BoolExpr::cmp(
-            BoolExprOp::Ult,
-            normalize_expr_for_solver(numerator.clone()),
-            normalize_expr_for_solver(denominator.clone()),
-        ),
+        BoolExpr::eq(denominator.clone(), Expr::constant(U256::ZERO)),
+        BoolExpr::cmp(BoolExprOp::Ult, numerator, denominator),
     ])
 }
 
 /// Builds the exact condition for EVM `udiv(numerator, denominator) != 0`.
 pub(crate) fn udiv_nonzero_condition(numerator: &Expr, denominator: &Expr) -> BoolExpr {
+    let numerator = normalize_expr_for_solver(numerator.clone());
+    let denominator = normalize_expr_for_solver(denominator.clone());
     BoolExpr::and(vec![
-        BoolExpr::eq(normalize_expr_for_solver(denominator.clone()), Expr::constant(U256::ZERO))
-            .not(),
-        BoolExpr::cmp(
-            BoolExprOp::Uge,
-            normalize_expr_for_solver(numerator.clone()),
-            normalize_expr_for_solver(denominator.clone()),
-        ),
+        BoolExpr::eq(denominator.clone(), Expr::constant(U256::ZERO)).not(),
+        BoolExpr::cmp(BoolExprOp::Uge, numerator, denominator),
     ])
 }
