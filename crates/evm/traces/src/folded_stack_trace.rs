@@ -239,7 +239,7 @@ impl FoldedStackTraceBuilder {
                 let parent_trace_to_match = &names[..names.len() - 1];
                 for parent in left.iter_mut().rev() {
                     if parent.names == parent_trace_to_match {
-                        parent.gas -= gas;
+                        parent.gas = parent.gas.saturating_sub(*gas);
                         break;
                     }
                 }
@@ -367,6 +367,15 @@ mod tests {
                 "top2 1700",
             ]
         );
+    }
+
+    #[test]
+    fn folded_stack_trace_saturates_parent_gas() {
+        let mut trace = super::FoldedStackTraceBuilder::default();
+        trace.enter("top".to_string(), 100);
+        trace.enter("child".to_string(), 150);
+
+        assert_eq!(trace.build(), vec!["top 0", "top;child 150"]);
     }
 
     #[test]
