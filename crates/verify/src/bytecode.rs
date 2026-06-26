@@ -31,7 +31,7 @@ use foundry_cli::{
 use foundry_common::{
     SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder, shell,
 };
-use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
+use foundry_compilers::info::ContractInfo;
 use foundry_config::{Config, figment, impl_figment_convert};
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
@@ -203,9 +203,34 @@ impl VerifyBytecodeArgs {
         self.etherscan.chain = Some(chain);
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
-        // Etherscan client
-        let etherscan =
-            EtherscanVerificationProvider.client(&self.etherscan, &self.verifier, &config)?;
+        // Whether the user explicitly configured a block explorer. Client setup errors are only
+        // treated as "no explorer available" when nothing was configured: an explicitly provided
+        // verifier or API key that fails to resolve must still surface as an error.
+        let has_explorer_config = self.verifier.verifier.is_some()
+            || self.verifier.verifier_url.is_some()
+            || self.verifier.verifier_api_key.is_some()
+            || self.etherscan.key.is_some();
+
+        // Etherscan client. May be unavailable (e.g. unknown chain, missing configuration), in
+        // which case verification proceeds with local data only.
+        let etherscan = match EtherscanVerificationProvider.client(
+            &self.etherscan,
+            &self.verifier,
+            &config,
+        ) {
+            Ok(client) => Some(client),
+            Err(err) => {
+                if has_explorer_config {
+                    return Err(err);
+                }
+                if !shell::is_json() {
+                    sh_warn!(
+                        "Failed to create a block explorer client: {err}. Continuing with the local project configuration."
+                    )?;
+                }
+                None
+            }
+        };
 
         // Get the bytecode at the address, bailing if it doesn't exist.
         let code = provider.get_code_at(self.address).await?;
@@ -223,25 +248,64 @@ impl VerifyBytecodeArgs {
 
         let mut json_results: Vec<JsonResult> = vec![];
 
-        // Get creation tx hash.
-        let creation_data = etherscan.contract_creation_data(self.address).await;
+        // Get creation tx hash. An unavailable explorer (missing API key, unsupported chain,
+        // unverified contract, etc.) must not prevent verification against a local build: fall
+        // back to verifying the runtime bytecode only.
+        // See <https://github.com/foundry-rs/foundry/issues/13479>.
+        let (creation_data, maybe_predeploy) = match &etherscan {
+            Some(etherscan) => {
+                let creation_data = etherscan.contract_creation_data(self.address).await;
 
-        // Check if contract is a predeploy
-        let (creation_data, maybe_predeploy) = maybe_predeploy_contract(creation_data)?;
+                // Check if contract is a predeploy
+                match maybe_predeploy_contract(creation_data) {
+                    Ok(res) => res,
+                    Err(err) => {
+                        if !shell::is_json() {
+                            sh_warn!(
+                                "Failed to fetch creation data from the block explorer: {err}"
+                            )?;
+                        }
+                        (None, false)
+                    }
+                }
+            }
+            None => (None, false),
+        };
 
         trace!(maybe_predeploy = ?maybe_predeploy);
 
         // Get the constructor args using `source_code` endpoint.
-        let source_code = etherscan.contract_source_code(self.address).await?;
-
-        // Check if the contract name matches.
-        let name = source_code.items.first().map(|item| item.contract_name.clone());
-        if name.as_ref() != Some(&self.contract.name) {
-            eyre::bail!("Contract name mismatch");
-        }
+        let source_code = match &etherscan {
+            Some(etherscan) => match etherscan.contract_source_code(self.address).await {
+                Ok(source_code) => {
+                    // Check if the contract name matches.
+                    let name = source_code.items.first().map(|item| item.contract_name.clone());
+                    if name.as_ref() != Some(&self.contract.name) {
+                        eyre::bail!("Contract name mismatch");
+                    }
+                    Some(source_code)
+                }
+                Err(err) => {
+                    if !shell::is_json() {
+                        sh_warn!(
+                            "Failed to fetch contract source code from the block explorer: {err}. Continuing with the local project configuration; compiler settings mismatches will not be reported."
+                        )?;
+                    }
+                    None
+                }
+            },
+            None => None,
+        };
 
         // Obtain Etherscan compilation metadata.
-        let etherscan_metadata = source_code.items.first().unwrap();
+        let etherscan_metadata = source_code.as_ref().and_then(|source| source.items.first());
+
+        // The EVM version to verify against: the explorer-reported version when available,
+        // otherwise the local project configuration.
+        let evm_version = match etherscan_metadata {
+            Some(metadata) => metadata.evm_version()?.unwrap_or_default(),
+            None => config.evm_version,
+        };
 
         // Obtain local artifact
         let artifact = crate::utils::build_project(&self, &config)?;
@@ -266,41 +330,68 @@ impl VerifyBytecodeArgs {
 
         let mut constructor_args = if let Some(provided) = provided_constructor_args {
             provided.into()
-        } else {
+        } else if let Some(source_code) = &source_code {
             // If no constructor args were provided, try to retrieve them from the explorer.
-            check_explorer_args(source_code.clone())?
+            check_explorer_args(source_code)?
+        } else {
+            Bytes::new()
         };
 
         // This fails only when the contract expects constructor args but NONE were provided OR
         // retrieved from explorer (in case of predeploys).
         crate::utils::check_args_len(&artifact, &constructor_args)?;
 
-        if maybe_predeploy {
+        // Without creation data (predeploys, or the explorer being unavailable), the creation
+        // code cannot be verified. Verify the runtime bytecode instead by deploying the local
+        // creation code and comparing the resulting runtime code with the onchain one.
+        if creation_data.is_none() {
             if !shell::is_json() {
-                sh_warn!(
-                    "Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.",
-                    self.address
-                )?;
+                if maybe_predeploy {
+                    sh_warn!(
+                        "Attempting to verify predeployed contract at {:?}. Ignoring creation code verification.",
+                        self.address
+                    )?;
+                } else {
+                    sh_warn!("Creation data is unavailable. Ignoring creation code verification.")?;
+                }
             }
+
+            // Without creation data there is nothing else to verify when the runtime bytecode is
+            // ignored.
+            if self.ignore.is_some_and(|b| b.is_runtime()) {
+                if shell::is_json() {
+                    sh_println!("{}", serde_json::to_string(&json_results)?)?;
+                }
+                return Ok(());
+            }
+
+            let deploy_block = if maybe_predeploy {
+                // Deploy at genesis
+                0_u64
+            } else {
+                match self.block {
+                    Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,
+                    Some(_) => eyre::bail!("Invalid block number"),
+                    None => provider.get_block_number().await?,
+                }
+            };
 
             // Append constructor args to the local_bytecode.
             trace!(%constructor_args);
             let mut local_bytecode_vec = local_bytecode.to_vec();
             local_bytecode_vec.extend_from_slice(&constructor_args);
 
-            // Deploy at genesis
-            let gen_blk_num = 0_u64;
             let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
             let (mut evm_env, _, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
-                gen_blk_num,
-                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
+                deploy_block,
+                evm_version,
                 evm_opts,
             )
             .await?;
 
-            evm_env.block_env.set_number(U256::ZERO);
-            let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
+            evm_env.block_env.set_number(U256::from(deploy_block));
+            let deploy_block_info = provider.get_block(deploy_block.into()).full().await?;
 
             // Setup genesis tx_env and evm_evm.
             let deployer = Address::with_last_byte(0x1);
@@ -312,7 +403,7 @@ impl VerifyBytecodeArgs {
             tx_env.set_gas_limit(evm_env.block_env.gas_limit());
             tx_env.set_gas_price(evm_env.block_env.basefee() as u128);
 
-            if let Some(ref block) = genesis_block {
+            if let Some(ref block) = deploy_block_info {
                 configure_env_block::<FEN>(&mut evm_env, block, config.networks);
                 tx_env.set_gas_limit(block.header().gas_limit());
                 tx_env.set_gas_price(block.header().base_fee_per_gas().unwrap_or_default() as u128);
@@ -336,13 +427,15 @@ impl VerifyBytecodeArgs {
                 kind,
             )?;
 
-            // Compare runtime bytecode
+            // Compare runtime bytecode. The onchain code is read at `deploy_block` to stay
+            // anchored to the same height as the local fork. Predeploys keep reading at the
+            // latest block: their code is stable and genesis state often isn't served by RPCs.
             let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes::<FEN>(
                 &mut executor,
                 &provider,
                 self.address,
                 fork_address,
-                None,
+                (!maybe_predeploy).then_some(deploy_block),
             )
             .await?;
 
@@ -501,7 +594,7 @@ impl VerifyBytecodeArgs {
             let (mut evm_env, _tx_env, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 simulation_block - 1, // env.fork_block_number
-                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
+                evm_version,
                 evm_opts,
             )
             .await?;
