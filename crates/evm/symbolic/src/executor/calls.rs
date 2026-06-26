@@ -935,12 +935,7 @@ impl SymbolicExecutor {
                     .cloned()
             })
             .unwrap_or_else(|| SymExpr::constant(address_word(to)));
-        if matches!(kind, CallKind::DelegateCall)
-            && (state.prank.next_caller.is_some()
-                || state.prank.next_origin.is_some()
-                || state.prank.persistent_caller.is_some()
-                || state.prank.persistent_origin.is_some())
-        {
+        if matches!(kind, CallKind::DelegateCall) && state.prank.has_active() {
             return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
         }
         let (pranked_caller, pranked_caller_word, pranked_origin) = state.prank_for_next_call();

@@ -1223,10 +1223,37 @@ pub(crate) struct TopLevelCallOutcome {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SymbolicPrank {
-    pub(crate) next_caller: Option<(Address, SymExpr)>,
-    pub(crate) next_origin: Option<(Address, SymExpr)>,
-    pub(crate) persistent_caller: Option<(Address, SymExpr)>,
-    pub(crate) persistent_origin: Option<(Address, SymExpr)>,
+    next_caller: Option<(Address, SymExpr)>,
+    next_origin: Option<(Address, SymExpr)>,
+    persistent_caller: Option<(Address, SymExpr)>,
+    persistent_origin: Option<(Address, SymExpr)>,
+}
+
+impl SymbolicPrank {
+    pub(crate) fn set_next(
+        &mut self,
+        caller: (Address, SymExpr),
+        origin: Option<(Address, SymExpr)>,
+    ) {
+        self.next_caller = Some(caller);
+        self.next_origin = origin;
+    }
+
+    pub(crate) fn set_persistent(
+        &mut self,
+        caller: (Address, SymExpr),
+        origin: Option<(Address, SymExpr)>,
+    ) {
+        self.persistent_caller = Some(caller);
+        self.persistent_origin = origin;
+    }
+
+    pub(crate) const fn has_active(&self) -> bool {
+        self.next_caller.is_some()
+            || self.next_origin.is_some()
+            || self.persistent_caller.is_some()
+            || self.persistent_origin.is_some()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

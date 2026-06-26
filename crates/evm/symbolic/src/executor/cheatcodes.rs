@@ -1210,16 +1210,14 @@ impl SymbolicExecutor {
                 return Ok(self.set_function_mock(state, callee, target, data));
             }
             prank_0Call::SELECTOR => {
-                state.prank.next_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.next_origin = None;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                state.prank.set_next(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             prank_1Call::SELECTOR => {
-                state.prank.next_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.next_origin =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                state.prank.set_next(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             prank_2Call::SELECTOR => {
@@ -1228,9 +1226,8 @@ impl SymbolicExecutor {
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
                 }
-                state.prank.next_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.next_origin = None;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                state.prank.set_next(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             prank_3Call::SELECTOR => {
@@ -1239,23 +1236,20 @@ impl SymbolicExecutor {
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
                 }
-                state.prank.next_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.next_origin =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                state.prank.set_next(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_0Call::SELECTOR => {
-                state.prank.persistent_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.persistent_origin = None;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                state.prank.set_persistent(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_1Call::SELECTOR => {
-                state.prank.persistent_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.persistent_origin =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                state.prank.set_persistent(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_2Call::SELECTOR => {
@@ -1264,9 +1258,8 @@ impl SymbolicExecutor {
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
                 }
-                state.prank.persistent_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.persistent_origin = None;
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                state.prank.set_persistent(caller, None);
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             startPrank_3Call::SELECTOR => {
@@ -1275,10 +1268,9 @@ impl SymbolicExecutor {
                 if delegate_call {
                     return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
                 }
-                state.prank.persistent_caller =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
-                state.prank.persistent_origin =
-                    Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?);
+                let caller = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?;
+                let origin = read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 1)?;
+                state.prank.set_persistent(caller, Some(origin));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             stopPrankCall::SELECTOR => {
