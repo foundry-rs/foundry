@@ -565,9 +565,7 @@ impl SmtLibSubprocessSolver {
         for var in vars {
             let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
         }
-        for constraint in smt_constraints {
-            let _ = writeln!(smt, "(assert {})", constraint.smt());
-        }
+        write_smt_assertions(&mut smt, smt_constraints);
         smt.push_str("(check-sat)\n");
         if model {
             smt.push_str("(get-model)\n");

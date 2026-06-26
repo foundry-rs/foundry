@@ -3746,6 +3746,37 @@ fn solver_capture_diagnostics_buffers_dump_smt_output() {
     assert!(solver.take_diagnostics().is_none());
 }
 
+#[cfg(unix)]
+#[test]
+fn solver_smt_dump_shares_repeated_subterms() {
+    let commands = vec![
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; printf 'sat\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, true);
+    let byte = SymExpr::var("calldata_0").extracted_byte(0);
+    let shifted = SymExpr::op(SymExprOp::Shl, byte, SymExpr::constant(U256::from(248)));
+    let constraints = vec![
+        SymBoolExpr::eq(shifted.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, shifted, SymExpr::constant(U256::ZERO)),
+    ];
+
+    solver.capture_diagnostics();
+
+    assert!(solver.is_sat(&constraints).unwrap());
+    let diagnostics = solver.take_diagnostics().unwrap();
+
+    assert!(diagnostics.contains("(assert (let ((__sym_expr_"));
+    assert_eq!(diagnostics.matches("(bvlshr calldata_0 (_ bv248 256))").count(), 1);
+}
+
 #[test]
 fn portfolio_diagnostics_counts_staged_outcomes() {
     let summaries = vec![
