@@ -57,7 +57,7 @@ pub(crate) struct SymMemory {
 #[derive(Clone, Debug)]
 pub(crate) struct SymbolicMemoryWrite {
     epoch: u64,
-    offset: Expr,
+    offset: Arc<Expr>,
     bytes: Arc<[SymWord]>,
 }
 
@@ -70,8 +70,8 @@ pub(crate) fn memory_size_after_access(offset: usize, len: usize) -> usize {
 }
 
 /// Returns the `memory_size_after_symbolic_access` symbolic memory helper result.
-pub(crate) fn memory_size_after_symbolic_access(offset: Expr, len: U256) -> Expr {
-    let end = Expr::op(ExprOp::Add, offset, Expr::Const(len));
+pub(crate) fn memory_size_after_symbolic_access(offset: &Expr, len: U256) -> Expr {
+    let end = Expr::op(ExprOp::Add, offset.clone(), Expr::Const(len));
     Expr::op(
         ExprOp::And,
         Expr::op(ExprOp::Add, end, Expr::Const(U256::from(31))),
@@ -102,7 +102,7 @@ impl SymMemory {
             }
             SymWord::Concrete(_) => {}
             SymWord::Expr(offset) => {
-                self.store_symbolic_bytes(Arc::unwrap_or_clone(offset), word_bytes(value));
+                self.store_symbolic_bytes(offset, word_bytes(value));
             }
         }
     }
@@ -120,7 +120,7 @@ impl SymMemory {
             }
             SymWord::Concrete(_) => {}
             SymWord::Expr(offset) => {
-                self.store_symbolic_bytes(Arc::unwrap_or_clone(offset), vec![low_byte(value)]);
+                self.store_symbolic_bytes(offset, vec![low_byte(value)]);
             }
         }
     }
@@ -140,7 +140,7 @@ impl SymMemory {
     }
 
     /// Applies the `store_symbolic_bytes` symbolic memory helper.
-    pub(crate) fn store_symbolic_bytes(&mut self, offset: Expr, bytes: Vec<SymWord>) {
+    pub(crate) fn store_symbolic_bytes(&mut self, offset: Arc<Expr>, bytes: Vec<SymWord>) {
         if bytes.is_empty() {
             return;
         }
@@ -159,7 +159,7 @@ impl SymMemory {
                 self.store_bytes(offset.to::<usize>(), bytes);
             }
             SymWord::Concrete(_) => {}
-            SymWord::Expr(offset) => self.store_symbolic_bytes(Arc::unwrap_or_clone(offset), bytes),
+            SymWord::Expr(offset) => self.store_symbolic_bytes(offset, bytes),
         }
     }
 
@@ -252,7 +252,11 @@ impl SymMemory {
                 has_symbolic_match = true;
                 result = Expr::ite(
                     BoolExpr::eq(
-                        Expr::op(ExprOp::Add, write.offset.clone(), Expr::Const(U256::from(idx))),
+                        Expr::op(
+                            ExprOp::Add,
+                            write.offset.as_ref().clone(),
+                            Expr::Const(U256::from(idx)),
+                        ),
                         Expr::Const(U256::from(offset)),
                     ),
                     byte.clone().into_expr(),
@@ -283,7 +287,7 @@ impl SymMemory {
                         BoolExpr::eq(
                             Expr::op(
                                 ExprOp::Add,
-                                write.offset.clone(),
+                                write.offset.as_ref().clone(),
                                 Expr::Const(U256::from(idx)),
                             ),
                             Expr::Const(U256::from(candidate)),
@@ -306,10 +310,8 @@ impl SymMemory {
     pub(crate) fn size_word(&self) -> SymWord {
         let mut size = Expr::Const(U256::from(self.size));
         for write in &self.symbolic_writes {
-            let write_size = memory_size_after_symbolic_access(
-                write.offset.clone(),
-                U256::from(write.bytes.len()),
-            );
+            let write_size =
+                memory_size_after_symbolic_access(&write.offset, U256::from(write.bytes.len()));
             size = max_u256_expr(size, write_size);
         }
         SymWord::from_expr(size)
@@ -366,7 +368,7 @@ impl SymMemory {
                         symbolic_copy_size_byte(idx, &size, source, existing)
                     })
                     .collect();
-                self.store_symbolic_bytes(Arc::unwrap_or_clone(dest), bytes);
+                self.store_symbolic_bytes(dest, bytes);
             }
         }
         Ok(())
