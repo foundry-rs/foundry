@@ -7,7 +7,7 @@ use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
-    map::{HashMap, HashSet},
+    map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
@@ -338,6 +338,17 @@ impl CallTraceDecoder {
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
+    }
+
+    /// Returns labels for precompiles active in this decoder's chain context.
+    pub fn precompile_labels(&self) -> AddressHashMap<String> {
+        self.labels
+            .iter()
+            .filter(|(address, _)| {
+                precompiles::is_known_precompile(**address, self.chain_id, self.tempo_hardfork)
+            })
+            .map(|(address, label)| (*address, label.clone()))
+            .collect()
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -1912,6 +1923,32 @@ mod tests {
 
         // On a Tempo chain, the Tempo precompile should be filtered out.
         assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_precompile_labels_include_local_tempo_precompiles() {
+        let decoder =
+            CallTraceDecoderBuilder::new().with_tempo_hardfork(Some(TempoHardfork::T5)).build();
+
+        let labels = decoder.precompile_labels();
+        assert_eq!(labels.get(&TIP_FEE_MANAGER_ADDRESS), Some(&"FeeManager".to_string()));
+        assert_eq!(
+            labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS),
+            Some(&"TIP20ChannelReserve".to_string())
+        );
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
+    }
+
+    #[test]
+    fn test_precompile_labels_skip_tempo_precompiles_on_other_chains() {
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_chain_id(Some(1))
+            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .build();
+
+        let labels = decoder.precompile_labels();
+        assert!(!labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
+        assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
     }
 
     #[test]
