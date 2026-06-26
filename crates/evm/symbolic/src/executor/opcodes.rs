@@ -69,7 +69,7 @@ impl SymbolicExecutor {
                 {
                     state.stack.push(SymWord::constant(addmod_word(a_value, b_value, n_value)))?;
                 } else {
-                    state.stack.push(SymWord::expr(Expr::addmod(
+                    state.stack.push(SymWord::expr(SymExpr::addmod(
                         a.into_expr(),
                         b.into_expr(),
                         n.into_expr(),
@@ -86,7 +86,7 @@ impl SymbolicExecutor {
                 {
                     state.stack.push(SymWord::constant(mulmod_word(a_value, b_value, n_value)))?;
                 } else {
-                    state.stack.push(SymWord::expr(Expr::mulmod(
+                    state.stack.push(SymWord::expr(SymExpr::mulmod(
                         a.into_expr(),
                         b.into_expr(),
                         n.into_expr(),
@@ -117,7 +117,7 @@ impl SymbolicExecutor {
                 if let Some(value) = value.as_const() {
                     state.stack.push(SymWord::constant(!value))?;
                 } else {
-                    state.stack.push(SymWord::expr(Expr::not(value.into_expr())))?;
+                    state.stack.push(SymWord::expr(SymExpr::not(value.into_expr())))?;
                 }
                 Ok(StepOutcome::Continue)
             }
@@ -728,7 +728,7 @@ impl SymbolicExecutor {
         if offset.contains_gasleft() || size.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let end = Expr::op(ExprOp::Add, offset.into_expr(), size.into_expr());
+        let end = SymExpr::op(ExprOp::Add, offset.into_expr(), size.into_expr());
         let in_bounds = BoolExpr::cmp(BoolExprOp::Ule, end, state.return_data.len_expr());
         match in_bounds.as_const() {
             Some(value) => Ok(value),

@@ -87,7 +87,11 @@ pub(crate) fn keccak_word_with_len(bytes: Vec<SymWord>, len: SymWord) -> SymWord
 
     let len = len.into_expr();
     let exprs = bytes.into_iter().map(SymWord::into_expr).collect::<Vec<_>>();
-    SymWord::expr(Expr::keccak(stable_symbol("keccak", format!("{len:?}:{exprs:?}")), len, exprs))
+    SymWord::expr(SymExpr::keccak(
+        stable_symbol("keccak", format!("{len:?}:{exprs:?}")),
+        len,
+        exprs,
+    ))
 }
 
 pub(crate) fn symbolic_hash_word_with_len(
@@ -101,7 +105,7 @@ pub(crate) fn symbolic_hash_word_with_len(
     let mut identity = Vec::with_capacity(exprs.len() + 1);
     identity.push(len);
     identity.extend(exprs);
-    SymWord::expr(Expr::hash(name, algorithm, identity))
+    SymWord::expr(SymExpr::hash(name, algorithm, identity))
 }
 
 pub(crate) fn create2_address_word(
@@ -202,9 +206,9 @@ pub(crate) fn compute_create_address_word(
 pub(crate) fn symbolic_create_address_word(
     state: &mut PathState,
     creator_identity: String,
-    nonce: Expr,
+    nonce: SymExpr,
 ) -> SymWord {
-    let word = SymWord::expr(Expr::var(stable_symbol(
+    let word = SymWord::expr(SymExpr::var(stable_symbol(
         "create_address",
         format!("{creator_identity}:{nonce:?}"),
     )));
@@ -215,10 +219,10 @@ pub(crate) fn symbolic_create_address_word(
 pub(crate) fn symbolic_create2_address_word(
     state: &mut PathState,
     creator_identity: String,
-    salt: Expr,
+    salt: SymExpr,
     initcode_identity: String,
 ) -> SymWord {
-    let word = SymWord::expr(Expr::var(stable_symbol(
+    let word = SymWord::expr(SymExpr::var(stable_symbol(
         "create2_address",
         format!("{creator_identity}:{salt:?}:{initcode_identity}"),
     )));
@@ -252,7 +256,7 @@ pub(crate) fn storage_select(
     match condition.as_const() {
         Some(true) => write_value,
         Some(false) => base,
-        None => SymWord::expr(Expr::ite(condition, write_value.into_expr(), base.into_expr())),
+        None => SymWord::expr(SymExpr::ite(condition, write_value.into_expr(), base.into_expr())),
     }
 }
 
@@ -277,7 +281,7 @@ pub(crate) fn storage_key_eq(read_key: SymWord, write_key: SymWord) -> BoolExpr 
 }
 
 /// Returns the root Solidity storage slot for a mapping-style keccak key.
-pub(crate) fn storage_mapping_root_slot(key: &Expr) -> Option<U256> {
+pub(crate) fn storage_mapping_root_slot(key: &SymExpr) -> Option<U256> {
     let ExprInner::Keccak { len, bytes, .. } = key.as_inner() else { return None };
     if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
         return None;
@@ -291,9 +295,9 @@ pub(crate) fn storage_mapping_root_slot(key: &Expr) -> Option<U256> {
     }
 }
 
-pub(crate) fn storage_layout_key(key: &Expr) -> Option<(Expr, Expr)> {
+pub(crate) fn storage_layout_key(key: &SymExpr) -> Option<(SymExpr, SymExpr)> {
     match key.as_inner() {
-        ExprInner::Keccak { .. } => Some((key.clone(), Expr::constant(U256::ZERO))),
+        ExprInner::Keccak { .. } => Some((key.clone(), SymExpr::constant(U256::ZERO))),
         ExprInner::Op(ExprOp::Add, left, right) => {
             if let Some((base, offset)) = storage_layout_key(left)
                 && !expr_contains_keccak(right)
@@ -311,14 +315,14 @@ pub(crate) fn storage_layout_key(key: &Expr) -> Option<(Expr, Expr)> {
     }
 }
 
-pub(crate) fn expr_add(left: Expr, right: Expr) -> Expr {
+pub(crate) fn expr_add(left: SymExpr, right: SymExpr) -> SymExpr {
     if let (Some(left_value), Some(right_value)) = (left.as_const(), right.as_const()) {
-        return Expr::constant(left_value.wrapping_add(right_value));
+        return SymExpr::constant(left_value.wrapping_add(right_value));
     }
     match (left.as_const(), right.as_const()) {
         (Some(value), _) if value.is_zero() => right,
         (_, Some(value)) if value.is_zero() => left,
-        _ => Expr::op(ExprOp::Add, left, right),
+        _ => SymExpr::op(ExprOp::Add, left, right),
     }
 }
 
@@ -333,7 +337,7 @@ pub(crate) fn sym_sub(left: SymWord, right: SymWord) -> SymWord {
     if let (Some(left_value), Some(right_value)) = (left.as_const(), right.as_const()) {
         return SymWord::constant(left_value.wrapping_sub(right_value));
     }
-    SymWord::expr(Expr::op(ExprOp::Sub, left.into_expr(), right.into_expr()))
+    SymWord::expr(SymExpr::op(ExprOp::Sub, left.into_expr(), right.into_expr()))
 }
 
 /// Computes the exact EVM `ADDMOD` semantics without truncating the intermediate sum.
@@ -346,7 +350,7 @@ pub(crate) fn mulmod_word(left: U256, right: U256, modulus: U256) -> U256 {
     left.mul_mod(right, modulus)
 }
 
-pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
+pub(crate) fn expr_contains_keccak(expr: &SymExpr) -> bool {
     expr.visit(&mut |expr| {
         if matches!(expr.as_inner(), ExprInner::Keccak { .. }) {
             ControlFlow::Break(())
@@ -358,7 +362,7 @@ pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
 }
 
 /// Returns whether a word expression depends on the opaque `GAS` / `gasleft()` value.
-pub(crate) fn expr_contains_gasleft(expr: &Expr) -> bool {
+pub(crate) fn expr_contains_gasleft(expr: &SymExpr) -> bool {
     expr.visit(&mut |expr| {
         if matches!(expr.as_inner(), ExprInner::GasLeft(_)) {
             ControlFlow::Break(())
@@ -371,7 +375,7 @@ pub(crate) fn expr_contains_gasleft(expr: &Expr) -> bool {
 
 pub(crate) fn bool_forces_expr_const_with_context(
     condition: &BoolExpr,
-    expr: &Expr,
+    expr: &SymExpr,
     context: &[BoolExpr],
 ) -> Option<U256> {
     match condition.as_inner() {
@@ -403,9 +407,9 @@ pub(crate) fn bool_forces_expr_const_with_context(
 }
 
 pub(crate) fn expr_equality_forces_const(
-    candidate: &Expr,
+    candidate: &SymExpr,
     value: U256,
-    expr: &Expr,
+    expr: &SymExpr,
     context: &[BoolExpr],
 ) -> Option<U256> {
     if candidate == expr {
@@ -417,7 +421,7 @@ pub(crate) fn expr_equality_forces_const(
 fn expr_equality_forces_const_inner(
     candidate: &ExprInner,
     value: U256,
-    expr: &Expr,
+    expr: &SymExpr,
     context: &[BoolExpr],
 ) -> Option<U256> {
     let mask = masked_expr_matches(candidate, expr)?;
@@ -428,8 +432,8 @@ fn expr_equality_forces_const_inner(
 }
 
 pub(crate) fn expr_nonzero_forces_const(
-    expr: &Expr,
-    target: &Expr,
+    expr: &SymExpr,
+    target: &SymExpr,
     context: &[BoolExpr],
 ) -> Option<U256> {
     expr_nonzero_forces_const_inner(expr.as_inner(), target, context)
@@ -437,7 +441,7 @@ pub(crate) fn expr_nonzero_forces_const(
 
 fn expr_nonzero_forces_const_inner(
     expr: &ExprInner,
-    target: &Expr,
+    target: &SymExpr,
     context: &[BoolExpr],
 ) -> Option<U256> {
     match expr {
@@ -484,7 +488,7 @@ fn expr_nonzero_forces_const_inner(
     }
 }
 
-fn masked_expr_matches(candidate: &ExprInner, target: &Expr) -> Option<U256> {
+fn masked_expr_matches(candidate: &ExprInner, target: &SymExpr) -> Option<U256> {
     match candidate {
         ExprInner::Op(ExprOp::And, left, right) if left == target => right.eval_const(),
         ExprInner::Op(ExprOp::And, left, right) if right == target => left.eval_const(),
@@ -492,7 +496,11 @@ fn masked_expr_matches(candidate: &ExprInner, target: &Expr) -> Option<U256> {
     }
 }
 
-pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, mask: U256) -> bool {
+pub(crate) fn context_forces_masked_expr(
+    context: &[BoolExpr],
+    target: &SymExpr,
+    mask: U256,
+) -> bool {
     context.iter().any(|condition| match condition.as_inner() {
         BoolExprInner::Eq(left, right) => {
             (left == target && masked_expr_matches(right.as_inner(), target) == Some(mask))
@@ -552,21 +560,21 @@ pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymWord>) -> SymWo
         return SymWord::expr(expr);
     }
 
-    let mut expr = Expr::constant(U256::ZERO);
+    let mut expr = SymExpr::constant(U256::ZERO);
     for (idx, byte) in bytes.into_iter().take(32).enumerate() {
         let shift = (31 - idx) * 8;
         let byte = low_byte(byte).into_expr();
         let byte = if shift == 0 {
             byte
         } else {
-            Expr::op(ExprOp::Shl, byte, Expr::constant(U256::from(shift)))
+            SymExpr::op(ExprOp::Shl, byte, SymExpr::constant(U256::from(shift)))
         };
-        expr = Expr::op(ExprOp::Or, expr, byte);
+        expr = SymExpr::op(ExprOp::Or, expr, byte);
     }
     SymWord::expr(expr)
 }
 
-pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<Expr> {
+pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<SymExpr> {
     if bytes.len() < 32 {
         return None;
     }
@@ -593,7 +601,7 @@ pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<Expr> {
     Some(source)
 }
 
-pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<Expr> {
+pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<SymExpr> {
     let expr = byte.as_expr();
     let expr = strip_low_byte_mask(expr)?;
     if index == 31 {
@@ -604,7 +612,7 @@ pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<Expr
     (shift == U256::from((31 - index) * 8)).then(|| source.clone())
 }
 
-pub(crate) fn strip_low_byte_mask(expr: &Expr) -> Option<&Expr> {
+pub(crate) fn strip_low_byte_mask(expr: &SymExpr) -> Option<&SymExpr> {
     match expr.as_inner() {
         ExprInner::Op(ExprOp::And, left, right) if right.as_const() == Some(U256::from(0xff)) => {
             Some(strip_low_byte_mask(left).unwrap_or(left))
@@ -620,7 +628,7 @@ pub(crate) fn low_byte(word: SymWord) -> SymWord {
     if let Some(word) = word.as_const() {
         return SymWord::constant(U256::from(word.to::<u8>()));
     }
-    SymWord::expr(Expr::op(ExprOp::And, word.into_expr(), Expr::constant(U256::from(0xff))))
+    SymWord::expr(SymExpr::op(ExprOp::And, word.into_expr(), SymExpr::constant(U256::from(0xff))))
 }
 
 pub(crate) fn concrete_bytes(
@@ -674,7 +682,7 @@ pub(crate) fn function_mock_match_condition(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct SymWord(Expr);
+pub(crate) struct SymWord(SymExpr);
 
 impl SymWord {
     pub(crate) fn zero() -> Self {
@@ -682,7 +690,7 @@ impl SymWord {
     }
 
     pub(crate) fn constant(value: U256) -> Self {
-        Self(Expr::constant(value))
+        Self(SymExpr::constant(value))
     }
 
     pub(crate) fn as_const(&self) -> Option<U256> {
@@ -696,15 +704,15 @@ impl SymWord {
         self.0.eval(model)
     }
 
-    pub(crate) const fn as_expr(&self) -> &Expr {
+    pub(crate) const fn as_expr(&self) -> &SymExpr {
         &self.0
     }
 
-    pub(crate) fn clone_expr(&self) -> Expr {
+    pub(crate) fn clone_expr(&self) -> SymExpr {
         self.0.clone()
     }
 
-    pub(crate) const fn expr(expr: Expr) -> Self {
+    pub(crate) const fn expr(expr: SymExpr) -> Self {
         Self(expr)
     }
 
@@ -718,17 +726,17 @@ impl SymWord {
         matches!(self.0.as_inner(), ExprInner::GasLeft(_))
     }
 
-    pub(crate) fn into_expr(self) -> Expr {
+    pub(crate) fn into_expr(self) -> SymExpr {
         self.0
     }
 
     pub(crate) fn from_bool(value: BoolExpr) -> Self {
         match value.as_const() {
             Some(value) => Self::constant(U256::from(value)),
-            None => Self::expr(Expr::ite(
+            None => Self::expr(SymExpr::ite(
                 value,
-                Expr::constant(U256::from(1)),
-                Expr::constant(U256::ZERO),
+                SymExpr::constant(U256::from(1)),
+                SymExpr::constant(U256::ZERO),
             )),
         }
     }
@@ -754,7 +762,7 @@ impl SymWord {
             {
                 cond
             }
-            expr => BoolExpr::eq(Expr::from_inner(expr), Expr::constant(U256::ZERO)),
+            expr => BoolExpr::eq(SymExpr::from_inner(expr), SymExpr::constant(U256::ZERO)),
         }
     }
 
@@ -786,9 +794,9 @@ impl SymWordSliceExt for [SymWord] {
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct Expr(Arc<ExprInner>);
+pub(crate) struct SymExpr(Arc<ExprInner>);
 
-impl fmt::Debug for Expr {
+impl fmt::Debug for SymExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_inner().fmt(f)
     }
@@ -799,13 +807,13 @@ pub(super) enum ExprInner {
     Const(U256),
     Var(Symbol),
     GasLeft(usize),
-    Keccak { name: Symbol, len: Expr, bytes: Arc<[Expr]> },
-    Hash { name: Symbol, algorithm: &'static str, bytes: Arc<[Expr]> },
-    Not(Expr),
-    Op(ExprOp, Expr, Expr),
-    AddMod { left: Expr, right: Expr, modulus: Expr },
-    MulMod { left: Expr, right: Expr, modulus: Expr },
-    Ite(BoolExpr, Expr, Expr),
+    Keccak { name: Symbol, len: SymExpr, bytes: Arc<[SymExpr]> },
+    Hash { name: Symbol, algorithm: &'static str, bytes: Arc<[SymExpr]> },
+    Not(SymExpr),
+    Op(ExprOp, SymExpr, SymExpr),
+    AddMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
+    MulMod { left: SymExpr, right: SymExpr, modulus: SymExpr },
+    Ite(BoolExpr, SymExpr, SymExpr),
 }
 
 static EXPR_ZERO: LazyLock<Arc<ExprInner>> =
@@ -814,7 +822,7 @@ static EXPR_ONE: LazyLock<Arc<ExprInner>> =
     LazyLock::new(|| Arc::new(ExprInner::Const(U256::from(1))));
 static EXPR_MAX: LazyLock<Arc<ExprInner>> = LazyLock::new(|| Arc::new(ExprInner::Const(U256::MAX)));
 
-impl Expr {
+impl SymExpr {
     fn from_inner(expr: ExprInner) -> Self {
         match expr {
             ExprInner::Const(value) => Self::constant(value),
@@ -1243,9 +1251,9 @@ impl Expr {
 fn write_smt_wide_modular_arithmetic(
     out: &mut String,
     op: &'static str,
-    left: &Expr,
-    right: &Expr,
-    modulus: &Expr,
+    left: &SymExpr,
+    right: &SymExpr,
+    modulus: &SymExpr,
 ) {
     out.push_str("(ite (= ");
     modulus.write_smt(out);
@@ -1359,8 +1367,8 @@ pub(super) enum BoolExprInner {
     Const(bool),
     Not(BoolExpr),
     And(Arc<[BoolExpr]>),
-    Eq(Expr, Expr),
-    Cmp(BoolExprOp, Expr, Expr),
+    Eq(SymExpr, SymExpr),
+    Cmp(BoolExprOp, SymExpr, SymExpr),
 }
 
 static BOOL_TRUE: LazyLock<Arc<BoolExprInner>> =
@@ -1454,7 +1462,7 @@ impl BoolExpr {
     /// Visits all word expressions contained in this boolean expression.
     pub(crate) fn visit_exprs<B>(
         &self,
-        visitor: &mut impl FnMut(&Expr) -> ControlFlow<B>,
+        visitor: &mut impl FnMut(&SymExpr) -> ControlFlow<B>,
     ) -> ControlFlow<B> {
         match self.as_inner() {
             BoolExprInner::Const(_) => {}
@@ -1472,7 +1480,7 @@ impl BoolExpr {
         ControlFlow::Continue(())
     }
 
-    pub(crate) fn eq(left: Expr, right: Expr) -> Self {
+    pub(crate) fn eq(left: SymExpr, right: SymExpr) -> Self {
         if left == right {
             return Self::constant(true);
         }
@@ -1525,11 +1533,11 @@ impl BoolExpr {
         if let Some(word) = word.as_const() {
             Self::constant(word == value)
         } else {
-            Self::eq(word.clone_expr(), Expr::constant(value))
+            Self::eq(word.clone_expr(), SymExpr::constant(value))
         }
     }
 
-    pub(crate) fn eq_word_expr(word: &SymWord, expr: Expr) -> Self {
+    pub(crate) fn eq_word_expr(word: &SymWord, expr: SymExpr) -> Self {
         Self::eq(word.clone_expr(), expr)
     }
 
@@ -1579,7 +1587,7 @@ impl BoolExpr {
         }
     }
 
-    pub(crate) fn cmp(op: BoolExprOp, left: Expr, right: Expr) -> Self {
+    pub(crate) fn cmp(op: BoolExprOp, left: SymExpr, right: SymExpr) -> Self {
         if left == right {
             return Self::constant(matches!(op, BoolExprOp::Ule | BoolExprOp::Uge));
         }
@@ -1620,11 +1628,11 @@ impl BoolExpr {
         if let Some(word) = word.as_const() {
             Self::constant(op.eval(word, value))
         } else {
-            Self::cmp(op, word.clone_expr(), Expr::constant(value))
+            Self::cmp(op, word.clone_expr(), SymExpr::constant(value))
         }
     }
 
-    pub(crate) fn cmp_word_expr(op: BoolExprOp, word: &SymWord, expr: Expr) -> Self {
+    pub(crate) fn cmp_word_expr(op: BoolExprOp, word: &SymWord, expr: SymExpr) -> Self {
         Self::cmp(op, word.clone_expr(), expr)
     }
 
@@ -1727,7 +1735,7 @@ pub(crate) fn u256_to_usize(value: U256) -> Option<usize> {
     if value > U256::from(usize::MAX) { None } else { Some(value.to::<usize>()) }
 }
 
-pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &Expr) -> Option<usize> {
+pub(crate) fn bool_upper_bound_usize(condition: &BoolExpr, expr: &SymExpr) -> Option<usize> {
     match condition.as_inner() {
         BoolExprInner::Const(_) | BoolExprInner::Not(_) => None,
         BoolExprInner::And(values) => {

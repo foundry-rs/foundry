@@ -433,7 +433,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
     }
 
     pub(super) fn fresh_word(&self, name: String) -> SymWord {
-        SymWord::expr(Expr::var(name))
+        SymWord::expr(SymExpr::var(name))
     }
 
     pub(super) fn fresh_byte(&mut self, name: String, printable: bool) -> SymWord {

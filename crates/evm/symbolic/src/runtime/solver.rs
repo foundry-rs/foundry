@@ -658,7 +658,7 @@ fn collect_cache_key_conjunct(expr: BoolExpr, out: &mut Vec<BoolExpr>) {
 }
 
 /// Returns a conservative canonical comparison for cache-key equality.
-fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
+fn cache_key_cmp(op: BoolExprOp, left: SymExpr, right: SymExpr) -> BoolExpr {
     match op {
         BoolExprOp::Ugt => BoolExpr::cmp(BoolExprOp::Ult, right, left),
         BoolExprOp::Uge => BoolExpr::cmp(BoolExprOp::Ule, right, left),
@@ -668,28 +668,30 @@ fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
 }
 
 /// Returns a conservative canonical word expression for cache-key equality.
-fn cache_key_expr(expr: Expr) -> Expr {
+fn cache_key_expr(expr: SymExpr) -> SymExpr {
     if matches!(expr.as_inner(), ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_)) {
         return expr;
     }
 
     match expr.into_inner() {
-        ExprInner::Keccak { name, len, bytes } => Expr::keccak_symbol(
+        ExprInner::Keccak { name, len, bytes } => SymExpr::keccak_symbol(
             name,
             cache_key_expr(len),
             bytes.iter().cloned().map(cache_key_expr).collect(),
         ),
-        ExprInner::Hash { name, algorithm, bytes } => {
-            Expr::hash_symbol(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
-        }
-        ExprInner::Not(value) => Expr::not(cache_key_expr(value)),
+        ExprInner::Hash { name, algorithm, bytes } => SymExpr::hash_symbol(
+            name,
+            algorithm,
+            bytes.iter().cloned().map(cache_key_expr).collect(),
+        ),
+        ExprInner::Not(value) => SymExpr::not(cache_key_expr(value)),
         ExprInner::Op(op, left, right) => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             if expr_op_is_commutative(op) && right < left {
-                Expr::op(op, right, left)
+                SymExpr::op(op, right, left)
             } else {
-                Expr::op(op, left, right)
+                SymExpr::op(op, left, right)
             }
         }
         ExprInner::AddMod { left, right, modulus } => {
@@ -697,9 +699,9 @@ fn cache_key_expr(expr: Expr) -> Expr {
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
             if right < left {
-                Expr::addmod(right, left, modulus)
+                SymExpr::addmod(right, left, modulus)
             } else {
-                Expr::addmod(left, right, modulus)
+                SymExpr::addmod(left, right, modulus)
             }
         }
         ExprInner::MulMod { left, right, modulus } => {
@@ -707,13 +709,13 @@ fn cache_key_expr(expr: Expr) -> Expr {
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
             if right < left {
-                Expr::mulmod(right, left, modulus)
+                SymExpr::mulmod(right, left, modulus)
             } else {
-                Expr::mulmod(left, right, modulus)
+                SymExpr::mulmod(left, right, modulus)
             }
         }
         ExprInner::Ite(cond, left, right) => {
-            Expr::ite(cache_key_bool(cond), cache_key_expr(left), cache_key_expr(right))
+            SymExpr::ite(cache_key_bool(cond), cache_key_expr(left), cache_key_expr(right))
         }
         ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_) => unreachable!(),
     }

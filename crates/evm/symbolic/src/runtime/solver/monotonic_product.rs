@@ -1,7 +1,7 @@
 use super::{normalize::mul_cannot_overflow_256, *};
 
-type LessThanFacts<'a> = HashSet<(&'a Expr, &'a Expr)>;
-type PositiveFacts<'a> = HashSet<&'a Expr>;
+type LessThanFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
+type PositiveFacts<'a> = HashSet<&'a SymExpr>;
 
 /// Returns whether monotonic product facts make these constraints unsatisfiable.
 #[cfg(test)]
@@ -55,7 +55,7 @@ fn collect_order_facts<'a>(
     }
 }
 
-fn product_less_than_negation(expr: &BoolExpr) -> Option<(&Expr, &Expr, &Expr, &Expr)> {
+fn product_less_than_negation(expr: &BoolExpr) -> Option<(&SymExpr, &SymExpr, &SymExpr, &SymExpr)> {
     let BoolExprInner::Not(value) = expr.as_inner() else { return None };
     let BoolExprInner::Cmp(BoolExprOp::Ult, left, right) = value.as_inner() else {
         return None;
@@ -66,10 +66,10 @@ fn product_less_than_negation(expr: &BoolExpr) -> Option<(&Expr, &Expr, &Expr, &
 }
 
 fn product_less_than_known<'a>(
-    left_a: &'a Expr,
-    left_b: &'a Expr,
-    right_a: &'a Expr,
-    right_b: &'a Expr,
+    left_a: &'a SymExpr,
+    left_b: &'a SymExpr,
+    right_a: &'a SymExpr,
+    right_b: &'a SymExpr,
     less_than: &LessThanFacts<'a>,
     positive: &PositiveFacts<'a>,
 ) -> bool {
@@ -80,10 +80,10 @@ fn product_less_than_known<'a>(
 }
 
 fn product_less_than_known_ordered<'a>(
-    left_a: &'a Expr,
-    left_b: &'a Expr,
-    right_a: &'a Expr,
-    right_b: &'a Expr,
+    left_a: &'a SymExpr,
+    left_b: &'a SymExpr,
+    right_a: &'a SymExpr,
+    right_b: &'a SymExpr,
     less_than: &LessThanFacts<'a>,
     positive: &PositiveFacts<'a>,
 ) -> bool {
@@ -95,7 +95,7 @@ fn product_less_than_known_ordered<'a>(
         && mul_cannot_overflow_256(right_a, right_b)
 }
 
-fn mul_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
+fn mul_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
     match expr.as_inner() {
         ExprInner::Op(ExprOp::Mul, left, right) => Some((left, right)),
         _ => None,

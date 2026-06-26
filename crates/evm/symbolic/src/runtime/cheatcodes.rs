@@ -462,8 +462,8 @@ pub(crate) fn push_hex_byte(out: &mut Vec<SymWord>, byte: SymWord) {
     } else {
         let expr = byte.into_expr();
         (
-            SymWord::expr(Expr::op(ExprOp::Shr, expr.clone(), Expr::constant(U256::from(4)))),
-            SymWord::expr(Expr::op(ExprOp::And, expr, Expr::constant(U256::from(0x0f)))),
+            SymWord::expr(SymExpr::op(ExprOp::Shr, expr.clone(), SymExpr::constant(U256::from(4)))),
+            SymWord::expr(SymExpr::op(ExprOp::And, expr, SymExpr::constant(U256::from(0x0f)))),
         )
     };
     out.push(hex_nibble_ascii(high));
@@ -478,10 +478,10 @@ pub(crate) fn hex_nibble_ascii(nibble: SymWord) -> SymWord {
         SymWord::constant(U256::from(byte))
     } else {
         let nibble = nibble.into_expr();
-        SymWord::expr(Expr::ite(
-            BoolExpr::cmp(BoolExprOp::Ult, nibble.clone(), Expr::constant(U256::from(10))),
-            Expr::op(ExprOp::Add, nibble.clone(), Expr::constant(U256::from(b'0'))),
-            Expr::op(ExprOp::Add, nibble, Expr::constant(U256::from(b'a' - 10))),
+        SymWord::expr(SymExpr::ite(
+            BoolExpr::cmp(BoolExprOp::Ult, nibble.clone(), SymExpr::constant(U256::from(10))),
+            SymExpr::op(ExprOp::Add, nibble.clone(), SymExpr::constant(U256::from(b'0'))),
+            SymExpr::op(ExprOp::Add, nibble, SymExpr::constant(U256::from(b'a' - 10))),
         ))
     }
 }
@@ -719,7 +719,7 @@ pub(crate) fn expected_revert_match_condition(
             conditions.push(BoolExpr::cmp(
                 BoolExprOp::Uge,
                 return_data.len_expr(),
-                Expr::constant(U256::from(prefix.len())),
+                SymExpr::constant(U256::from(prefix.len())),
             ));
             conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
@@ -730,8 +730,10 @@ pub(crate) fn expected_revert_match_condition(
             if return_data.len() < data.len() {
                 return None;
             }
-            conditions
-                .push(BoolExpr::eq(return_data.len_expr(), Expr::constant(U256::from(data.len()))));
+            conditions.push(BoolExpr::eq(
+                return_data.len_expr(),
+                SymExpr::constant(U256::from(data.len())),
+            ));
             conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
                 BoolExpr::eq_words(&actual, expected)

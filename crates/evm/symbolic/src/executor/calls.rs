@@ -1415,7 +1415,7 @@ impl SymbolicExecutor {
 
         let candidate_constraints = candidates
             .iter()
-            .map(|address| BoolExpr::eq(target.clone(), Expr::constant(address_word(*address))))
+            .map(|address| BoolExpr::eq(target.clone(), SymExpr::constant(address_word(*address))))
             .collect::<Vec<_>>();
         let mut outside_constraints = state.constraints.clone();
         outside_constraints.extend(candidate_constraints.iter().cloned().map(BoolExpr::not));

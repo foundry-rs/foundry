@@ -191,7 +191,7 @@ impl PathState {
         })
     }
 
-    pub(crate) fn constrained_expr_value(&self, expr: &Expr) -> Option<U256> {
+    pub(crate) fn constrained_expr_value(&self, expr: &SymExpr) -> Option<U256> {
         if let Some(value) = expr.eval_const() {
             return Some(value);
         }
@@ -203,7 +203,7 @@ impl PathState {
         collect_eval_vars(expr, &mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
-            let var_expr = Expr::var_symbol(var);
+            let var_expr = SymExpr::var_symbol(var);
             let value = self.constraints.iter().find_map(|constraint| {
                 bool_forces_expr_const_with_context(constraint, &var_expr, &self.constraints)
             })?;
@@ -213,7 +213,7 @@ impl PathState {
         expr.eval(&model).ok()
     }
 
-    pub(crate) fn expr_upper_bound_usize(&self, expr: &Expr) -> Option<usize> {
+    pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
         if let Some(value) = expr.eval_const() {
             return u256_to_usize(value);
         }
@@ -291,7 +291,7 @@ impl PathState {
         }
     }
 
-    pub(crate) fn constraint_upper_bound_usize(&self, expr: &Expr) -> Option<usize> {
+    pub(crate) fn constraint_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
         let mut bound: Option<usize> = None;
         for constraint in &self.constraints {
             if let Some(candidate) = bool_upper_bound_usize(constraint, expr) {
@@ -327,7 +327,7 @@ impl PathState {
         if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
             self.stack.push(SymWord::constant(concrete(a_value, b_value)))?;
         } else {
-            self.stack.push(SymWord::expr(Expr::op(op, a.into_expr(), b.into_expr())))?;
+            self.stack.push(SymWord::expr(SymExpr::op(op, a.into_expr(), b.into_expr())))?;
         }
         Ok(StepOutcome::Continue)
     }
@@ -344,10 +344,10 @@ impl PathState {
         } else {
             let a = a.into_expr();
             let b = b.into_expr();
-            self.stack.push(SymWord::expr(Expr::ite(
-                BoolExpr::eq(b.clone(), Expr::constant(U256::ZERO)),
-                Expr::constant(U256::ZERO),
-                Expr::op(op, a, b),
+            self.stack.push(SymWord::expr(SymExpr::ite(
+                BoolExpr::eq(b.clone(), SymExpr::constant(U256::ZERO)),
+                SymExpr::constant(U256::ZERO),
+                SymExpr::op(op, a, b),
             )))?;
         }
         Ok(StepOutcome::Continue)
@@ -389,9 +389,9 @@ impl PathState {
             SymWord::constant(result)
         } else {
             let expr = match kind {
-                ShiftKind::Shl => Expr::op(ExprOp::Shl, value.into_expr(), shift.into_expr()),
-                ShiftKind::Shr => Expr::op(ExprOp::Shr, value.into_expr(), shift.into_expr()),
-                ShiftKind::Sar => Expr::op(ExprOp::Sar, value.into_expr(), shift.into_expr()),
+                ShiftKind::Shl => SymExpr::op(ExprOp::Shl, value.into_expr(), shift.into_expr()),
+                ShiftKind::Shr => SymExpr::op(ExprOp::Shr, value.into_expr(), shift.into_expr()),
+                ShiftKind::Sar => SymExpr::op(ExprOp::Sar, value.into_expr(), shift.into_expr()),
             };
             expr_known_word(&expr).map(SymWord::constant).unwrap_or_else(|| SymWord::expr(expr))
         };
@@ -425,10 +425,10 @@ impl PathState {
                 .ok_or(SymbolicError::Unsupported("symbolic EXP exponent"))?;
             let exponent = exponent.into_expr();
             let base = base.into_expr();
-            let mut expr = Expr::constant(U256::ZERO);
+            let mut expr = SymExpr::constant(U256::ZERO);
             for candidate in (0..=max_exponent).rev() {
-                expr = Expr::ite(
-                    BoolExpr::eq(exponent.clone(), Expr::constant(U256::from(candidate))),
+                expr = SymExpr::ite(
+                    BoolExpr::eq(exponent.clone(), SymExpr::constant(U256::from(candidate))),
                     exp_expr_for_concrete_exponent(base.clone(), candidate),
                     expr,
                 );
@@ -499,13 +499,13 @@ impl PathState {
     pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymWord {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymWord::expr(Expr::var(format!("{prefix}_{id}")))
+        SymWord::expr(SymExpr::var(format!("{prefix}_{id}")))
     }
 
     pub(crate) fn fresh_gasleft(&mut self) -> SymWord {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymWord::expr(Expr::gas_left(id))
+        SymWord::expr(SymExpr::gas_left(id))
     }
 
     pub(crate) fn fresh_bounded_uint(&mut self, bits: U256) -> SymWord {
@@ -1147,7 +1147,7 @@ impl SymbolicWorld {
         concrete_key: Option<U256>,
     ) -> Result<SymWord, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
-            return Ok(SymWord::expr(Expr::var(stable_symbol(
+            return Ok(SymWord::expr(SymExpr::var(stable_symbol(
                 "storage",
                 format!("{address:?}:{key:?}"),
             ))));
@@ -1168,7 +1168,10 @@ impl SymbolicWorld {
         } else if self.zero_init_symbolic_storage {
             Ok(SymWord::zero())
         } else {
-            Ok(SymWord::expr(Expr::var(stable_symbol("storage", format!("{address:?}:{key:?}")))))
+            Ok(SymWord::expr(SymExpr::var(stable_symbol(
+                "storage",
+                format!("{address:?}:{key:?}"),
+            ))))
         }
     }
 
@@ -1216,8 +1219,8 @@ impl SymbolicWorld {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = Expr::ite(
-                BoolExpr::eq(expr.clone(), Expr::constant(address_word(*address))),
+            result = SymExpr::ite(
+                BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
                 balance.clone_expr(),
                 result,
             );
@@ -1454,14 +1457,15 @@ impl SymbolicWorld {
 
         let expr = word.into_expr();
         let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
-        let mut result = Expr::constant(U256::from(self.extcode(executor, representative)?.len()));
+        let mut result =
+            SymExpr::constant(U256::from(self.extcode(executor, representative)?.len()));
         for (address, code) in &self.code_cache {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
-            result = Expr::ite(
-                BoolExpr::eq(expr.clone(), Expr::constant(address_word(*address))),
-                Expr::constant(U256::from(code.len())),
+            result = SymExpr::ite(
+                BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
+                SymExpr::constant(U256::from(code.len())),
                 result,
             );
         }
@@ -1489,8 +1493,8 @@ impl SymbolicWorld {
             } else {
                 keccak_word(code.read_bytes(0, code.len()))
             };
-            result = Expr::ite(
-                BoolExpr::eq(expr.clone(), Expr::constant(address_word(address))),
+            result = SymExpr::ite(
+                BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address))),
                 hash.into_expr(),
                 result,
             );
@@ -1522,9 +1526,9 @@ impl SymbolicWorld {
             } else {
                 code.read_bytes_offset(offset.clone(), size)
             };
-            let condition = BoolExpr::eq(expr.clone(), Expr::constant(address_word(address)));
+            let condition = BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
             for (idx, byte) in bytes.into_iter().enumerate() {
-                result[idx] = SymWord::expr(Expr::ite(
+                result[idx] = SymWord::expr(SymExpr::ite(
                     condition.clone(),
                     byte.into_expr(),
                     result[idx].clone_expr(),
@@ -1595,7 +1599,7 @@ impl Default for SymbolicBlock {
 }
 
 /// Collects the symbolic variables needed to concretely evaluate an expression.
-fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
+fn collect_eval_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit(&mut |expr| {
         match expr.as_inner() {
             ExprInner::Var(var) => {
@@ -1695,7 +1699,7 @@ impl SymbolicBlock {
             return Ok(SymWord::zero());
         }
 
-        let mut result = Expr::constant(U256::ZERO);
+        let mut result = SymExpr::constant(U256::ZERO);
         let max_distance = current.min(U256::from(256)).to::<usize>();
         for distance in (1..=max_distance).rev() {
             let candidate = current - U256::from(distance);
@@ -1703,8 +1707,8 @@ impl SymbolicBlock {
             if hash.as_const().is_some_and(|hash| hash.is_zero()) {
                 continue;
             }
-            result = Expr::ite(
-                BoolExpr::eq(block_number.clone(), Expr::constant(candidate)),
+            result = SymExpr::ite(
+                BoolExpr::eq(block_number.clone(), SymExpr::constant(candidate)),
                 hash.into_expr(),
                 result,
             );

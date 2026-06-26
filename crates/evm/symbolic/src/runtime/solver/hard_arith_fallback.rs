@@ -11,7 +11,7 @@ pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
     }
 }
 
-pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
+pub(crate) fn expr_contains_hard_arith(expr: &SymExpr) -> bool {
     match expr.as_inner() {
         ExprInner::Const(_)
         | ExprInner::Var(_)
@@ -40,7 +40,7 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
 }
 
 /// Returns whether the expression contains symbolic hash variables that local search should avoid.
-pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
+pub(crate) fn expr_contains_symbolic_hash(expr: &SymExpr) -> bool {
     expr.visit(&mut |expr| {
         if matches!(expr.as_inner(), ExprInner::Hash { .. }) {
             ControlFlow::Break(())
@@ -64,7 +64,7 @@ pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
     .is_break()
 }
 
-pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
+pub(crate) fn expr_contains_var(expr: &SymExpr) -> bool {
     expr.visit(&mut |expr| {
         if matches!(
             expr.as_inner(),
@@ -290,7 +290,7 @@ pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut SymbolicVar
 }
 
 /// Collects assignable variables from an expression, recursing into recomputable hashes.
-pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
+pub(crate) fn collect_expr_fallback_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
     match expr.as_inner() {
         ExprInner::Const(_) | ExprInner::GasLeft(_) | ExprInner::Hash { .. } => {}
         ExprInner::Var(var) => {
@@ -401,7 +401,7 @@ pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut HashSet<U2
     }
 }
 
-pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut HashSet<U256>) {
+pub(crate) fn collect_expr_constants(expr: &SymExpr, constants: &mut HashSet<U256>) {
     match expr.as_inner() {
         ExprInner::Const(value) => {
             constants.insert(*value);
@@ -457,7 +457,13 @@ impl MaskHints {
         }
     }
 
-    pub(crate) fn apply_equality(&mut self, var: &str, left: &Expr, right: &Expr, inverted: bool) {
+    pub(crate) fn apply_equality(
+        &mut self,
+        var: &str,
+        left: &SymExpr,
+        right: &SymExpr,
+        inverted: bool,
+    ) {
         if let Some(mask) =
             zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
         {
@@ -470,7 +476,7 @@ impl MaskHints {
     }
 }
 
-pub(crate) fn zero_mask_equality(var: &str, masked: &Expr, zero: &Expr) -> Option<U256> {
+pub(crate) fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) -> Option<U256> {
     if !zero.as_const().is_some_and(|value| value.is_zero()) {
         return None;
     }

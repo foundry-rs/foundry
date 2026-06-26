@@ -135,8 +135,8 @@ impl SymbolicExecutor {
 
         let value_expr = value.into_expr();
         let in_range = BoolExpr::and(vec![
-            BoolExpr::cmp(BoolExprOp::Uge, value_expr.clone(), Expr::constant(min_value)),
-            BoolExpr::cmp(BoolExprOp::Ule, value_expr.clone(), Expr::constant(max_value)),
+            BoolExpr::cmp(BoolExprOp::Uge, value_expr.clone(), SymExpr::constant(min_value)),
+            BoolExpr::cmp(BoolExprOp::Ule, value_expr.clone(), SymExpr::constant(max_value)),
         ]);
         let (_in_range_constraints, in_range_sat) =
             self.constraints_with_condition(state, in_range.clone())?;
@@ -186,8 +186,8 @@ impl SymbolicExecutor {
 
         let value_expr = value.into_expr();
         let in_range = BoolExpr::and(vec![
-            BoolExpr::cmp(BoolExprOp::Slt, value_expr.clone(), Expr::constant(min_value)).not(),
-            BoolExpr::cmp(BoolExprOp::Sgt, value_expr.clone(), Expr::constant(max_value)).not(),
+            BoolExpr::cmp(BoolExprOp::Slt, value_expr.clone(), SymExpr::constant(min_value)).not(),
+            BoolExpr::cmp(BoolExprOp::Sgt, value_expr.clone(), SymExpr::constant(max_value)).not(),
         ]);
         let (_in_range_constraints, in_range_sat) =
             self.constraints_with_condition(state, in_range.clone())?;
