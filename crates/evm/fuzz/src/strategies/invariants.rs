@@ -184,7 +184,7 @@ pub fn fuzz_contract_with_calldata<S: FuzzStateReader>(
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
     let calldata_strategy = prop_oneof![
         100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-        dictionary_weight => fuzz_calldata_from_state(func, fuzz_state),
+        dictionary_weight => fuzz_calldata_from_state(func, fuzz_state, fuzz_fixtures),
     ];
 
     // For payable functions, generate random value using shared strategy.
