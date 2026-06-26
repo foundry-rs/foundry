@@ -9,7 +9,7 @@ pub(crate) fn keccak_word_with_len(bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr
     if let Some(len) = len.as_const()
         && let Ok(len) = usize::try_from(len)
         && len <= bytes.len()
-        && let Ok(bytes) = bytes[..len].concrete_bytes("symbolic keccak input")
+        && let Ok(bytes) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
     {
         return SymExpr::constant(U256::from_be_bytes(keccak256(bytes).0));
     }
@@ -247,94 +247,44 @@ fn context_forces_masked_expr(context: &[SymBoolExpr], target: &SymExpr, mask: U
     })
 }
 
-pub(crate) trait SymExprSliceExt {
-    fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError>;
-
-    fn word_from_extracted_bytes(&self) -> Option<SymExpr>;
-
-    fn calldata_prefix_condition(
-        &self,
-        prefix: &[SymExpr],
-        reason: &'static str,
-    ) -> Result<Option<SymBoolExpr>, SymbolicError>;
-
-    fn eval_model<M: SymbolicModelLookup + ?Sized>(
-        &self,
-        model: &M,
-    ) -> Result<Vec<u8>, SymbolicError>;
+pub(crate) fn concrete_expr_bytes(
+    bytes: &[SymExpr],
+    reason: &'static str,
+) -> Result<Vec<u8>, SymbolicError> {
+    bytes
+        .iter()
+        .map(|byte| match byte.as_const() {
+            Some(value) => Ok(value.to::<u8>()),
+            None => Err(SymbolicError::Unsupported(reason)),
+        })
+        .collect()
 }
 
-impl SymExprSliceExt for [SymExpr] {
-    fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
-        self.iter()
-            .map(|byte| match byte.as_const() {
-                Some(value) => Ok(value.to::<u8>()),
-                None => Err(SymbolicError::Unsupported(reason)),
-            })
-            .collect()
+fn word_from_extracted_bytes(bytes: &[SymExpr]) -> Option<SymExpr> {
+    if bytes.len() < 32 {
+        return None;
     }
 
-    fn word_from_extracted_bytes(&self) -> Option<SymExpr> {
-        if self.len() < 32 {
-            return None;
-        }
+    let source = bytes
+        .iter()
+        .take(32)
+        .enumerate()
+        .find_map(|(idx, byte)| byte.extracted_byte_source(idx))?;
 
-        let source = self
-            .iter()
-            .take(32)
-            .enumerate()
-            .find_map(|(idx, byte)| byte.extracted_byte_source(idx))?;
-
-        for (idx, byte) in self.iter().take(32).enumerate() {
-            if let Some(byte_source) = byte.extracted_byte_source(idx) {
-                if byte_source != source {
-                    return None;
-                }
-                continue;
-            }
-
-            let byte = byte.as_const()?;
-            if source.known_byte(idx) != Some(byte.to::<u8>()) {
+    for (idx, byte) in bytes.iter().take(32).enumerate() {
+        if let Some(byte_source) = byte.extracted_byte_source(idx) {
+            if byte_source != source {
                 return None;
             }
+            continue;
         }
-        Some(source)
-    }
 
-    fn calldata_prefix_condition(
-        &self,
-        prefix: &[SymExpr],
-        _reason: &'static str,
-    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        if prefix.len() > self.len() {
-            return Ok(None);
+        let byte = byte.as_const()?;
+        if source.known_byte(idx) != Some(byte.to::<u8>()) {
+            return None;
         }
-        let mut conditions = Vec::new();
-        for (actual, expected) in self.iter().zip(prefix) {
-            if actual == expected {
-                continue;
-            }
-            match (actual, expected) {
-                _ if actual
-                    .as_const()
-                    .zip(expected.as_const())
-                    .is_some_and(|(actual, expected)| actual.to::<u8>() == expected.to::<u8>()) => {
-                }
-                _ if actual.as_const().is_some() && expected.as_const().is_some() => {
-                    return Ok(None);
-                }
-                _ => conditions.push(SymBoolExpr::eq_words(actual, expected)),
-            }
-        }
-        Ok(Some(SymBoolExpr::and(conditions)))
     }
-
-    fn eval_model<M: SymbolicModelLookup + ?Sized>(
-        &self,
-        model: &M,
-    ) -> Result<Vec<u8>, SymbolicError> {
-        self.iter().map(|byte| Ok(byte.eval_model(model)?.to::<u8>())).collect()
-    }
+    Some(source)
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -445,7 +395,7 @@ impl SymExpr {
 
     pub(crate) fn from_bytes(bytes: impl IntoIterator<Item = Self>) -> Self {
         let bytes = bytes.into_iter().collect::<Vec<_>>();
-        if let Ok(concrete) = bytes.concrete_bytes("symbolic word bytes") {
+        if let Ok(concrete) = concrete_expr_bytes(&bytes, "symbolic word bytes") {
             let mut word = [0u8; 32];
             for (idx, byte) in concrete.into_iter().take(32).enumerate() {
                 word[idx] = byte;
@@ -453,7 +403,7 @@ impl SymExpr {
             return Self::constant(U256::from_be_bytes(word));
         }
 
-        if let Some(expr) = bytes.word_from_extracted_bytes() {
+        if let Some(expr) = word_from_extracted_bytes(&bytes) {
             return expr;
         }
 

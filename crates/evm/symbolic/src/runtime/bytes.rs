@@ -52,7 +52,7 @@ impl SymBytes {
     }
 
     pub(crate) fn exprs(bytes: Vec<SymExpr>) -> Self {
-        if let Ok(concrete) = bytes.concrete_bytes("symbolic bytes") {
+        if let Ok(concrete) = concrete_expr_bytes(&bytes, "symbolic bytes") {
             Self::concrete(concrete)
         } else {
             Self::from_kind(SymBytesKind::Exprs(bytes))
@@ -411,10 +411,60 @@ impl SymBytes {
         (0..self.len()).map(|idx| self.byte(idx)).collect()
     }
 
+    pub(crate) fn contains_gasleft(&self) -> bool {
+        match self.kind() {
+            SymBytesKind::Concrete(_) => false,
+            SymBytesKind::Exprs(bytes) => bytes.iter().any(SymExpr::contains_gasleft),
+            SymBytesKind::Word(word) => word.contains_gasleft(),
+            SymBytesKind::Concat(values) => values.iter().any(Self::contains_gasleft),
+            SymBytesKind::Slice { offset, .. } if offset.contains_gasleft() => true,
+            SymBytesKind::Sized { size, .. } if size.contains_gasleft() => true,
+            SymBytesKind::Slice { .. } | SymBytesKind::Sized { .. } => {
+                (0..self.len()).any(|idx| self.byte(idx).contains_gasleft())
+            }
+        }
+    }
+
+    pub(crate) fn same_bytes(&self, other: &Self) -> bool {
+        self.len() == other.len() && (0..self.len()).all(|idx| self.byte(idx) == other.byte(idx))
+    }
+
+    pub(crate) fn prefix_condition(&self, prefix: &Self) -> Option<SymBoolExpr> {
+        if prefix.len() > self.len() {
+            return None;
+        }
+        let mut conditions = Vec::new();
+        for idx in 0..prefix.len() {
+            let actual = self.byte(idx);
+            let expected = prefix.byte(idx);
+            if actual == expected {
+                continue;
+            }
+            match (actual.as_const(), expected.as_const()) {
+                (Some(actual), Some(expected)) if actual.to::<u8>() == expected.to::<u8>() => {}
+                (Some(_), Some(_)) => return None,
+                _ => conditions.push(SymBoolExpr::eq_words(&actual, &expected)),
+            }
+        }
+        Some(SymBoolExpr::and(conditions))
+    }
+
+    pub(crate) fn eval_model<M: SymbolicModelLookup + ?Sized>(
+        &self,
+        model: &M,
+    ) -> Result<Vec<u8>, SymbolicError> {
+        match self.kind() {
+            SymBytesKind::Concrete(bytes) => Ok(bytes.clone()),
+            _ => (0..self.len())
+                .map(|idx| Ok(self.byte(idx).eval_model(model)?.to::<u8>()))
+                .collect(),
+        }
+    }
+
     pub(crate) fn concrete_bytes(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {
         match self.kind() {
             SymBytesKind::Concrete(bytes) => Ok(bytes.clone()),
-            SymBytesKind::Exprs(bytes) => bytes.concrete_bytes(reason),
+            SymBytesKind::Exprs(bytes) => concrete_expr_bytes(bytes, reason),
             SymBytesKind::Concat(values) => {
                 let mut out = Vec::with_capacity(self.len());
                 for bytes in values {
@@ -428,10 +478,10 @@ impl SymBytes {
                 {
                     bytes.slice_concrete(offset, *len).concrete_bytes(reason)
                 } else {
-                    self.materialize().concrete_bytes(reason)
+                    concrete_expr_bytes(&self.materialize(), reason)
                 }
             }
-            _ => self.materialize().concrete_bytes(reason),
+            _ => concrete_expr_bytes(&self.materialize(), reason),
         }
     }
 }

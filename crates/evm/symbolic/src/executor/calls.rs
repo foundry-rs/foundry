@@ -87,8 +87,8 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
-        let call_input = in_size.read_from_memory(&state.memory, in_offset.clone()).materialize();
-        if call_input.iter().any(SymExpr::contains_gasleft) {
+        let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
+        if call_input.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
 
@@ -175,7 +175,7 @@ impl SymbolicExecutor {
         code_address: Address,
         value: &SymExpr,
         gas: &SymExpr,
-        call_input: &[SymExpr],
+        call_input: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         if state.constrained_word(value).is_some() {
             return Ok(false);
@@ -255,17 +255,13 @@ impl SymbolicExecutor {
         pre_call_state: &PathState,
         call_pc: usize,
         callee: Address,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         for idx in (0..state.function_mocks.len()).rev() {
             if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -284,11 +280,7 @@ impl SymbolicExecutor {
             if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -312,7 +304,7 @@ impl SymbolicExecutor {
         callee: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         if state.expected_calls.is_empty() {
             return Ok(true);
@@ -344,7 +336,7 @@ impl SymbolicExecutor {
         code_address: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<bool, SymbolicError> {
         for idx in 0..state.expected_calls.len() {
             let Some(condition) = self.expected_call_match_condition(
@@ -380,8 +372,7 @@ impl SymbolicExecutor {
                 code_address,
                 value,
                 calldata,
-            )?
-            else {
+            ) else {
                 continue;
             };
             if self.branch_symbolic_match_condition_if_needed(
@@ -403,7 +394,7 @@ impl SymbolicExecutor {
         state: &mut PathState,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<CallMockOutcome>, SymbolicError> {
         if state.call_mocks.is_empty() {
             return Ok(None);
@@ -478,17 +469,13 @@ impl SymbolicExecutor {
         &mut self,
         state: &mut PathState,
         callee: Address,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<Address>, SymbolicError> {
         for idx in (0..state.function_mocks.len()).rev() {
             if state.function_mocks[idx].calldata_len() != calldata.len() {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction calldata",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -501,11 +488,7 @@ impl SymbolicExecutor {
             if state.function_mocks[idx].calldata_len() != 4 {
                 continue;
             }
-            let Some(condition) = state.function_mocks[idx].match_condition(
-                callee,
-                calldata,
-                "symbolic vm.mockFunction selector",
-            )?
+            let Some(condition) = state.function_mocks[idx].match_condition(callee, calldata)
             else {
                 continue;
             };
@@ -524,7 +507,7 @@ impl SymbolicExecutor {
         callee: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
         let Some(condition) =
             self.expected_call_match_condition(expected, callee, value, gas, calldata)?
@@ -540,9 +523,9 @@ impl SymbolicExecutor {
         mock: &CallMock,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<Vec<SymBoolExpr>>, SymbolicError> {
-        let Some(condition) = self.call_mock_match_condition(mock, callee, value, calldata)? else {
+        let Some(condition) = self.call_mock_match_condition(mock, callee, value, calldata) else {
             return Ok(None);
         };
         self.constraints_for_condition(state, condition)
@@ -554,7 +537,7 @@ impl SymbolicExecutor {
         callee: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<SymBoolExpr>, SymbolicError> {
         expected.match_condition(callee, value, gas, calldata)
     }
@@ -564,8 +547,8 @@ impl SymbolicExecutor {
         mock: &CallMock,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymExpr],
-    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
+        calldata: &SymBytes,
+    ) -> Option<SymBoolExpr> {
         mock.match_condition(callee, value, calldata)
     }
 
@@ -849,18 +832,17 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
-        let call_input_exprs = call_input.materialize();
         if !state.expected_calls.is_empty() {
             let concrete_value = state.constrained_word(&value);
-            if !self.observe_expected_call(state, to, concrete_value, &gas, &call_input_exprs)? {
+            if !self.observe_expected_call(state, to, concrete_value, &gas, &call_input)? {
                 return Ok(StepOutcome::Failure);
             }
         }
-        let code_address = self.function_mock_target(state, to, &call_input_exprs)?.unwrap_or(to);
+        let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
         if !state.call_mocks.is_empty() {
             let concrete_value = state.constrained_word(&value);
             if let Some(mock) =
-                self.take_call_mock(state, code_address, concrete_value, &call_input_exprs)?
+                self.take_call_mock(state, code_address, concrete_value, &call_input)?
             {
                 if !matches!(kind, CallKind::DelegateCall) {
                     let _ = state.prank_for_next_call();

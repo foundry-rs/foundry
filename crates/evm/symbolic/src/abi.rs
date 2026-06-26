@@ -669,12 +669,12 @@ impl SymbolicAbiValue {
                     .ok()
                     .filter(|len| *len <= bytes.len())
                     .ok_or_else(|| SymbolicError::Solver("invalid symbolic bytes length".into()))?;
-                let mut bytes = bytes.materialize().eval_model(model)?;
+                let mut bytes = bytes.eval_model(model)?;
                 bytes.truncate(len);
                 DynSolValue::Bytes(bytes)
             }
             Self::String { bytes } => {
-                let bytes = bytes.materialize().eval_model(model)?;
+                let bytes = bytes.eval_model(model)?;
                 let value = String::from_utf8(bytes).map_err(|err| {
                     SymbolicError::Solver(format!("invalid symbolic string model: {err}"))
                 })?;

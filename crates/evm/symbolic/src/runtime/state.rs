@@ -635,7 +635,7 @@ impl PathState {
 pub(crate) struct SymbolicLog {
     topics: Arc<[SymExpr]>,
     data_len: SymExpr,
-    data: Arc<[SymExpr]>,
+    data: SymBytes,
     emitter: Address,
 }
 
@@ -643,13 +643,13 @@ impl SymbolicLog {
     pub(crate) fn new(
         topics: Vec<SymExpr>,
         data_len: SymExpr,
-        data: Vec<SymExpr>,
+        data: SymBytes,
         emitter: Address,
     ) -> Self {
-        Self { topics: topics.into(), data_len, data: data.into(), emitter }
+        Self { topics: topics.into(), data_len, data, emitter }
     }
 
-    pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, Arc<[SymExpr]>, Address) {
+    pub(crate) fn into_parts(self) -> (Arc<[SymExpr]>, SymExpr, SymBytes, Address) {
         (self.topics, self.data_len, self.data, self.emitter)
     }
 }
@@ -730,9 +730,10 @@ impl ExpectedRevert {
                     return_data.len_expr(),
                     SymExpr::constant(U256::from(prefix.len())),
                 ));
-                conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
+                conditions.extend((0..prefix.len()).map(|offset| {
+                    let expected = prefix.byte(offset);
                     let actual = return_data.byte(offset);
-                    SymBoolExpr::eq_words(&actual, expected)
+                    SymBoolExpr::eq_words(&actual, &expected)
                 }));
             }
             ExpectedRevertData::Exact(data) => {
@@ -743,9 +744,10 @@ impl ExpectedRevert {
                     return_data.len_expr(),
                     SymExpr::constant(U256::from(data.len())),
                 ));
-                conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
+                conditions.extend((0..data.len()).map(|offset| {
+                    let expected = data.byte(offset);
                     let actual = return_data.byte(offset);
-                    SymBoolExpr::eq_words(&actual, expected)
+                    SymBoolExpr::eq_words(&actual, &expected)
                 }));
             }
         }
@@ -756,17 +758,17 @@ impl ExpectedRevert {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExpectedRevertData {
     Any,
-    Prefix(Arc<[SymExpr]>),
-    Exact(Arc<[SymExpr]>),
+    Prefix(SymBytes),
+    Exact(SymBytes),
 }
 
 impl ExpectedRevertData {
-    pub(crate) fn prefix(data: Vec<SymExpr>) -> Self {
-        Self::Prefix(data.into())
+    pub(crate) const fn prefix(data: SymBytes) -> Self {
+        Self::Prefix(data)
     }
 
-    pub(crate) fn exact(data: Vec<SymExpr>) -> Self {
-        Self::Exact(data.into())
+    pub(crate) const fn exact(data: SymBytes) -> Self {
+        Self::Exact(data)
     }
 }
 
@@ -782,7 +784,7 @@ pub(crate) struct ExpectedCall {
     value: Option<U256>,
     gas: Option<u64>,
     min_gas: Option<u64>,
-    data: Arc<[SymExpr]>,
+    data: SymBytes,
     expected: u64,
     observed: u64,
     exact: bool,
@@ -817,7 +819,7 @@ impl ExpectedCall {
         value: Option<U256>,
         gas: Option<u64>,
         min_gas: Option<u64>,
-        data: Vec<SymExpr>,
+        data: SymBytes,
         count: Option<u64>,
     ) -> Self {
         let (gas, min_gas) = if value.is_some_and(|value| !value.is_zero()) {
@@ -833,7 +835,7 @@ impl ExpectedCall {
             value,
             gas,
             min_gas,
-            data: data.into(),
+            data,
             expected: count.unwrap_or(1).max(1),
             observed: 0,
             exact: count.is_some(),
@@ -849,14 +851,12 @@ impl ExpectedCall {
         callee: Address,
         value: Option<U256>,
         gas: &SymExpr,
-        calldata: &[SymExpr],
+        calldata: &SymBytes,
     ) -> Result<Option<SymBoolExpr>, SymbolicError> {
         if !self.static_parts_match(value, gas)? {
             return Ok(None);
         }
-        let Some(data_condition) =
-            calldata.calldata_prefix_condition(&self.data, "symbolic expected call calldata")?
-        else {
+        let Some(data_condition) = calldata.prefix_condition(&self.data) else {
             return Ok(None);
         };
         Ok(Some(SymBoolExpr::and(vec![
@@ -903,21 +903,21 @@ impl ExpectedCall {
 pub(crate) struct CallMock {
     callee: SymExpr,
     value: Option<U256>,
-    data: Arc<[SymExpr]>,
+    data: SymBytes,
     returns: Vec<SymReturnData>,
     reverts: bool,
     calls: usize,
 }
 
 impl CallMock {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         callee: SymExpr,
         value: Option<U256>,
-        data: Vec<SymExpr>,
+        data: SymBytes,
         returns: Vec<SymReturnData>,
         reverts: bool,
     ) -> Self {
-        Self { callee, value, data: data.into(), returns, reverts, calls: 0 }
+        Self { callee, value, data, returns, reverts, calls: 0 }
     }
 
     pub(crate) const fn value(&self) -> Option<U256> {
@@ -932,20 +932,13 @@ impl CallMock {
         &self,
         callee: Address,
         value: Option<U256>,
-        calldata: &[SymExpr],
-    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
+        calldata: &SymBytes,
+    ) -> Option<SymBoolExpr> {
         if !self.static_parts_match(value) {
-            return Ok(None);
+            return None;
         }
-        let Some(data_condition) =
-            calldata.calldata_prefix_condition(&self.data, "symbolic mocked call calldata")?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(SymBoolExpr::and(vec![
-            self.callee.address_match_condition(callee),
-            data_condition,
-        ])))
+        let data_condition = calldata.prefix_condition(&self.data)?;
+        Some(SymBoolExpr::and(vec![self.callee.address_match_condition(callee), data_condition]))
     }
 
     fn static_parts_match(&self, value: Option<U256>) -> bool {
@@ -978,16 +971,16 @@ impl CallMockOutcome {
 pub(crate) struct FunctionMock {
     callee: SymExpr,
     target: Address,
-    data: Arc<[SymExpr]>,
+    data: SymBytes,
 }
 
 impl FunctionMock {
-    pub(crate) fn new(callee: SymExpr, target: Address, data: Vec<SymExpr>) -> Self {
-        Self { callee, target, data: data.into() }
+    pub(crate) const fn new(callee: SymExpr, target: Address, data: SymBytes) -> Self {
+        Self { callee, target, data }
     }
 
-    pub(crate) fn matches_definition(&self, callee: &SymExpr, data: &[SymExpr]) -> bool {
-        self.callee == *callee && self.data.as_ref() == data
+    pub(crate) fn matches_definition(&self, callee: &SymExpr, data: &SymBytes) -> bool {
+        self.callee == *callee && self.data.same_bytes(data)
     }
 
     pub(crate) const fn set_target(&mut self, target: Address) {
@@ -1005,16 +998,10 @@ impl FunctionMock {
     pub(crate) fn match_condition(
         &self,
         callee: Address,
-        calldata: &[SymExpr],
-        reason: &'static str,
-    ) -> Result<Option<SymBoolExpr>, SymbolicError> {
-        let Some(data_condition) = calldata.calldata_prefix_condition(&self.data, reason)? else {
-            return Ok(None);
-        };
-        Ok(Some(SymBoolExpr::and(vec![
-            self.callee.address_match_condition(callee),
-            data_condition,
-        ])))
+        calldata: &SymBytes,
+    ) -> Option<SymBoolExpr> {
+        let data_condition = calldata.prefix_condition(&self.data)?;
+        Some(SymBoolExpr::and(vec![self.callee.address_match_condition(callee), data_condition]))
     }
 }
 
@@ -1084,13 +1071,9 @@ impl ExpectedEmit {
             if template.data.len() != actual.data.len() {
                 return None;
             }
-            conditions.extend(
-                template
-                    .data
-                    .iter()
-                    .zip(actual.data.iter())
-                    .map(|(left, right)| SymBoolExpr::eq_words(left, right)),
-            );
+            conditions.extend((0..template.data.len()).map(|idx| {
+                SymBoolExpr::eq_words(&template.data.byte(idx), &actual.data.byte(idx))
+            }));
         }
 
         Some(SymBoolExpr::and(conditions))

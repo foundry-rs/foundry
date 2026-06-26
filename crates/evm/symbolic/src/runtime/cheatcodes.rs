@@ -307,10 +307,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                 SymbolicAbiValue::Tuple {
                     elements: vec![
                         SymbolicAbiValue::Array { elements: topics },
-                        SymbolicAbiValue::Bytes {
-                            len: data_len,
-                            bytes: SymBytes::exprs(data.iter().cloned().collect()),
-                        },
+                        SymbolicAbiValue::Bytes { len: data_len, bytes: data },
                         SymbolicAbiValue::Address {
                             word: SymExpr::constant(address_word(emitter)),
                         },
@@ -353,8 +350,8 @@ pub(crate) fn recorded_logs_json_return_data(
         if len > data.len() {
             return Err(SymbolicError::Unsupported("symbolic vm.getRecordedLogsJson data length"));
         }
-        for byte in data.iter().take(len).cloned() {
-            push_hex_byte(&mut bytes, byte);
+        for idx in 0..len {
+            push_hex_byte(&mut bytes, data.byte(idx));
         }
 
         push_ascii(&mut bytes, "\",\"emitter\":\"");
@@ -772,10 +769,7 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
 
     let reverter = dyn_address(reverter)?;
     let reverter = (reverter != Address::ZERO).then(|| SymExpr::constant(address_word(reverter)));
-    let revert_data = dyn_bytes(revert_data)?
-        .into_iter()
-        .map(|byte| SymExpr::constant(U256::from(byte)))
-        .collect();
+    let revert_data = SymBytes::concrete(dyn_bytes(revert_data)?);
     let data = if dyn_bool(partial_match)? {
         ExpectedRevertData::prefix(revert_data)
     } else {
