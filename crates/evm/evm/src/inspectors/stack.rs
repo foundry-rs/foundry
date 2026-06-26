@@ -5,7 +5,7 @@ use super::{
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressMap},
+    map::{AddressHashMap, AddressHashSet, AddressMap},
 };
 
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
@@ -34,7 +34,7 @@ use revm::{
     handler::FrameResult,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterResult, return_ok,
+        InstructionResult, Interpreter, InterpreterResult, interpreter_types::InputsTr, return_ok,
     },
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
@@ -335,6 +335,8 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
 pub struct InnerContextData {
     /// Origin of the transaction in the outer EVM context.
     original_origin: Address,
+    /// Accounts that were created locally before entering the nested EVM context.
+    locally_created_accounts: AddressHashSet,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -387,6 +389,8 @@ pub struct InspectorStackInner {
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
+    /// Accounts that should retain the per-transaction creation marker in the current context.
+    pub locally_created_accounts: AddressHashSet,
     pub top_frame_journal: AddressMap<Account>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
@@ -484,6 +488,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         self.in_inner_context = enabled;
         self.inner_context_data = enabled.then(|| InnerContextData {
             original_origin: original_origin.expect("origin required when enabling inner ctx"),
+            locally_created_accounts: AddressHashSet::default(),
         });
     }
 }
@@ -837,8 +842,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             ecx.tx_mut().set_blob_hashes(Vec::new());
         }
 
-        self.inner_context_data =
-            Some(InnerContextData { original_origin: cached_tx_env.caller() });
+        let locally_created_accounts = ecx
+            .journal()
+            .evm_state()
+            .iter()
+            .filter_map(|(addr, acc)| acc.is_created_locally().then_some(*addr))
+            .collect();
+        self.inner_context_data = Some(InnerContextData {
+            original_origin: cached_tx_env.caller(),
+            locally_created_accounts,
+        });
         self.in_inner_context = true;
 
         // Tell cheatcodes we're entering the synthetic inner transaction so
@@ -864,7 +877,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                     let mut state = journal.state.clone();
 
                     for (addr, acc_mut) in &mut state {
-                        // mark all accounts cold, besides preloaded addresses
+                        // Preserve revm's per-transaction creation flag for accounts created in
+                        // the parent context in initialize_interp. A cold load in the nested
+                        // context clears local flags, but keeping accounts cold preserves gas
+                        // accounting for isolated calls.
                         if journal.warm_addresses.is_cold(addr) {
                             acc_mut.mark_cold();
                         }
@@ -989,6 +1005,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
+        self.locally_created_accounts.clear();
+
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
@@ -1077,6 +1095,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        let address = interpreter.input.target_address();
+        let should_mark_created_locally = self.locally_created_accounts.contains(&address)
+            || self
+                .inner_context_data
+                .as_ref()
+                .is_some_and(|ctx| ctx.locally_created_accounts.contains(&address));
+        if should_mark_created_locally
+            && let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&address)
+        {
+            account.mark_created_locally();
+        }
+
         call_inspectors!(
             [
                 &mut self.line_coverage,
@@ -1419,6 +1449,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
+        if outcome.result.result.is_ok()
+            && let Some(address) = outcome.address
+        {
+            self.locally_created_accounts.insert(address);
+
+            if self.in_inner_context
+                && let Some(inner_context) = &mut self.inner_context_data
+            {
+                inner_context.locally_created_accounts.insert(address);
+            }
+        }
+
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journal().depth() == 1 {

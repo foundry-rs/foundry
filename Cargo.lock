@@ -5192,7 +5192,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-signer",
  "cfg-if",
- "chrono",
  "clap",
  "clap_complete",
  "clap_complete_nushell",

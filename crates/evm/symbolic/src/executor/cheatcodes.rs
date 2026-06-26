@@ -1825,9 +1825,17 @@ impl SymbolicExecutor {
             lastCallGasCall::SELECTOR => {
                 return Err(SymbolicError::Unsupported("symbolic vm.lastCallGas not modeled"));
             }
+            lastFrameGasCall::SELECTOR => {
+                return Err(SymbolicError::Unsupported("symbolic vm.lastFrameGas not modeled"));
+            }
             snapshotGasLastCall_0Call::SELECTOR | snapshotGasLastCall_1Call::SELECTOR => {
                 return Err(SymbolicError::Unsupported(
                     "symbolic vm.snapshotGasLastCall not modeled",
+                ));
+            }
+            snapshotGasLastFrame_0Call::SELECTOR | snapshotGasLastFrame_1Call::SELECTOR => {
+                return Err(SymbolicError::Unsupported(
+                    "symbolic vm.snapshotGasLastFrame not modeled",
                 ));
             }
             stopSnapshotGas_0Call::SELECTOR
