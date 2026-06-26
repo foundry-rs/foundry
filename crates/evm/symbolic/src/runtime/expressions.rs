@@ -743,8 +743,7 @@ pub(crate) fn calldata_prefix_condition(
             (SymWord::Concrete(actual), SymWord::Concrete(expected))
                 if actual.to::<u8>() == expected.to::<u8>() => {}
             (SymWord::Concrete(_), SymWord::Concrete(_)) => return Ok(None),
-            _ => conditions
-                .push(BoolExpr::eq(actual.clone().into_expr(), expected.clone().into_expr())),
+            _ => conditions.push(BoolExpr::eq_words(actual, expected)),
         }
     }
     Ok(Some(BoolExpr::and(conditions)))
@@ -1607,6 +1606,22 @@ impl BoolExpr {
         match word {
             SymWord::Concrete(word) => Self::eq(Expr::Const(*word), expr),
             SymWord::Expr(word) => Self::eq_arc(Arc::clone(word), Arc::new(expr)),
+        }
+    }
+
+    /// Builds equality between borrowed symbolic words.
+    pub(crate) fn eq_words(left: &SymWord, right: &SymWord) -> Self {
+        match (left, right) {
+            (SymWord::Concrete(left), SymWord::Concrete(right)) => Self::Const(left == right),
+            (SymWord::Expr(left), SymWord::Expr(right)) => {
+                Self::eq_arc(Arc::clone(left), Arc::clone(right))
+            }
+            (SymWord::Concrete(left), SymWord::Expr(right)) => {
+                Self::eq_arc(Arc::new(Expr::Const(*left)), Arc::clone(right))
+            }
+            (SymWord::Expr(left), SymWord::Concrete(right)) => {
+                Self::eq_arc(Arc::clone(left), Arc::new(Expr::Const(*right)))
+            }
         }
     }
 

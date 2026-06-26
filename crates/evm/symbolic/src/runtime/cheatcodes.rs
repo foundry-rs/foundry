@@ -762,7 +762,8 @@ pub(crate) fn expected_revert_match_condition(
                 Expr::Const(U256::from(prefix.len())),
             ));
             conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
-                BoolExpr::eq(return_data.byte(offset).into_expr(), expected.clone().into_expr())
+                let actual = return_data.byte(offset);
+                BoolExpr::eq_words(&actual, expected)
             }));
         }
         ExpectedRevertData::Exact(data) => {
@@ -772,7 +773,8 @@ pub(crate) fn expected_revert_match_condition(
             conditions
                 .push(BoolExpr::eq(return_data.len_expr(), Expr::Const(U256::from(data.len()))));
             conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
-                BoolExpr::eq(return_data.byte(offset).into_expr(), expected.clone().into_expr())
+                let actual = return_data.byte(offset);
+                BoolExpr::eq_words(&actual, expected)
             }));
         }
     }

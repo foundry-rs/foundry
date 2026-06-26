@@ -755,8 +755,7 @@ impl SymbolicExecutor {
             }
             match (template.topics.get(idx), actual.topics.get(idx)) {
                 (Some(left), Some(right)) => {
-                    conditions
-                        .push(BoolExpr::eq(left.clone().into_expr(), right.clone().into_expr()));
+                    conditions.push(BoolExpr::eq_words(left, right));
                 }
                 (None, None) => {}
                 _ => return Ok(false),
@@ -764,10 +763,7 @@ impl SymbolicExecutor {
         }
 
         if expected.checks.data {
-            conditions.push(BoolExpr::eq(
-                template.data_len.clone().into_expr(),
-                actual.data_len.clone().into_expr(),
-            ));
+            conditions.push(BoolExpr::eq_words(&template.data_len, &actual.data_len));
             if template.data.len() != actual.data.len() {
                 return Ok(false);
             }
@@ -775,9 +771,8 @@ impl SymbolicExecutor {
                 template
                     .data
                     .iter()
-                    .cloned()
-                    .zip(actual.data.iter().cloned())
-                    .map(|(left, right)| BoolExpr::eq(left.into_expr(), right.into_expr())),
+                    .zip(actual.data.iter())
+                    .map(|(left, right)| BoolExpr::eq_words(left, right)),
             );
         }
 
