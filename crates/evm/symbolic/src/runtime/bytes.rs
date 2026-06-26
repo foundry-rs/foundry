@@ -411,20 +411,6 @@ impl SymBytes {
         (0..self.len()).map(|idx| self.byte(idx)).collect()
     }
 
-    pub(crate) fn contains_gasleft(&self) -> bool {
-        match self.kind() {
-            SymBytesKind::Concrete(_) => false,
-            SymBytesKind::Exprs(bytes) => bytes.iter().any(SymExpr::contains_gasleft),
-            SymBytesKind::Word(word) => word.contains_gasleft(),
-            SymBytesKind::Concat(values) => values.iter().any(Self::contains_gasleft),
-            SymBytesKind::Slice { offset, .. } if offset.contains_gasleft() => true,
-            SymBytesKind::Sized { size, .. } if size.contains_gasleft() => true,
-            SymBytesKind::Slice { .. } | SymBytesKind::Sized { .. } => {
-                (0..self.len()).any(|idx| self.byte(idx).contains_gasleft())
-            }
-        }
-    }
-
     pub(crate) fn same_bytes(&self, other: &Self) -> bool {
         self.len() == other.len() && (0..self.len()).all(|idx| self.byte(idx) == other.byte(idx))
     }

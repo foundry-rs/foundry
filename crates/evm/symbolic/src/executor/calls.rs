@@ -88,9 +88,6 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
-        if call_input.contains_gasleft() {
-            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-        }
 
         if let Some(to) = target_address {
             if self.branch_symbolic_function_mock_if_needed(

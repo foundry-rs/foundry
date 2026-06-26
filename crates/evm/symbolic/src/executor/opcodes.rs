@@ -662,9 +662,6 @@ impl SymbolicExecutor {
                     }
                     log_topics.push(topic);
                 }
-                if data.contains_gasleft() {
-                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
-                }
                 return self.handle_log(
                     state,
                     SymbolicLog::new(log_topics, data_len, data, state.address),
