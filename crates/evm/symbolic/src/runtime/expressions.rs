@@ -587,26 +587,26 @@ pub(crate) fn bool_contains_gasleft(expr: &BoolExpr) -> bool {
 
 /// Returns the `word_bytes` symbolic expression helper result.
 pub(crate) fn word_bytes(word: SymWord) -> Vec<SymWord> {
-    match word {
-        SymWord::Concrete(word) => word
+    if let Some(word) = word.as_const() {
+        return word
             .to_be_bytes::<32>()
             .into_iter()
-            .map(|byte| SymWord::Concrete(U256::from(byte)))
-            .collect(),
-        SymWord::Expr(expr) => (0..32).map(|idx| byte_expr(idx, &expr)).collect(),
+            .map(|byte| SymWord::constant(U256::from(byte)))
+            .collect();
     }
+    let expr = word.into_arc_expr();
+    (0..32).map(|idx| byte_expr(idx, &expr)).collect()
 }
 
 /// Returns the `word_from_bytes` symbolic expression helper result.
 pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymWord>) -> SymWord {
     let bytes = bytes.into_iter().collect::<Vec<_>>();
-    if bytes.iter().all(|byte| matches!(byte, SymWord::Concrete(_))) {
+    if bytes.iter().all(|byte| byte.as_const().is_some()) {
         let mut word = [0u8; 32];
         for (idx, byte) in bytes.into_iter().take(32).enumerate() {
-            let SymWord::Concrete(byte) = byte else { unreachable!() };
-            word[idx] = byte.to::<u8>();
+            word[idx] = byte.as_const().expect("checked concrete byte").to::<u8>();
         }
-        return SymWord::Concrete(U256::from_be_bytes(word));
+        return SymWord::constant(U256::from_be_bytes(word));
     }
 
     if let Some(expr) = word_from_extracted_bytes(&bytes) {
@@ -647,7 +647,7 @@ pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<Expr> {
             continue;
         }
 
-        let SymWord::Concrete(byte) = byte else { return None };
+        let byte = byte.as_const()?;
         if expr_known_byte(&source, idx) != Some(byte.to::<u8>()) {
             return None;
         }
@@ -657,7 +657,7 @@ pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<Expr> {
 
 /// Implements the `extracted_byte_source` symbolic expression helper.
 pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<Expr> {
-    let SymWord::Expr(expr) = byte else { return None };
+    let expr = byte.as_expr()?;
     let expr = strip_low_byte_mask(expr)?;
     if index == 31 {
         return Some(expr.clone());
@@ -682,14 +682,10 @@ pub(crate) fn strip_low_byte_mask(expr: &Expr) -> Option<&Expr> {
 
 /// Returns the `low_byte` symbolic expression helper result.
 pub(crate) fn low_byte(word: SymWord) -> SymWord {
-    match word {
-        SymWord::Concrete(word) => SymWord::Concrete(U256::from(word.to::<u8>())),
-        word => SymWord::from_expr(Expr::op(
-            ExprOp::And,
-            word.into_expr(),
-            Expr::Const(U256::from(0xff)),
-        )),
+    if let Some(word) = word.as_const() {
+        return SymWord::constant(U256::from(word.to::<u8>()));
     }
+    SymWord::from_expr(Expr::op(ExprOp::And, word.into_expr(), Expr::Const(U256::from(0xff))))
 }
 
 /// Returns the `model_word` symbolic expression helper result.
@@ -697,10 +693,10 @@ pub(crate) fn model_word(
     word: &SymWord,
     model: &(impl SymbolicModelLookup + ?Sized),
 ) -> Result<U256, SymbolicError> {
-    match word {
-        SymWord::Concrete(value) => Ok(*value),
-        SymWord::Expr(expr) => eval_expr(expr, model),
+    if let Some(value) = word.as_const() {
+        return Ok(value);
     }
+    eval_expr(word.as_expr().expect("non-const word has expression"), model)
 }
 
 /// Returns the `model_bytes` symbolic expression helper result.
@@ -718,9 +714,9 @@ pub(crate) fn concrete_bytes(
 ) -> Result<Vec<u8>, SymbolicError> {
     bytes
         .iter()
-        .map(|byte| match byte {
-            SymWord::Concrete(value) => Ok(value.to::<u8>()),
-            SymWord::Expr(_) => Err(SymbolicError::Unsupported(reason)),
+        .map(|byte| match byte.as_const() {
+            Some(value) => Ok(value.to::<u8>()),
+            None => Err(SymbolicError::Unsupported(reason)),
         })
         .collect()
 }
@@ -915,13 +911,34 @@ pub(crate) enum SymWord {
 impl SymWord {
     /// Implements the `zero` symbolic expression helper.
     pub(crate) const fn zero() -> Self {
-        Self::Concrete(U256::ZERO)
+        Self::constant(U256::ZERO)
+    }
+
+    /// Builds a concrete symbolic word.
+    pub(crate) const fn constant(value: U256) -> Self {
+        Self::Concrete(value)
+    }
+
+    /// Returns the concrete value of this word.
+    pub(crate) const fn as_const(&self) -> Option<U256> {
+        match self {
+            Self::Concrete(value) => Some(*value),
+            Self::Expr(_) => None,
+        }
+    }
+
+    /// Returns the expression of this word when it is not concrete.
+    pub(crate) const fn as_expr(&self) -> Option<&Arc<Expr>> {
+        match self {
+            Self::Concrete(_) => None,
+            Self::Expr(expr) => Some(expr),
+        }
     }
 
     /// Converts an expression into a symbolic word, preserving the concrete fast path.
     pub(crate) fn from_expr(expr: Expr) -> Self {
         match expr {
-            Expr::Const(value) => Self::Concrete(value),
+            Expr::Const(value) => Self::constant(value),
             expr => Self::Expr(Arc::new(expr)),
         }
     }
@@ -929,7 +946,7 @@ impl SymWord {
     /// Converts a shared expression into a symbolic word, preserving the concrete fast path.
     pub(crate) fn from_arc_expr(expr: Arc<Expr>) -> Self {
         match expr.as_ref() {
-            Expr::Const(value) => Self::Concrete(*value),
+            Expr::Const(value) => Self::constant(*value),
             _ => Self::Expr(expr),
         }
     }
@@ -979,7 +996,7 @@ impl SymWord {
     /// Converts values for the `from_bool` symbolic expression helper.
     pub(crate) fn from_bool(value: BoolExpr) -> Self {
         match value {
-            BoolExpr::Const(value) => Self::Concrete(U256::from(value)),
+            BoolExpr::Const(value) => Self::constant(U256::from(value)),
             value => Self::from_expr(Expr::ite(
                 value,
                 Expr::Const(U256::from(1)),
