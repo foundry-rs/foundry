@@ -17,15 +17,18 @@ workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-config.workspace = true
+foundry-cheatcodes-spec.workspace = true
 foundry-evm.workspace = true
 
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-sol-types.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 base64.workspace = true
+inturn.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

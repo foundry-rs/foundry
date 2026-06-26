@@ -46,10 +46,12 @@ FOUNDRYUP_RUST_HOME="${FOUNDRYUP_RUST_HOME:-"$FOUNDRY_DIR/foundryup"}"
 FOUNDRYUP_MAX_RETRIES=5
 FOUNDRYUP_RETRY_DELAY=2
 FOUNDRYUP_RETRY_MAX_TIME=60
+FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT=5
 
 BINS=(forge cast anvil chisel)
 HASH_NAMES=()
 HASH_VALUES=()
+FOUNDRYUP_NIGHTLY_CANDIDATES=()
 
 export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
 
@@ -143,12 +145,18 @@ main() {
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-latest}
+    FOUNDRYUP_REQUESTED_VERSION="$FOUNDRYUP_VERSION"
     resolve_version_and_tag
 
     say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
     # Detect platform and architecture.
     detect_platform_arch
+
+    if [[ "$FOUNDRYUP_REQUESTED_VERSION" == "nightly" && ${#FOUNDRYUP_NIGHTLY_CANDIDATES[@]} -gt 1 ]]; then
+      FOUNDRYUP_TAG=$(select_installable_nightly_tag)
+      say "resolved installable nightly release tag: ${FOUNDRYUP_TAG}"
+    fi
 
     # Compute the URL of the release tarball in the Foundry repository.
     RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
@@ -719,7 +727,11 @@ resolve_version_and_tag() {
     # that limit and fail with HTTP 403. Falls back to the API only when the
     # feed cannot be parsed.
     say "fetching latest nightly release tag from ${FOUNDRYUP_REPO}..."
-    FOUNDRYUP_TAG=$(resolve_nightly_tag_via_feed "$FOUNDRYUP_REPO")
+    FOUNDRYUP_NIGHTLY_CANDIDATES=()
+    while IFS= read -r nightly_candidate; do
+      FOUNDRYUP_NIGHTLY_CANDIDATES+=("$nightly_candidate")
+    done < <(resolve_nightly_tags_via_feed "$FOUNDRYUP_REPO")
+    FOUNDRYUP_TAG="${FOUNDRYUP_NIGHTLY_CANDIDATES[0]:-}"
     if [ -z "$FOUNDRYUP_TAG" ]; then
       # The GitHub API does not guarantee that releases are returned in
       # chronological order, so we collect all matching nightlies along with
@@ -783,12 +795,13 @@ resolve_latest_tag_via_redirect() {
   esac
 }
 
-# Resolves the latest nightly tag for repo $1 from GitHub's public releases
+# Resolves recent nightly tags for repo $1 from GitHub's public releases
 # Atom feed (`releases.atom`), which lists releases newest-first, works
 # unauthenticated, and is not subject to the api.github.com REST rate limit.
-# Prints `nightly-<sha>` for the most recent nightly, or nothing if it cannot
-# be resolved so the caller can fall back to the API.
-resolve_nightly_tag_via_feed() {
+# Prints up to `FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT` unique `nightly-<sha>` tags,
+# newest-first, or nothing if the feed cannot be resolved so the caller can fall
+# back to the API.
+resolve_nightly_tags_via_feed() {
   local _repo="$1"
   local _url="https://github.com/${_repo}/releases.atom"
   local _feed=""
@@ -805,14 +818,45 @@ resolve_nightly_tag_via_feed() {
       --retry-on-http-error=403,408,429,500,502,503,504 \
       -qO- "$_url" 2>/dev/null) || return 0
   fi
-  # The feed is newest-first, so the first `nightly-<40-hex-sha>` reference is
-  # the most recent nightly release. Validate the SHA before returning it.
-  local _tag=""
-  _tag=$(printf '%s\n' "$_feed" | grep -oE 'nightly-[0-9a-f]{40}' | head -n1) || return 0
-  case "$_tag" in
-    nightly-*) printf '%s\n' "$_tag" ;;
-    *) return 0 ;;
-  esac
+  # The feed is newest-first. Return a small unique candidate set so callers can
+  # skip draft or still-uploading immutable nightly releases without hitting the
+  # GitHub REST API on the happy path.
+  printf '%s\n' "$_feed" \
+    | grep -oE 'nightly-[0-9a-f]{40}' \
+    | awk '!seen[$0]++ { print; count++ } count >= limit { exit }' limit="$FOUNDRYUP_NIGHTLY_CANDIDATE_LIMIT"
+}
+
+# Backwards-compatible helper for tests/callers that only need the newest
+# candidate from the feed.
+resolve_nightly_tag_via_feed() {
+  resolve_nightly_tags_via_feed "$1" | head -n1
+}
+
+select_installable_nightly_tag() {
+  local _tag _release_url _archive_url _tmp
+  for _tag in "${FOUNDRYUP_NIGHTLY_CANDIDATES[@]}"; do
+    _release_url="https://github.com/${FOUNDRYUP_REPO}/releases/download/${_tag}/"
+    _archive_url="${_release_url}foundry_nightly_${PLATFORM}_${ARCHITECTURE}.${EXT}"
+    _tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
+    if [ "$PLATFORM" = "win32" ]; then
+      _tmp="$_tmp/foundry.zip"
+      if download "$_archive_url" "$_tmp" && unzip -t "$_tmp" >/dev/null 2>&1; then
+        rm -f "$_tmp"
+        printf '%s\n' "$_tag"
+        return 0
+      fi
+    else
+      _tmp="$_tmp/foundry.tar.gz"
+      if download "$_archive_url" "$_tmp" && tar tf "$_tmp" >/dev/null 2>&1; then
+        rm -f "$_tmp"
+        printf '%s\n' "$_tag"
+        return 0
+      fi
+    fi
+    rm -f "$_tmp"
+    warn "nightly ${_tag} is not installable yet, trying previous nightly"
+  done
+  err "could not find an installable nightly release for ${FOUNDRYUP_REPO}"
 }
 
 # Silently fetches $1 to stdout.

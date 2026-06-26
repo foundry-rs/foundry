@@ -453,6 +453,7 @@ figment = { package = "figment2", version = "0.11" }
 futures = { version = "0.3", default-features = false }
 hyper = "1.8"
 indicatif = "0.18"
+inturn = "0.1.2"
 itertools = "0.14"
 jsonpath_lib = "0.3"
 k256 = "0.13"
