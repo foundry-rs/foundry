@@ -663,7 +663,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 fixtures.insert(fixture_name(func.name.clone()), DynSolValue::Array(vals));
             };
         }
-        FuzzFixtures::new(fixtures)
+        FuzzFixtures::new(fixtures).with_enum_bounds(self.mcr.enum_bounds.clone())
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
