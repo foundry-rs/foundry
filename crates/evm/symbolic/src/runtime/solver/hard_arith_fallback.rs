@@ -14,22 +14,28 @@ pub(crate) fn bool_contains_hard_arith(expr: &BoolExpr) -> bool {
 
 /// Returns the `expr_contains_hard_arith` solver helper result.
 pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => false,
-        Expr::Not(value) => expr_contains_hard_arith(value),
-        Expr::Op(ExprOp::Mul, left, right) => expr_contains_var(left) && expr_contains_var(right),
-        Expr::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
+    match expr.as_inner() {
+        ExprInner::Const(_)
+        | ExprInner::Var(_)
+        | ExprInner::GasLeft(_)
+        | ExprInner::Keccak(_)
+        | ExprInner::Hash(_) => false,
+        ExprInner::Not(value) => expr_contains_hard_arith(value),
+        ExprInner::Op(ExprOp::Mul, left, right) => {
+            expr_contains_var(left) && expr_contains_var(right)
+        }
+        ExprInner::Op(ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, left, right) => {
             expr_contains_var(left) || expr_contains_var(right)
         }
-        Expr::AddMod(expr) | Expr::MulMod(expr) => {
+        ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
             expr_contains_var(expr.left())
                 || expr_contains_var(expr.right())
                 || expr_contains_var(expr.modulus())
         }
-        Expr::Op(_, left, right) => {
+        ExprInner::Op(_, left, right) => {
             expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
         }
-        Expr::Ite(cond, left, right) => {
+        ExprInner::Ite(cond, left, right) => {
             bool_contains_hard_arith(cond)
                 || expr_contains_hard_arith(left)
                 || expr_contains_hard_arith(right)
@@ -40,7 +46,7 @@ pub(crate) fn expr_contains_hard_arith(expr: &Expr) -> bool {
 /// Returns whether the expression contains symbolic hash variables that local search should avoid.
 pub(crate) fn expr_contains_symbolic_hash(expr: &Expr) -> bool {
     let mut contains = false;
-    expr.visit(&mut |expr| contains |= matches!(expr, Expr::Hash(_)));
+    expr.visit(&mut |expr| contains |= matches!(expr.as_inner(), ExprInner::Hash(_)));
     contains
 }
 
@@ -60,7 +66,8 @@ pub(crate) fn bool_contains_symbolic_hash(expr: &BoolExpr) -> bool {
 pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
     let mut contains = false;
     expr.visit(&mut |expr| {
-        contains |= matches!(expr, Expr::Var(_) | Expr::Keccak(_) | Expr::Hash(_))
+        contains |=
+            matches!(expr.as_inner(), ExprInner::Var(_) | ExprInner::Keccak(_) | ExprInner::Hash(_))
     });
     contains
 }
@@ -278,28 +285,28 @@ pub(crate) fn collect_bool_fallback_vars(expr: &BoolExpr, vars: &mut SymbolicVar
 
 /// Collects assignable variables from an expression, recursing into recomputable hashes.
 pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
-    match expr {
-        Expr::Const(_) | Expr::GasLeft(_) | Expr::Hash(_) => {}
-        Expr::Var(var) => {
+    match expr.as_inner() {
+        ExprInner::Const(_) | ExprInner::GasLeft(_) | ExprInner::Hash(_) => {}
+        ExprInner::Var(var) => {
             vars.insert(var.clone());
         }
-        Expr::Keccak(hash) => {
+        ExprInner::Keccak(hash) => {
             collect_expr_fallback_vars(hash.len(), vars);
             for byte in hash.bytes() {
                 collect_expr_fallback_vars(byte, vars);
             }
         }
-        Expr::Not(value) => collect_expr_fallback_vars(value, vars),
-        Expr::Op(_, left, right) => {
+        ExprInner::Not(value) => collect_expr_fallback_vars(value, vars),
+        ExprInner::Op(_, left, right) => {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
-        Expr::AddMod(expr) | Expr::MulMod(expr) => {
+        ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
             collect_expr_fallback_vars(expr.left(), vars);
             collect_expr_fallback_vars(expr.right(), vars);
             collect_expr_fallback_vars(expr.modulus(), vars);
         }
-        Expr::Ite(cond, left, right) => {
+        ExprInner::Ite(cond, left, right) => {
             collect_bool_fallback_vars(cond, vars);
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
@@ -394,22 +401,22 @@ pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut HashSet<U2
 
 /// Implements the `collect_expr_constants` solver helper.
 pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut HashSet<U256>) {
-    match expr {
-        Expr::Const(value) => {
+    match expr.as_inner() {
+        ExprInner::Const(value) => {
             constants.insert(*value);
         }
-        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => {}
-        Expr::Not(value) => collect_expr_constants(value, constants),
-        Expr::Op(_, left, right) => {
+        ExprInner::Var(_) | ExprInner::GasLeft(_) | ExprInner::Keccak(_) | ExprInner::Hash(_) => {}
+        ExprInner::Not(value) => collect_expr_constants(value, constants),
+        ExprInner::Op(_, left, right) => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
         }
-        Expr::AddMod(expr) | Expr::MulMod(expr) => {
+        ExprInner::AddMod(expr) | ExprInner::MulMod(expr) => {
             collect_expr_constants(expr.left(), constants);
             collect_expr_constants(expr.right(), constants);
             collect_expr_constants(expr.modulus(), constants);
         }
-        Expr::Ite(cond, left, right) => {
+        ExprInner::Ite(cond, left, right) => {
             collect_bool_constants(cond, constants);
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
@@ -464,12 +471,13 @@ impl MaskHints {
 
 /// Implements the `zero_mask_equality` solver helper.
 pub(crate) fn zero_mask_equality(var: &str, masked: &Expr, zero: &Expr) -> Option<U256> {
-    if !matches!(zero, Expr::Const(value) if value.is_zero()) {
+    if !zero.as_const().is_some_and(|value| value.is_zero()) {
         return None;
     }
-    match masked {
-        Expr::Op(ExprOp::And, left, right) => match (left.as_ref(), right.as_ref()) {
-            (Expr::Var(name), Expr::Const(mask)) | (Expr::Const(mask), Expr::Var(name))
+    match masked.as_inner() {
+        ExprInner::Op(ExprOp::And, left, right) => match (left.as_inner(), right.as_inner()) {
+            (ExprInner::Var(name), ExprInner::Const(mask))
+            | (ExprInner::Const(mask), ExprInner::Var(name))
                 if name.as_ref() == var =>
             {
                 Some(*mask)

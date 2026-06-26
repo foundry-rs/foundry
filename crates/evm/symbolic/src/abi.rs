@@ -44,7 +44,7 @@ impl SymbolicCalldata {
             .selector()
             .iter()
             .copied()
-            .map(|byte| SymWord::Concrete(U256::from(byte)))
+            .map(|byte| SymWord::constant(U256::from(byte)))
             .collect::<Vec<_>>();
         Ok(Self { bytes: bytes.into(), inputs: Vec::new(), constraints: Vec::new() })
     }
@@ -89,7 +89,7 @@ impl SymbolicCalldata {
                     .selector()
                     .iter()
                     .copied()
-                    .map(|byte| SymWord::Concrete(U256::from(byte)))
+                    .map(|byte| SymWord::constant(U256::from(byte)))
                     .collect::<Vec<_>>();
                 bytes.extend(encode_sequence(inputs.iter().map(|input| &input.value)));
                 if bytes.len() > config.max_calldata_bytes as usize {
@@ -240,7 +240,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
             DynSolType::Bytes => {
                 let len = self.next_dynamic_length(&name, &aliases, DynamicKind::Bytes)?;
                 SymbolicAbiValue::Bytes {
-                    len: SymWord::Concrete(U256::from(len)),
+                    len: SymWord::constant(U256::from(len)),
                     bytes: (0..len)
                         .map(|idx| self.fresh_byte(format!("{name}_{idx}"), false))
                         .collect::<Vec<_>>()
@@ -311,7 +311,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 for len in lengths {
                     let mut builder = builder.clone();
                     let value = SymbolicAbiValue::Bytes {
-                        len: SymWord::Concrete(U256::from(len)),
+                        len: SymWord::constant(U256::from(len)),
                         bytes: (0..len as usize)
                             .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), false))
                             .collect::<Vec<_>>()
@@ -693,10 +693,10 @@ impl SymbolicAbiValue {
         match self {
             Self::Bytes { len, bytes } => encode_packed_bytes_with_len(len.clone(), bytes),
             Self::String { bytes } => {
-                encode_packed_bytes_with_len(SymWord::Concrete(U256::from(bytes.len())), bytes)
+                encode_packed_bytes_with_len(SymWord::constant(U256::from(bytes.len())), bytes)
             }
             Self::Array { elements } => {
-                let mut out = word_bytes(SymWord::Concrete(U256::from(elements.len())));
+                let mut out = word_bytes(SymWord::constant(U256::from(elements.len())));
                 out.extend(encode_sequence(elements.iter()));
                 out
             }
@@ -783,7 +783,7 @@ pub(super) fn encode_sequence<'a>(
 
     for value in values {
         if value.is_dynamic() {
-            head.extend(word_bytes(SymWord::Concrete(U256::from(head_size + tail.len()))));
+            head.extend(word_bytes(SymWord::constant(U256::from(head_size + tail.len()))));
             tail.extend(value.encode_dynamic_body());
         } else {
             head.extend(value.encode_static());

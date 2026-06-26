@@ -82,8 +82,8 @@ pub(crate) fn execute_symbolic_precompile(
     input_len: SymWord,
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
-    if input.iter().all(|byte| matches!(byte, SymWord::Concrete(_)))
-        && let SymWord::Concrete(input_len) = input_len
+    if input.iter().all(|byte| byte.as_const().is_some())
+        && let Some(input_len) = input_len.as_const()
         && input_len <= U256::from(input.len())
     {
         let input_len = input_len.to::<usize>();
@@ -157,9 +157,12 @@ pub(crate) fn execute_symbolic_precompile(
                 return Err(SymbolicError::Unsupported("out-of-bounds symbolic precompile input"));
             }
             match input.get(212) {
-                Some(SymWord::Concrete(flag)) if flag.is_zero() || *flag == U256::from(1) => {}
-                Some(SymWord::Concrete(_)) => return Ok(None),
-                Some(SymWord::Expr(_)) => {
+                Some(flag)
+                    if flag
+                        .as_const()
+                        .is_some_and(|flag| flag.is_zero() || flag == U256::from(1)) => {}
+                Some(flag) if flag.as_const().is_some() => return Ok(None),
+                Some(_) => {
                     return Err(SymbolicError::Unsupported(
                         "symbolic blake2f precompile final flag not modeled",
                     ));
@@ -187,7 +190,7 @@ pub(crate) fn execute_symbolic_precompile(
 }
 
 fn input_has_symbolic_bytes(input: &[SymWord], input_len: usize) -> bool {
-    input.iter().take(input_len).any(|byte| matches!(byte, SymWord::Expr(_)))
+    input.iter().take(input_len).any(|byte| byte.as_const().is_none())
 }
 
 /// Returns the `symbolic_modexp_precompile` precompile helper result.
@@ -217,8 +220,12 @@ pub(crate) fn concrete_precompile_word_at(
     let mut bytes = [0u8; 32];
     for (idx, byte) in bytes.iter_mut().enumerate() {
         *byte = match input.get(offset + idx) {
-            Some(SymWord::Concrete(byte)) => byte.to::<u8>(),
-            Some(_) => return Err(SymbolicError::Unsupported("symbolic precompile length header")),
+            Some(word) => match word.as_const() {
+                Some(byte) => byte.to::<u8>(),
+                None => {
+                    return Err(SymbolicError::Unsupported("symbolic precompile length header"));
+                }
+            },
             None => 0,
         };
     }
@@ -232,11 +239,11 @@ pub(crate) fn symbolic_fixed_len_precompile_output(
     input_len: usize,
     output_len: usize,
 ) -> SymReturnData {
-    let input_len_word = SymWord::Concrete(U256::from(input_len));
+    let input_len_word = SymWord::constant(U256::from(input_len));
     let mut bytes = Vec::with_capacity(output_len);
     for chunk in 0..output_len.div_ceil(32) {
         let mut chunk_input = Vec::with_capacity(input.len() + 1);
-        chunk_input.push(SymWord::Concrete(U256::from(chunk)));
+        chunk_input.push(SymWord::constant(U256::from(chunk)));
         chunk_input.extend(input.iter().cloned());
         bytes.extend(word_bytes(symbolic_hash_word_with_len(
             algorithm,

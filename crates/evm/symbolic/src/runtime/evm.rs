@@ -24,11 +24,11 @@ pub(crate) fn pow_mod(base: U256, exponent: U256) -> U256 {
 
 /// Computes the `exp_expr_for_concrete_exponent` EVM semantics helper result.
 pub(crate) fn exp_expr_for_concrete_exponent(base: Expr, exponent: usize) -> Expr {
-    let mut expr = Expr::Const(U256::from(1));
+    let mut expr = Expr::constant(U256::from(1));
     for _ in 0..exponent {
         expr = Expr::op(ExprOp::Mul, expr, base.clone());
     }
-    expr_const_value(&expr).map(Expr::Const).unwrap_or(expr)
+    expr_const_value(&expr).map(Expr::constant).unwrap_or(expr)
 }
 
 /// Implements the `slt` EVM semantics helper.
@@ -84,41 +84,39 @@ pub(crate) fn signextend_word(byte_index: U256, value: SymWord) -> SymWord {
     if byte_index >= U256::from(32) {
         return value;
     }
-    match value {
-        SymWord::Concrete(value) => SymWord::Concrete(signextend(byte_index, value)),
-        value => {
-            let bit_index = byte_index.to::<usize>() * 8 + 7;
-            let sign_bit = U256::from(1) << bit_index;
-            let mask = sign_bit - U256::from(1);
-            let value = value.into_expr();
-            SymWord::from_expr(Expr::ite(
-                BoolExpr::eq(
-                    Expr::op(ExprOp::And, value.clone(), Expr::Const(sign_bit)),
-                    Expr::Const(U256::ZERO),
-                ),
-                Expr::op(ExprOp::And, value.clone(), Expr::Const(mask)),
-                Expr::op(ExprOp::Or, value, Expr::Const(!mask)),
-            ))
-        }
+    if let Some(value) = value.as_const() {
+        return SymWord::constant(signextend(byte_index, value));
     }
+    let bit_index = byte_index.to::<usize>() * 8 + 7;
+    let sign_bit = U256::from(1) << bit_index;
+    let mask = sign_bit - U256::from(1);
+    let value = value.into_expr();
+    SymWord::expr(Expr::ite(
+        BoolExpr::eq(
+            Expr::op(ExprOp::And, value.clone(), Expr::constant(sign_bit)),
+            Expr::constant(U256::ZERO),
+        ),
+        Expr::op(ExprOp::And, value.clone(), Expr::constant(mask)),
+        Expr::op(ExprOp::Or, value, Expr::constant(!mask)),
+    ))
 }
 
 /// Implements the `signextend_word_dynamic` EVM semantics helper.
 pub(crate) fn signextend_word_dynamic(byte_index: SymWord, value: SymWord) -> SymWord {
-    if let SymWord::Concrete(byte_index) = byte_index {
+    if let Some(byte_index) = byte_index.as_const() {
         return signextend_word(byte_index, value);
     }
 
-    let byte_index = byte_index.into_arc_expr();
-    let mut result = value.clone_arc_expr();
+    let byte_index = byte_index.into_expr();
+    let mut result = value.clone_expr();
     for idx in (0..32).rev() {
-        result = Expr::ite_arc(
-            BoolExpr::eq_arc(Arc::clone(&byte_index), Arc::new(Expr::Const(U256::from(idx)))),
-            signextend_word(U256::from(idx), value.clone()).into_arc_expr(),
+        result = Expr::ite(
+            BoolExpr::eq(byte_index.clone(), Expr::constant(U256::from(idx))),
+            signextend_word(U256::from(idx), value.clone()).into_expr(),
             result,
         );
     }
-    SymWord::from_arc_expr(result)
+    SymWord::expr(result)
 }
 
 /// Returns the `byte_word` EVM semantics helper result.
@@ -127,71 +125,72 @@ pub(crate) fn byte_word(index: U256, word: SymWord) -> SymWord {
         return SymWord::zero();
     }
     let index = index.to::<usize>();
-    match word {
-        SymWord::Concrete(word) => SymWord::Concrete(U256::from(word.to_be_bytes::<32>()[index])),
-        SymWord::Expr(expr) => byte_expr(index, &expr),
+    if let Some(word) = word.as_const() {
+        SymWord::constant(U256::from(word.to_be_bytes::<32>()[index]))
+    } else {
+        byte_expr(index, word.as_expr())
     }
 }
 
 /// Returns the `byte_word_dynamic` EVM semantics helper result.
 pub(crate) fn byte_word_dynamic(index: SymWord, word: SymWord) -> SymWord {
-    if let SymWord::Concrete(index) = index {
+    if let Some(index) = index.as_const() {
         return byte_word(index, word);
     }
 
-    let index = index.into_arc_expr();
-    let mut result = Arc::new(Expr::Const(U256::ZERO));
-    match word {
-        SymWord::Concrete(word) => {
-            let bytes = word.to_be_bytes::<32>();
-            for idx in (0..32).rev() {
-                result = Expr::ite_arc(
-                    BoolExpr::eq_arc(Arc::clone(&index), Arc::new(Expr::Const(U256::from(idx)))),
-                    Arc::new(Expr::Const(U256::from(bytes[idx]))),
-                    result,
-                );
-            }
+    let index = index.into_expr();
+    let mut result = Expr::constant(U256::ZERO);
+    if let Some(word) = word.as_const() {
+        let bytes = word.to_be_bytes::<32>();
+        for idx in (0..32).rev() {
+            result = Expr::ite(
+                BoolExpr::eq(index.clone(), Expr::constant(U256::from(idx))),
+                Expr::constant(U256::from(bytes[idx])),
+                result,
+            );
         }
-        SymWord::Expr(word) => {
-            for idx in (0..32).rev() {
-                result = Expr::ite_arc(
-                    BoolExpr::eq_arc(Arc::clone(&index), Arc::new(Expr::Const(U256::from(idx)))),
-                    byte_expr(idx, &word).into_arc_expr(),
-                    result,
-                );
-            }
+    } else {
+        let word = word.into_expr();
+        for idx in (0..32).rev() {
+            result = Expr::ite(
+                BoolExpr::eq(index.clone(), Expr::constant(U256::from(idx))),
+                byte_expr(idx, &word).into_expr(),
+                result,
+            );
         }
     }
-    SymWord::from_arc_expr(result)
+    SymWord::expr(result)
 }
 
 /// Returns the byte extraction expression for a symbolic word.
 pub(crate) fn byte_expr(index: usize, expr: &Expr) -> SymWord {
     debug_assert!(index < 32);
     if let Some(byte) = expr_known_byte(expr, index) {
-        return SymWord::Concrete(U256::from(byte));
+        return SymWord::constant(U256::from(byte));
     }
     let shift = U256::from((31 - index) * 8);
-    SymWord::from_expr(Expr::op(
+    SymWord::expr(Expr::op(
         ExprOp::And,
-        Expr::op(ExprOp::Shr, expr.clone(), Expr::Const(shift)),
-        Expr::Const(U256::from(0xff)),
+        Expr::op(ExprOp::Shr, expr.clone(), Expr::constant(shift)),
+        Expr::constant(U256::from(0xff)),
     ))
 }
 
 /// Returns the `expr_known_byte` EVM semantics helper result.
 pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
     debug_assert!(index < 32);
-    match expr {
-        Expr::Const(value) => Some(value.to_be_bytes::<32>()[index]),
-        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => None,
-        Expr::Not(value) => expr_known_byte(value, index).map(|byte| !byte),
-        Expr::Ite(_, then_expr, else_expr) => {
+    match expr.as_inner() {
+        ExprInner::Const(value) => Some(value.to_be_bytes::<32>()[index]),
+        ExprInner::Var(_) | ExprInner::GasLeft(_) | ExprInner::Keccak(_) | ExprInner::Hash(_) => {
+            None
+        }
+        ExprInner::Not(value) => expr_known_byte(value, index).map(|byte| !byte),
+        ExprInner::Ite(_, then_expr, else_expr) => {
             let then_byte = expr_known_byte(then_expr, index)?;
             let else_byte = expr_known_byte(else_expr, index)?;
             (then_byte == else_byte).then_some(then_byte)
         }
-        Expr::Op(op, left, right) => match op {
+        ExprInner::Op(op, left, right) => match op {
             ExprOp::And => match (expr_known_byte(left, index), expr_known_byte(right, index)) {
                 (Some(left), Some(right)) => Some(left & right),
                 (Some(0), _) | (_, Some(0)) => Some(0),
@@ -200,8 +199,8 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
             ExprOp::Or => Some(expr_known_byte(left, index)? | expr_known_byte(right, index)?),
             ExprOp::Xor => Some(expr_known_byte(left, index)? ^ expr_known_byte(right, index)?),
             ExprOp::Shl => {
-                let Expr::Const(shift) = right.as_ref() else { return None };
-                if *shift >= U256::from(256) {
+                let shift = right.as_const()?;
+                if shift >= U256::from(256) {
                     return Some(0);
                 }
                 let shift = shift.to::<usize>();
@@ -212,8 +211,8 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
                 if source_index >= 32 { Some(0) } else { expr_known_byte(left, source_index) }
             }
             ExprOp::Shr => {
-                let Expr::Const(shift) = right.as_ref() else { return None };
-                if *shift >= U256::from(256) {
+                let shift = right.as_const()?;
+                if shift >= U256::from(256) {
                     return Some(0);
                 }
                 let shift = shift.to::<usize>();
@@ -232,7 +231,7 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
             | ExprOp::SRem
             | ExprOp::Sar => None,
         },
-        Expr::AddMod(_) | Expr::MulMod(_) => None,
+        ExprInner::AddMod(_) | ExprInner::MulMod(_) => None,
     }
 }
 
@@ -260,13 +259,10 @@ pub(crate) fn sar(value: U256, shift: usize) -> U256 {
 
 /// Computes the `shift_left` EVM semantics helper result.
 pub(crate) fn shift_left(value: SymWord, bits: usize) -> SymWord {
-    match value {
-        SymWord::Concrete(value) => SymWord::Concrete(value << bits),
-        value => SymWord::from_expr(Expr::op(
-            ExprOp::Shl,
-            value.into_expr(),
-            Expr::Const(U256::from(bits)),
-        )),
+    if let Some(value) = value.as_const() {
+        SymWord::constant(value << bits)
+    } else {
+        SymWord::expr(Expr::op(ExprOp::Shl, value.into_expr(), Expr::constant(U256::from(bits))))
     }
 }
 

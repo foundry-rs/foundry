@@ -61,7 +61,7 @@ impl SymbolicExecutor {
             CreateKind::Create => {
                 let nonce = state.world.nonce(executor, state.address)?;
                 let address = state.address.create(nonce);
-                (SymWord::Concrete(address_word(address)), address)
+                (SymWord::constant(address_word(address)), address)
             }
             CreateKind::Create2 => create2_address_word(
                 state,

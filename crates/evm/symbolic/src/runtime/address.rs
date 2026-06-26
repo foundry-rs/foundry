@@ -31,45 +31,41 @@ pub(crate) fn representative_symbolic_address(word: &SymWord) -> Address {
 
 /// Returns the `symbolic_address_key` address normalization helper result.
 pub(crate) fn symbolic_address_key(word: &SymWord) -> String {
-    match word {
-        SymWord::Concrete(value) => format!("concrete-address:{:?}", word_to_address(*value)),
-        SymWord::Expr(expr) => {
-            let bytes = address_byte_terms(expr)
-                .map(|bytes| format!("{bytes:?}"))
-                .unwrap_or_else(|| format!("{expr:?}"));
-            format!("symbolic-address:{bytes}")
-        }
+    if let Some(value) = word.as_const() {
+        format!("concrete-address:{:?}", word_to_address(value))
+    } else {
+        let expr = word.as_expr();
+        let bytes = address_byte_terms(expr)
+            .map(|bytes| format!("{bytes:?}"))
+            .unwrap_or_else(|| format!("{expr:?}"));
+        format!("symbolic-address:{bytes}")
     }
 }
 
 /// Returns the `address_match_condition` address normalization helper result.
 pub(crate) fn address_match_condition(word: &SymWord, address: Address) -> BoolExpr {
-    let expr = match word {
-        SymWord::Concrete(word) => return BoolExpr::Const(*word == address_word(address)),
-        SymWord::Expr(expr) => expr,
-    };
+    if let Some(word) = word.as_const() {
+        return BoolExpr::Const(word == address_word(address));
+    }
+    let expr = word.as_expr();
     let Some(terms) = address_byte_terms(expr) else {
-        return BoolExpr::eq_arc(Arc::clone(expr), Arc::new(Expr::Const(address_word(address))));
+        return BoolExpr::eq(expr.clone(), Expr::constant(address_word(address)));
     };
     let bytes = address.as_slice();
     BoolExpr::and(
         terms
             .into_iter()
             .enumerate()
-            .map(|(index, term)| BoolExpr::eq(term, Expr::Const(U256::from(bytes[index]))))
+            .map(|(index, term)| BoolExpr::eq(term, Expr::constant(U256::from(bytes[index]))))
             .collect(),
     )
 }
 
 /// Returns the `symbolic_address_equivalent` address normalization helper result.
 pub(crate) fn symbolic_address_equivalent(candidate: &SymWord, alias: &SymWord) -> bool {
-    match (candidate, alias) {
-        (SymWord::Concrete(left), SymWord::Concrete(right)) => {
-            word_to_address(*left) == word_to_address(*right)
-        }
-        (SymWord::Expr(candidate), SymWord::Expr(alias)) => {
-            address_expr_equivalent(candidate, alias)
-        }
+    match (candidate.as_const(), alias.as_const()) {
+        (Some(left), Some(right)) => word_to_address(left) == word_to_address(right),
+        (None, None) => address_expr_equivalent(candidate.as_expr(), alias.as_expr()),
         _ => false,
     }
 }
@@ -86,13 +82,13 @@ pub(crate) fn address_expr_equivalent(candidate: &Expr, alias: &Expr) -> bool {
         return candidate == alias;
     }
 
-    match candidate {
-        Expr::Op(ExprOp::And, left, right) => {
+    match candidate.as_inner() {
+        ExprInner::Op(ExprOp::And, left, right) => {
             (is_address_mask(right) && address_expr_equivalent(left, alias))
                 || (is_address_mask(left) && address_expr_equivalent(right, alias))
         }
-        Expr::Op(ExprOp::Shr, value, shift) if is_shift_96(shift) => match value.as_ref() {
-            Expr::Op(ExprOp::Shl, inner, inner_shift) if is_shift_96(inner_shift) => {
+        ExprInner::Op(ExprOp::Shr, value, shift) if is_shift_96(shift) => match value.as_inner() {
+            ExprInner::Op(ExprOp::Shl, inner, inner_shift) if is_shift_96(inner_shift) => {
                 address_expr_equivalent(inner, alias)
             }
             _ => false,
@@ -110,18 +106,20 @@ pub(crate) fn address_byte_terms(expr: &Expr) -> Option<Vec<Expr>> {
 pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
     debug_assert!(index < 32);
 
-    match expr {
-        Expr::Const(value) => Some(Expr::Const(U256::from(value.to_be_bytes::<32>()[index]))),
-        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak(_) | Expr::Hash(_) => {
+    match expr.as_inner() {
+        ExprInner::Const(value) => {
+            Some(Expr::constant(U256::from(value.to_be_bytes::<32>()[index])))
+        }
+        ExprInner::Var(_) | ExprInner::GasLeft(_) | ExprInner::Keccak(_) | ExprInner::Hash(_) => {
             Some(extracted_byte_expr(expr, index))
         }
-        Expr::Not(value) => Some(Expr::not(expr_byte_term(value, index)?)),
-        Expr::Ite(cond, then_expr, else_expr) => Some(Expr::ite(
-            (**cond).clone(),
+        ExprInner::Not(value) => Some(Expr::not(expr_byte_term(value, index)?)),
+        ExprInner::Ite(cond, then_expr, else_expr) => Some(Expr::ite(
+            cond.as_ref().clone(),
             expr_byte_term(then_expr, index)?,
             expr_byte_term(else_expr, index)?,
         )),
-        Expr::Op(op, left, right) => match op {
+        ExprInner::Op(op, left, right) => match op {
             ExprOp::And => expr_binary_byte_term(
                 left,
                 right,
@@ -139,7 +137,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
             ExprOp::Shl => {
                 let shift = expr_const_value(right)?;
                 if shift >= U256::from(256) {
-                    return Some(Expr::Const(U256::ZERO));
+                    return Some(Expr::constant(U256::ZERO));
                 }
                 let shift = shift.to::<usize>();
                 if shift % 8 != 0 {
@@ -147,7 +145,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
                 }
                 let source_index = index + shift / 8;
                 if source_index >= 32 {
-                    Some(Expr::Const(U256::ZERO))
+                    Some(Expr::constant(U256::ZERO))
                 } else {
                     expr_byte_term(left, source_index)
                 }
@@ -155,7 +153,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
             ExprOp::Shr => {
                 let shift = expr_const_value(right)?;
                 if shift >= U256::from(256) {
-                    return Some(Expr::Const(U256::ZERO));
+                    return Some(Expr::constant(U256::ZERO));
                 }
                 let shift = shift.to::<usize>();
                 if shift % 8 != 0 {
@@ -163,7 +161,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
                 }
                 let byte_shift = shift / 8;
                 if index < byte_shift {
-                    Some(Expr::Const(U256::ZERO))
+                    Some(Expr::constant(U256::ZERO))
                 } else {
                     expr_byte_term(left, index - byte_shift)
                 }
@@ -177,7 +175,7 @@ pub(crate) fn expr_byte_term(expr: &Expr, index: usize) -> Option<Expr> {
             | ExprOp::SRem
             | ExprOp::Sar => None,
         },
-        Expr::AddMod(_) | Expr::MulMod(_) => None,
+        ExprInner::AddMod(_) | ExprInner::MulMod(_) => None,
     }
 }
 
@@ -193,8 +191,8 @@ pub(crate) fn expr_binary_byte_term(
     let left = expr_byte_term(left, index)?;
     let right = expr_byte_term(right, index)?;
     match (expr_byte_const(&left), expr_byte_const(&right)) {
-        (Some(left), _) if absorbing(left) => Some(Expr::Const(U256::from(left))),
-        (_, Some(right)) if absorbing(right) => Some(Expr::Const(U256::from(right))),
+        (Some(left), _) if absorbing(left) => Some(Expr::constant(U256::from(left))),
+        (_, Some(right)) if absorbing(right) => Some(Expr::constant(U256::from(right))),
         (Some(left), _) if identity(left) => Some(right),
         (_, Some(right)) if identity(right) => Some(left),
         _ => Some(Expr::op(op, left, right)),
@@ -203,27 +201,26 @@ pub(crate) fn expr_binary_byte_term(
 
 /// Returns the `expr_byte_const` address normalization helper result.
 pub(crate) fn expr_byte_const(expr: &Expr) -> Option<u8> {
-    let Expr::Const(value) = expr else { return None };
-    Some(value.to::<u8>())
+    expr.as_const().map(|value| value.to::<u8>())
 }
 
 /// Implements the `extracted_byte_expr` address normalization helper.
 pub(crate) fn extracted_byte_expr(expr: &Expr, index: usize) -> Expr {
     Expr::op(
         ExprOp::And,
-        Expr::op(ExprOp::Shr, expr.clone(), Expr::Const(U256::from((31 - index) * 8))),
-        Expr::Const(U256::from(0xff)),
+        Expr::op(ExprOp::Shr, expr.clone(), Expr::constant(U256::from((31 - index) * 8))),
+        Expr::constant(U256::from(0xff)),
     )
 }
 
 /// Returns whether `is_address_mask` holds.
 pub(crate) fn is_address_mask(expr: &Expr) -> bool {
-    matches!(expr, Expr::Const(value) if *value == ((U256::from(1) << 160) - U256::from(1)))
+    expr.as_const() == Some((U256::from(1) << 160) - U256::from(1))
 }
 
 /// Returns whether `is_shift_96` holds.
 pub(crate) fn is_shift_96(expr: &Expr) -> bool {
-    matches!(expr, Expr::Const(value) if *value == U256::from(96))
+    expr.as_const() == Some(U256::from(96))
 }
 
 /// Implements the `stable_symbol` address normalization helper.

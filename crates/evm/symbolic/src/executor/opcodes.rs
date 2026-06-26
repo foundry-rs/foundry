@@ -65,17 +65,16 @@ impl SymbolicExecutor {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                match (a, b, n) {
-                    (SymWord::Concrete(a), SymWord::Concrete(b), SymWord::Concrete(n)) => {
-                        state.stack.push(SymWord::Concrete(addmod_word(a, b, n)))?;
-                    }
-                    (a, b, n) => {
-                        state.stack.push(SymWord::from_expr(Expr::addmod(
-                            a.into_expr(),
-                            b.into_expr(),
-                            n.into_expr(),
-                        )))?;
-                    }
+                if let (Some(a_value), Some(b_value), Some(n_value)) =
+                    (a.as_const(), b.as_const(), n.as_const())
+                {
+                    state.stack.push(SymWord::constant(addmod_word(a_value, b_value, n_value)))?;
+                } else {
+                    state.stack.push(SymWord::expr(Expr::addmod(
+                        a.into_expr(),
+                        b.into_expr(),
+                        n.into_expr(),
+                    )))?;
                 }
                 Ok(StepOutcome::Continue)
             }
@@ -83,17 +82,16 @@ impl SymbolicExecutor {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                match (a, b, n) {
-                    (SymWord::Concrete(a), SymWord::Concrete(b), SymWord::Concrete(n)) => {
-                        state.stack.push(SymWord::Concrete(mulmod_word(a, b, n)))?;
-                    }
-                    (a, b, n) => {
-                        state.stack.push(SymWord::from_expr(Expr::mulmod(
-                            a.into_expr(),
-                            b.into_expr(),
-                            n.into_expr(),
-                        )))?;
-                    }
+                if let (Some(a_value), Some(b_value), Some(n_value)) =
+                    (a.as_const(), b.as_const(), n.as_const())
+                {
+                    state.stack.push(SymWord::constant(mulmod_word(a_value, b_value, n_value)))?;
+                } else {
+                    state.stack.push(SymWord::expr(Expr::mulmod(
+                        a.into_expr(),
+                        b.into_expr(),
+                        n.into_expr(),
+                    )))?;
                 }
                 Ok(StepOutcome::Continue)
             }
@@ -117,10 +115,11 @@ impl SymbolicExecutor {
             opcode::XOR => state.bin_word(|a, b| a ^ b, ExprOp::Xor),
             opcode::NOT => {
                 let value = state.stack.pop()?;
-                state.stack.push(match value {
-                    SymWord::Concrete(value) => SymWord::Concrete(!value),
-                    value => SymWord::from_expr(Expr::not(value.into_expr())),
-                })?;
+                if let Some(value) = value.as_const() {
+                    state.stack.push(SymWord::constant(!value))?;
+                } else {
+                    state.stack.push(SymWord::expr(Expr::not(value.into_expr())))?;
+                }
                 Ok(StepOutcome::Continue)
             }
             opcode::SIGNEXTEND => {
@@ -305,7 +304,7 @@ impl SymbolicExecutor {
                 Ok(StepOutcome::Continue)
             }
             opcode::CODESIZE => {
-                state.stack.push(SymWord::Concrete(U256::from(code.len())))?;
+                state.stack.push(SymWord::constant(U256::from(code.len())))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::CODECOPY => {
@@ -360,7 +359,7 @@ impl SymbolicExecutor {
                         if !self.assume_returndata_copy_in_bounds(
                             state,
                             offset.clone(),
-                            SymWord::Concrete(U256::from(size)),
+                            SymWord::constant(U256::from(size)),
                         )? {
                             return Ok(StepOutcome::Revert);
                         }
@@ -529,7 +528,7 @@ impl SymbolicExecutor {
             }
             opcode::PC => {
                 let pc = state.pc - 1;
-                state.stack.push(SymWord::Concrete(U256::from(pc)))?;
+                state.stack.push(SymWord::constant(U256::from(pc)))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::MSIZE => {
@@ -635,12 +634,12 @@ impl SymbolicExecutor {
                 let index = state.stack.pop()?;
                 let index = state.expect_constrained_usize(index, "symbolic BLOBHASH index")?;
                 let hash = state.block.blob_hash(index);
-                state.stack.push(SymWord::Concrete(U256::from_be_slice(hash.as_slice())))?;
+                state.stack.push(SymWord::constant(U256::from_be_slice(hash.as_slice())))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::COINBASE => {
                 let coinbase = state.block.coinbase;
-                state.stack.push(SymWord::Concrete(address_word(coinbase)))?;
+                state.stack.push(SymWord::constant(address_word(coinbase)))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::TIMESTAMP => {
@@ -684,7 +683,7 @@ impl SymbolicExecutor {
                 }
                 let (data_len, data) = match state.constrained_usize(&size) {
                     Some(size) => (
-                        SymWord::Concrete(U256::from(size)),
+                        SymWord::constant(U256::from(size)),
                         state.memory.read_bytes_offset(offset, size),
                     ),
                     None if state.constrained_word(&size).is_some() => {
@@ -745,8 +744,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let end = Expr::op(ExprOp::Add, offset.into_expr(), size.into_expr());
-        let in_bounds =
-            BoolExpr::cmp_arc(BoolExprOp::Ule, Arc::new(end), state.return_data.len_arc_expr());
+        let in_bounds = BoolExpr::cmp(BoolExprOp::Ule, end, state.return_data.len_expr());
         match in_bounds {
             BoolExpr::Const(value) => Ok(value),
             in_bounds => {
@@ -809,7 +807,7 @@ impl SymbolicExecutor {
         size: usize,
     ) -> StepOutcome {
         if state.call_depth == 0
-            && let SymWord::Concrete(offset) = offset
+            && let Some(offset) = offset.as_const()
             && offset <= U256::from(usize::MAX)
             && let Ok(data) = state.memory.read_concrete(offset.to::<usize>(), size)
             && is_assertion_revert(&data)

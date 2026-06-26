@@ -322,12 +322,12 @@ pub(crate) fn selector_in(selector: [u8; 4], selectors: &[[u8; 4]]) -> bool {
 
 /// Returns the `abi_bytes_return` cheatcode runtime helper result.
 pub(crate) fn abi_bytes_return(bytes: Vec<SymWord>) -> SymReturnData {
-    abi_bytes_return_with_len(SymWord::Concrete(U256::from(bytes.len())), bytes)
+    abi_bytes_return_with_len(SymWord::constant(U256::from(bytes.len())), bytes)
 }
 
 /// Returns the `abi_bytes_return_with_len` cheatcode runtime helper result.
 pub(crate) fn abi_bytes_return_with_len(len: SymWord, bytes: Vec<SymWord>) -> SymReturnData {
-    let mut out = word_bytes(SymWord::Concrete(U256::from(32)));
+    let mut out = word_bytes(SymWord::constant(U256::from(32)));
     out.extend(word_bytes(len));
     out.extend(bytes.iter().cloned());
     out.resize(64 + bytes.len().next_multiple_of(32), SymWord::zero());
@@ -336,13 +336,13 @@ pub(crate) fn abi_bytes_return_with_len(len: SymWord, bytes: Vec<SymWord>) -> Sy
 
 /// Returns the `abi_concrete_bytes_return` cheatcode runtime helper result.
 pub(crate) fn abi_concrete_bytes_return(bytes: impl IntoIterator<Item = u8>) -> SymReturnData {
-    abi_bytes_return(bytes.into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect())
+    abi_bytes_return(bytes.into_iter().map(|byte| SymWord::constant(U256::from(byte))).collect())
 }
 
 /// Returns the `abi_concrete_value_return` cheatcode runtime helper result.
 pub(crate) fn abi_concrete_value_return(value: DynSolValue) -> SymReturnData {
     SymReturnData::from_symbolic_bytes(
-        value.abi_encode().into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect(),
+        value.abi_encode().into_iter().map(|byte| SymWord::constant(U256::from(byte))).collect(),
     )
 }
 
@@ -366,7 +366,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                         SymbolicAbiValue::Array { elements: topics },
                         SymbolicAbiValue::Bytes { len: log.data_len, bytes: log.data },
                         SymbolicAbiValue::Address {
-                            word: SymWord::Concrete(address_word(log.emitter)),
+                            word: SymWord::constant(address_word(log.emitter)),
                         },
                     ],
                 }
@@ -443,7 +443,7 @@ pub(crate) fn complete_cheatcode_call(
     state.return_data = return_data;
     let return_data = state.return_data.clone();
     state.memory.copy_call_output_offset(out_offset, out_size, &return_data)?;
-    state.stack.push(SymWord::Concrete(U256::from(1)))?;
+    state.stack.push(SymWord::constant(U256::from(1)))?;
     Ok(())
 }
 
@@ -459,7 +459,7 @@ pub(crate) fn storage_slots_abi_array(slots: Vec<SymWord>) -> SymbolicAbiValue {
 
 /// Applies the `push_ascii` cheatcode runtime helper.
 pub(crate) fn push_ascii(out: &mut Vec<SymWord>, value: &str) {
-    out.extend(value.bytes().map(|byte| SymWord::Concrete(U256::from(byte))));
+    out.extend(value.bytes().map(|byte| SymWord::constant(U256::from(byte))));
 }
 
 /// Applies the `push_hex_word` cheatcode runtime helper.
@@ -472,19 +472,19 @@ pub(crate) fn push_hex_word(out: &mut Vec<SymWord>, word: SymWord) {
 /// Applies the `push_hex_byte` cheatcode runtime helper.
 pub(crate) fn push_hex_byte(out: &mut Vec<SymWord>, byte: SymWord) {
     let byte = low_byte(byte);
-    let high = match byte.clone() {
-        SymWord::Concrete(value) => SymWord::Concrete(U256::from(value.to::<u8>() >> 4)),
-        byte => {
-            SymWord::from_expr(Expr::op(ExprOp::Shr, byte.into_expr(), Expr::Const(U256::from(4))))
-        }
+    let high = if let Some(value) = byte.as_const() {
+        SymWord::constant(U256::from(value.to::<u8>() >> 4))
+    } else {
+        SymWord::expr(Expr::op(
+            ExprOp::Shr,
+            byte.clone().into_expr(),
+            Expr::constant(U256::from(4)),
+        ))
     };
-    let low = match byte {
-        SymWord::Concrete(value) => SymWord::Concrete(U256::from(value.to::<u8>() & 0x0f)),
-        byte => SymWord::from_expr(Expr::op(
-            ExprOp::And,
-            byte.into_expr(),
-            Expr::Const(U256::from(0x0f)),
-        )),
+    let low = if let Some(value) = byte.as_const() {
+        SymWord::constant(U256::from(value.to::<u8>() & 0x0f))
+    } else {
+        SymWord::expr(Expr::op(ExprOp::And, byte.into_expr(), Expr::constant(U256::from(0x0f))))
     };
     out.push(hex_nibble_ascii(high));
     out.push(hex_nibble_ascii(low));
@@ -492,20 +492,18 @@ pub(crate) fn push_hex_byte(out: &mut Vec<SymWord>, byte: SymWord) {
 
 /// Implements the `hex_nibble_ascii` cheatcode runtime helper.
 pub(crate) fn hex_nibble_ascii(nibble: SymWord) -> SymWord {
-    match low_byte(nibble) {
-        SymWord::Concrete(value) => {
-            let nibble = value.to::<u8>() & 0x0f;
-            let byte = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };
-            SymWord::Concrete(U256::from(byte))
-        }
-        nibble => {
-            let nibble = nibble.into_expr();
-            SymWord::from_expr(Expr::ite(
-                BoolExpr::cmp(BoolExprOp::Ult, nibble.clone(), Expr::Const(U256::from(10))),
-                Expr::op(ExprOp::Add, nibble.clone(), Expr::Const(U256::from(b'0'))),
-                Expr::op(ExprOp::Add, nibble, Expr::Const(U256::from(b'a' - 10))),
-            ))
-        }
+    let nibble = low_byte(nibble);
+    if let Some(value) = nibble.as_const() {
+        let nibble = value.to::<u8>() & 0x0f;
+        let byte = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };
+        SymWord::constant(U256::from(byte))
+    } else {
+        let nibble = nibble.into_expr();
+        SymWord::expr(Expr::ite(
+            BoolExpr::cmp(BoolExprOp::Ult, nibble.clone(), Expr::constant(U256::from(10))),
+            Expr::op(ExprOp::Add, nibble.clone(), Expr::constant(U256::from(b'0'))),
+            Expr::op(ExprOp::Add, nibble, Expr::constant(U256::from(b'a' - 10))),
+        ))
     }
 }
 
@@ -756,10 +754,10 @@ pub(crate) fn expected_revert_match_condition(
             if return_data.len() < prefix.len() {
                 return None;
             }
-            conditions.push(BoolExpr::cmp_arc(
+            conditions.push(BoolExpr::cmp(
                 BoolExprOp::Uge,
-                return_data.len_arc_expr(),
-                Arc::new(Expr::Const(U256::from(prefix.len()))),
+                return_data.len_expr(),
+                Expr::constant(U256::from(prefix.len())),
             ));
             conditions.extend(prefix.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
@@ -770,10 +768,8 @@ pub(crate) fn expected_revert_match_condition(
             if return_data.len() < data.len() {
                 return None;
             }
-            conditions.push(BoolExpr::eq_arc(
-                return_data.len_arc_expr(),
-                Arc::new(Expr::Const(U256::from(data.len()))),
-            ));
+            conditions
+                .push(BoolExpr::eq(return_data.len_expr(), Expr::constant(U256::from(data.len()))));
             conditions.extend(data.iter().enumerate().map(|(offset, expected)| {
                 let actual = return_data.byte(offset);
                 BoolExpr::eq_words(&actual, expected)
@@ -902,10 +898,10 @@ pub(crate) fn dyn_potential_revert(value: &DynSolValue) -> Result<ExpectedRevert
     };
 
     let reverter = dyn_address(reverter)?;
-    let reverter = (reverter != Address::ZERO).then(|| SymWord::Concrete(address_word(reverter)));
+    let reverter = (reverter != Address::ZERO).then(|| SymWord::constant(address_word(reverter)));
     let revert_data = dyn_bytes(revert_data)?
         .into_iter()
-        .map(|byte| SymWord::Concrete(U256::from(byte)))
+        .map(|byte| SymWord::constant(U256::from(byte)))
         .collect();
     let data = if dyn_bool(partial_match)? {
         ExpectedRevertData::prefix(revert_data)
@@ -1071,9 +1067,9 @@ pub(crate) fn sign_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.sign"))?;
     Ok(vec![
-        SymWord::Concrete(U256::from(sig.v() as u64 + 27)),
-        SymWord::Concrete(sig.r()),
-        SymWord::Concrete(sig.s()),
+        SymWord::constant(U256::from(sig.v() as u64 + 27)),
+        SymWord::constant(sig.r()),
+        SymWord::constant(sig.s()),
     ])
 }
 
@@ -1088,7 +1084,7 @@ pub(crate) fn sign_compact_hash_words(
         .sign_hash_sync(&digest)
         .map_err(|_| SymbolicError::Unsupported("symbolic vm.signCompact"))?;
     let y_parity = U256::from(sig.v() as u64) << 255;
-    Ok(vec![SymWord::Concrete(sig.r()), SymWord::Concrete(sig.s() | y_parity)])
+    Ok(vec![SymWord::constant(sig.r()), SymWord::constant(sig.s() | y_parity)])
 }
 
 /// Computes the `derive_private_key` cheatcode runtime helper result.

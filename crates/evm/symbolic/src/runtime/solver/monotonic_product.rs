@@ -35,15 +35,15 @@ pub(crate) fn collect_order_facts(
             }
         }
         BoolExpr::Cmp(BoolExprOp::Ult, left, right) => {
-            less_than.insert(((**left).clone(), (**right).clone()));
-            if matches!(left.as_ref(), Expr::Const(value) if value.is_zero()) {
-                positive.insert((**right).clone());
+            less_than.insert((left.clone(), right.clone()));
+            if left.as_const().is_some_and(|value| value.is_zero()) {
+                positive.insert(right.clone());
             }
         }
         BoolExpr::Cmp(BoolExprOp::Ugt, left, right) => {
-            less_than.insert(((**right).clone(), (**left).clone()));
-            if matches!(right.as_ref(), Expr::Const(value) if value.is_zero()) {
-                positive.insert((**left).clone());
+            less_than.insert((right.clone(), left.clone()));
+            if right.as_const().is_some_and(|value| value.is_zero()) {
+                positive.insert(left.clone());
             }
         }
         BoolExpr::Const(_) | BoolExpr::Not(_) | BoolExpr::Eq(_, _) | BoolExpr::Cmp(_, _, _) => {}
@@ -93,8 +93,8 @@ pub(crate) fn product_less_than_known_ordered(
 
 /// Returns the operands for an unsigned multiplication expression.
 pub(crate) fn mul_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
-    match expr {
-        Expr::Op(ExprOp::Mul, left, right) => Some((left, right)),
+    match expr.as_inner() {
+        ExprInner::Op(ExprOp::Mul, left, right) => Some((left, right)),
         _ => None,
     }
 }

@@ -641,15 +641,13 @@ fn cache_key_bool(expr: BoolExpr) -> BoolExpr {
             BoolExpr::and(conjuncts)
         }
         BoolExpr::Eq(left, right) => {
-            let left = cache_key_expr(Arc::unwrap_or_clone(left));
-            let right = cache_key_expr(Arc::unwrap_or_clone(right));
+            let left = cache_key_expr(left);
+            let right = cache_key_expr(right);
             if left <= right { BoolExpr::eq(left, right) } else { BoolExpr::eq(right, left) }
         }
-        BoolExpr::Cmp(op, left, right) => cache_key_cmp(
-            op,
-            cache_key_expr(Arc::unwrap_or_clone(left)),
-            cache_key_expr(Arc::unwrap_or_clone(right)),
-        ),
+        BoolExpr::Cmp(op, left, right) => {
+            cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
+        }
     }
 }
 
@@ -678,32 +676,35 @@ fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
 
 /// Returns a conservative canonical word expression for cache-key equality.
 fn cache_key_expr(expr: Expr) -> Expr {
-    match expr {
-        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => expr,
-        Expr::Keccak(hash) => {
-            let (name, len, bytes) = Arc::unwrap_or_clone(hash).into_parts();
+    if matches!(expr.as_inner(), ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_)) {
+        return expr;
+    }
+
+    match expr.as_inner() {
+        ExprInner::Keccak(hash) => {
+            let (name, len, bytes) = hash.clone().into_parts();
             Expr::keccak(
                 name,
                 cache_key_expr(len),
                 bytes.iter().cloned().map(cache_key_expr).collect(),
             )
         }
-        Expr::Hash(hash) => {
-            let (name, algorithm, bytes) = Arc::unwrap_or_clone(hash).into_parts();
+        ExprInner::Hash(hash) => {
+            let (name, algorithm, bytes) = hash.clone().into_parts();
             Expr::hash(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
         }
-        Expr::Not(value) => Expr::not(cache_key_expr(Arc::unwrap_or_clone(value))),
-        Expr::Op(op, left, right) => {
-            let left = cache_key_expr(Arc::unwrap_or_clone(left));
-            let right = cache_key_expr(Arc::unwrap_or_clone(right));
-            if expr_op_is_commutative(op) && right < left {
-                Expr::op(op, right, left)
+        ExprInner::Not(value) => Expr::not(cache_key_expr(value.clone())),
+        ExprInner::Op(op, left, right) => {
+            let left = cache_key_expr(left.clone());
+            let right = cache_key_expr(right.clone());
+            if expr_op_is_commutative(*op) && right < left {
+                Expr::op(*op, right, left)
             } else {
-                Expr::op(op, left, right)
+                Expr::op(*op, left, right)
             }
         }
-        Expr::AddMod(expr) => {
-            let (left, right, modulus) = Arc::unwrap_or_clone(expr).into_parts();
+        ExprInner::AddMod(expr) => {
+            let (left, right, modulus) = expr.clone().into_parts();
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -713,8 +714,8 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::addmod(left, right, modulus)
             }
         }
-        Expr::MulMod(expr) => {
-            let (left, right, modulus) = Arc::unwrap_or_clone(expr).into_parts();
+        ExprInner::MulMod(expr) => {
+            let (left, right, modulus) = expr.clone().into_parts();
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -724,11 +725,12 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::mulmod(left, right, modulus)
             }
         }
-        Expr::Ite(cond, left, right) => Expr::ite(
-            cache_key_bool(Arc::unwrap_or_clone(cond)),
-            cache_key_expr(Arc::unwrap_or_clone(left)),
-            cache_key_expr(Arc::unwrap_or_clone(right)),
+        ExprInner::Ite(cond, left, right) => Expr::ite(
+            cache_key_bool(cond.as_ref().clone()),
+            cache_key_expr(left.clone()),
+            cache_key_expr(right.clone()),
         ),
+        ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_) => unreachable!(),
     }
 }
 

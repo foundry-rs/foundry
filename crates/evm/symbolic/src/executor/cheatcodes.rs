@@ -174,7 +174,7 @@ impl SymbolicExecutor {
 
         let nonce = state.world.nonce(executor, state.address)?;
         let created = state.address.create(nonce);
-        let created_word = SymWord::Concrete(address_word(created));
+        let created_word = SymWord::constant(address_word(created));
 
         let mut failure_world = state.world.clone();
         failure_world.increment_nonce(executor, state.address)?;
@@ -386,7 +386,7 @@ impl SymbolicExecutor {
             return Ok(None);
         };
         let target = read_abi_word_arg(&state.memory, in_offset + 4, 0)?;
-        if matches!(target, SymWord::Concrete(_)) {
+        if target.as_const().is_some() {
             return Ok(None);
         }
 
@@ -445,7 +445,7 @@ impl SymbolicExecutor {
             return Ok(accesses_return_data(None, Address::ZERO));
         };
 
-        if let SymWord::Concrete(target) = target {
+        if let Some(target) = target.as_const() {
             return Ok(accesses_return_data(Some(&record), word_to_address(target)));
         }
 
@@ -1289,7 +1289,7 @@ impl SymbolicExecutor {
             let private_key =
                 read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.addr")?;
             let address = private_key_address(private_key)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(address_word(address))]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(address))]));
         }
         if selector == sign_1Call::SELECTOR {
             let private_key =
@@ -1310,7 +1310,7 @@ impl SymbolicExecutor {
             let index = read_abi_u32_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
             let private_key =
                 derive_private_key::<English>(&mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, index)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(private_key)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
         }
         if selector == deriveKey_1Call::SELECTOR {
             let mnemonic =
@@ -1318,7 +1318,7 @@ impl SymbolicExecutor {
             let path = read_abi_string_arg(&state.memory, args_offset, 1, "symbolic vm.deriveKey")?;
             let index = read_abi_u32_arg(&state.memory, args_offset, 2, "symbolic vm.deriveKey")?;
             let private_key = derive_private_key::<English>(&mnemonic, &path, index)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(private_key)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
         }
         if selector == deriveKey_2Call::SELECTOR {
             let mnemonic =
@@ -1332,7 +1332,7 @@ impl SymbolicExecutor {
                 index,
                 &language,
             )?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(private_key)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
         }
         if selector == deriveKey_3Call::SELECTOR {
             let mnemonic =
@@ -1342,14 +1342,14 @@ impl SymbolicExecutor {
             let language =
                 read_abi_string_arg(&state.memory, args_offset, 3, "symbolic vm.deriveKey")?;
             let private_key = derive_private_key_with_language(&mnemonic, &path, index, &language)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(private_key)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(private_key)]));
         }
         if selector == rememberKeyCall::SELECTOR {
             let private_key =
                 read_abi_constrained_word_arg(state, args_offset, 0, "symbolic vm.rememberKey")?;
             let address = private_key_address(private_key)?;
             state.wallets.insert(address);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(address_word(address))]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(address))]));
         }
         if selector == rememberKeys_0Call::SELECTOR || selector == rememberKeys_1Call::SELECTOR {
             let mnemonic =
@@ -1404,8 +1404,8 @@ impl SymbolicExecutor {
             let slot = state.memory.load_word(in_offset + 36)?;
             let value = state.memory.load_word(in_offset + 68)?;
             if target == CHEATCODE_ADDRESS
-                && slot == SymWord::Concrete(failed_slot())
-                && value == SymWord::Concrete(U256::from(1))
+                && slot == SymWord::constant(failed_slot())
+                && value == SymWord::constant(U256::from(1))
             {
                 return Ok(CheatcodeOutcome::Failure);
             }
@@ -1422,7 +1422,7 @@ impl SymbolicExecutor {
         if selector == getNonce_0Call::SELECTOR {
             let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
             let nonce = state.world.nonce(executor, target)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(nonce))]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(nonce))]));
         }
         if selector == computeCreateAddressCall::SELECTOR {
             let deployer = read_abi_word_arg(&state.memory, args_offset, 0)?;
@@ -1442,7 +1442,7 @@ impl SymbolicExecutor {
             let init_code_hash = read_abi_word_arg(&state.memory, args_offset, 1)?;
             let address = compute_create2_address_word(
                 state,
-                SymWord::Concrete(address_word(DEFAULT_CREATE2_DEPLOYER)),
+                SymWord::constant(address_word(DEFAULT_CREATE2_DEPLOYER)),
                 salt,
                 init_code_hash,
             )?;
@@ -1472,7 +1472,7 @@ impl SymbolicExecutor {
             if value.contains_gasleft() {
                 return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
             }
-            let value = state.constrained_word(&value).map(SymWord::Concrete).unwrap_or(value);
+            let value = state.constrained_word(&value).map(SymWord::constant).unwrap_or(value);
             state.world.set_balance_word(target, value);
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
@@ -1551,7 +1551,7 @@ impl SymbolicExecutor {
         }
         if selector == isPersistentCall::SELECTOR {
             let account = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
                 state.persistent_accounts.contains(&account),
             ))]));
         }
@@ -1559,7 +1559,7 @@ impl SymbolicExecutor {
             let id = executor.backend().active_fork_id().ok_or(SymbolicError::Unsupported(
                 "symbolic vm.activeFork requires an active forked executor",
             ))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(id)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(id)]));
         }
         if selector == selectForkCall::SELECTOR {
             let id =
@@ -1620,7 +1620,7 @@ impl SymbolicExecutor {
         }
         if selector == snapshotCall::SELECTOR || selector == snapshotStateCall::SELECTOR {
             let id = state.world.snapshot_state();
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(id)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(id)]));
         }
         if selector == revertToCall::SELECTOR
             || selector == revertToStateCall::SELECTOR
@@ -1640,7 +1640,7 @@ impl SymbolicExecutor {
             {
                 state.world.delete_snapshot(id);
             }
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(success))]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(success))]));
         }
         if selector == deleteSnapshotCall::SELECTOR || selector == deleteStateSnapshotCall::SELECTOR
         {
@@ -1651,7 +1651,7 @@ impl SymbolicExecutor {
                 "symbolic vm.deleteStateSnapshot snapshot",
             )?;
             let success = state.world.delete_snapshot(id);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(success))]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(success))]));
         }
         if selector == deleteSnapshotsCall::SELECTOR
             || selector == deleteStateSnapshotsCall::SELECTOR
@@ -1834,12 +1834,12 @@ impl SymbolicExecutor {
                 .as_millis();
             let value = U256::try_from(milliseconds)
                 .map_err(|_| SymbolicError::Unsupported("symbolic vm.unixTime"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(value)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
         }
         if selector == isContextCall::SELECTOR {
             let context =
                 read_abi_concrete_word_arg(&state.memory, args_offset, 0, "symbolic vm.isContext")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
                 context == U256::ZERO || context == U256::from(1),
             ))]));
         }
@@ -1894,32 +1894,32 @@ impl SymbolicExecutor {
         if selector == parseAddressCall::SELECTOR {
             let value =
                 read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseAddress")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(address_word(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(
                 parse_env_address(&value)?,
             ))]));
         }
         if selector == parseUintCall::SELECTOR {
             let value =
                 read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseUint")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(parse_env_uint(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_uint(
                 &value,
             )?)]));
         }
         if selector == parseIntCall::SELECTOR {
             let value = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseInt")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(parse_env_int(&value)?)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_int(&value)?)]));
         }
         if selector == parseBytes32Call::SELECTOR {
             let value =
                 read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes32")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(parse_env_bytes32(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_bytes32(
                 &value,
             )?)]));
         }
         if selector == parseBoolCall::SELECTOR {
             let value =
                 read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBool")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
                 parse_env_bool(&value)?,
             ))]));
         }
@@ -1976,7 +1976,7 @@ impl SymbolicExecutor {
             let input = dyn_string(&values[0])?;
             let needle = dyn_string(&values[1])?;
             let index = input.find(&needle).map(U256::from).unwrap_or(U256::MAX);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(index)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(index)]));
         }
         if selector == containsCall::SELECTOR {
             let values = decode_cheatcode_args(
@@ -1986,7 +1986,7 @@ impl SymbolicExecutor {
                 vec![DynSolType::String, DynSolType::String],
             )?;
             let contains = dyn_string(&values[0])?.contains(&dyn_string(&values[1])?);
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(contains))]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(contains))]));
         }
         if selector == toBase64_0Call::SELECTOR
             || selector == toBase64_1Call::SELECTOR
@@ -2012,7 +2012,7 @@ impl SymbolicExecutor {
         }
         if selector == envExistsCall::SELECTOR {
             let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envExists")?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
                 std::env::var_os(name).is_some(),
             ))]));
         }
@@ -2020,7 +2020,7 @@ impl SymbolicExecutor {
             let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBool")?;
             let value = std::env::var(name)
                 .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(U256::from(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(U256::from(
                 parse_env_bool(&value)?,
             ))]));
         }
@@ -2028,7 +2028,7 @@ impl SymbolicExecutor {
             let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envUint")?;
             let value = std::env::var(name)
                 .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(parse_env_uint(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_uint(
                 &value,
             )?)]));
         }
@@ -2036,7 +2036,7 @@ impl SymbolicExecutor {
             let name = read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envInt")?;
             let value = std::env::var(name)
                 .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(parse_env_int(&value)?)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_int(&value)?)]));
         }
         if selector == envAddress_0Call::SELECTOR {
             let name =
@@ -2044,14 +2044,14 @@ impl SymbolicExecutor {
             let value = std::env::var(name)
                 .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
             let address = parse_env_address(&value)?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(address_word(address))]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(address_word(address))]));
         }
         if selector == envBytes32_0Call::SELECTOR {
             let name =
                 read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes32")?;
             let value = std::env::var(name)
                 .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(parse_env_bytes32(
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(parse_env_bytes32(
                 &value,
             )?)]));
         }
@@ -2112,7 +2112,7 @@ impl SymbolicExecutor {
                     read_abi_concrete_word_arg(&state.memory, args_offset, 1, "symbolic vm.envOr")?
                 }
             };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(value)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
         }
         if selector == envOr_1Call::SELECTOR
             || selector == envOr_2Call::SELECTOR
@@ -2131,7 +2131,7 @@ impl SymbolicExecutor {
                 Ok(value) => parse_env_bytes32(&value)?,
                 Err(_) => default,
             };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(value)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(value)]));
         }
         if selector == envOr_5Call::SELECTOR {
             let values = decode_cheatcode_args(
@@ -2721,11 +2721,11 @@ impl SymbolicExecutor {
         if selector == selectors.snapshot_storage {
             let _target = read_abi_address_or_symbolic_slot_arg(state, in_offset + 4, 0)?;
             let id = state.world.snapshot_state();
-            return Ok(SymReturnData::from_words(vec![SymWord::Concrete(id)]));
+            return Ok(SymReturnData::from_words(vec![SymWord::constant(id)]));
         }
         if selector == snapshotStateCall::SELECTOR {
             let id = state.world.snapshot_state();
-            return Ok(SymReturnData::from_words(vec![SymWord::Concrete(id)]));
+            return Ok(SymReturnData::from_words(vec![SymWord::constant(id)]));
         }
 
         Err(SymbolicError::Unsupported("symbolic VM compatibility cheatcode"))

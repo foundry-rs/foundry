@@ -15,7 +15,7 @@ impl SymCalldata {
 
     /// Constructs a new instance from shared bytes.
     pub(crate) fn from_shared(bytes: Arc<[SymWord]>) -> Self {
-        Self { size_word: SymWord::Concrete(U256::from(bytes.len())), size: bytes.len(), bytes }
+        Self { size_word: SymWord::constant(U256::from(bytes.len())), size: bytes.len(), bytes }
     }
 
     /// Implements the `new_symbolic_size` symbolic calldata helper.
@@ -30,14 +30,13 @@ impl SymCalldata {
 
     /// Returns the `load_word` symbolic calldata helper result.
     pub(crate) fn load_word(&self, offset: SymWord) -> Result<SymWord, SymbolicError> {
-        match offset {
-            SymWord::Concrete(offset) => {
-                if offset > U256::from(usize::MAX) {
-                    return Ok(SymWord::zero());
-                }
-                self.load(offset.to::<usize>())
+        if let Some(offset) = offset.as_const() {
+            if offset > U256::from(usize::MAX) {
+                return Ok(SymWord::zero());
             }
-            SymWord::Expr(offset) => self.load_dynamic(&offset),
+            self.load(offset.to::<usize>())
+        } else {
+            self.load_dynamic(offset.as_expr())
         }
     }
 
@@ -53,28 +52,28 @@ impl SymCalldata {
 
     /// Returns the `load_dynamic` symbolic calldata helper result.
     pub(crate) fn load_dynamic(&self, offset: &Expr) -> Result<SymWord, SymbolicError> {
-        let mut result = Expr::Const(U256::ZERO);
+        let mut result = Expr::constant(U256::ZERO);
         for candidate in (0..self.size).rev() {
             result = Expr::ite(
-                BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate))),
+                BoolExpr::eq(offset.clone(), Expr::constant(U256::from(candidate))),
                 self.load(candidate)?.into_expr(),
                 result,
             );
         }
-        Ok(SymWord::from_expr(result))
+        Ok(SymWord::expr(result))
     }
 
     /// Returns the `byte_dynamic_with_delta` symbolic calldata helper result.
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &Expr, delta: usize) -> SymWord {
-        let mut result = Expr::Const(U256::ZERO);
+        let mut result = Expr::constant(U256::ZERO);
         for candidate in (delta..self.size).rev() {
             result = Expr::ite(
-                BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta))),
+                BoolExpr::eq(offset.clone(), Expr::constant(U256::from(candidate - delta))),
                 self.byte(candidate).into_expr(),
                 result,
             );
         }
-        SymWord::from_expr(result)
+        SymWord::expr(result)
     }
 }
 
@@ -95,7 +94,7 @@ pub(crate) fn call_input_from_memory(
 /// Implements the `bounded_copy_size_word` symbolic calldata helper.
 pub(crate) fn bounded_copy_size_word(size: &BoundedCopySize) -> SymWord {
     match size {
-        BoundedCopySize::Concrete(size) => SymWord::Concrete(U256::from(*size)),
+        BoundedCopySize::Concrete(size) => SymWord::constant(U256::from(*size)),
         BoundedCopySize::Symbolic { size, .. } => size.clone(),
     }
 }
@@ -103,7 +102,7 @@ pub(crate) fn bounded_copy_size_word(size: &BoundedCopySize) -> SymWord {
 /// Implements the `bounded_copy_size_parts` symbolic calldata helper.
 pub(crate) fn bounded_copy_size_parts(size: &BoundedCopySize) -> (SymWord, usize, bool) {
     match size {
-        BoundedCopySize::Concrete(size) => (SymWord::Concrete(U256::from(*size)), *size, false),
+        BoundedCopySize::Concrete(size) => (SymWord::constant(U256::from(*size)), *size, false),
         BoundedCopySize::Symbolic { size, max_size } => (size.clone(), *max_size, true),
     }
 }
