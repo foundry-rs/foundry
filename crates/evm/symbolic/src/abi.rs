@@ -2,7 +2,7 @@ use super::{runtime::*, *};
 
 #[derive(Clone, Debug)]
 pub(super) struct SymbolicCalldata {
-    bytes: Arc<[SymWord]>,
+    bytes: Arc<[SymExpr]>,
     inputs: Vec<SymbolicInput>,
     constraints: Vec<BoolExpr>,
 }
@@ -11,7 +11,7 @@ impl SymbolicCalldata {
     /// Constructs a raw symbolic calldata fixture.
     #[cfg(test)]
     pub(super) fn from_raw(
-        bytes: Vec<SymWord>,
+        bytes: Vec<SymExpr>,
         inputs: Vec<SymbolicInput>,
         constraints: Vec<BoolExpr>,
     ) -> Self {
@@ -42,7 +42,7 @@ impl SymbolicCalldata {
             .selector()
             .iter()
             .copied()
-            .map(|byte| SymWord::constant(U256::from(byte)))
+            .map(|byte| SymExpr::constant(U256::from(byte)))
             .collect::<Vec<_>>();
         Ok(Self { bytes: bytes.into(), inputs: Vec::new(), constraints: Vec::new() })
     }
@@ -86,7 +86,7 @@ impl SymbolicCalldata {
                     .selector()
                     .iter()
                     .copied()
-                    .map(|byte| SymWord::constant(U256::from(byte)))
+                    .map(|byte| SymExpr::constant(U256::from(byte)))
                     .collect::<Vec<_>>();
                 bytes.extend(encode_sequence(inputs.iter().map(|input| &input.value)));
                 if bytes.len() > config.max_calldata_bytes as usize {
@@ -101,13 +101,13 @@ impl SymbolicCalldata {
     }
 
     #[cfg(test)]
-    pub(super) fn load(&self, offset: usize) -> Result<SymWord, SymbolicError> {
+    pub(super) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
         Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
     #[cfg(test)]
-    pub(super) fn byte(&self, offset: usize) -> SymWord {
-        self.bytes.get(offset).cloned().unwrap_or_else(SymWord::zero)
+    pub(super) fn byte(&self, offset: usize) -> SymExpr {
+        self.bytes.get(offset).cloned().unwrap_or_else(SymExpr::zero)
     }
 
     pub(super) fn call_data(&self) -> SymCalldata {
@@ -231,7 +231,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
             DynSolType::Bytes => {
                 let len = self.next_dynamic_length(&name, &aliases, DynamicKind::Bytes)?;
                 SymbolicAbiValue::Bytes {
-                    len: SymWord::constant(U256::from(len)),
+                    len: SymExpr::constant(U256::from(len)),
                     bytes: (0..len)
                         .map(|idx| self.fresh_byte(format!("{name}_{idx}"), false))
                         .collect::<Vec<_>>()
@@ -301,7 +301,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 for len in lengths {
                     let mut builder = builder.clone();
                     let value = SymbolicAbiValue::Bytes {
-                        len: SymWord::constant(U256::from(len)),
+                        len: SymExpr::constant(U256::from(len)),
                         bytes: (0..len as usize)
                             .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), false))
                             .collect::<Vec<_>>()
@@ -432,11 +432,11 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(variants)
     }
 
-    pub(super) fn fresh_word(&self, name: String) -> SymWord {
-        SymWord::expr(SymExpr::var(name))
+    pub(super) fn fresh_word(&self, name: String) -> SymExpr {
+        SymExpr::var(name)
     }
 
-    pub(super) fn fresh_byte(&mut self, name: String, printable: bool) -> SymWord {
+    pub(super) fn fresh_byte(&mut self, name: String, printable: bool) -> SymExpr {
         let word = self.fresh_word(name);
         self.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(256)));
         if printable {
@@ -506,7 +506,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(lengths)
     }
 
-    pub(super) fn constrain_uint(&mut self, word: &SymWord, bits: usize) {
+    pub(super) fn constrain_uint(&mut self, word: &SymExpr, bits: usize) {
         if bits < 256 {
             self.constraints.push(BoolExpr::cmp_word_const(
                 BoolExprOp::Ult,
@@ -516,13 +516,11 @@ impl<'a> SymbolicAbiBuilder<'a> {
         }
     }
 
-    pub(super) fn constrain_int(&mut self, word: &SymWord, bits: usize) {
+    pub(super) fn constrain_int(&mut self, word: &SymExpr, bits: usize) {
         if bits < 256 {
             let byte_index = U256::from(bits / 8 - 1);
-            self.constraints.push(BoolExpr::eq_word_expr(
-                word,
-                signextend_word(byte_index, word.clone()).into_expr(),
-            ));
+            self.constraints
+                .push(BoolExpr::eq_word_expr(word, signextend_word(byte_index, word.clone())));
         }
     }
 }
@@ -598,13 +596,13 @@ pub(super) fn child_aliases(aliases: &[String], idx: usize) -> Vec<String> {
 
 #[derive(Clone, Debug)]
 pub(super) enum SymbolicAbiValue {
-    Bool { word: SymWord },
-    Uint { bits: usize, word: SymWord },
-    Int { bits: usize, word: SymWord },
-    FixedBytes { bytes: Arc<[SymWord]>, size: usize },
-    Address { word: SymWord },
-    Bytes { len: SymWord, bytes: Arc<[SymWord]> },
-    String { bytes: Arc<[SymWord]> },
+    Bool { word: SymExpr },
+    Uint { bits: usize, word: SymExpr },
+    Int { bits: usize, word: SymExpr },
+    FixedBytes { bytes: Arc<[SymExpr]>, size: usize },
+    Address { word: SymExpr },
+    Bytes { len: SymExpr, bytes: Arc<[SymExpr]> },
+    String { bytes: Arc<[SymExpr]> },
     Array { elements: Vec<Self> },
     FixedArray { elements: Vec<Self> },
     Tuple { elements: Vec<Self> },
@@ -644,7 +642,7 @@ impl SymbolicAbiValue {
         }
     }
 
-    pub(super) fn encode_static(&self) -> Vec<SymWord> {
+    pub(super) fn encode_static(&self) -> Vec<SymExpr> {
         match self {
             Self::Bool { word }
             | Self::Uint { word, .. }
@@ -652,7 +650,7 @@ impl SymbolicAbiValue {
             | Self::Address { word } => word_bytes(word.clone()),
             Self::FixedBytes { bytes, .. } => {
                 let mut out = bytes.to_vec();
-                out.resize(32, SymWord::zero());
+                out.resize(32, SymExpr::zero());
                 out
             }
             Self::FixedArray { elements } | Self::Tuple { elements } => {
@@ -664,14 +662,14 @@ impl SymbolicAbiValue {
         }
     }
 
-    pub(super) fn encode_dynamic_body(&self) -> Vec<SymWord> {
+    pub(super) fn encode_dynamic_body(&self) -> Vec<SymExpr> {
         match self {
             Self::Bytes { len, bytes } => encode_packed_bytes_with_len(len.clone(), bytes),
             Self::String { bytes } => {
-                encode_packed_bytes_with_len(SymWord::constant(U256::from(bytes.len())), bytes)
+                encode_packed_bytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
             }
             Self::Array { elements } => {
-                let mut out = word_bytes(SymWord::constant(U256::from(elements.len())));
+                let mut out = word_bytes(SymExpr::constant(U256::from(elements.len())));
                 out.extend(encode_sequence(elements.iter()));
                 out
             }
@@ -744,7 +742,7 @@ impl SymbolicAbiValue {
 
 pub(super) fn encode_sequence<'a>(
     values: impl IntoIterator<Item = &'a SymbolicAbiValue>,
-) -> Vec<SymWord> {
+) -> Vec<SymExpr> {
     let values = values.into_iter().collect::<Vec<_>>();
     let head_size = values.iter().map(|value| value.head_size()).sum::<usize>();
     let mut head = Vec::with_capacity(head_size);
@@ -752,7 +750,7 @@ pub(super) fn encode_sequence<'a>(
 
     for value in values {
         if value.is_dynamic() {
-            head.extend(word_bytes(SymWord::constant(U256::from(head_size + tail.len()))));
+            head.extend(word_bytes(SymExpr::constant(U256::from(head_size + tail.len()))));
             tail.extend(value.encode_dynamic_body());
         } else {
             head.extend(value.encode_static());
@@ -763,9 +761,9 @@ pub(super) fn encode_sequence<'a>(
     head
 }
 
-pub(super) fn encode_packed_bytes_with_len(len: SymWord, bytes: &[SymWord]) -> Vec<SymWord> {
+pub(super) fn encode_packed_bytes_with_len(len: SymExpr, bytes: &[SymExpr]) -> Vec<SymExpr> {
     let mut out = word_bytes(len);
     out.extend(bytes.iter().cloned());
-    out.resize(32 + bytes.len().next_multiple_of(32), SymWord::zero());
+    out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
     out
 }

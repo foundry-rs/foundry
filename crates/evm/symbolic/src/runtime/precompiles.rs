@@ -70,8 +70,8 @@ pub(crate) fn execute_precompile(
 
 pub(crate) fn execute_symbolic_precompile(
     address: Address,
-    input: Vec<SymWord>,
-    input_len: SymWord,
+    input: Vec<SymExpr>,
+    input_len: SymExpr,
     spec_id: SpecId,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     if input.iter().all(|byte| byte.as_const().is_some())
@@ -86,7 +86,7 @@ pub(crate) fn execute_symbolic_precompile(
     match precompile_number_for_spec(address, spec_id) {
         Some(1) => {
             let word = symbolic_hash_word_with_len("ecrecover", input, input_len);
-            let mut bytes = vec![SymWord::zero(); 12];
+            let mut bytes = vec![SymExpr::zero(); 12];
             bytes.extend((12..32).map(|idx| byte_word(U256::from(idx), word.clone())));
             Ok(Some(SymReturnData::from_symbolic_bytes(bytes)))
         }
@@ -95,7 +95,7 @@ pub(crate) fn execute_symbolic_precompile(
         )))),
         Some(3) => {
             let word = symbolic_hash_word_with_len("ripemd160", input, input_len);
-            let mut bytes = vec![SymWord::zero(); 12];
+            let mut bytes = vec![SymExpr::zero(); 12];
             bytes.extend((12..32).map(|idx| byte_word(U256::from(idx), word.clone())));
             Ok(Some(SymReturnData::from_symbolic_bytes(bytes)))
         }
@@ -181,13 +181,13 @@ pub(crate) fn execute_symbolic_precompile(
     }
 }
 
-fn input_has_symbolic_bytes(input: &[SymWord], input_len: usize) -> bool {
+fn input_has_symbolic_bytes(input: &[SymExpr], input_len: usize) -> bool {
     input.iter().take(input_len).any(|byte| byte.as_const().is_none())
 }
 
 pub(crate) fn symbolic_modexp_precompile(
-    input: Vec<SymWord>,
-    input_len: SymWord,
+    input: Vec<SymExpr>,
+    input_len: SymExpr,
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     let input_len = input_len.into_usize("symbolic precompile input")?;
     if input_len > input.len() {
@@ -204,7 +204,7 @@ pub(crate) fn symbolic_modexp_precompile(
 }
 
 pub(crate) fn concrete_precompile_word_at(
-    input: &[SymWord],
+    input: &[SymExpr],
     offset: usize,
 ) -> Result<U256, SymbolicError> {
     let mut bytes = [0u8; 32];
@@ -224,15 +224,15 @@ pub(crate) fn concrete_precompile_word_at(
 
 pub(crate) fn symbolic_fixed_len_precompile_output(
     algorithm: &'static str,
-    input: Vec<SymWord>,
+    input: Vec<SymExpr>,
     input_len: usize,
     output_len: usize,
 ) -> SymReturnData {
-    let input_len_word = SymWord::constant(U256::from(input_len));
+    let input_len_word = SymExpr::constant(U256::from(input_len));
     let mut bytes = Vec::with_capacity(output_len);
     for chunk in 0..output_len.div_ceil(32) {
         let mut chunk_input = Vec::with_capacity(input.len() + 1);
-        chunk_input.push(SymWord::constant(U256::from(chunk)));
+        chunk_input.push(SymExpr::constant(U256::from(chunk)));
         chunk_input.extend(input.iter().cloned());
         bytes.extend(word_bytes(symbolic_hash_word_with_len(
             algorithm,

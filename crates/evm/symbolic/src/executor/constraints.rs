@@ -44,7 +44,7 @@ impl SymbolicExecutor {
     pub(super) fn solver_upper_bound_usize(
         &mut self,
         state: &PathState,
-        word: &SymWord,
+        word: &SymExpr,
         max: usize,
         reason: &'static str,
     ) -> Result<usize, SymbolicError> {
@@ -75,7 +75,7 @@ impl SymbolicExecutor {
     pub(super) fn assume_word_at_least(
         &mut self,
         state: &mut PathState,
-        word: &SymWord,
+        word: &SymExpr,
         min: usize,
     ) -> Result<bool, SymbolicError> {
         if word.contains_gasleft() {
@@ -121,7 +121,7 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Failure);
             }
             let bounded = if value == min { max } else { min };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(bounded)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(bounded)]));
         }
 
         if let (Some(min), Some(max)) = (min.as_const(), max.as_const())
@@ -133,7 +133,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("symbolic vm.bound range"));
         };
 
-        let value_expr = value.into_expr();
+        let value_expr = value;
         let in_range = BoolExpr::and(vec![
             BoolExpr::cmp(BoolExprOp::Uge, value_expr.clone(), SymExpr::constant(min_value)),
             BoolExpr::cmp(BoolExprOp::Ule, value_expr.clone(), SymExpr::constant(max_value)),
@@ -172,7 +172,7 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::Failure);
             }
             let bounded = if value == min { max } else { min };
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::constant(bounded)]));
+            return Ok(CheatcodeOutcome::Continue(vec![SymExpr::constant(bounded)]));
         }
 
         if let (Some(min), Some(max)) = (min.as_const(), max.as_const())
@@ -184,7 +184,7 @@ impl SymbolicExecutor {
             return Err(SymbolicError::Unsupported("symbolic vm.bound range"));
         };
 
-        let value_expr = value.into_expr();
+        let value_expr = value;
         let in_range = BoolExpr::and(vec![
             BoolExpr::cmp(BoolExprOp::Slt, value_expr.clone(), SymExpr::constant(min_value)).not(),
             BoolExpr::cmp(BoolExprOp::Sgt, value_expr.clone(), SymExpr::constant(max_value)).not(),

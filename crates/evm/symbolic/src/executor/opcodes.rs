@@ -15,7 +15,7 @@ impl SymbolicExecutor {
         state.pc += 1;
 
         if op == opcode::PUSH0 {
-            state.stack.push(SymWord::zero())?;
+            state.stack.push(SymExpr::zero())?;
             return Ok(StepOutcome::Continue);
         }
         if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
@@ -24,7 +24,7 @@ impl SymbolicExecutor {
             if end > code.len() {
                 return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
             }
-            let bytes = std::iter::repeat_with(SymWord::zero)
+            let bytes = std::iter::repeat_with(SymExpr::zero)
                 .take(32 - n)
                 .chain(code.read_bytes(state.pc, n))
                 .collect::<Vec<_>>();
@@ -67,13 +67,9 @@ impl SymbolicExecutor {
                 if let (Some(a_value), Some(b_value), Some(n_value)) =
                     (a.as_const(), b.as_const(), n.as_const())
                 {
-                    state.stack.push(SymWord::constant(addmod_word(a_value, b_value, n_value)))?;
+                    state.stack.push(SymExpr::constant(addmod_word(a_value, b_value, n_value)))?;
                 } else {
-                    state.stack.push(SymWord::expr(SymExpr::addmod(
-                        a.into_expr(),
-                        b.into_expr(),
-                        n.into_expr(),
-                    )))?;
+                    state.stack.push(SymExpr::addmod(a, b, n))?;
                 }
                 Ok(StepOutcome::Continue)
             }
@@ -84,13 +80,9 @@ impl SymbolicExecutor {
                 if let (Some(a_value), Some(b_value), Some(n_value)) =
                     (a.as_const(), b.as_const(), n.as_const())
                 {
-                    state.stack.push(SymWord::constant(mulmod_word(a_value, b_value, n_value)))?;
+                    state.stack.push(SymExpr::constant(mulmod_word(a_value, b_value, n_value)))?;
                 } else {
-                    state.stack.push(SymWord::expr(SymExpr::mulmod(
-                        a.into_expr(),
-                        b.into_expr(),
-                        n.into_expr(),
-                    )))?;
+                    state.stack.push(SymExpr::mulmod(a, b, n))?;
                 }
                 Ok(StepOutcome::Continue)
             }
@@ -101,12 +93,12 @@ impl SymbolicExecutor {
             opcode::EQ => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
-                state.stack.push(SymWord::from_bool(BoolExpr::eq(b.into_expr(), a.into_expr())))?;
+                state.stack.push(SymExpr::from_bool(BoolExpr::eq(b, a)))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::ISZERO => {
                 let value = state.stack.pop()?;
-                state.stack.push(SymWord::from_bool(value.into_zero_bool()))?;
+                state.stack.push(SymExpr::from_bool(value.into_zero_bool()))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::AND => state.bin_word(|a, b| a & b, ExprOp::And),
@@ -115,9 +107,9 @@ impl SymbolicExecutor {
             opcode::NOT => {
                 let value = state.stack.pop()?;
                 if let Some(value) = value.as_const() {
-                    state.stack.push(SymWord::constant(!value))?;
+                    state.stack.push(SymExpr::constant(!value))?;
                 } else {
-                    state.stack.push(SymWord::expr(SymExpr::not(value.into_expr())))?;
+                    state.stack.push(SymExpr::not(value))?;
                 }
                 Ok(StepOutcome::Continue)
             }
@@ -303,7 +295,7 @@ impl SymbolicExecutor {
                 Ok(StepOutcome::Continue)
             }
             opcode::CODESIZE => {
-                state.stack.push(SymWord::constant(U256::from(code.len())))?;
+                state.stack.push(SymExpr::constant(U256::from(code.len())))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::CODECOPY => {
@@ -358,7 +350,7 @@ impl SymbolicExecutor {
                         if !self.assume_returndata_copy_in_bounds(
                             state,
                             offset.clone(),
-                            SymWord::constant(U256::from(size)),
+                            SymExpr::constant(U256::from(size)),
                         )? {
                             return Ok(StepOutcome::Revert);
                         }
@@ -514,7 +506,7 @@ impl SymbolicExecutor {
             }
             opcode::PC => {
                 let pc = state.pc - 1;
-                state.stack.push(SymWord::constant(U256::from(pc)))?;
+                state.stack.push(SymExpr::constant(U256::from(pc)))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::MSIZE => {
@@ -620,12 +612,12 @@ impl SymbolicExecutor {
                 let index = state.stack.pop()?;
                 let index = state.expect_constrained_usize(index, "symbolic BLOBHASH index")?;
                 let hash = state.block.blob_hash(index);
-                state.stack.push(SymWord::constant(U256::from_be_slice(hash.as_slice())))?;
+                state.stack.push(SymExpr::constant(U256::from_be_slice(hash.as_slice())))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::COINBASE => {
                 let coinbase = state.block.coinbase;
-                state.stack.push(SymWord::constant(address_word(coinbase)))?;
+                state.stack.push(SymExpr::constant(address_word(coinbase)))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::TIMESTAMP => {
@@ -669,7 +661,7 @@ impl SymbolicExecutor {
                 }
                 let (data_len, data) = match state.constrained_usize(&size) {
                     Some(size) => (
-                        SymWord::constant(U256::from(size)),
+                        SymExpr::constant(U256::from(size)),
                         state.memory.read_bytes_offset(offset, size),
                     ),
                     None if state.constrained_word(&size).is_some() => {
@@ -702,7 +694,7 @@ impl SymbolicExecutor {
                     }
                     log_topics.push(topic);
                 }
-                if data.iter().any(SymWord::contains_gasleft) {
+                if data.iter().any(SymExpr::contains_gasleft) {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 self.handle_log(
@@ -722,13 +714,13 @@ impl SymbolicExecutor {
     pub(super) fn assume_returndata_copy_in_bounds(
         &mut self,
         state: &mut PathState,
-        offset: SymWord,
-        size: SymWord,
+        offset: SymExpr,
+        size: SymExpr,
     ) -> Result<bool, SymbolicError> {
         if offset.contains_gasleft() || size.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let end = SymExpr::op(ExprOp::Add, offset.into_expr(), size.into_expr());
+        let end = SymExpr::op(ExprOp::Add, offset, size);
         let in_bounds = BoolExpr::cmp(BoolExprOp::Ule, end, state.return_data.len_expr());
         match in_bounds.as_const() {
             Some(value) => Ok(value),
@@ -786,7 +778,7 @@ impl SymbolicExecutor {
     pub(super) fn classify_revert(
         &self,
         state: &PathState,
-        offset: SymWord,
+        offset: SymExpr,
         size: usize,
     ) -> StepOutcome {
         if state.call_depth == 0

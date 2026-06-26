@@ -116,9 +116,9 @@ impl SymbolicExecutor {
         let jumpdests = analyze_jumpdests(&code);
         state.call_depth = 0;
         state.origin = sender;
-        state.origin_word = SymWord::constant(address_word(sender));
+        state.origin_word = SymExpr::constant(address_word(sender));
         state.frame =
-            CallFrame::new(target, target, target, sender, SymWord::zero(), false, calldata);
+            CallFrame::new(target, target, target, sender, SymExpr::zero(), false, calldata);
         state.constraints.extend(constraints);
 
         let mut worklist = VecDeque::from([state]);

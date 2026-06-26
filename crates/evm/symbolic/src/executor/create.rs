@@ -21,7 +21,7 @@ impl SymbolicExecutor {
             Some(size) => BoundedCopySize::Concrete(size),
             None if state.constrained_word(&size).is_some() => {
                 state.return_data = SymReturnData::default();
-                state.stack.push(SymWord::zero())?;
+                state.stack.push(SymExpr::zero())?;
                 return Ok(StepOutcome::Continue);
             }
             None => {
@@ -60,7 +60,7 @@ impl SymbolicExecutor {
             CreateKind::Create => {
                 let nonce = state.world.nonce(executor, state.address)?;
                 let address = state.address.create(nonce);
-                (SymWord::constant(address_word(address)), address)
+                (SymExpr::constant(address_word(address)), address)
             }
             CreateKind::Create2 => create2_address_word(
                 state,
@@ -80,7 +80,7 @@ impl SymbolicExecutor {
         if failure_world.has_code_or_nonce(executor, created)? {
             state.world = failure_world;
             state.return_data = SymReturnData::default();
-            state.stack.push(SymWord::zero())?;
+            state.stack.push(SymExpr::zero())?;
             return Ok(StepOutcome::Continue);
         }
 
@@ -187,7 +187,7 @@ impl SymbolicExecutor {
                 }
                 TopLevelCallStatus::Revert => {
                     parent.world = failure_world.clone();
-                    parent.stack.push(SymWord::zero())?;
+                    parent.stack.push(SymExpr::zero())?;
                 }
                 TopLevelCallStatus::Failure => {
                     *state = parent;

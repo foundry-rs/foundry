@@ -17,7 +17,7 @@ pub(crate) fn word_to_address(value: U256) -> Address {
     Address::from_word(value.to_be_bytes::<32>().into())
 }
 
-pub(crate) fn representative_symbolic_address(word: &SymWord) -> Address {
+pub(crate) fn representative_symbolic_address(word: &SymExpr) -> Address {
     let digest = keccak256(symbolic_address_key(word));
     let mut bytes = [0u8; 20];
     bytes[0] = 0xfe;
@@ -25,11 +25,11 @@ pub(crate) fn representative_symbolic_address(word: &SymWord) -> Address {
     Address::from(bytes)
 }
 
-pub(crate) fn symbolic_address_key(word: &SymWord) -> String {
+pub(crate) fn symbolic_address_key(word: &SymExpr) -> String {
     if let Some(value) = word.as_const() {
         format!("concrete-address:{:?}", word_to_address(value))
     } else {
-        let expr = word.as_expr();
+        let expr = word;
         let bytes = address_byte_terms(expr)
             .map(|bytes| format!("{bytes:?}"))
             .unwrap_or_else(|| format!("{expr:?}"));
@@ -37,11 +37,11 @@ pub(crate) fn symbolic_address_key(word: &SymWord) -> String {
     }
 }
 
-pub(crate) fn address_match_condition(word: &SymWord, address: Address) -> BoolExpr {
+pub(crate) fn address_match_condition(word: &SymExpr, address: Address) -> BoolExpr {
     if let Some(word) = word.as_const() {
         return BoolExpr::constant(word == address_word(address));
     }
-    let expr = word.as_expr();
+    let expr = word;
     let Some(terms) = address_byte_terms(expr) else {
         return BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
     };
@@ -55,10 +55,10 @@ pub(crate) fn address_match_condition(word: &SymWord, address: Address) -> BoolE
     )
 }
 
-pub(crate) fn symbolic_address_equivalent(candidate: &SymWord, alias: &SymWord) -> bool {
+pub(crate) fn symbolic_address_equivalent(candidate: &SymExpr, alias: &SymExpr) -> bool {
     match (candidate.as_const(), alias.as_const()) {
         (Some(left), Some(right)) => word_to_address(left) == word_to_address(right),
-        (None, None) => address_expr_equivalent(candidate.as_expr(), alias.as_expr()),
+        (None, None) => address_expr_equivalent(candidate, alias),
         _ => false,
     }
 }

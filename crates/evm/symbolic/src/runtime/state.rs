@@ -5,8 +5,8 @@ pub(crate) struct PathState {
     pub(crate) depth: usize,
     pub(crate) call_depth: usize,
     pub(crate) origin: Address,
-    pub(crate) origin_word: SymWord,
-    pub(crate) gas_price: SymWord,
+    pub(crate) origin_word: SymExpr,
+    pub(crate) gas_price: SymExpr,
     pub(crate) ffi_enabled: bool,
     pub(crate) block: SymbolicBlock,
     pub(crate) frame: CallFrame,
@@ -44,8 +44,8 @@ impl PathState {
             depth: 0,
             call_depth: 0,
             origin: caller,
-            origin_word: SymWord::constant(address_word(caller)),
-            gas_price: SymWord::zero(),
+            origin_word: SymExpr::constant(address_word(caller)),
+            gas_price: SymExpr::zero(),
             ffi_enabled,
             block: SymbolicBlock::default(),
             frame: CallFrame::new(
@@ -53,7 +53,7 @@ impl PathState {
                 address,
                 address,
                 caller,
-                SymWord::constant(callvalue),
+                SymExpr::constant(callvalue),
                 false,
                 call_data,
             ),
@@ -83,8 +83,8 @@ impl PathState {
             depth: 0,
             call_depth: 0,
             origin: caller,
-            origin_word: SymWord::constant(address_word(caller)),
-            gas_price: SymWord::zero(),
+            origin_word: SymExpr::constant(address_word(caller)),
+            gas_price: SymExpr::zero(),
             ffi_enabled,
             block: SymbolicBlock::default(),
             frame: CallFrame::new(
@@ -92,7 +92,7 @@ impl PathState {
                 address,
                 address,
                 caller,
-                SymWord::zero(),
+                SymExpr::zero(),
                 false,
                 SymCalldata::new(Vec::new()),
             ),
@@ -125,7 +125,7 @@ impl PathState {
             .as_ref()
             .and_then(|cheats| cheats.gas_price)
             .unwrap_or_else(|| executor.tx_env().gas_price());
-        self.gas_price = SymWord::constant(U256::from(gas_price));
+        self.gas_price = SymExpr::constant(U256::from(gas_price));
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
@@ -138,7 +138,7 @@ impl PathState {
 
     pub(crate) fn copy_call_output_offset(
         &mut self,
-        dest: SymWord,
+        dest: SymExpr,
         size: &BoundedCopySize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, return_data, .. } = &mut self.frame;
@@ -147,8 +147,8 @@ impl PathState {
 
     pub(crate) fn copy_return_data_to_offset(
         &mut self,
-        dest: SymWord,
-        offset: SymWord,
+        dest: SymExpr,
+        offset: SymExpr,
         size: usize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, return_data, .. } = &mut self.frame;
@@ -157,31 +157,29 @@ impl PathState {
 
     pub(crate) fn copy_return_data_symbolic_size(
         &mut self,
-        dest: SymWord,
-        offset: SymWord,
-        size: SymWord,
+        dest: SymExpr,
+        offset: SymExpr,
+        size: SymExpr,
         max_size: usize,
     ) -> Result<(), SymbolicError> {
         let CallFrame { memory, return_data, .. } = &mut self.frame;
         memory.copy_return_data_symbolic_size(dest, offset, size, max_size, return_data)
     }
 
-    pub(crate) fn constrained_usize(&self, word: &SymWord) -> Option<usize> {
+    pub(crate) fn constrained_usize(&self, word: &SymExpr) -> Option<usize> {
         let value = self.constrained_word(word)?;
         (value <= U256::from(usize::MAX)).then(|| value.to::<usize>())
     }
 
-    pub(crate) fn upper_bound_usize(&self, word: &SymWord) -> Option<usize> {
+    pub(crate) fn upper_bound_usize(&self, word: &SymExpr) -> Option<usize> {
         self.constrained_usize(word).or_else(|| {
-            word.as_const()
-                .and_then(u256_to_usize)
-                .or_else(|| self.expr_upper_bound_usize(word.as_expr()))
+            word.as_const().and_then(u256_to_usize).or_else(|| self.expr_upper_bound_usize(word))
         })
     }
 
-    pub(crate) fn constrained_word(&self, word: &SymWord) -> Option<U256> {
+    pub(crate) fn constrained_word(&self, word: &SymExpr) -> Option<U256> {
         word.as_const().or_else(|| {
-            let expr = word.as_expr();
+            let expr = word;
             self.constraints
                 .iter()
                 .find_map(|constraint| {
@@ -303,7 +301,7 @@ impl PathState {
 
     pub(crate) fn expect_constrained_usize(
         &self,
-        word: SymWord,
+        word: SymExpr,
         reason: &'static str,
     ) -> Result<usize, SymbolicError> {
         self.constrained_usize(&word).ok_or(SymbolicError::Unsupported(reason))
@@ -311,7 +309,7 @@ impl PathState {
 
     pub(crate) fn expect_constrained_word(
         &self,
-        word: SymWord,
+        word: SymExpr,
         reason: &'static str,
     ) -> Result<U256, SymbolicError> {
         self.constrained_word(&word).ok_or(SymbolicError::Unsupported(reason))
@@ -325,9 +323,9 @@ impl PathState {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
         if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
-            self.stack.push(SymWord::constant(concrete(a_value, b_value)))?;
+            self.stack.push(SymExpr::constant(concrete(a_value, b_value)))?;
         } else {
-            self.stack.push(SymWord::expr(SymExpr::op(op, a.into_expr(), b.into_expr())))?;
+            self.stack.push(SymExpr::op(op, a, b))?;
         }
         Ok(StepOutcome::Continue)
     }
@@ -340,15 +338,13 @@ impl PathState {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
         if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
-            self.stack.push(SymWord::constant(concrete(a_value, b_value)))?;
+            self.stack.push(SymExpr::constant(concrete(a_value, b_value)))?;
         } else {
-            let a = a.into_expr();
-            let b = b.into_expr();
-            self.stack.push(SymWord::expr(SymExpr::ite(
+            self.stack.push(SymExpr::ite(
                 BoolExpr::eq(b.clone(), SymExpr::constant(U256::ZERO)),
                 SymExpr::constant(U256::ZERO),
                 SymExpr::op(op, a, b),
-            )))?;
+            ))?;
         }
         Ok(StepOutcome::Continue)
     }
@@ -361,9 +357,9 @@ impl PathState {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
         if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
-            self.stack.push(SymWord::constant(U256::from(concrete(a_value, b_value))))?;
+            self.stack.push(SymExpr::constant(U256::from(concrete(a_value, b_value))))?;
         } else {
-            self.stack.push(SymWord::from_bool(BoolExpr::cmp(op, a.into_expr(), b.into_expr())))?;
+            self.stack.push(SymExpr::from_bool(BoolExpr::cmp(op, a, b)))?;
         }
         Ok(StepOutcome::Continue)
     }
@@ -386,14 +382,14 @@ impl PathState {
                     ShiftKind::Sar => sar(value, shift),
                 }
             };
-            SymWord::constant(result)
+            SymExpr::constant(result)
         } else {
             let expr = match kind {
-                ShiftKind::Shl => SymExpr::op(ExprOp::Shl, value.into_expr(), shift.into_expr()),
-                ShiftKind::Shr => SymExpr::op(ExprOp::Shr, value.into_expr(), shift.into_expr()),
-                ShiftKind::Sar => SymExpr::op(ExprOp::Sar, value.into_expr(), shift.into_expr()),
+                ShiftKind::Shl => SymExpr::op(ExprOp::Shl, value, shift),
+                ShiftKind::Shr => SymExpr::op(ExprOp::Shr, value, shift),
+                ShiftKind::Sar => SymExpr::op(ExprOp::Sar, value, shift),
             };
-            expr_known_word(&expr).map(SymWord::constant).unwrap_or_else(|| SymWord::expr(expr))
+            expr_known_word(&expr).map(SymExpr::constant).unwrap_or_else(|| expr)
         };
         self.stack.push(result)?;
         Ok(StepOutcome::Continue)
@@ -404,12 +400,9 @@ impl PathState {
         let exponent = self.stack.pop()?;
         let result = if let Some(exponent) = self.constrained_word(&exponent) {
             if let Some(base_value) = base.as_const() {
-                SymWord::constant(pow_mod(base_value, exponent))
+                SymExpr::constant(pow_mod(base_value, exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
-                SymWord::expr(exp_expr_for_concrete_exponent(
-                    base.into_expr(),
-                    exponent.to::<usize>(),
-                ))
+                exp_expr_for_concrete_exponent(base, exponent.to::<usize>())
             } else {
                 return Err(SymbolicError::Unsupported("symbolic EXP base"));
             }
@@ -423,8 +416,6 @@ impl PathState {
                 .upper_bound_usize(&exponent)
                 .filter(|exponent| *exponent <= exponent_limit as usize)
                 .ok_or(SymbolicError::Unsupported("symbolic EXP exponent"))?;
-            let exponent = exponent.into_expr();
-            let base = base.into_expr();
             let mut expr = SymExpr::constant(U256::ZERO);
             for candidate in (0..=max_exponent).rev() {
                 expr = SymExpr::ite(
@@ -433,7 +424,7 @@ impl PathState {
                     expr,
                 );
             }
-            SymWord::expr(expr)
+            expr
         };
         self.stack.push(result)?;
         Ok(StepOutcome::Continue)
@@ -443,72 +434,72 @@ impl PathState {
         &self,
         executor: &Executor<FEN>,
         address: Address,
-    ) -> SymWord {
+    ) -> SymExpr {
         self.world.balance_word_for_address(executor, address)
     }
 
     pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-    ) -> Result<SymWord, SymbolicError> {
+        word: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
         self.world.balance_word(executor, word)
     }
 
     pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-    ) -> Result<SymWord, SymbolicError> {
+        word: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
         self.world.extcode_size_word(executor, word)
     }
 
     pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-    ) -> Result<SymWord, SymbolicError> {
+        word: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
         self.world.extcode_hash_word(executor, word)
     }
 
     pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-        offset: SymWord,
+        word: SymExpr,
+        offset: SymExpr,
         size: usize,
-    ) -> Result<Vec<SymWord>, SymbolicError> {
+    ) -> Result<Vec<SymExpr>, SymbolicError> {
         self.world.extcode_bytes_word(executor, word, offset, size)
     }
 
     pub(crate) fn pop_address_word_or_symbolic_slot(
         &mut self,
-    ) -> Result<(SymWord, Address), SymbolicError> {
+    ) -> Result<(SymExpr, Address), SymbolicError> {
         let word = self.stack.pop()?;
         let address = self.address_or_symbolic_slot(word.clone());
         Ok((word, address))
     }
 
-    pub(crate) fn address_or_symbolic_slot(&mut self, word: SymWord) -> Address {
+    pub(crate) fn address_or_symbolic_slot(&mut self, word: SymExpr) -> Address {
         if let Some(value) = self.constrained_word(&word) {
             return word_to_address(value);
         }
         self.world.resolve_address(&word).unwrap_or_else(|| self.world.symbolic_address_slot(word))
     }
 
-    pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymWord {
+    pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymWord::expr(SymExpr::var(format!("{prefix}_{id}")))
+        SymExpr::var(format!("{prefix}_{id}"))
     }
 
-    pub(crate) fn fresh_gasleft(&mut self) -> SymWord {
+    pub(crate) fn fresh_gasleft(&mut self) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymWord::expr(SymExpr::gas_left(id))
+        SymExpr::gas_left(id)
     }
 
-    pub(crate) fn fresh_bounded_uint(&mut self, bits: U256) -> SymWord {
+    pub(crate) fn fresh_bounded_uint(&mut self, bits: U256) -> SymExpr {
         let value = self.fresh_word("symbolic");
         if bits < U256::from(256) {
             let upper =
@@ -518,7 +509,7 @@ impl PathState {
         value
     }
 
-    pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymWord {
+    pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymExpr {
         let value = self.fresh_word("symbolic");
         if bits.is_zero() {
             self.constraints.push(BoolExpr::eq_word_const(&value, U256::ZERO));
@@ -536,7 +527,7 @@ impl PathState {
         value
     }
 
-    pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymWord, Option<(Address, SymWord)>) {
+    pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymExpr, Option<(Address, SymExpr)>) {
         if let Some((caller, caller_word)) = self.prank.next_caller.take() {
             (caller, caller_word, self.prank.next_origin.take())
         } else {
@@ -551,7 +542,7 @@ impl PathState {
         }
     }
 
-    pub(crate) fn read_callers_words(&self) -> Vec<SymWord> {
+    pub(crate) fn read_callers_words(&self) -> Vec<SymExpr> {
         let (mode, caller, origin) = if let Some((_, caller_word)) = self.prank.next_caller.as_ref()
         {
             (
@@ -576,7 +567,7 @@ impl PathState {
         } else {
             (U256::ZERO, self.caller_word.clone(), self.origin_word.clone())
         };
-        vec![SymWord::constant(mode), caller, origin]
+        vec![SymExpr::constant(mode), caller, origin]
     }
 
     pub(crate) fn record_log(&mut self, log: SymbolicLog) {
@@ -585,13 +576,13 @@ impl PathState {
         }
     }
 
-    pub(crate) fn record_sload(&mut self, address: Address, slot: SymWord) {
+    pub(crate) fn record_sload(&mut self, address: Address, slot: SymExpr) {
         if let Some(record) = &mut self.access_record {
             record.read(address, slot);
         }
     }
 
-    pub(crate) fn record_sstore(&mut self, address: Address, slot: SymWord) {
+    pub(crate) fn record_sstore(&mut self, address: Address, slot: SymExpr) {
         if let Some(record) = &mut self.access_record {
             record.write(address, slot);
         }
@@ -607,29 +598,29 @@ impl PathState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SymbolicLog {
-    pub(crate) topics: Arc<[SymWord]>,
-    pub(crate) data_len: SymWord,
-    pub(crate) data: Arc<[SymWord]>,
+    pub(crate) topics: Arc<[SymExpr]>,
+    pub(crate) data_len: SymExpr,
+    pub(crate) data: Arc<[SymExpr]>,
     pub(crate) emitter: Address,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccessRecord {
-    pub(crate) reads: HashMap<Address, Vec<SymWord>>,
-    pub(crate) writes: HashMap<Address, Vec<SymWord>>,
+    pub(crate) reads: HashMap<Address, Vec<SymExpr>>,
+    pub(crate) writes: HashMap<Address, Vec<SymExpr>>,
 }
 
 impl AccessRecord {
-    pub(crate) fn read(&mut self, address: Address, slot: SymWord) {
+    pub(crate) fn read(&mut self, address: Address, slot: SymExpr) {
         push_unique_slot(self.reads.entry(address).or_default(), slot);
     }
 
-    pub(crate) fn write(&mut self, address: Address, slot: SymWord) {
+    pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
         push_unique_slot(self.writes.entry(address).or_default(), slot);
     }
 }
 
-pub(crate) fn push_unique_slot(slots: &mut Vec<SymWord>, slot: SymWord) {
+pub(crate) fn push_unique_slot(slots: &mut Vec<SymExpr>, slot: SymExpr) {
     if !slots.iter().any(|existing| existing == &slot) {
         slots.push(slot);
     }
@@ -653,7 +644,7 @@ pub(crate) fn adjust_expected_call_gas_for_value(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedRevert {
     pub(crate) data: ExpectedRevertData,
-    pub(crate) reverter: Option<SymWord>,
+    pub(crate) reverter: Option<SymExpr>,
     pub(crate) remaining: u64,
 }
 
@@ -667,16 +658,16 @@ impl ExpectedRevert {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExpectedRevertData {
     Any,
-    Prefix(Arc<[SymWord]>),
-    Exact(Arc<[SymWord]>),
+    Prefix(Arc<[SymExpr]>),
+    Exact(Arc<[SymExpr]>),
 }
 
 impl ExpectedRevertData {
-    pub(crate) fn prefix(data: Vec<SymWord>) -> Self {
+    pub(crate) fn prefix(data: Vec<SymExpr>) -> Self {
         Self::Prefix(data.into())
     }
 
-    pub(crate) fn exact(data: Vec<SymWord>) -> Self {
+    pub(crate) fn exact(data: Vec<SymExpr>) -> Self {
         Self::Exact(data.into())
     }
 }
@@ -689,11 +680,11 @@ pub(crate) enum AssumeNoRevert {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedCall {
-    pub(crate) callee: SymWord,
+    pub(crate) callee: SymExpr,
     pub(crate) value: Option<U256>,
     pub(crate) gas: Option<u64>,
     pub(crate) min_gas: Option<u64>,
-    pub(crate) data: Arc<[SymWord]>,
+    pub(crate) data: Arc<[SymExpr]>,
     pub(crate) expected: u64,
     pub(crate) observed: u64,
     pub(crate) exact: bool,
@@ -702,7 +693,7 @@ pub(crate) struct ExpectedCall {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedCreate {
     pub(crate) bytecode: Vec<u8>,
-    pub(crate) deployer: SymWord,
+    pub(crate) deployer: SymExpr,
     pub(crate) kind: CreateKind,
 }
 
@@ -710,7 +701,7 @@ impl ExpectedCall {
     pub(crate) fn static_parts_match(
         &self,
         value: Option<U256>,
-        gas: &SymWord,
+        gas: &SymExpr,
     ) -> Result<bool, SymbolicError> {
         Ok(self.value.is_none_or(|expected| value.is_some_and(|value| expected == value))
             && self.gas_matches(gas, value)?)
@@ -718,7 +709,7 @@ impl ExpectedCall {
 
     pub(crate) fn gas_matches(
         &self,
-        gas: &SymWord,
+        gas: &SymExpr,
         value: Option<U256>,
     ) -> Result<bool, SymbolicError> {
         if self.gas.is_none() && self.min_gas.is_none() {
@@ -747,9 +738,9 @@ impl ExpectedCall {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CallMock {
-    pub(crate) callee: SymWord,
+    pub(crate) callee: SymExpr,
     pub(crate) value: Option<U256>,
-    pub(crate) data: Arc<[SymWord]>,
+    pub(crate) data: Arc<[SymExpr]>,
     pub(crate) returns: Vec<SymReturnData>,
     pub(crate) reverts: bool,
     pub(crate) calls: usize,
@@ -778,15 +769,15 @@ pub(crate) struct CallMockOutcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FunctionMock {
-    pub(crate) callee: SymWord,
+    pub(crate) callee: SymExpr,
     pub(crate) target: Address,
-    pub(crate) data: Arc<[SymWord]>,
+    pub(crate) data: Arc<[SymExpr]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedEmit {
     pub(crate) checks: ExpectedEmitChecks,
-    pub(crate) emitter: Option<SymWord>,
+    pub(crate) emitter: Option<SymExpr>,
     pub(crate) remaining: u64,
     pub(crate) template: Option<SymbolicLog>,
 }
@@ -871,13 +862,13 @@ impl DerefMut for PathState {
 pub(crate) struct CallFrame {
     pub(crate) pc: usize,
     pub(crate) address: Address,
-    pub(crate) address_word: SymWord,
+    pub(crate) address_word: SymExpr,
     #[allow(dead_code)]
     pub(crate) code_address: Address,
     pub(crate) storage_address: Address,
     pub(crate) caller: Address,
-    pub(crate) caller_word: SymWord,
-    pub(crate) callvalue: SymWord,
+    pub(crate) caller_word: SymExpr,
+    pub(crate) callvalue: SymExpr,
     pub(crate) is_static: bool,
     pub(crate) calldata: SymCalldata,
     pub(crate) stack: SymStack,
@@ -891,18 +882,18 @@ impl CallFrame {
         code_address: Address,
         storage_address: Address,
         caller: Address,
-        callvalue: SymWord,
+        callvalue: SymExpr,
         is_static: bool,
         calldata: SymCalldata,
     ) -> Self {
         Self {
             pc: 0,
             address,
-            address_word: SymWord::constant(address_word(address)),
+            address_word: SymExpr::constant(address_word(address)),
             code_address,
             storage_address,
             caller,
-            caller_word: SymWord::constant(address_word(caller)),
+            caller_word: SymExpr::constant(address_word(caller)),
             callvalue,
             is_static,
             calldata,
@@ -957,21 +948,21 @@ pub(crate) struct TopLevelCallOutcome {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SymbolicPrank {
-    pub(crate) next_caller: Option<(Address, SymWord)>,
-    pub(crate) next_origin: Option<(Address, SymWord)>,
-    pub(crate) persistent_caller: Option<(Address, SymWord)>,
-    pub(crate) persistent_origin: Option<(Address, SymWord)>,
+    pub(crate) next_caller: Option<(Address, SymExpr)>,
+    pub(crate) next_origin: Option<(Address, SymExpr)>,
+    pub(crate) persistent_caller: Option<(Address, SymExpr)>,
+    pub(crate) persistent_origin: Option<(Address, SymExpr)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StorageWrite {
     pub(crate) address: Address,
-    pub(crate) key: SymWord,
-    pub(crate) value: SymWord,
+    pub(crate) key: SymExpr,
+    pub(crate) value: SymExpr,
 }
 
 impl StorageWrite {
-    pub(crate) const fn new(address: Address, key: SymWord, value: SymWord) -> Self {
+    pub(crate) const fn new(address: Address, key: SymExpr, value: SymExpr) -> Self {
         Self { address, key, value }
     }
 }
@@ -981,7 +972,7 @@ pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
     pub(crate) current_transaction_created_accounts: HashSet<Address>,
-    pub(crate) balances: HashMap<Address, SymWord>,
+    pub(crate) balances: HashMap<Address, SymExpr>,
     pub(crate) code_cache: HashMap<Address, SymCode>,
     pub(crate) nonces: HashMap<Address, u64>,
     pub(crate) existing_accounts: HashSet<Address>,
@@ -989,7 +980,7 @@ pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) arbitrary_storage_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
     pub(crate) zero_init_symbolic_storage: bool,
-    pub(crate) symbolic_address_aliases: HashMap<SymWord, Address>,
+    pub(crate) symbolic_address_aliases: HashMap<SymExpr, Address>,
 }
 
 impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
@@ -1018,7 +1009,7 @@ pub(crate) struct SymbolicWorld {
     pub(crate) storage: Vec<StorageWrite>,
     pub(crate) transient_storage: Vec<StorageWrite>,
     pub(crate) current_transaction_created_accounts: HashSet<Address>,
-    pub(crate) balances: HashMap<Address, SymWord>,
+    pub(crate) balances: HashMap<Address, SymExpr>,
     pub(crate) code_cache: HashMap<Address, SymCode>,
     pub(crate) nonces: HashMap<Address, u64>,
     pub(crate) existing_accounts: HashSet<Address>,
@@ -1026,7 +1017,7 @@ pub(crate) struct SymbolicWorld {
     pub(crate) arbitrary_storage_accounts: HashSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
     pub(crate) zero_init_symbolic_storage: bool,
-    pub(crate) symbolic_address_aliases: HashMap<SymWord, Address>,
+    pub(crate) symbolic_address_aliases: HashMap<SymExpr, Address>,
     pub(crate) snapshots: HashMap<U256, SymbolicWorldSnapshot>,
     pub(crate) next_snapshot_id: u64,
 }
@@ -1041,23 +1032,23 @@ impl SymbolicWorld {
         &self,
         executor: &Executor<FEN>,
         address: Address,
-        key: SymWord,
+        key: SymExpr,
         concrete_key: Option<U256>,
-    ) -> Result<SymWord, SymbolicError> {
+    ) -> Result<SymExpr, SymbolicError> {
         let base = self.storage_base(executor, address, &key, concrete_key)?;
-        let read_key = concrete_key.map(SymWord::constant).unwrap_or(key);
+        let read_key = concrete_key.map(SymExpr::constant).unwrap_or(key);
         Ok(read_storage_writes(&self.storage, address, read_key, base))
     }
 
-    pub(crate) fn sstore(&mut self, address: Address, key: SymWord, value: SymWord) {
+    pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         self.storage.push(StorageWrite::new(address, key, value));
     }
 
-    pub(crate) fn tload(&self, address: Address, key: SymWord) -> SymWord {
-        read_storage_writes(&self.transient_storage, address, key, SymWord::zero())
+    pub(crate) fn tload(&self, address: Address, key: SymExpr) -> SymExpr {
+        read_storage_writes(&self.transient_storage, address, key, SymExpr::zero())
     }
 
-    pub(crate) fn tstore(&mut self, address: Address, key: SymWord, value: SymWord) {
+    pub(crate) fn tstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
         self.transient_storage.push(StorageWrite::new(address, key, value));
     }
 
@@ -1080,7 +1071,7 @@ impl SymbolicWorld {
         self.arbitrary_storage_accounts.insert(address);
     }
 
-    pub(crate) fn resolve_address(&self, word: &SymWord) -> Option<Address> {
+    pub(crate) fn resolve_address(&self, word: &SymExpr) -> Option<Address> {
         word.as_const().map(word_to_address).or_else(|| {
             self.symbolic_address_aliases.get(word).copied().or_else(|| {
                 self.symbolic_address_aliases.iter().find_map(|(alias, address)| {
@@ -1090,7 +1081,7 @@ impl SymbolicWorld {
         })
     }
 
-    pub(crate) fn symbolic_address_slot(&mut self, word: SymWord) -> Address {
+    pub(crate) fn symbolic_address_slot(&mut self, word: SymExpr) -> Address {
         if let Some(address) = self.resolve_address(&word) {
             return address;
         }
@@ -1099,7 +1090,7 @@ impl SymbolicWorld {
         address
     }
 
-    pub(crate) fn symbolic_word_for_address(&self, address: Address) -> Option<SymWord> {
+    pub(crate) fn symbolic_word_for_address(&self, address: Address) -> Option<SymExpr> {
         self.symbolic_address_aliases
             .iter()
             .find_map(|(word, slot)| (*slot == address).then(|| word.clone()))
@@ -1143,35 +1134,29 @@ impl SymbolicWorld {
         &self,
         executor: &Executor<FEN>,
         address: Address,
-        key: &SymWord,
+        key: &SymExpr,
         concrete_key: Option<U256>,
-    ) -> Result<SymWord, SymbolicError> {
+    ) -> Result<SymExpr, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
-            return Ok(SymWord::expr(SymExpr::var(stable_symbol(
-                "storage",
-                format!("{address:?}:{key:?}"),
-            ))));
+            return Ok(SymExpr::var(stable_symbol("storage", format!("{address:?}:{key:?}"))));
         }
         if let Some(key) = concrete_key {
             return executor
                 .backend()
                 .storage_ref(address, key)
-                .map(SymWord::constant)
+                .map(SymExpr::constant)
                 .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         if let Some(key) = key.as_const() {
             executor
                 .backend()
                 .storage_ref(address, key)
-                .map(SymWord::constant)
+                .map(SymExpr::constant)
                 .map_err(|err| SymbolicError::Backend(err.to_string()))
         } else if self.zero_init_symbolic_storage {
-            Ok(SymWord::zero())
+            Ok(SymExpr::zero())
         } else {
-            Ok(SymWord::expr(SymExpr::var(stable_symbol(
-                "storage",
-                format!("{address:?}:{key:?}"),
-            ))))
+            Ok(SymExpr::var(stable_symbol("storage", format!("{address:?}:{key:?}"))))
         }
     }
 
@@ -1193,43 +1178,43 @@ impl SymbolicWorld {
         &self,
         executor: &Executor<FEN>,
         address: Address,
-    ) -> SymWord {
+    ) -> SymExpr {
         if self.destroyed_accounts.contains(&address) {
-            return SymWord::zero();
+            return SymExpr::zero();
         }
         self.balances
             .get(&address)
             .cloned()
-            .unwrap_or_else(|| SymWord::constant(self.backend_balance(executor, address)))
+            .unwrap_or_else(|| SymExpr::constant(self.backend_balance(executor, address)))
     }
 
     pub(crate) fn balance_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-    ) -> Result<SymWord, SymbolicError> {
+        word: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&word) {
             return Ok(self.balance_word_for_address(executor, address));
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
-        let mut result = self.balance_word_for_address(executor, representative).into_expr();
+        let expr = word;
+        let representative = representative_symbolic_address(&expr);
+        let mut result = self.balance_word_for_address(executor, representative);
         for (address, balance) in &self.balances {
             if self.destroyed_accounts.contains(address) {
                 continue;
             }
             result = SymExpr::ite(
                 BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
-                balance.clone_expr(),
+                balance.clone(),
                 result,
             );
         }
 
-        Ok(SymWord::expr(result))
+        Ok(result)
     }
 
-    pub(crate) fn set_balance_word(&mut self, address: Address, value: SymWord) {
+    pub(crate) fn set_balance_word(&mut self, address: Address, value: SymExpr) {
         self.balances.insert(address, value.clone());
         if !value.as_const().is_some_and(|value| value.is_zero()) {
             self.existing_accounts.insert(address);
@@ -1242,7 +1227,7 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         from: Address,
         to: Address,
-        value: SymWord,
+        value: SymExpr,
     ) {
         if value.as_const().is_some_and(|value| value.is_zero()) {
             return;
@@ -1318,7 +1303,7 @@ impl SymbolicWorld {
             let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
             self.set_balance_word(beneficiary, sym_add(beneficiary_balance, balance));
         }
-        self.balances.insert(address, SymWord::zero());
+        self.balances.insert(address, SymExpr::zero());
         self.code_cache.insert(address, SymCode::default());
         if !self.nonces.contains_key(&address) {
             let nonce = self.nonce(executor, address)?;
@@ -1344,7 +1329,7 @@ impl SymbolicWorld {
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
             self.set_balance_word(beneficiary, sym_add(beneficiary_balance, balance));
-            self.balances.insert(address, SymWord::zero());
+            self.balances.insert(address, SymExpr::zero());
         }
     }
 
@@ -1437,26 +1422,26 @@ impl SymbolicWorld {
         &mut self,
         executor: &Executor<FEN>,
         address: Address,
-    ) -> Result<SymWord, SymbolicError> {
+    ) -> Result<SymExpr, SymbolicError> {
         if self.account_exists(executor, address)? {
             let code = self.extcode(executor, address)?;
             Ok(keccak_word(code.read_bytes(0, code.len())))
         } else {
-            Ok(SymWord::zero())
+            Ok(SymExpr::zero())
         }
     }
 
     pub(crate) fn extcode_size_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-    ) -> Result<SymWord, SymbolicError> {
+        word: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&word) {
-            return Ok(SymWord::constant(U256::from(self.extcode(executor, address)?.len())));
+            return Ok(SymExpr::constant(U256::from(self.extcode(executor, address)?.len())));
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
+        let expr = word;
+        let representative = representative_symbolic_address(&expr);
         let mut result =
             SymExpr::constant(U256::from(self.extcode(executor, representative)?.len()));
         for (address, code) in &self.code_cache {
@@ -1470,69 +1455,65 @@ impl SymbolicWorld {
             );
         }
 
-        Ok(SymWord::expr(result))
+        Ok(result)
     }
 
     pub(crate) fn extcode_hash_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-    ) -> Result<SymWord, SymbolicError> {
+        word: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
         if let Some(address) = self.resolve_address(&word) {
             return self.extcode_hash_for_address(executor, address);
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
-        let mut result = self.extcode_hash_for_address(executor, representative)?.into_expr();
+        let expr = word;
+        let representative = representative_symbolic_address(&expr);
+        let mut result = self.extcode_hash_for_address(executor, representative)?;
         let cached_codes: Vec<_> =
             self.code_cache.iter().map(|(address, code)| (*address, code.clone())).collect();
         for (address, code) in cached_codes.into_iter().rev() {
             let hash = if self.destroyed_accounts.contains(&address) {
-                SymWord::zero()
+                SymExpr::zero()
             } else {
                 keccak_word(code.read_bytes(0, code.len()))
             };
             result = SymExpr::ite(
                 BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address))),
-                hash.into_expr(),
+                hash,
                 result,
             );
         }
 
-        Ok(SymWord::expr(result))
+        Ok(result)
     }
 
     pub(crate) fn extcode_bytes_word<FEN: FoundryEvmNetwork>(
         &mut self,
         executor: &Executor<FEN>,
-        word: SymWord,
-        offset: SymWord,
+        word: SymExpr,
+        offset: SymExpr,
         size: usize,
-    ) -> Result<Vec<SymWord>, SymbolicError> {
+    ) -> Result<Vec<SymExpr>, SymbolicError> {
         if let Some(address) = self.resolve_address(&word) {
             return Ok(self.extcode(executor, address)?.read_bytes_offset(offset, size));
         }
 
-        let expr = word.into_expr();
-        let representative = representative_symbolic_address(&SymWord::expr(expr.clone()));
+        let expr = word;
+        let representative = representative_symbolic_address(&expr);
         let mut result =
             self.extcode(executor, representative)?.read_bytes_offset(offset.clone(), size);
         let cached_codes: Vec<_> =
             self.code_cache.iter().map(|(address, code)| (*address, code.clone())).collect();
         for (address, code) in cached_codes.into_iter().rev() {
             let bytes = if self.destroyed_accounts.contains(&address) {
-                vec![SymWord::zero(); size]
+                vec![SymExpr::zero(); size]
             } else {
                 code.read_bytes_offset(offset.clone(), size)
             };
             let condition = BoolExpr::eq(expr.clone(), SymExpr::constant(address_word(address)));
             for (idx, byte) in bytes.into_iter().enumerate() {
-                result[idx] = SymWord::expr(SymExpr::ite(
-                    condition.clone(),
-                    byte.into_expr(),
-                    result[idx].clone_expr(),
-                ));
+                result[idx] = SymExpr::ite(condition.clone(), byte, result[idx].clone());
             }
         }
 
@@ -1569,29 +1550,29 @@ impl SymbolicWorld {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SymbolicBlock {
-    pub(crate) chain_id: SymWord,
+    pub(crate) chain_id: SymExpr,
     pub(crate) coinbase: Address,
-    pub(crate) timestamp: SymWord,
-    pub(crate) number: SymWord,
-    pub(crate) difficulty: SymWord,
-    pub(crate) gaslimit: SymWord,
-    pub(crate) basefee: SymWord,
-    pub(crate) blob_basefee: SymWord,
-    pub(crate) block_hashes: HashMap<U256, SymWord>,
+    pub(crate) timestamp: SymExpr,
+    pub(crate) number: SymExpr,
+    pub(crate) difficulty: SymExpr,
+    pub(crate) gaslimit: SymExpr,
+    pub(crate) basefee: SymExpr,
+    pub(crate) blob_basefee: SymExpr,
+    pub(crate) block_hashes: HashMap<U256, SymExpr>,
     pub(crate) blob_hashes: Vec<B256>,
 }
 
 impl Default for SymbolicBlock {
     fn default() -> Self {
         Self {
-            chain_id: SymWord::constant(U256::from(1)),
+            chain_id: SymExpr::constant(U256::from(1)),
             coinbase: Address::ZERO,
-            timestamp: SymWord::zero(),
-            number: SymWord::zero(),
-            difficulty: SymWord::zero(),
-            gaslimit: SymWord::zero(),
-            basefee: SymWord::zero(),
-            blob_basefee: SymWord::zero(),
+            timestamp: SymExpr::zero(),
+            number: SymExpr::zero(),
+            difficulty: SymExpr::zero(),
+            gaslimit: SymExpr::zero(),
+            basefee: SymExpr::zero(),
+            blob_basefee: SymExpr::zero(),
             block_hashes: HashMap::default(),
             blob_hashes: Vec::new(),
         }
@@ -1636,14 +1617,14 @@ impl SymbolicBlock {
             .unwrap_or_else(|| block.difficulty());
 
         Self {
-            chain_id: SymWord::constant(U256::from(evm_env.cfg_env.chain_id)),
+            chain_id: SymExpr::constant(U256::from(evm_env.cfg_env.chain_id)),
             coinbase: block.beneficiary(),
-            timestamp: SymWord::constant(block.timestamp()),
-            number: SymWord::constant(block.number()),
-            difficulty: SymWord::constant(difficulty),
-            gaslimit: SymWord::constant(U256::from(block.gas_limit())),
-            basefee: SymWord::constant(U256::from(block.basefee())),
-            blob_basefee: SymWord::constant(U256::from(block.blob_gasprice().unwrap_or_default())),
+            timestamp: SymExpr::constant(block.timestamp()),
+            number: SymExpr::constant(block.number()),
+            difficulty: SymExpr::constant(difficulty),
+            gaslimit: SymExpr::constant(U256::from(block.gas_limit())),
+            basefee: SymExpr::constant(U256::from(block.basefee())),
+            blob_basefee: SymExpr::constant(U256::from(block.blob_gasprice().unwrap_or_default())),
             block_hashes: HashMap::default(),
             blob_hashes: executor.tx_env().blob_versioned_hashes().to_vec(),
         }
@@ -1652,7 +1633,7 @@ impl SymbolicBlock {
     pub(crate) fn set_block_hash(
         &mut self,
         block_number: U256,
-        block_hash: SymWord,
+        block_hash: SymExpr,
     ) -> Result<(), SymbolicError> {
         let current =
             self.number.clone().into_concrete("symbolic vm.setBlockhash current number")?;
@@ -1666,37 +1647,35 @@ impl SymbolicBlock {
         &self,
         executor: &Executor<FEN>,
         block_number: U256,
-    ) -> Result<SymWord, SymbolicError> {
+    ) -> Result<SymExpr, SymbolicError> {
         let current = self.number.clone().into_concrete("symbolic BLOCKHASH current number")?;
         if block_number >= current || current - block_number > U256::from(256) {
-            return Ok(SymWord::zero());
+            return Ok(SymExpr::zero());
         }
         if let Some(hash) = self.block_hashes.get(&block_number) {
             return Ok(hash.clone());
         }
         let Ok(block_number) = u64::try_from(block_number) else {
-            return Ok(SymWord::zero());
+            return Ok(SymExpr::zero());
         };
         let hash = executor
             .backend()
             .block_hash_ref(block_number)
             .map_err(|err| SymbolicError::Backend(err.to_string()))?;
-        Ok(SymWord::constant(U256::from_be_slice(hash.as_slice())))
+        Ok(SymExpr::constant(U256::from_be_slice(hash.as_slice())))
     }
 
     pub(crate) fn block_hash_word<FEN: FoundryEvmNetwork>(
         &self,
         executor: &Executor<FEN>,
-        block_number: SymWord,
-    ) -> Result<SymWord, SymbolicError> {
+        block_number: SymExpr,
+    ) -> Result<SymExpr, SymbolicError> {
         if let Some(block_number) = block_number.as_const() {
             return self.block_hash(executor, block_number);
         }
-        let block_number = block_number.into_expr();
-
         let current = self.number.clone().into_concrete("symbolic BLOCKHASH current number")?;
         if current.is_zero() {
-            return Ok(SymWord::zero());
+            return Ok(SymExpr::zero());
         }
 
         let mut result = SymExpr::constant(U256::ZERO);
@@ -1709,12 +1688,12 @@ impl SymbolicBlock {
             }
             result = SymExpr::ite(
                 BoolExpr::eq(block_number.clone(), SymExpr::constant(candidate)),
-                hash.into_expr(),
+                hash,
                 result,
             );
         }
 
-        Ok(SymWord::expr(result))
+        Ok(result)
     }
 
     pub(crate) fn set_blob_hashes(&mut self, blob_hashes: Vec<B256>) {
