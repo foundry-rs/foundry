@@ -107,9 +107,9 @@ pub(crate) fn hard_arith_fallback_model(constraints: &[BoolExpr]) -> Option<Symb
 
     let candidates = vars
         .iter()
-        .map(|var| fallback_candidates_for_var(var, constraints, &constants))
+        .map(|var| fallback_candidates_for_var(var.as_str(), constraints, &constants))
         .collect::<Option<Vec<_>>>()?;
-    let searched_vars = vars.iter().cloned().collect::<SymbolicVars>();
+    let searched_vars = vars.iter().copied().collect::<SymbolicVars>();
     let constraint_vars = constraints
         .iter()
         .map(|constraint| {
@@ -131,13 +131,14 @@ pub(crate) fn hard_arith_fallback_model(constraints: &[BoolExpr]) -> Option<Symb
 }
 
 /// Selects direct symbolic inputs for bounded fallback search.
-pub(crate) fn fallback_search_vars(vars: SymbolicVars) -> Vec<Arc<str>> {
+pub(crate) fn fallback_search_vars(vars: SymbolicVars) -> Vec<Symbol> {
     if vars.len() <= HARD_ARITH_FALLBACK_MAX_VARS {
         return vars.into_iter().collect();
     }
 
     vars.into_iter()
         .filter(|var| {
+            let var = var.as_str();
             var.starts_with("calldata")
                 || var.starts_with("sequence")
                 || var.starts_with("create_address")
@@ -199,7 +200,7 @@ struct FallbackSearch<'a> {
     constraints: &'a [BoolExpr],
     constraint_vars: &'a [SymbolicVars],
     searched_vars: &'a SymbolicVars,
-    vars: &'a [Arc<str>],
+    vars: &'a [Symbol],
     candidates: &'a [Vec<U256>],
 }
 
@@ -221,7 +222,7 @@ impl FallbackSearch<'_> {
         }
 
         for candidate in &self.candidates[index] {
-            model.insert(Arc::clone(&self.vars[index]), *candidate);
+            model.insert(self.vars[index], *candidate);
             if fallback_partial_model_satisfies_known_constraints(
                 self.constraints,
                 self.constraint_vars,
@@ -235,7 +236,7 @@ impl FallbackSearch<'_> {
                 return None;
             }
         }
-        model.remove(self.vars[index].as_ref());
+        model.remove(&self.vars[index]);
         None
     }
 }
@@ -257,7 +258,7 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
 ) -> bool {
     constraints.iter().zip(constraint_vars).all(|(constraint, vars)| {
         !vars.is_subset(searched_vars)
-            || !vars.iter().all(|var| model.contains_name(var))
+            || !vars.iter().all(|var| model.contains_name(*var))
             || eval_bool_expr(constraint, model).unwrap_or(false)
     })
 }
@@ -284,7 +285,7 @@ pub(crate) fn collect_expr_fallback_vars(expr: &Expr, vars: &mut SymbolicVars) {
     match expr.as_inner() {
         ExprInner::Const(_) | ExprInner::GasLeft(_) | ExprInner::Hash(_) => {}
         ExprInner::Var(var) => {
-            vars.insert(var.clone());
+            vars.insert(*var);
         }
         ExprInner::Keccak(hash) => {
             collect_expr_fallback_vars(hash.len(), vars);
@@ -321,8 +322,8 @@ pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<Symb
     let mut constants = constants.into_iter().collect::<Vec<_>>();
     constants.sort_unstable();
 
-    let var = if vars.len() == 1 { vars.iter().next()?.clone() } else { return None };
-    let hints = MaskHints::for_var(&var, constraints);
+    let var = if vars.len() == 1 { *vars.iter().next()? } else { return None };
+    let hints = MaskHints::for_var(var.as_str(), constraints);
     if (hints.one & hints.zero) != U256::ZERO {
         return None;
     }
@@ -358,7 +359,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[BoolExpr]) -> Option<Symb
     candidates.sort_unstable();
     for candidate in candidates {
         let mut model = SymbolicModel::default();
-        model.insert(Arc::clone(&var), candidate);
+        model.insert(var, candidate);
         if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false))
         {
             return Some(model);
@@ -466,7 +467,7 @@ pub(crate) fn zero_mask_equality(var: &str, masked: &Expr, zero: &Expr) -> Optio
         ExprInner::Op(ExprOp::And, left, right) => match (left.as_inner(), right.as_inner()) {
             (ExprInner::Var(name), ExprInner::Const(mask))
             | (ExprInner::Const(mask), ExprInner::Var(name))
-                if name.as_ref() == var =>
+                if name.as_str() == var =>
             {
                 Some(*mask)
             }

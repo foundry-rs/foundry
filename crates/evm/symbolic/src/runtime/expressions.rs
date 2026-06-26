@@ -1,57 +1,69 @@
 use super::*;
 
-/// Set of symbolic variable names collected from expression trees.
-pub(crate) type SymbolicVars = IndexSet<Arc<str>>;
+pub(crate) type SymbolicVars = IndexSet<Symbol>;
 
-/// Concrete assignments for symbolic variables.
-pub(crate) type SymbolicModel = HashMap<Arc<str>, U256>;
+pub(crate) type SymbolicModel = HashMap<Symbol, U256>;
 
-/// Lookup interface for concrete symbolic assignments.
 pub(crate) trait SymbolicModelLookup {
-    /// Returns the concrete assignment for `name`.
-    fn value(&self, name: &str) -> Option<U256>;
+    fn value(&self, name: Symbol) -> Option<U256>;
 
-    /// Returns whether `name` has a concrete assignment.
-    fn contains_name(&self, name: &str) -> bool {
+    fn contains_name(&self, name: Symbol) -> bool {
         self.value(name).is_some()
     }
 }
 
 impl SymbolicModelLookup for SymbolicModel {
-    fn value(&self, name: &str) -> Option<U256> {
-        self.get(name).copied()
+    fn value(&self, name: Symbol) -> Option<U256> {
+        self.get(&name).copied()
     }
 }
 
 #[cfg(test)]
 impl SymbolicModelLookup for BTreeMap<String, U256> {
-    fn value(&self, name: &str) -> Option<U256> {
-        self.get(name).copied()
+    fn value(&self, name: Symbol) -> Option<U256> {
+        self.get(name.as_str()).copied()
     }
 }
 
-#[derive(Default)]
-struct SymbolInterner {
-    names: IndexSet<Arc<str>>,
-}
+type SymbolInterner = inturn::Interner<Symbol, DefaultHashBuilder>;
 
-impl SymbolInterner {
-    fn intern(&mut self, name: &str) -> Arc<str> {
-        if let Some(name) = self.names.get(name) {
-            return Arc::clone(name);
-        }
+static SYMBOL_INTERNER: LazyLock<SymbolInterner> =
+    LazyLock::new(|| SymbolInterner::with_capacity_and_hasher(1024, DefaultHashBuilder::default()));
 
-        let name = Arc::<str>::from(name);
-        self.names.insert(Arc::clone(&name));
-        name
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct Symbol(NonZeroU32);
+
+impl Symbol {
+    pub(crate) fn intern(name: impl AsRef<str>) -> Self {
+        SYMBOL_INTERNER.intern(name.as_ref())
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        SYMBOL_INTERNER.resolve(self)
     }
 }
 
-pub(crate) fn intern_symbol(name: impl AsRef<str>) -> Arc<str> {
-    static INTERNER: std::sync::LazyLock<std::sync::Mutex<SymbolInterner>> =
-        std::sync::LazyLock::new(|| std::sync::Mutex::new(SymbolInterner::default()));
-    let mut interner = INTERNER.lock().expect("symbol interner mutex poisoned");
-    interner.intern(name.as_ref())
+impl inturn::InternerSymbol for Symbol {
+    fn try_from_usize(id: usize) -> Option<Self> {
+        let id = u32::try_from(id).ok()?.checked_add(1)?;
+        NonZeroU32::new(id).map(Self)
+    }
+
+    fn to_usize(self) -> usize {
+        self.0.get() as usize - 1
+    }
+}
+
+impl fmt::Debug for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 pub(crate) fn keccak_word(bytes: Vec<SymWord>) -> SymWord {
@@ -722,12 +734,12 @@ pub(crate) fn eval_expr(
 ) -> Result<U256, SymbolicError> {
     Ok(match expr.as_inner() {
         ExprInner::Const(value) => *value,
-        ExprInner::Var(var) => model.value(var).unwrap_or_default(),
+        ExprInner::Var(var) => model.value(*var).unwrap_or_default(),
         ExprInner::GasLeft(_) => {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         ExprInner::Keccak(hash) => eval_keccak_expr(&hash.len, &hash.bytes, model)?,
-        ExprInner::Hash(hash) => model.value(&hash.name).unwrap_or_default(),
+        ExprInner::Hash(hash) => model.value(hash.name).unwrap_or_default(),
         ExprInner::Not(value) => !eval_expr(value, model)?,
         ExprInner::Op(op, left, right) => {
             let left = eval_expr(left, model)?;
@@ -971,7 +983,7 @@ impl fmt::Debug for Expr {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) enum ExprInner {
     Const(U256),
-    Var(Arc<str>),
+    Var(Symbol),
     GasLeft(usize),
     Keccak(KeccakExpr),
     Hash(HashExpr),
@@ -984,14 +996,14 @@ pub(super) enum ExprInner {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) struct KeccakExpr {
-    name: Arc<str>,
+    name: Symbol,
     len: Expr,
     bytes: Arc<[Expr]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) struct HashExpr {
-    name: Arc<str>,
+    name: Symbol,
     algorithm: &'static str,
     bytes: Arc<[Expr]>,
 }
@@ -1004,58 +1016,48 @@ pub(super) struct ModularExpr {
 }
 
 impl KeccakExpr {
-    /// Returns this symbolic keccak input length.
     pub(super) const fn len(&self) -> &Expr {
         &self.len
     }
 
-    /// Returns this symbolic keccak input bytes.
     pub(super) fn bytes(&self) -> &[Expr] {
         &self.bytes
     }
 
-    /// Consumes this symbolic keccak expression into its parts.
-    pub(super) fn into_parts(self) -> (Arc<str>, Expr, Arc<[Expr]>) {
+    pub(super) fn into_parts(self) -> (Symbol, Expr, Arc<[Expr]>) {
         let Self { name, len, bytes } = self;
         (name, len, bytes)
     }
 }
 
 impl HashExpr {
-    /// Returns this opaque symbolic hash variable name.
-    pub(super) const fn name(&self) -> &Arc<str> {
-        &self.name
+    pub(super) const fn name(&self) -> Symbol {
+        self.name
     }
 
-    /// Consumes this opaque symbolic hash expression into its parts.
-    pub(super) fn into_parts(self) -> (Arc<str>, &'static str, Arc<[Expr]>) {
+    pub(super) fn into_parts(self) -> (Symbol, &'static str, Arc<[Expr]>) {
         let Self { name, algorithm, bytes } = self;
         (name, algorithm, bytes)
     }
 }
 
 impl ModularExpr {
-    /// Constructs a new modular arithmetic expression.
     const fn new(left: Expr, right: Expr, modulus: Expr) -> Self {
         Self { left, right, modulus }
     }
 
-    /// Returns the left operand.
     pub(super) const fn left(&self) -> &Expr {
         &self.left
     }
 
-    /// Returns the right operand.
     pub(super) const fn right(&self) -> &Expr {
         &self.right
     }
 
-    /// Returns the modulus operand.
     pub(super) const fn modulus(&self) -> &Expr {
         &self.modulus
     }
 
-    /// Consumes this modular expression into its parts.
     pub(super) fn into_parts(self) -> (Expr, Expr, Expr) {
         let Self { left, right, modulus } = self;
         (left, right, modulus)
@@ -1075,7 +1077,7 @@ impl Expr {
     #[cfg(test)]
     pub(crate) fn var_name(&self) -> Option<&str> {
         match self.as_inner() {
-            ExprInner::Var(name) => Some(name),
+            ExprInner::Var(name) => Some(name.as_str()),
             _ => None,
         }
     }
@@ -1118,32 +1120,32 @@ impl Expr {
         }
     }
 
-    /// Builds a symbolic variable expression.
     pub(crate) fn var(name: impl AsRef<str>) -> Self {
-        Self::from_inner(ExprInner::Var(intern_symbol(name)))
+        Self::var_symbol(Symbol::intern(name))
     }
 
-    /// Builds an opaque `GAS` / `gasleft()` expression.
+    pub(crate) fn var_symbol(name: Symbol) -> Self {
+        Self::from_inner(ExprInner::Var(name))
+    }
+
     pub(crate) fn gas_left(id: usize) -> Self {
         Self::from_inner(ExprInner::GasLeft(id))
     }
 
-    /// Builds a symbolic keccak expression.
     pub(crate) fn keccak(name: impl AsRef<str>, len: Self, bytes: Vec<Self>) -> Self {
-        Self::from_inner(ExprInner::Keccak(KeccakExpr {
-            name: intern_symbol(name),
-            len,
-            bytes: bytes.into(),
-        }))
+        Self::keccak_symbol(Symbol::intern(name), len, bytes)
     }
 
-    /// Builds an opaque symbolic hash expression.
+    pub(crate) fn keccak_symbol(name: Symbol, len: Self, bytes: Vec<Self>) -> Self {
+        Self::from_inner(ExprInner::Keccak(KeccakExpr { name, len, bytes: bytes.into() }))
+    }
+
     pub(crate) fn hash(name: impl AsRef<str>, algorithm: &'static str, bytes: Vec<Self>) -> Self {
-        Self::from_inner(ExprInner::Hash(HashExpr {
-            name: intern_symbol(name),
-            algorithm,
-            bytes: bytes.into(),
-        }))
+        Self::hash_symbol(Symbol::intern(name), algorithm, bytes)
+    }
+
+    pub(crate) fn hash_symbol(name: Symbol, algorithm: &'static str, bytes: Vec<Self>) -> Self {
+        Self::from_inner(ExprInner::Hash(HashExpr { name, algorithm, bytes: bytes.into() }))
     }
 
     /// Builds a conditional expression.
@@ -1336,13 +1338,13 @@ impl Expr {
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
         self.visit(&mut |expr| match expr.as_inner() {
             ExprInner::Var(var) => {
-                vars.insert(var.clone());
+                vars.insert(*var);
             }
             ExprInner::Keccak(hash) => {
-                vars.insert(hash.name.clone());
+                vars.insert(hash.name);
             }
             ExprInner::Hash(hash) => {
-                vars.insert(hash.name.clone());
+                vars.insert(hash.name);
             }
             ExprInner::Const(_)
             | ExprInner::GasLeft(_)
@@ -1366,12 +1368,12 @@ impl Expr {
             ExprInner::Const(value) => {
                 let _ = write!(out, "(_ bv{value} 256)");
             }
-            ExprInner::Var(var) => out.push_str(var),
+            ExprInner::Var(var) => out.push_str(var.as_str()),
             ExprInner::GasLeft(id) => {
                 let _ = write!(out, "gasleft_{id}");
             }
-            ExprInner::Keccak(hash) => out.push_str(&hash.name),
-            ExprInner::Hash(hash) => out.push_str(&hash.name),
+            ExprInner::Keccak(hash) => out.push_str(hash.name.as_str()),
+            ExprInner::Hash(hash) => out.push_str(hash.name.as_str()),
             ExprInner::Not(value) => {
                 out.push_str("(bvnot ");
                 value.write_smt(out);

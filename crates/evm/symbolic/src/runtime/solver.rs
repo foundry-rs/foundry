@@ -678,7 +678,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
     match expr.as_inner() {
         ExprInner::Keccak(hash) => {
             let (name, len, bytes) = hash.clone().into_parts();
-            Expr::keccak(
+            Expr::keccak_symbol(
                 name,
                 cache_key_expr(len),
                 bytes.iter().cloned().map(cache_key_expr).collect(),
@@ -686,7 +686,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
         }
         ExprInner::Hash(hash) => {
             let (name, algorithm, bytes) = hash.clone().into_parts();
-            Expr::hash(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
+            Expr::hash_symbol(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
         }
         ExprInner::Not(value) => Expr::not(cache_key_expr(value.clone())),
         ExprInner::Op(op, left, right) => {
@@ -1676,7 +1676,7 @@ pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> 
                     })?;
                     let start = 32usize.saturating_sub(decoded.len());
                     bytes[start..start + decoded.len()].copy_from_slice(&decoded);
-                    values.insert(intern_symbol(name), U256::from_be_bytes(bytes));
+                    values.insert(Symbol::intern(name), U256::from_be_bytes(bytes));
                     break;
                 }
                 if let Some(binary) = value.strip_prefix("#b") {
@@ -1688,7 +1688,7 @@ pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> 
                     let parsed = U256::from_str_radix(binary, 2).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver binary model value: {err}"))
                     })?;
-                    values.insert(intern_symbol(name), parsed);
+                    values.insert(Symbol::intern(name), parsed);
                     break;
                 }
                 if value == "_"
@@ -1697,7 +1697,7 @@ pub(crate) fn parse_model(output: &str) -> Result<SymbolicModel, SymbolicError> 
                     let parsed = U256::from_str_radix(bv, 10).map_err(|err| {
                         SymbolicError::Solver(format!("invalid solver decimal model value: {err}"))
                     })?;
-                    values.insert(intern_symbol(name), parsed);
+                    values.insert(Symbol::intern(name), parsed);
                     break;
                 }
             }

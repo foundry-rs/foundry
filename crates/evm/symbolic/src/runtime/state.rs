@@ -174,7 +174,7 @@ impl PathState {
         collect_eval_vars(expr, &mut vars);
         let mut model = SymbolicModel::default();
         for var in vars {
-            let var_expr = Expr::var(var.clone());
+            let var_expr = Expr::var_symbol(var);
             let value = self.constraints.iter().find_map(|constraint| {
                 bool_forces_expr_const_with_context(constraint, &var_expr, &self.constraints)
             })?;
@@ -1578,10 +1578,10 @@ impl Default for SymbolicBlock {
 fn collect_eval_vars(expr: &Expr, vars: &mut SymbolicVars) {
     expr.visit(&mut |expr| match expr.as_inner() {
         ExprInner::Var(var) => {
-            vars.insert(var.clone());
+            vars.insert(*var);
         }
         ExprInner::Hash(hash) => {
-            vars.insert(hash.name().clone());
+            vars.insert(hash.name());
         }
         ExprInner::Const(_)
         | ExprInner::GasLeft(_)

@@ -1930,7 +1930,7 @@ sat
 
     let model = parse_model(output).unwrap();
 
-    assert_eq!(model.get("calldata_0"), Some(&U256::from(42)));
+    assert_eq!(model.get(&Symbol::intern("calldata_0")), Some(&U256::from(42)));
 }
 
 #[test]
@@ -1946,7 +1946,7 @@ sat
 
     let model = parse_model(output).unwrap();
 
-    assert_eq!(model.get("calldata_0"), Some(&U256::from(42)));
+    assert_eq!(model.get(&Symbol::intern("calldata_0")), Some(&U256::from(42)));
 }
 
 #[test]
@@ -2646,7 +2646,7 @@ fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
     assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
-    assert_eq!(model.get("a"), Some(&U256::MAX));
+    assert_eq!(model.get(&Symbol::intern("a")), Some(&U256::MAX));
 }
 
 #[test]
@@ -3206,8 +3206,11 @@ fn model_cache_reuses_normalized_model_results() {
         BoolExpr::eq(x, Expr::constant(U256::from(1))),
     ];
 
-    assert_eq!(solver.model(&constraints).unwrap().get("x"), Some(&U256::from(1)));
-    assert_eq!(solver.model(&reordered_constraints).unwrap().get("y"), Some(&U256::from(2)));
+    assert_eq!(solver.model(&constraints).unwrap().get(&Symbol::intern("x")), Some(&U256::from(1)));
+    assert_eq!(
+        solver.model(&reordered_constraints).unwrap().get(&Symbol::intern("y")),
+        Some(&U256::from(2))
+    );
 
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
@@ -3230,7 +3233,7 @@ fn model_query_populates_sat_cache() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
     let constraints = vec![BoolExpr::eq(Expr::var("x"), Expr::constant(U256::from(1)))];
 
-    assert_eq!(solver.model(&constraints).unwrap().get("x"), Some(&U256::from(1)));
+    assert_eq!(solver.model(&constraints).unwrap().get(&Symbol::intern("x")), Some(&U256::from(1)));
     assert!(solver.is_sat(&constraints).unwrap());
 
     let stats = solver.stats();
@@ -3479,7 +3482,10 @@ fn portfolio_scheduler_penalizes_invalid_models() {
             BoolExpr::eq(Expr::var("calldata_0"), Expr::constant(U256::from(1))),
             BoolExpr::eq(Expr::var(format!("portfolio_query_{query}")), Expr::constant(U256::ZERO)),
         ];
-        assert_eq!(solver.model(&constraints).unwrap().get("calldata_0"), Some(&U256::from(1)));
+        assert_eq!(
+            solver.model(&constraints).unwrap().get(&Symbol::intern("calldata_0")),
+            Some(&U256::from(1))
+        );
         if query == 0 {
             assert!(marker.exists());
             let _ = std::fs::remove_file(&marker);

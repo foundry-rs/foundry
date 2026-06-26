@@ -6,7 +6,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, B256, Bytes, I256, U256, hex, keccak256,
-    map::{HashMap, HashSet, IndexSet},
+    map::{DefaultHashBuilder, HashMap, HashSet, IndexSet},
 };
 use alloy_signer::SignerSync;
 use alloy_signer_local::{
@@ -34,11 +34,12 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fmt::{self, Write as _},
     io::{Read, Write},
+    num::NonZeroU32,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
