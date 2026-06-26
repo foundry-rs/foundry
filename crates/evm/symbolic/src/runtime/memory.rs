@@ -43,16 +43,12 @@ pub(crate) enum BoundedCopySize {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymMemory {
-    bytes: HashMap<usize, SymExpr>,
-    byte_epochs: HashMap<usize, u64>,
     symbolic_writes: Vec<SymbolicMemoryWrite>,
-    epoch: u64,
     size: usize,
 }
 
 #[derive(Clone, Debug)]
 struct SymbolicMemoryWrite {
-    epoch: u64,
     offset: SymExpr,
     bytes: SymBytes,
 }
@@ -69,6 +65,10 @@ impl SymbolicMemoryWrite {
             SymExpr::op(SymExprOp::Add, end, SymExpr::constant(U256::from(31))),
             SymExpr::constant(!U256::from(31)),
         )
+    }
+
+    fn concrete_offset(&self) -> Option<usize> {
+        self.offset.eval().and_then(|offset| usize::try_from(offset).ok())
     }
 }
 
@@ -131,21 +131,15 @@ impl SymMemory {
         if bytes.is_empty() {
             return;
         }
-        self.epoch = self.epoch.saturating_add(1);
         self.size = self.size.max(Self::size_after_access(offset, bytes.len()));
-        for idx in 0..bytes.len() {
-            let offset = offset + idx;
-            self.bytes.insert(offset, bytes.byte(idx));
-            self.byte_epochs.insert(offset, self.epoch);
-        }
+        self.store_symbolic_bytes(SymExpr::constant(U256::from(offset)), bytes);
     }
 
     pub(crate) fn store_symbolic_bytes(&mut self, offset: SymExpr, bytes: SymBytes) {
         if bytes.is_empty() {
             return;
         }
-        self.epoch = self.epoch.saturating_add(1);
-        self.symbolic_writes.push(SymbolicMemoryWrite { epoch: self.epoch, offset, bytes });
+        self.symbolic_writes.push(SymbolicMemoryWrite { offset, bytes });
     }
 
     pub(crate) fn store_bytes_offset(&mut self, offset: SymExpr, bytes: Vec<SymExpr>) {
@@ -163,7 +157,7 @@ impl SymMemory {
     }
 
     pub(crate) fn load_word(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
+        Ok(self.read_symbytes_offset(SymExpr::constant(U256::from(offset)), 32).word_at(0))
     }
 
     pub(crate) fn load_word_offset(&self, offset: SymExpr) -> Result<SymExpr, SymbolicError> {
@@ -204,12 +198,74 @@ impl SymMemory {
             let Ok(offset) = usize::try_from(offset) else {
                 return SymBytes::concrete(vec![0; size]);
             };
+            if let Some(bytes) = self.read_stored_symbytes(offset, size) {
+                return bytes;
+            }
             SymBytes::exprs(self.read_bytes(offset, size))
         } else {
             SymBytes::exprs(
                 (0..size).map(|idx| self.byte_dynamic_with_delta(&offset, idx)).collect(),
             )
         }
+    }
+
+    fn read_stored_symbytes(&self, offset: usize, size: usize) -> Option<SymBytes> {
+        if size == 0 {
+            return Some(SymBytes::default());
+        }
+        let end = offset.checked_add(size)?;
+
+        let mut unresolved = vec![(offset, end)];
+        let mut pieces = Vec::new();
+
+        for write in self.symbolic_writes.iter().rev() {
+            if unresolved.is_empty() {
+                break;
+            }
+
+            let write_offset = write.concrete_offset()?;
+            let write_end = write_offset.checked_add(write.bytes.len())?;
+
+            if write_end <= offset || end <= write_offset {
+                continue;
+            }
+
+            let mut next_unresolved = Vec::new();
+            for (start, end) in unresolved {
+                let overlap_start = start.max(write_offset);
+                let overlap_end = end.min(write_end);
+
+                if overlap_start >= overlap_end {
+                    next_unresolved.push((start, end));
+                    continue;
+                }
+
+                if start < overlap_start {
+                    next_unresolved.push((start, overlap_start));
+                }
+
+                pieces.push((
+                    overlap_start - offset,
+                    write
+                        .bytes
+                        .slice_concrete(overlap_start - write_offset, overlap_end - overlap_start),
+                ));
+
+                if overlap_end < end {
+                    next_unresolved.push((overlap_end, end));
+                }
+            }
+            unresolved = next_unresolved;
+        }
+
+        pieces.extend(
+            unresolved
+                .into_iter()
+                .map(|(start, end)| (start - offset, SymBytes::concrete(vec![0; end - start]))),
+        );
+        pieces.sort_by_key(|(offset, _)| *offset);
+
+        Some(SymBytes::concat(pieces.into_iter().map(|(_, bytes)| bytes)))
     }
 
     pub(crate) fn read_bytes_symbolic_size(
@@ -239,9 +295,8 @@ impl SymMemory {
     }
 
     pub(crate) fn byte(&self, offset: usize) -> SymExpr {
-        let (base, base_epoch) = self.base_byte(offset);
-        let mut result = base;
-        for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
+        let mut result = SymExpr::zero();
+        for write in &self.symbolic_writes {
             for idx in 0..write.bytes.len() {
                 result = SymExpr::ite(
                     SymBoolExpr::eq(
@@ -256,19 +311,11 @@ impl SymMemory {
         result
     }
 
-    pub(crate) fn base_byte(&self, offset: usize) -> (SymExpr, u64) {
-        (
-            self.bytes.get(&offset).cloned().unwrap_or_else(SymExpr::zero),
-            self.byte_epochs.get(&offset).copied().unwrap_or_default(),
-        )
-    }
-
     pub(crate) fn byte_dynamic_with_delta(&self, offset: &SymExpr, delta: usize) -> SymExpr {
         let mut result = SymExpr::constant(U256::ZERO);
         for candidate in (delta..self.size).rev() {
-            let (byte, base_epoch) = self.base_byte(candidate);
-            let mut candidate_result = byte;
-            for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
+            let mut candidate_result = SymExpr::zero();
+            for write in &self.symbolic_writes {
                 for idx in 0..write.bytes.len() {
                     candidate_result = SymExpr::ite(
                         SymBoolExpr::eq(
@@ -292,6 +339,9 @@ impl SymMemory {
     pub(crate) fn size_word(&self) -> SymExpr {
         let mut size = SymExpr::constant(U256::from(self.size));
         for write in &self.symbolic_writes {
+            if write.concrete_offset().is_some() {
+                continue;
+            }
             size = Self::max_size_word(size, write.size_after_access());
         }
         size
