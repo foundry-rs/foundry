@@ -74,15 +74,13 @@ pub(crate) fn address_expr_equivalent(candidate: &SymExpr, alias: &SymExpr) -> b
         return candidate == alias;
     }
 
-    match candidate.as_inner() {
-        SymExprInner::Op(SymExprOp::And, left, right) => {
+    match candidate.kind() {
+        SymExprKind::Op(SymExprOp::And, left, right) => {
             (is_address_mask(right) && address_expr_equivalent(left, alias))
                 || (is_address_mask(left) && address_expr_equivalent(right, alias))
         }
-        SymExprInner::Op(SymExprOp::Shr, value, shift) if is_shift_96(shift) => match value
-            .as_inner()
-        {
-            SymExprInner::Op(SymExprOp::Shl, inner, inner_shift) if is_shift_96(inner_shift) => {
+        SymExprKind::Op(SymExprOp::Shr, value, shift) if is_shift_96(shift) => match value.kind() {
+            SymExprKind::Op(SymExprOp::Shl, inner, inner_shift) if is_shift_96(inner_shift) => {
                 address_expr_equivalent(inner, alias)
             }
             _ => false,

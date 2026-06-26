@@ -30,36 +30,36 @@ fn collect_order_facts<'a>(
     less_than: &mut LessThanFacts<'a>,
     positive: &mut PositiveFacts<'a>,
 ) {
-    match expr.as_inner() {
-        SymBoolExprInner::And(values) => {
+    match expr.kind() {
+        SymBoolExprKind::And(values) => {
             for value in values.iter() {
                 collect_order_facts(value, less_than, positive);
             }
         }
-        SymBoolExprInner::Cmp(SymBoolExprOp::Ult, left, right) => {
+        SymBoolExprKind::Cmp(SymBoolExprOp::Ult, left, right) => {
             less_than.insert((left, right));
             if left.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(right);
             }
         }
-        SymBoolExprInner::Cmp(SymBoolExprOp::Ugt, left, right) => {
+        SymBoolExprKind::Cmp(SymBoolExprOp::Ugt, left, right) => {
             less_than.insert((right, left));
             if right.as_const().is_some_and(|value| value.is_zero()) {
                 positive.insert(left);
             }
         }
-        SymBoolExprInner::Const(_)
-        | SymBoolExprInner::Not(_)
-        | SymBoolExprInner::Eq(_, _)
-        | SymBoolExprInner::Cmp(_, _, _) => {}
+        SymBoolExprKind::Const(_)
+        | SymBoolExprKind::Not(_)
+        | SymBoolExprKind::Eq(_, _)
+        | SymBoolExprKind::Cmp(_, _, _) => {}
     }
 }
 
 fn product_less_than_negation(
     expr: &SymBoolExpr,
 ) -> Option<(&SymExpr, &SymExpr, &SymExpr, &SymExpr)> {
-    let SymBoolExprInner::Not(value) = expr.as_inner() else { return None };
-    let SymBoolExprInner::Cmp(SymBoolExprOp::Ult, left, right) = value.as_inner() else {
+    let SymBoolExprKind::Not(value) = expr.kind() else { return None };
+    let SymBoolExprKind::Cmp(SymBoolExprOp::Ult, left, right) = value.kind() else {
         return None;
     };
     let (left_a, left_b) = mul_operands(left)?;
@@ -98,8 +98,8 @@ fn product_less_than_known_ordered<'a>(
 }
 
 fn mul_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
-    match expr.as_inner() {
-        SymExprInner::Op(SymExprOp::Mul, left, right) => Some((left, right)),
+    match expr.kind() {
+        SymExprKind::Op(SymExprOp::Mul, left, right) => Some((left, right)),
         _ => None,
     }
 }

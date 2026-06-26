@@ -593,9 +593,9 @@ fn constraint_cache_key(constraints: &[SymBoolExpr]) -> Vec<SymBoolExpr> {
 
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
 fn constraints_are_directly_unsat(constraints: &[SymBoolExpr]) -> bool {
-    constraints.iter().any(|constraint| match constraint.as_inner() {
-        SymBoolExprInner::Const(false) => true,
-        SymBoolExprInner::Not(inner) => constraints.binary_search(inner).is_ok(),
+    constraints.iter().any(|constraint| match constraint.kind() {
+        SymBoolExprKind::Const(false) => true,
+        SymBoolExprKind::Not(inner) => constraints.binary_search(inner).is_ok(),
         _ => constraints.binary_search(&constraint.clone().not()).is_ok(),
     })
 }
@@ -621,10 +621,10 @@ fn sorted_bool_exprs_are_subset(subset: &[SymBoolExpr], superset: &[SymBoolExpr]
 
 /// Returns a conservative canonical boolean expression for cache-key equality.
 fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
-    match expr.into_inner() {
-        SymBoolExprInner::Const(value) => SymBoolExpr::constant(value),
-        SymBoolExprInner::Not(value) => cache_key_bool(value).not(),
-        SymBoolExprInner::And(values) => {
+    match expr.into_kind() {
+        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
+        SymBoolExprKind::Not(value) => cache_key_bool(value).not(),
+        SymBoolExprKind::And(values) => {
             let mut conjuncts = Vec::new();
             for value in values.iter().cloned().map(cache_key_bool) {
                 collect_cache_key_conjunct(value, &mut conjuncts);
@@ -633,12 +633,12 @@ fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
             conjuncts.dedup();
             SymBoolExpr::and(conjuncts)
         }
-        SymBoolExprInner::Eq(left, right) => {
+        SymBoolExprKind::Eq(left, right) => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             if left <= right { SymBoolExpr::eq(left, right) } else { SymBoolExpr::eq(right, left) }
         }
-        SymBoolExprInner::Cmp(op, left, right) => {
+        SymBoolExprKind::Cmp(op, left, right) => {
             cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
         }
     }
@@ -646,9 +646,9 @@ fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
 
 /// Collects cache-key conjuncts, flattening conjunctions because path constraints are conjunctive.
 fn collect_cache_key_conjunct(expr: SymBoolExpr, out: &mut Vec<SymBoolExpr>) {
-    match expr.as_inner() {
-        SymBoolExprInner::Const(true) => {}
-        SymBoolExprInner::And(values) => {
+    match expr.kind() {
+        SymBoolExprKind::Const(true) => {}
+        SymBoolExprKind::And(values) => {
             for value in values.iter().cloned() {
                 collect_cache_key_conjunct(value, out);
             }
@@ -671,26 +671,24 @@ fn cache_key_cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> SymBoolExp
 
 /// Returns a conservative canonical word expression for cache-key equality.
 fn cache_key_expr(expr: SymExpr) -> SymExpr {
-    if matches!(
-        expr.as_inner(),
-        SymExprInner::Const(_) | SymExprInner::Var(_) | SymExprInner::GasLeft(_)
-    ) {
+    if matches!(expr.kind(), SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_))
+    {
         return expr;
     }
 
-    match expr.into_inner() {
-        SymExprInner::Keccak { name, len, bytes } => SymExpr::keccak_symbol(
+    match expr.into_kind() {
+        SymExprKind::Keccak { name, len, bytes } => SymExpr::keccak_symbol(
             name,
             cache_key_expr(len),
             bytes.iter().cloned().map(cache_key_expr).collect(),
         ),
-        SymExprInner::Hash { name, algorithm, bytes } => SymExpr::hash_symbol(
+        SymExprKind::Hash { name, algorithm, bytes } => SymExpr::hash_symbol(
             name,
             algorithm,
             bytes.iter().cloned().map(cache_key_expr).collect(),
         ),
-        SymExprInner::Not(value) => SymExpr::not(cache_key_expr(value)),
-        SymExprInner::Op(op, left, right) => {
+        SymExprKind::Not(value) => SymExpr::not(cache_key_expr(value)),
+        SymExprKind::Op(op, left, right) => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             if expr_op_is_commutative(op) && right < left {
@@ -699,7 +697,7 @@ fn cache_key_expr(expr: SymExpr) -> SymExpr {
                 SymExpr::op(op, left, right)
             }
         }
-        SymExprInner::AddMod { left, right, modulus } => {
+        SymExprKind::AddMod { left, right, modulus } => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -709,7 +707,7 @@ fn cache_key_expr(expr: SymExpr) -> SymExpr {
                 SymExpr::addmod(left, right, modulus)
             }
         }
-        SymExprInner::MulMod { left, right, modulus } => {
+        SymExprKind::MulMod { left, right, modulus } => {
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -719,10 +717,10 @@ fn cache_key_expr(expr: SymExpr) -> SymExpr {
                 SymExpr::mulmod(left, right, modulus)
             }
         }
-        SymExprInner::Ite(cond, left, right) => {
+        SymExprKind::Ite(cond, left, right) => {
             SymExpr::ite(cache_key_bool(cond), cache_key_expr(left), cache_key_expr(right))
         }
-        SymExprInner::Const(_) | SymExprInner::Var(_) | SymExprInner::GasLeft(_) => unreachable!(),
+        SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => unreachable!(),
     }
 }
 

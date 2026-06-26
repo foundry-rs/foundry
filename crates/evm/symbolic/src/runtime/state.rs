@@ -222,14 +222,14 @@ impl PathState {
         }
 
         let constraint_bound = self.constraint_upper_bound_usize(expr);
-        let structural_bound = match expr.as_inner() {
-            SymExprInner::Const(value) => usize::try_from(*value).ok(),
-            SymExprInner::Var(_)
-            | SymExprInner::GasLeft(_)
-            | SymExprInner::Keccak { .. }
-            | SymExprInner::Hash { .. } => None,
-            SymExprInner::Not(_) => None,
-            SymExprInner::AddMod { modulus, .. } | SymExprInner::MulMod { modulus, .. } => {
+        let structural_bound = match expr.kind() {
+            SymExprKind::Const(value) => usize::try_from(*value).ok(),
+            SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. } => None,
+            SymExprKind::Not(_) => None,
+            SymExprKind::AddMod { modulus, .. } | SymExprKind::MulMod { modulus, .. } => {
                 match modulus.eval_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
                     Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
@@ -238,10 +238,10 @@ impl PathState {
                     }
                 }
             }
-            SymExprInner::Ite(_, left, right) => {
+            SymExprKind::Ite(_, left, right) => {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
             }
-            SymExprInner::Op(op, left, right) => match op {
+            SymExprKind::Op(op, left, right) => match op {
                 SymExprOp::Add => self
                     .expr_upper_bound_usize(left)?
                     .checked_add(self.expr_upper_bound_usize(right)?),
@@ -1578,21 +1578,21 @@ impl Default for SymbolicBlock {
 /// Collects the symbolic variables needed to concretely evaluate an expression.
 fn collect_eval_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
     let _ = expr.visit(&mut |expr| {
-        match expr.as_inner() {
-            SymExprInner::Var(var) => {
+        match expr.kind() {
+            SymExprKind::Var(var) => {
                 vars.insert(*var);
             }
-            SymExprInner::Hash { name, .. } => {
+            SymExprKind::Hash { name, .. } => {
                 vars.insert(*name);
             }
-            SymExprInner::Const(_)
-            | SymExprInner::GasLeft(_)
-            | SymExprInner::Keccak { .. }
-            | SymExprInner::Not(_)
-            | SymExprInner::Op(_, _, _)
-            | SymExprInner::AddMod { .. }
-            | SymExprInner::MulMod { .. }
-            | SymExprInner::Ite(_, _, _) => {}
+            SymExprKind::Const(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Not(_)
+            | SymExprKind::Op(_, _, _)
+            | SymExprKind::AddMod { .. }
+            | SymExprKind::MulMod { .. }
+            | SymExprKind::Ite(_, _, _) => {}
         }
         ControlFlow::<()>::Continue(())
     });

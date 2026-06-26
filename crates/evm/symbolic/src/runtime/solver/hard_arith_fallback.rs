@@ -2,19 +2,19 @@ use super::*;
 
 impl SymBoolExpr {
     pub(crate) fn contains_hard_arith(&self) -> bool {
-        match self.as_inner() {
-            SymBoolExprInner::Const(_) => false,
-            SymBoolExprInner::Not(value) => value.contains_hard_arith(),
-            SymBoolExprInner::And(values) => values.iter().any(Self::contains_hard_arith),
-            SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right) => {
+        match self.kind() {
+            SymBoolExprKind::Const(_) => false,
+            SymBoolExprKind::Not(value) => value.contains_hard_arith(),
+            SymBoolExprKind::And(values) => values.iter().any(Self::contains_hard_arith),
+            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
                 left.contains_hard_arith() || right.contains_hard_arith()
             }
         }
     }
 
     fn contains_symbolic_hash(&self) -> bool {
-        self.visit(&mut |expr| match expr.as_inner() {
-            SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right)
+        self.visit(&mut |expr| match expr.kind() {
+            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right)
                 if left.contains_symbolic_hash() || right.contains_symbolic_hash() =>
             {
                 ControlFlow::Break(())
@@ -27,29 +27,29 @@ impl SymBoolExpr {
 
 impl SymExpr {
     pub(crate) fn contains_hard_arith(&self) -> bool {
-        match self.as_inner() {
-            SymExprInner::Const(_)
-            | SymExprInner::Var(_)
-            | SymExprInner::GasLeft(_)
-            | SymExprInner::Keccak { .. }
-            | SymExprInner::Hash { .. } => false,
-            SymExprInner::Not(value) => value.contains_hard_arith(),
-            SymExprInner::Op(SymExprOp::Mul, left, right) => {
+        match self.kind() {
+            SymExprKind::Const(_)
+            | SymExprKind::Var(_)
+            | SymExprKind::GasLeft(_)
+            | SymExprKind::Keccak { .. }
+            | SymExprKind::Hash { .. } => false,
+            SymExprKind::Not(value) => value.contains_hard_arith(),
+            SymExprKind::Op(SymExprOp::Mul, left, right) => {
                 left.contains_var() && right.contains_var()
             }
-            SymExprInner::Op(
+            SymExprKind::Op(
                 SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
                 left,
                 right,
             ) => left.contains_var() || right.contains_var(),
-            SymExprInner::AddMod { left, right, modulus }
-            | SymExprInner::MulMod { left, right, modulus } => {
+            SymExprKind::AddMod { left, right, modulus }
+            | SymExprKind::MulMod { left, right, modulus } => {
                 left.contains_var() || right.contains_var() || modulus.contains_var()
             }
-            SymExprInner::Op(_, left, right) => {
+            SymExprKind::Op(_, left, right) => {
                 left.contains_hard_arith() || right.contains_hard_arith()
             }
-            SymExprInner::Ite(cond, left, right) => {
+            SymExprKind::Ite(cond, left, right) => {
                 cond.contains_hard_arith()
                     || left.contains_hard_arith()
                     || right.contains_hard_arith()
@@ -59,7 +59,7 @@ impl SymExpr {
 
     fn contains_symbolic_hash(&self) -> bool {
         self.visit(&mut |expr| {
-            if matches!(expr.as_inner(), SymExprInner::Hash { .. }) {
+            if matches!(expr.kind(), SymExprKind::Hash { .. }) {
                 ControlFlow::Break(())
             } else {
                 ControlFlow::Continue(())
@@ -71,8 +71,8 @@ impl SymExpr {
     fn contains_var(&self) -> bool {
         self.visit(&mut |expr| {
             if matches!(
-                expr.as_inner(),
-                SymExprInner::Var(_) | SymExprInner::Keccak { .. } | SymExprInner::Hash { .. }
+                expr.kind(),
+                SymExprKind::Var(_) | SymExprKind::Keccak { .. } | SymExprKind::Hash { .. }
             ) {
                 ControlFlow::Break(())
             } else {
@@ -279,15 +279,15 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
 
 /// Collects variables that local hard-arithmetic search can assign directly.
 pub(crate) fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
-    match expr.as_inner() {
-        SymBoolExprInner::Const(_) => {}
-        SymBoolExprInner::Not(value) => collect_bool_fallback_vars(value, vars),
-        SymBoolExprInner::And(values) => {
+    match expr.kind() {
+        SymBoolExprKind::Const(_) => {}
+        SymBoolExprKind::Not(value) => collect_bool_fallback_vars(value, vars),
+        SymBoolExprKind::And(values) => {
             for value in values.iter() {
                 collect_bool_fallback_vars(value, vars);
             }
         }
-        SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right) => {
+        SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
@@ -296,29 +296,29 @@ pub(crate) fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut Symbolic
 
 /// Collects assignable variables from an expression, recursing into recomputable hashes.
 pub(crate) fn collect_expr_fallback_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
-    match expr.as_inner() {
-        SymExprInner::Const(_) | SymExprInner::GasLeft(_) | SymExprInner::Hash { .. } => {}
-        SymExprInner::Var(var) => {
+    match expr.kind() {
+        SymExprKind::Const(_) | SymExprKind::GasLeft(_) | SymExprKind::Hash { .. } => {}
+        SymExprKind::Var(var) => {
             vars.insert(*var);
         }
-        SymExprInner::Keccak { len, bytes, .. } => {
+        SymExprKind::Keccak { len, bytes, .. } => {
             collect_expr_fallback_vars(len, vars);
             for byte in bytes.iter() {
                 collect_expr_fallback_vars(byte, vars);
             }
         }
-        SymExprInner::Not(value) => collect_expr_fallback_vars(value, vars),
-        SymExprInner::Op(_, left, right) => {
+        SymExprKind::Not(value) => collect_expr_fallback_vars(value, vars),
+        SymExprKind::Op(_, left, right) => {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
         }
-        SymExprInner::AddMod { left, right, modulus }
-        | SymExprInner::MulMod { left, right, modulus } => {
+        SymExprKind::AddMod { left, right, modulus }
+        | SymExprKind::MulMod { left, right, modulus } => {
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
             collect_expr_fallback_vars(modulus, vars);
         }
-        SymExprInner::Ite(cond, left, right) => {
+        SymExprKind::Ite(cond, left, right) => {
             collect_bool_fallback_vars(cond, vars);
             collect_expr_fallback_vars(left, vars);
             collect_expr_fallback_vars(right, vars);
@@ -392,15 +392,15 @@ pub(crate) fn push_fallback_candidate(
 }
 
 pub(crate) fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet<U256>) {
-    match expr.as_inner() {
-        SymBoolExprInner::Const(_) => {}
-        SymBoolExprInner::Not(value) => collect_bool_constants(value, constants),
-        SymBoolExprInner::And(values) => {
+    match expr.kind() {
+        SymBoolExprKind::Const(_) => {}
+        SymBoolExprKind::Not(value) => collect_bool_constants(value, constants),
+        SymBoolExprKind::And(values) => {
             for value in values.iter() {
                 collect_bool_constants(value, constants);
             }
         }
-        SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right) => {
+        SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
         }
@@ -408,26 +408,26 @@ pub(crate) fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet
 }
 
 pub(crate) fn collect_expr_constants(expr: &SymExpr, constants: &mut HashSet<U256>) {
-    match expr.as_inner() {
-        SymExprInner::Const(value) => {
+    match expr.kind() {
+        SymExprKind::Const(value) => {
             constants.insert(*value);
         }
-        SymExprInner::Var(_)
-        | SymExprInner::GasLeft(_)
-        | SymExprInner::Keccak { .. }
-        | SymExprInner::Hash { .. } => {}
-        SymExprInner::Not(value) => collect_expr_constants(value, constants),
-        SymExprInner::Op(_, left, right) => {
+        SymExprKind::Var(_)
+        | SymExprKind::GasLeft(_)
+        | SymExprKind::Keccak { .. }
+        | SymExprKind::Hash { .. } => {}
+        SymExprKind::Not(value) => collect_expr_constants(value, constants),
+        SymExprKind::Op(_, left, right) => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
         }
-        SymExprInner::AddMod { left, right, modulus }
-        | SymExprInner::MulMod { left, right, modulus } => {
+        SymExprKind::AddMod { left, right, modulus }
+        | SymExprKind::MulMod { left, right, modulus } => {
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
             collect_expr_constants(modulus, constants);
         }
-        SymExprInner::Ite(cond, left, right) => {
+        SymExprKind::Ite(cond, left, right) => {
             collect_bool_constants(cond, constants);
             collect_expr_constants(left, constants);
             collect_expr_constants(right, constants);
@@ -451,16 +451,16 @@ impl MaskHints {
     }
 
     pub(crate) fn apply_bool(&mut self, var: &str, expr: &SymBoolExpr, inverted: bool) {
-        match expr.as_inner() {
-            SymBoolExprInner::Const(_) => {}
-            SymBoolExprInner::Not(value) => self.apply_bool(var, value, !inverted),
-            SymBoolExprInner::And(values) if !inverted => {
+        match expr.kind() {
+            SymBoolExprKind::Const(_) => {}
+            SymBoolExprKind::Not(value) => self.apply_bool(var, value, !inverted),
+            SymBoolExprKind::And(values) if !inverted => {
                 for value in values.iter() {
                     self.apply_bool(var, value, false);
                 }
             }
-            SymBoolExprInner::Eq(left, right) => self.apply_equality(var, left, right, inverted),
-            SymBoolExprInner::Cmp(_, _, _) | SymBoolExprInner::And(_) => {}
+            SymBoolExprKind::Eq(left, right) => self.apply_equality(var, left, right, inverted),
+            SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {}
         }
     }
 
@@ -487,18 +487,16 @@ pub(crate) fn zero_mask_equality(var: &str, masked: &SymExpr, zero: &SymExpr) ->
     if !zero.as_const().is_some_and(|value| value.is_zero()) {
         return None;
     }
-    match masked.as_inner() {
-        SymExprInner::Op(SymExprOp::And, left, right) => {
-            match (left.as_inner(), right.as_inner()) {
-                (SymExprInner::Var(name), SymExprInner::Const(mask))
-                | (SymExprInner::Const(mask), SymExprInner::Var(name))
-                    if name.as_str() == var =>
-                {
-                    Some(*mask)
-                }
-                _ => None,
+    match masked.kind() {
+        SymExprKind::Op(SymExprOp::And, left, right) => match (left.kind(), right.kind()) {
+            (SymExprKind::Var(name), SymExprKind::Const(mask))
+            | (SymExprKind::Const(mask), SymExprKind::Var(name))
+                if name.as_str() == var =>
+            {
+                Some(*mask)
             }
-        }
+            _ => None,
+        },
         _ => None,
     }
 }

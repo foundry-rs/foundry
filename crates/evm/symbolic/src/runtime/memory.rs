@@ -696,7 +696,7 @@ impl SymCode {
                 Ok(GuardedOpcode::Concrete(byte.as_const().expect("checked concrete").to::<u8>()))
             }
             Some(byte) => {
-                if let SymExprInner::Ite(condition, then_expr, else_expr) = byte.as_inner()
+                if let SymExprKind::Ite(condition, then_expr, else_expr) = byte.kind()
                     && else_expr.as_const().is_some_and(|value| value.is_zero())
                 {
                     match then_expr.as_const() {
