@@ -750,16 +750,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        if let Some(fuzzer) = &mut self.fuzzer {
+            fuzzer.call_end(ecx, inputs, outcome);
+        }
+
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
-            [
-                &mut self.fuzzer,
-                &mut self.tracer,
-                &mut self.cheatcodes,
-                &mut self.printer,
-                &mut self.revert_diag
-            ],
+            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer, &mut self.revert_diag],
             |inspector| {
                 let previous_outcome = outcome.clone();
                 inspector.call_end(ecx, inputs, outcome);
