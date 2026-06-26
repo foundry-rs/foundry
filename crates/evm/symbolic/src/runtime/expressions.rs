@@ -1756,6 +1756,9 @@ impl SymBoolExpr {
             (SymExprKind::Const(left), SymExprKind::Const(right)) => Self::constant(left == right),
             (left, SymExprKind::Const(right_value)) => {
                 let left = SymExpr::from_kind(left);
+                if let Some(condition) = Self::bool_word_eq_const(&left, right_value) {
+                    return condition;
+                }
                 if let Some(left_value) = left.known_word() {
                     return Self::constant(left_value == right_value);
                 }
@@ -1763,6 +1766,9 @@ impl SymBoolExpr {
             }
             (SymExprKind::Const(left_value), right) => {
                 let right = SymExpr::from_kind(right);
+                if let Some(condition) = Self::bool_word_eq_const(&right, left_value) {
+                    return condition;
+                }
                 if let Some(right_value) = right.known_word() {
                     return Self::constant(left_value == right_value);
                 }
@@ -1800,6 +1806,17 @@ impl SymBoolExpr {
                 SymExpr::from_kind(right),
             )),
         }
+    }
+
+    fn bool_word_eq_const(word: &SymExpr, value: U256) -> Option<Self> {
+        let condition = word.bool_word_condition()?;
+        Some(if value.is_zero() {
+            condition.not()
+        } else if value == U256::from(1) {
+            condition
+        } else {
+            Self::constant(false)
+        })
     }
 
     pub(crate) fn eq_word_const(word: &SymExpr, value: U256) -> Self {

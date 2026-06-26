@@ -1991,6 +1991,36 @@ fn expression_op_simplifies_exact_arithmetic_identities() {
 }
 
 #[test]
+fn bool_word_equality_simplifies_to_condition() {
+    let condition = SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::var("x"), SymExpr::var("y"));
+    let word = SymExpr::from_bool(condition.clone());
+
+    assert_eq!(SymBoolExpr::eq(word.clone(), SymExpr::constant(U256::from(1))), condition);
+    assert_eq!(SymBoolExpr::eq(SymExpr::constant(U256::from(1)), word.clone()), condition);
+    assert_eq!(SymBoolExpr::eq(word.clone(), SymExpr::constant(U256::ZERO)), condition.not());
+    assert_eq!(
+        SymBoolExpr::eq(word, SymExpr::constant(U256::from(2))),
+        SymBoolExpr::constant(false)
+    );
+}
+
+#[test]
+fn inverted_bool_word_equality_simplifies_to_condition() {
+    let condition = SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::var("x"), SymExpr::var("y"));
+    let word = SymExpr::ite(
+        condition.clone(),
+        SymExpr::constant(U256::ZERO),
+        SymExpr::constant(U256::from(1)),
+    );
+
+    assert_eq!(
+        SymBoolExpr::eq(word.clone(), SymExpr::constant(U256::from(1))),
+        condition.clone().not()
+    );
+    assert_eq!(SymBoolExpr::eq(word, SymExpr::constant(U256::ZERO)), condition);
+}
+
+#[test]
 fn bool_comparison_folds_reflexive_operands() {
     let x = || SymExpr::var("x");
 
