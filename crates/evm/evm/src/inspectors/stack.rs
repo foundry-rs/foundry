@@ -315,6 +315,7 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub logs: Vec<Log>,
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
+    pub collect_debug_bytecodes: bool,
     pub line_coverage: Option<HitMaps>,
     pub edge_coverage: Option<EdgeCoverage>,
     pub evm_cmp_values: Option<Vec<CmpOperands>>,
@@ -386,6 +387,8 @@ pub struct InspectorStackInner {
     pub sancov_edges: bool,
     /// Whether to capture sancov trace-cmp operands for dictionary injection.
     pub sancov_trace_cmp: bool,
+    /// Whether to load runtime bytecodes for debugger source mapping.
+    pub collect_debug_bytecodes: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -649,6 +652,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
     #[inline]
     pub fn tracing(&mut self, mode: TraceMode) {
+        self.inner.collect_debug_bytecodes = mode.is_debug();
         self.revert_diag = (!mode.is_none()).then(RevertDiagnostic::default).map(Into::into);
 
         if let Some(config) = mode.into_config() {
@@ -684,6 +688,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                     log_collector,
                     tempo_labels,
                     tracer,
+                    collect_debug_bytecodes,
                     reverter,
                     ..
                 },
@@ -724,6 +729,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
                 labels
             },
             traces,
+            collect_debug_bytecodes,
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
             edge_coverage,
             evm_cmp_values,
@@ -1760,6 +1766,22 @@ mod tests {
         stack.set_chisel(0);
         assert_eq!(stack.inner.static_step_dispatch, OpcodeStepDispatch::None);
         assert!(stack.inner.has_static_step_end_inspectors);
+    }
+
+    #[test]
+    fn debug_bytecode_collection_tracks_debug_trace_mode() {
+        let mut stack = InspectorStack::<EthEvmNetwork>::new();
+
+        assert!(!stack.inner.collect_debug_bytecodes);
+
+        stack.tracing(TraceMode::Call);
+        assert!(!stack.inner.collect_debug_bytecodes);
+
+        stack.tracing(TraceMode::Debug);
+        assert!(stack.inner.collect_debug_bytecodes);
+
+        stack.tracing(TraceMode::None);
+        assert!(!stack.inner.collect_debug_bytecodes);
     }
 
     #[test]
