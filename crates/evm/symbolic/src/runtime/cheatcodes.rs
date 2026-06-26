@@ -273,8 +273,8 @@ pub(crate) fn abi_bytes_return(bytes: Vec<SymExpr>) -> SymReturnData {
 }
 
 pub(crate) fn abi_bytes_return_with_len(len: SymExpr, bytes: Vec<SymExpr>) -> SymReturnData {
-    let mut out = word_bytes(SymExpr::constant(U256::from(32)));
-    out.extend(word_bytes(len));
+    let mut out = SymExpr::constant(U256::from(32)).into_bytes();
+    out.extend(len.into_bytes());
     out.extend(bytes.iter().cloned());
     out.resize(64 + bytes.len().next_multiple_of(32), SymExpr::zero());
     SymReturnData::from_symbolic_bytes(out)
@@ -300,7 +300,7 @@ pub(crate) fn recorded_logs_return_data(logs: Vec<SymbolicLog>) -> SymReturnData
                     .iter()
                     .cloned()
                     .map(|topic| SymbolicAbiValue::FixedBytes {
-                        bytes: word_bytes(topic).into(),
+                        bytes: topic.into_bytes().into(),
                         size: 32,
                     })
                     .collect();
@@ -388,7 +388,7 @@ pub(crate) fn storage_slots_abi_array(slots: Vec<SymExpr>) -> SymbolicAbiValue {
     SymbolicAbiValue::Array {
         elements: slots
             .into_iter()
-            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: word_bytes(slot).into(), size: 32 })
+            .map(|slot| SymbolicAbiValue::FixedBytes { bytes: slot.into_bytes().into(), size: 32 })
             .collect(),
     }
 }
@@ -398,7 +398,7 @@ pub(crate) fn push_ascii(out: &mut Vec<SymExpr>, value: &str) {
 }
 
 pub(crate) fn push_hex_word(out: &mut Vec<SymExpr>, word: SymExpr) {
-    for byte in word_bytes(word) {
+    for byte in word.into_bytes() {
         push_hex_byte(out, byte);
     }
 }

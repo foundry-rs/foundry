@@ -278,7 +278,7 @@ impl SymExpr {
             return None;
         }
 
-        let slot = word_from_bytes(bytes[32..64].iter().cloned());
+        let slot = Self::from_bytes(bytes[32..64].iter().cloned());
         match slot.kind() {
             SymExprKind::Const(slot) => Some(*slot),
             SymExprKind::Keccak { .. } => slot.storage_mapping_root_slot(),
@@ -324,46 +324,6 @@ fn context_forces_masked_expr(context: &[SymBoolExpr], target: &SymExpr, mask: U
         SymBoolExprKind::And(values) => context_forces_masked_expr(values, target, mask),
         _ => false,
     })
-}
-
-pub(crate) fn word_bytes(word: SymExpr) -> Vec<SymExpr> {
-    if let Some(word) = word.as_const() {
-        return word
-            .to_be_bytes::<32>()
-            .into_iter()
-            .map(|byte| SymExpr::constant(U256::from(byte)))
-            .collect();
-    }
-    let expr = word;
-    (0..32).map(|idx| byte_expr(idx, &expr)).collect()
-}
-
-pub(crate) fn word_from_bytes(bytes: impl IntoIterator<Item = SymExpr>) -> SymExpr {
-    let bytes = bytes.into_iter().collect::<Vec<_>>();
-    if let Ok(concrete) = bytes.concrete_bytes("symbolic word bytes") {
-        let mut word = [0u8; 32];
-        for (idx, byte) in concrete.into_iter().take(32).enumerate() {
-            word[idx] = byte;
-        }
-        return SymExpr::constant(U256::from_be_bytes(word));
-    }
-
-    if let Some(expr) = bytes.word_from_extracted_bytes() {
-        return expr;
-    }
-
-    let mut expr = SymExpr::constant(U256::ZERO);
-    for (idx, byte) in bytes.into_iter().take(32).enumerate() {
-        let shift = (31 - idx) * 8;
-        let byte = byte.low_byte();
-        let byte = if shift == 0 {
-            byte
-        } else {
-            SymExpr::op(SymExprOp::Shl, byte, SymExpr::constant(U256::from(shift)))
-        };
-        expr = SymExpr::op(SymExprOp::Or, expr, byte);
-    }
-    expr
 }
 
 pub(crate) trait SymExprSliceExt {
@@ -552,6 +512,45 @@ impl SymExpr {
             return Self::constant(U256::from(word.to::<u8>()));
         }
         Self::op(SymExprOp::And, self, Self::constant(U256::from(0xff)))
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<Self> {
+        if let Some(word) = self.as_const() {
+            return word
+                .to_be_bytes::<32>()
+                .into_iter()
+                .map(|byte| Self::constant(U256::from(byte)))
+                .collect();
+        }
+        (0..32).map(|idx| byte_expr(idx, &self)).collect()
+    }
+
+    pub(crate) fn from_bytes(bytes: impl IntoIterator<Item = Self>) -> Self {
+        let bytes = bytes.into_iter().collect::<Vec<_>>();
+        if let Ok(concrete) = bytes.concrete_bytes("symbolic word bytes") {
+            let mut word = [0u8; 32];
+            for (idx, byte) in concrete.into_iter().take(32).enumerate() {
+                word[idx] = byte;
+            }
+            return Self::constant(U256::from_be_bytes(word));
+        }
+
+        if let Some(expr) = bytes.word_from_extracted_bytes() {
+            return expr;
+        }
+
+        let mut expr = Self::constant(U256::ZERO);
+        for (idx, byte) in bytes.into_iter().take(32).enumerate() {
+            let shift = (31 - idx) * 8;
+            let byte = byte.low_byte();
+            let byte = if shift == 0 {
+                byte
+            } else {
+                Self::op(SymExprOp::Shl, byte, Self::constant(U256::from(shift)))
+            };
+            expr = Self::op(SymExprOp::Or, expr, byte);
+        }
+        expr
     }
 
     pub(crate) fn as_const(&self) -> Option<U256> {

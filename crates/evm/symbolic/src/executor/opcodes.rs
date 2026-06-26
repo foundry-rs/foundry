@@ -29,7 +29,7 @@ impl SymbolicExecutor {
                     .chain(code.read_bytes(state.pc, n))
                     .collect::<Vec<_>>();
                 state.pc = end;
-                state.stack.push(word_from_bytes(bytes))?;
+                state.stack.push(SymExpr::from_bytes(bytes))?;
             }
             opcode::DUP1..=opcode::DUP16 => {
                 let n = (op - opcode::DUP1 + 1) as usize;

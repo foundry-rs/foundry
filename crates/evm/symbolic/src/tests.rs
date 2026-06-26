@@ -286,9 +286,9 @@ fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
 fn word_reassembly_preserves_split_symbolic_word() {
     let original =
         SymExpr::op(SymExprOp::Add, SymExpr::var("value"), SymExpr::constant(U256::from(1)));
-    let bytes = word_bytes(original.clone());
+    let bytes = original.clone().into_bytes();
 
-    assert_eq!(word_from_bytes(bytes), original);
+    assert_eq!(SymExpr::from_bytes(bytes), original);
 }
 
 #[test]
@@ -301,7 +301,7 @@ fn symbolic_address_aliases_match_abi_encoded_address_words() {
     );
     let mut encoded = vec![SymExpr::zero(); 12];
     encoded.extend((12..32).map(|idx| byte_word(U256::from(idx), masked.clone())));
-    let reassembled = word_from_bytes(encoded);
+    let reassembled = SymExpr::from_bytes(encoded);
 
     assert!(source.symbolic_address_equivalent(&reassembled));
     assert_eq!(source.symbolic_address_key(), reassembled.symbolic_address_key());
@@ -404,7 +404,7 @@ fn calldata_load_accepts_symbolic_offsets() {
     let calldata =
         SymCalldata::new((0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
     let loaded = calldata.load_word(SymExpr::var("offset")).unwrap();
-    let expected = word_from_bytes((1u8..33).map(|idx| SymExpr::constant(U256::from(idx + 1))));
+    let expected = SymExpr::from_bytes((1u8..33).map(|idx| SymExpr::constant(U256::from(idx + 1))));
 
     assert_eq!(
         loaded.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(1))])).unwrap(),
@@ -851,7 +851,7 @@ fn memory_read_bytes_accepts_symbolic_offsets() {
     let value = SymExpr::var("word");
 
     memory.store_word(7, value);
-    let loaded = word_from_bytes(memory.read_bytes_offset(SymExpr::var("offset"), 32));
+    let loaded = SymExpr::from_bytes(memory.read_bytes_offset(SymExpr::var("offset"), 32));
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
@@ -925,7 +925,7 @@ fn memory_copy_accepts_symbolic_destination_offsets() {
 #[test]
 fn memory_call_output_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
-    let return_data = SymReturnData::from_symbolic_bytes(word_bytes(SymExpr::var("word")));
+    let return_data = SymReturnData::from_symbolic_bytes(SymExpr::var("word").into_bytes());
 
     memory
         .copy_call_output_offset(SymExpr::var("dest"), &BoundedCopySize::Concrete(32), &return_data)
@@ -1180,7 +1180,7 @@ fn abi_bytes_encoding_accepts_symbolic_length() {
             SymExpr::constant(U256::from(0x44)),
         ],
     );
-    let length = word_from_bytes(encoded[..32].iter().cloned());
+    let length = SymExpr::from_bytes(encoded[..32].iter().cloned());
 
     assert_eq!(
         length.eval_model(&BTreeMap::from([("len".to_string(), U256::from(2))])).unwrap(),
@@ -1296,7 +1296,7 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
 
     memory.copy_symbolic(7, vec![SymExpr::constant(U256::from(opcode::STOP)), SymExpr::var("arg")]);
     let initcode = SymCode::from_memory_offset(&memory, SymExpr::var("offset"), 2);
-    let word = word_from_bytes(
+    let word = SymExpr::from_bytes(
         initcode.read_bytes(0, 2).into_iter().chain(std::iter::repeat_with(SymExpr::zero).take(30)),
     );
 
@@ -1396,7 +1396,7 @@ fn symbolic_push_data_reconstructs_symbolic_word() {
         SymExpr::var("immutable_lo"),
     ]);
 
-    let word = word_from_bytes(
+    let word = SymExpr::from_bytes(
         std::iter::repeat_with(SymExpr::zero).take(30).chain(code.read_bytes(1, 2)),
     );
 
@@ -1411,11 +1411,11 @@ fn abi_bytes_return_encodes_symbolic_bytes() {
     ]);
 
     assert_eq!(
-        word_from_bytes((0..32).map(|idx| ret.byte(idx))),
+        SymExpr::from_bytes((0..32).map(|idx| ret.byte(idx))),
         SymExpr::constant(U256::from(32))
     );
     assert_eq!(
-        word_from_bytes((32..64).map(|idx| ret.byte(idx))),
+        SymExpr::from_bytes((32..64).map(|idx| ret.byte(idx))),
         SymExpr::constant(U256::from(2))
     );
     assert_eq!(ret.byte(64), SymExpr::var("calldata_byte_0"));
@@ -1430,17 +1430,17 @@ fn abi_bytes_return_can_encode_symbolic_length() {
     );
 
     assert_eq!(
-        word_from_bytes((0..32).map(|idx| ret.byte(idx))),
+        SymExpr::from_bytes((0..32).map(|idx| ret.byte(idx))),
         SymExpr::constant(U256::from(32))
     );
-    assert_eq!(word_from_bytes((32..64).map(|idx| ret.byte(idx))), SymExpr::var("len"));
+    assert_eq!(SymExpr::from_bytes((32..64).map(|idx| ret.byte(idx))), SymExpr::var("len"));
     assert_eq!(ret.byte(64), SymExpr::var("byte_0"));
     assert_eq!(ret.byte(65), SymExpr::var("byte_1"));
 }
 
 #[test]
 fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
-    let bytes = word_bytes(SymExpr::var("slot_key"));
+    let bytes = SymExpr::var("slot_key").into_bytes();
 
     let first = keccak_word(bytes.clone());
     let second = keccak_word(bytes);
@@ -1466,8 +1466,8 @@ fn symbolic_keccak_tracks_symbolic_length() {
 fn sym_expr_eval_computes_symbolic_keccak_from_model() {
     let owner = Address::from([0x11; 20]);
     let slot = U256::from(1);
-    let mut bytes = word_bytes(SymExpr::var("owner"));
-    bytes.extend(word_bytes(SymExpr::constant(slot)));
+    let mut bytes = SymExpr::var("owner").into_bytes();
+    bytes.extend(SymExpr::constant(slot).into_bytes());
     let word = keccak_word(bytes);
 
     let mut input = Vec::new();
@@ -1500,8 +1500,8 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     )
     .unwrap()
     .unwrap();
-    let sha_word = word_from_bytes((0..32).map(|idx| sha.byte(idx)));
-    let sha_again_word = word_from_bytes((0..32).map(|idx| sha_again.byte(idx)));
+    let sha_word = SymExpr::from_bytes((0..32).map(|idx| sha.byte(idx)));
+    let sha_again_word = SymExpr::from_bytes((0..32).map(|idx| sha_again.byte(idx)));
 
     assert_eq!(sha.len(), 32);
     assert_eq!(sha_word, sha_again_word);
@@ -1676,7 +1676,7 @@ fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
 #[test]
 fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
     let owner = SymExpr::var("owner");
-    let base = keccak_word(word_bytes(owner));
+    let base = keccak_word(owner.into_bytes());
     let left = add_words(base.clone(), SymExpr::var("left_index"));
     let right = add_words(base, SymExpr::var("right_index"));
 
@@ -1702,7 +1702,7 @@ fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
 #[test]
 fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let owner = SymExpr::var("owner");
-    let layout_key = add_words(keccak_word(word_bytes(owner)), SymExpr::constant(U256::ZERO));
+    let layout_key = add_words(keccak_word(owner.into_bytes()), SymExpr::constant(U256::ZERO));
 
     assert_eq!(
         layout_key.storage_key_eq(&SymExpr::constant(U256::ZERO)),
@@ -1716,16 +1716,16 @@ fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
     let spender = SymExpr::var("spender");
     let recipient = SymExpr::var("recipient");
 
-    let mut balance_key_bytes = word_bytes(recipient);
-    balance_key_bytes.extend(word_bytes(SymExpr::constant(U256::ZERO)));
+    let mut balance_key_bytes = recipient.into_bytes();
+    balance_key_bytes.extend(SymExpr::constant(U256::ZERO).into_bytes());
     let balance_key = keccak_word(balance_key_bytes);
 
-    let mut inner_key_bytes = word_bytes(owner);
-    inner_key_bytes.extend(word_bytes(SymExpr::constant(U256::from(1))));
+    let mut inner_key_bytes = owner.into_bytes();
+    inner_key_bytes.extend(SymExpr::constant(U256::from(1)).into_bytes());
     let inner_key = keccak_word(inner_key_bytes);
 
-    let mut allowance_key_bytes = word_bytes(spender);
-    allowance_key_bytes.extend(word_bytes(inner_key));
+    let mut allowance_key_bytes = spender.into_bytes();
+    allowance_key_bytes.extend(inner_key.into_bytes());
     let allowance_key = keccak_word(allowance_key_bytes);
 
     let same_address = precompile_address(0x60);
@@ -2229,7 +2229,7 @@ fn solver_normalizes_erc4626_style_share_zero_predicate() {
 fn solver_rebuilds_word_from_extracted_byte_terms() {
     let masked =
         SymExpr::op(SymExprOp::And, SymExpr::var("word"), SymExpr::constant(U256::from(u64::MAX)));
-    let rebuilt = normalize_expr_for_solver(word_from_bytes(word_bytes(masked.clone())));
+    let rebuilt = normalize_expr_for_solver(SymExpr::from_bytes(masked.clone().into_bytes()));
 
     assert_eq!(rebuilt, normalize_expr_for_solver(masked));
 }

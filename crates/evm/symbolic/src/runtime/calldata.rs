@@ -36,7 +36,7 @@ impl SymCalldata {
     }
 
     pub(crate) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
+        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
     pub(crate) fn byte(&self, offset: usize) -> SymExpr {

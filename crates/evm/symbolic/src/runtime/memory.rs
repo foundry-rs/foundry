@@ -96,7 +96,7 @@ impl SymMemory {
     }
 
     pub(crate) fn store_word(&mut self, offset: usize, value: SymExpr) {
-        self.store_bytes(offset, word_bytes(value));
+        self.store_bytes(offset, value.into_bytes());
     }
 
     pub(crate) fn store_word_offset(&mut self, offset: SymExpr, value: SymExpr) {
@@ -105,7 +105,7 @@ impl SymMemory {
                 self.store_word(offset, value);
             }
         } else {
-            self.store_symbolic_bytes(offset, word_bytes(value));
+            self.store_symbolic_bytes(offset, value.into_bytes());
         }
     }
 
@@ -159,7 +159,7 @@ impl SymMemory {
     }
 
     pub(crate) fn load_word(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
+        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
     pub(crate) fn load_word_offset(&self, offset: SymExpr) -> Result<SymExpr, SymbolicError> {
@@ -167,7 +167,7 @@ impl SymMemory {
             let Ok(offset) = usize::try_from(offset) else { return Ok(SymExpr::zero()) };
             self.load_word(offset)
         } else {
-            Ok(word_from_bytes(self.read_bytes_offset(offset, 32)))
+            Ok(SymExpr::from_bytes(self.read_bytes_offset(offset, 32)))
         }
     }
 
@@ -795,7 +795,7 @@ impl Default for SymReturnData {
 
 impl SymReturnData {
     pub(crate) fn from_words(words: Vec<SymExpr>) -> Self {
-        let bytes = words.into_iter().flat_map(word_bytes).collect::<Vec<_>>();
+        let bytes = words.into_iter().flat_map(SymExpr::into_bytes).collect::<Vec<_>>();
         Self::from_symbolic_bytes(bytes)
     }
 
@@ -861,7 +861,7 @@ impl SymReturnData {
         if offset.saturating_add(32) > self.len() {
             return Err(SymbolicError::Unsupported("out-of-bounds symbolic returndata word"));
         }
-        Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
+        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
     pub(crate) fn read_concrete(&self, reason: &'static str) -> Result<Vec<u8>, SymbolicError> {

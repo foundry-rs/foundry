@@ -101,7 +101,7 @@ impl SymbolicCalldata {
 
     #[cfg(test)]
     pub(super) fn load(&self, offset: usize) -> Result<SymExpr, SymbolicError> {
-        Ok(word_from_bytes((0..32).map(|idx| self.byte(offset + idx))))
+        Ok(SymExpr::from_bytes((0..32).map(|idx| self.byte(offset + idx))))
     }
 
     #[cfg(test)]
@@ -650,7 +650,7 @@ impl SymbolicAbiValue {
             Self::Bool { word }
             | Self::Uint { word, .. }
             | Self::Int { word, .. }
-            | Self::Address { word } => word_bytes(word.clone()),
+            | Self::Address { word } => word.clone().into_bytes(),
             Self::FixedBytes { bytes, .. } => {
                 let mut out = bytes.to_vec();
                 out.resize(32, SymExpr::zero());
@@ -672,7 +672,7 @@ impl SymbolicAbiValue {
                 encode_packed_bytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
             }
             Self::Array { elements } => {
-                let mut out = word_bytes(SymExpr::constant(U256::from(elements.len())));
+                let mut out = SymExpr::constant(U256::from(elements.len())).into_bytes();
                 out.extend(encode_sequence(elements.iter()));
                 out
             }
@@ -758,7 +758,7 @@ pub(super) fn encode_sequence<'a>(
 
     for value in values {
         if value.is_dynamic() {
-            head.extend(word_bytes(SymExpr::constant(U256::from(head_size + tail.len()))));
+            head.extend(SymExpr::constant(U256::from(head_size + tail.len())).into_bytes());
             tail.extend(value.encode_dynamic_body());
         } else {
             head.extend(value.encode_static());
@@ -770,7 +770,7 @@ pub(super) fn encode_sequence<'a>(
 }
 
 pub(super) fn encode_packed_bytes_with_len(len: SymExpr, bytes: &[SymExpr]) -> Vec<SymExpr> {
-    let mut out = word_bytes(len);
+    let mut out = len.into_bytes();
     out.extend(bytes.iter().cloned());
     out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
     out

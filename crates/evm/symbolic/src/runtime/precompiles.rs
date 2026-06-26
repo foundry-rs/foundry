@@ -89,9 +89,9 @@ pub(crate) fn execute_symbolic_precompile(
             bytes.extend((12..32).map(|idx| byte_word(U256::from(idx), word.clone())));
             Ok(Some(SymReturnData::from_symbolic_bytes(bytes)))
         }
-        Some(2) => Ok(Some(SymReturnData::from_symbolic_bytes(word_bytes(
-            symbolic_hash_word_with_len("sha256", input, input_len),
-        )))),
+        Some(2) => Ok(Some(SymReturnData::from_symbolic_bytes(
+            symbolic_hash_word_with_len("sha256", input, input_len).into_bytes(),
+        ))),
         Some(3) => {
             let word = symbolic_hash_word_with_len("ripemd160", input, input_len);
             let mut bytes = vec![SymExpr::zero(); 12];
@@ -232,11 +232,10 @@ pub(crate) fn symbolic_fixed_len_precompile_output(
         let mut chunk_input = Vec::with_capacity(input.len() + 1);
         chunk_input.push(SymExpr::constant(U256::from(chunk)));
         chunk_input.extend(input.iter().cloned());
-        bytes.extend(word_bytes(symbolic_hash_word_with_len(
-            algorithm,
-            chunk_input,
-            input_len_word.clone(),
-        )));
+        bytes.extend(
+            symbolic_hash_word_with_len(algorithm, chunk_input, input_len_word.clone())
+                .into_bytes(),
+        );
     }
     bytes.truncate(output_len);
     SymReturnData::from_symbolic_bytes(bytes)
