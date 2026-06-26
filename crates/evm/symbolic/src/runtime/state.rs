@@ -315,52 +315,31 @@ impl PathState {
         self.constrained_word(&word).ok_or(SymbolicError::Unsupported(reason))
     }
 
-    pub(crate) fn bin_word(
-        &mut self,
-        concrete: impl FnOnce(U256, U256) -> U256,
-        op: SymExprOp,
-    ) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn bin_word(&mut self, op: SymExprOp) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
-            self.stack.push(SymExpr::constant(concrete(a_value, b_value)))?;
-        } else {
-            self.stack.push(SymExpr::op(op, a, b))?;
-        }
+        self.stack.push(SymExpr::op(op, a, b))?;
         Ok(StepOutcome::Continue)
     }
 
     pub(crate) fn bin_word_div_zero_guard(
         &mut self,
-        concrete: impl FnOnce(U256, U256) -> U256,
         op: SymExprOp,
     ) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
-            self.stack.push(SymExpr::constant(concrete(a_value, b_value)))?;
-        } else {
-            self.stack.push(SymExpr::ite(
-                SymBoolExpr::eq(b.clone(), SymExpr::constant(U256::ZERO)),
-                SymExpr::constant(U256::ZERO),
-                SymExpr::op(op, a, b),
-            ))?;
-        }
+        self.stack.push(SymExpr::ite(
+            SymBoolExpr::eq(b.clone(), SymExpr::constant(U256::ZERO)),
+            SymExpr::constant(U256::ZERO),
+            SymExpr::op(op, a, b),
+        ))?;
         Ok(StepOutcome::Continue)
     }
 
-    pub(crate) fn cmp_word(
-        &mut self,
-        concrete: impl FnOnce(U256, U256) -> bool,
-        op: SymBoolExprOp,
-    ) -> Result<StepOutcome, SymbolicError> {
+    pub(crate) fn cmp_word(&mut self, op: SymBoolExprOp) -> Result<StepOutcome, SymbolicError> {
         let a = self.stack.pop()?;
         let b = self.stack.pop()?;
-        if let (Some(a_value), Some(b_value)) = (a.as_const(), b.as_const()) {
-            self.stack.push(SymExpr::constant(U256::from(concrete(a_value, b_value))))?;
-        } else {
-            self.stack.push(SymExpr::from_bool(SymBoolExpr::cmp(op, a, b)))?;
-        }
+        self.stack.push(SymExpr::from_bool(SymBoolExpr::cmp(op, a, b)))?;
         Ok(StepOutcome::Continue)
     }
 

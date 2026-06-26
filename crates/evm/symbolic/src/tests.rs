@@ -109,7 +109,7 @@ fn binary_helpers_use_evm_operand_order() {
     state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(U256::from(10))).unwrap();
 
-    state.bin_word(|a, b| a.wrapping_sub(b), SymExprOp::Sub).unwrap();
+    state.bin_word(SymExprOp::Sub).unwrap();
 
     assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::from(8)));
 }
@@ -121,7 +121,7 @@ fn comparison_helpers_use_evm_operand_order() {
     state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
     state.stack.push(SymExpr::constant(U256::from(10))).unwrap();
 
-    state.cmp_word(|a, b| a < b, SymBoolExprOp::Ult).unwrap();
+    state.cmp_word(SymBoolExprOp::Ult).unwrap();
 
     assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::ZERO));
 }
@@ -228,12 +228,7 @@ fn symbolic_division_guards_zero_divisor() {
     state.stack.push(SymExpr::var("den")).unwrap();
     state.stack.push(SymExpr::var("num")).unwrap();
 
-    state
-        .bin_word_div_zero_guard(
-            |a, b| if b.is_zero() { U256::ZERO } else { a / b },
-            SymExprOp::UDiv,
-        )
-        .unwrap();
+    state.bin_word_div_zero_guard(SymExprOp::UDiv).unwrap();
 
     assert_eq!(
         state.stack.pop().unwrap(),

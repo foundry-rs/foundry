@@ -14,82 +14,63 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         state.pc += 1;
 
-        if op == opcode::PUSH0 {
-            state.stack.push(SymExpr::zero())?;
-            return Ok(StepOutcome::Continue);
-        }
-        if (opcode::PUSH1..=opcode::PUSH32).contains(&op) {
-            let n = (op - opcode::PUSH1 + 1) as usize;
-            let end = state.pc.saturating_add(n);
-            if end > code.len() {
-                return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
-            }
-            let bytes = std::iter::repeat_with(SymExpr::zero)
-                .take(32 - n)
-                .chain(code.read_bytes(state.pc, n))
-                .collect::<Vec<_>>();
-            state.pc = end;
-            state.stack.push(word_from_bytes(bytes))?;
-            return Ok(StepOutcome::Continue);
-        }
-        if (opcode::DUP1..=opcode::DUP16).contains(&op) {
-            let n = (op - opcode::DUP1 + 1) as usize;
-            let value = state.stack.peek(n - 1)?.clone();
-            state.stack.push(value)?;
-            return Ok(StepOutcome::Continue);
-        }
-        if (opcode::SWAP1..=opcode::SWAP16).contains(&op) {
-            let n = (op - opcode::SWAP1 + 1) as usize;
-            state.stack.swap(n)?;
-            return Ok(StepOutcome::Continue);
-        }
-
         match op {
+            opcode::PUSH0 => {
+                state.stack.push(SymExpr::zero())?;
+                Ok(StepOutcome::Continue)
+            }
+            op if (opcode::PUSH1..=opcode::PUSH32).contains(&op) => {
+                let n = (op - opcode::PUSH1 + 1) as usize;
+                let end = state.pc.saturating_add(n);
+                if end > code.len() {
+                    return Err(SymbolicError::InvalidBytecode("truncated PUSH data"));
+                }
+                let bytes = std::iter::repeat_with(SymExpr::zero)
+                    .take(32 - n)
+                    .chain(code.read_bytes(state.pc, n))
+                    .collect::<Vec<_>>();
+                state.pc = end;
+                state.stack.push(word_from_bytes(bytes))?;
+                Ok(StepOutcome::Continue)
+            }
+            op if (opcode::DUP1..=opcode::DUP16).contains(&op) => {
+                let n = (op - opcode::DUP1 + 1) as usize;
+                let value = state.stack.peek(n - 1)?.clone();
+                state.stack.push(value)?;
+                Ok(StepOutcome::Continue)
+            }
+            op if (opcode::SWAP1..=opcode::SWAP16).contains(&op) => {
+                let n = (op - opcode::SWAP1 + 1) as usize;
+                state.stack.swap(n)?;
+                Ok(StepOutcome::Continue)
+            }
             opcode::STOP => Ok(StepOutcome::Halt),
-            opcode::ADD => state.bin_word(|a, b| a.wrapping_add(b), SymExprOp::Add),
-            opcode::SUB => state.bin_word(|a, b| a.wrapping_sub(b), SymExprOp::Sub),
-            opcode::MUL => state.bin_word(|a, b| a.wrapping_mul(b), SymExprOp::Mul),
+            opcode::ADD => state.bin_word(SymExprOp::Add),
+            opcode::SUB => state.bin_word(SymExprOp::Sub),
+            opcode::MUL => state.bin_word(SymExprOp::Mul),
             opcode::EXP => state.exp_word(),
-            opcode::DIV => state.bin_word_div_zero_guard(
-                |a, b| if b.is_zero() { U256::ZERO } else { a / b },
-                SymExprOp::UDiv,
-            ),
-            opcode::SDIV => state.bin_word_div_zero_guard(sdiv, SymExprOp::SDiv),
-            opcode::MOD => state.bin_word_div_zero_guard(
-                |a, b| if b.is_zero() { U256::ZERO } else { a % b },
-                SymExprOp::URem,
-            ),
-            opcode::SMOD => state.bin_word_div_zero_guard(smod, SymExprOp::SRem),
+            opcode::DIV => state.bin_word_div_zero_guard(SymExprOp::UDiv),
+            opcode::SDIV => state.bin_word_div_zero_guard(SymExprOp::SDiv),
+            opcode::MOD => state.bin_word_div_zero_guard(SymExprOp::URem),
+            opcode::SMOD => state.bin_word_div_zero_guard(SymExprOp::SRem),
             opcode::ADDMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                if let (Some(a_value), Some(b_value), Some(n_value)) =
-                    (a.as_const(), b.as_const(), n.as_const())
-                {
-                    state.stack.push(SymExpr::constant(addmod_word(a_value, b_value, n_value)))?;
-                } else {
-                    state.stack.push(SymExpr::addmod(a, b, n))?;
-                }
+                state.stack.push(SymExpr::addmod(a, b, n))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::MULMOD => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
                 let n = state.stack.pop()?;
-                if let (Some(a_value), Some(b_value), Some(n_value)) =
-                    (a.as_const(), b.as_const(), n.as_const())
-                {
-                    state.stack.push(SymExpr::constant(mulmod_word(a_value, b_value, n_value)))?;
-                } else {
-                    state.stack.push(SymExpr::mulmod(a, b, n))?;
-                }
+                state.stack.push(SymExpr::mulmod(a, b, n))?;
                 Ok(StepOutcome::Continue)
             }
-            opcode::LT => state.cmp_word(|a, b| a < b, SymBoolExprOp::Ult),
-            opcode::GT => state.cmp_word(|a, b| a > b, SymBoolExprOp::Ugt),
-            opcode::SLT => state.cmp_word(slt, SymBoolExprOp::Slt),
-            opcode::SGT => state.cmp_word(|a, b| slt(b, a), SymBoolExprOp::Sgt),
+            opcode::LT => state.cmp_word(SymBoolExprOp::Ult),
+            opcode::GT => state.cmp_word(SymBoolExprOp::Ugt),
+            opcode::SLT => state.cmp_word(SymBoolExprOp::Slt),
+            opcode::SGT => state.cmp_word(SymBoolExprOp::Sgt),
             opcode::EQ => {
                 let a = state.stack.pop()?;
                 let b = state.stack.pop()?;
@@ -101,16 +82,12 @@ impl SymbolicExecutor {
                 state.stack.push(SymExpr::from_bool(value.into_zero_bool()))?;
                 Ok(StepOutcome::Continue)
             }
-            opcode::AND => state.bin_word(|a, b| a & b, SymExprOp::And),
-            opcode::OR => state.bin_word(|a, b| a | b, SymExprOp::Or),
-            opcode::XOR => state.bin_word(|a, b| a ^ b, SymExprOp::Xor),
+            opcode::AND => state.bin_word(SymExprOp::And),
+            opcode::OR => state.bin_word(SymExprOp::Or),
+            opcode::XOR => state.bin_word(SymExprOp::Xor),
             opcode::NOT => {
                 let value = state.stack.pop()?;
-                if let Some(value) = value.as_const() {
-                    state.stack.push(SymExpr::constant(!value))?;
-                } else {
-                    state.stack.push(SymExpr::not(value))?;
-                }
+                state.stack.push(SymExpr::not(value))?;
                 Ok(StepOutcome::Continue)
             }
             opcode::SIGNEXTEND => {
