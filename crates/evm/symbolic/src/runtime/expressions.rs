@@ -234,75 +234,76 @@ pub(crate) fn read_storage_writes(
     value
 }
 
-pub(crate) fn storage_select(
-    read_key: SymExpr,
-    write_key: SymExpr,
-    write_value: SymExpr,
-    base: SymExpr,
-) -> SymExpr {
-    if write_value == base {
-        return base;
-    }
-    let condition = storage_key_eq(read_key, write_key);
-    match condition.as_const() {
-        Some(true) => write_value,
-        Some(false) => base,
-        None => SymExpr::ite(condition, write_value, base),
-    }
-}
-
-pub(crate) fn storage_key_eq(read_key: SymExpr, write_key: SymExpr) -> SymBoolExpr {
-    if let (Some(read_root), Some(write_root)) =
-        (storage_mapping_root_slot(&read_key), storage_mapping_root_slot(&write_key))
-        && read_root != write_root
-    {
-        return SymBoolExpr::constant(false);
-    }
-    match (storage_layout_key(&read_key), storage_layout_key(&write_key)) {
-        (Some((read_base, read_offset)), Some((write_base, write_offset))) => {
-            SymBoolExpr::and(vec![
-                SymBoolExpr::eq(read_base, write_base),
-                SymBoolExpr::eq(read_offset, write_offset),
-            ])
+impl SymExpr {
+    pub(crate) fn select_storage_write(
+        self,
+        write_key: Self,
+        write_value: Self,
+        base: Self,
+    ) -> Self {
+        if write_value == base {
+            return base;
         }
-        (Some(_), None) if write_key.as_const().is_some() => SymBoolExpr::constant(false),
-        (None, Some(_)) if read_key.as_const().is_some() => SymBoolExpr::constant(false),
-        _ => SymBoolExpr::eq(read_key, write_key),
-    }
-}
-
-/// Returns the root Solidity storage slot for a mapping-style keccak key.
-pub(crate) fn storage_mapping_root_slot(key: &SymExpr) -> Option<U256> {
-    let SymExprKind::Keccak { len, bytes, .. } = key.kind() else { return None };
-    if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
-        return None;
-    }
-
-    let slot = word_from_bytes(bytes[32..64].iter().cloned());
-    match slot.kind() {
-        SymExprKind::Const(slot) => Some(*slot),
-        SymExprKind::Keccak { .. } => storage_mapping_root_slot(&slot),
-        _ => None,
-    }
-}
-
-pub(crate) fn storage_layout_key(key: &SymExpr) -> Option<(SymExpr, SymExpr)> {
-    match key.kind() {
-        SymExprKind::Keccak { .. } => Some((key.clone(), SymExpr::constant(U256::ZERO))),
-        SymExprKind::Op(SymExprOp::Add, left, right) => {
-            if let Some((base, offset)) = storage_layout_key(left)
-                && !right.contains_keccak()
-            {
-                return Some((base, SymExpr::op(SymExprOp::Add, offset, right.clone())));
-            }
-            if let Some((base, offset)) = storage_layout_key(right)
-                && !left.contains_keccak()
-            {
-                return Some((base, SymExpr::op(SymExprOp::Add, offset, left.clone())));
-            }
-            None
+        let condition = self.storage_key_eq(&write_key);
+        match condition.as_const() {
+            Some(true) => write_value,
+            Some(false) => base,
+            None => Self::ite(condition, write_value, base),
         }
-        _ => None,
+    }
+
+    pub(crate) fn storage_key_eq(&self, write_key: &Self) -> SymBoolExpr {
+        if let (Some(read_root), Some(write_root)) =
+            (self.storage_mapping_root_slot(), write_key.storage_mapping_root_slot())
+            && read_root != write_root
+        {
+            return SymBoolExpr::constant(false);
+        }
+        match (self.storage_layout_key(), write_key.storage_layout_key()) {
+            (Some((read_base, read_offset)), Some((write_base, write_offset))) => {
+                SymBoolExpr::and(vec![
+                    SymBoolExpr::eq(read_base, write_base),
+                    SymBoolExpr::eq(read_offset, write_offset),
+                ])
+            }
+            (Some(_), None) if write_key.as_const().is_some() => SymBoolExpr::constant(false),
+            (None, Some(_)) if self.as_const().is_some() => SymBoolExpr::constant(false),
+            _ => SymBoolExpr::eq(self.clone(), write_key.clone()),
+        }
+    }
+
+    fn storage_mapping_root_slot(&self) -> Option<U256> {
+        let SymExprKind::Keccak { len, bytes, .. } = self.kind() else { return None };
+        if len.as_const() != Some(U256::from(64)) || bytes.len() < 64 {
+            return None;
+        }
+
+        let slot = word_from_bytes(bytes[32..64].iter().cloned());
+        match slot.kind() {
+            SymExprKind::Const(slot) => Some(*slot),
+            SymExprKind::Keccak { .. } => slot.storage_mapping_root_slot(),
+            _ => None,
+        }
+    }
+
+    fn storage_layout_key(&self) -> Option<(Self, Self)> {
+        match self.kind() {
+            SymExprKind::Keccak { .. } => Some((self.clone(), Self::constant(U256::ZERO))),
+            SymExprKind::Op(SymExprOp::Add, left, right) => {
+                if let Some((base, offset)) = left.storage_layout_key()
+                    && !right.contains_keccak()
+                {
+                    return Some((base, Self::op(SymExprOp::Add, offset, right.clone())));
+                }
+                if let Some((base, offset)) = right.storage_layout_key()
+                    && !left.contains_keccak()
+                {
+                    return Some((base, Self::op(SymExprOp::Add, offset, left.clone())));
+                }
+                None
+            }
+            _ => None,
+        }
     }
 }
 

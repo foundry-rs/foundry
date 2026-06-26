@@ -1681,7 +1681,7 @@ fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
     let right = add_words(base, SymExpr::var("right_index"));
 
     assert_eq!(
-        storage_key_eq(left, right),
+        left.storage_key_eq(&right),
         SymBoolExpr::eq(SymExpr::var("left_index"), SymExpr::var("right_index"))
     );
 }
@@ -1692,8 +1692,9 @@ fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
     let right_base = keccak_word(vec![SymExpr::var("right_owner")]);
     let index = SymExpr::var("index");
 
-    let condition =
-        storage_key_eq(add_words(left_base, index.clone()), add_words(right_base, index));
+    let left = add_words(left_base, index.clone());
+    let right = add_words(right_base, index);
+    let condition = left.storage_key_eq(&right);
 
     assert_eq!(condition, SymBoolExpr::eq(SymExpr::var("left_owner"), SymExpr::var("right_owner")));
 }
@@ -1704,7 +1705,7 @@ fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
     let layout_key = add_words(keccak_word(word_bytes(owner)), SymExpr::constant(U256::ZERO));
 
     assert_eq!(
-        storage_key_eq(layout_key, SymExpr::constant(U256::ZERO)),
+        layout_key.storage_key_eq(&SymExpr::constant(U256::ZERO)),
         SymBoolExpr::constant(false)
     );
 }
@@ -1733,7 +1734,7 @@ fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
         ("spender".to_string(), address_word(same_address)),
         ("recipient".to_string(), address_word(same_address)),
     ]);
-    let condition = storage_key_eq(balance_key, allowance_key);
+    let condition = balance_key.storage_key_eq(&allowance_key);
 
     assert_eq!(condition, SymBoolExpr::constant(false));
     assert!(!condition.eval_model(&model).unwrap());

@@ -1302,7 +1302,7 @@ impl StorageWrite {
     }
 
     pub(crate) fn select(&self, read_key: SymExpr, base: SymExpr) -> SymExpr {
-        storage_select(read_key, self.key.clone(), self.value.clone(), base)
+        read_key.select_storage_write(self.key.clone(), self.value.clone(), base)
     }
 }
 
