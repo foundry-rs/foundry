@@ -15,8 +15,6 @@ use foundry_wallets as _;
 
 pub mod args;
 pub mod cmd;
-pub mod diagnostic;
-pub mod introspect;
 pub mod opts;
 
 pub mod coverage;
@@ -26,11 +24,16 @@ pub mod gas_report;
 pub mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
+pub mod mutation;
+
+pub mod workspace;
+
 mod runner;
 pub use runner::ContractRunner;
 
 mod progress;
 pub mod result;
+mod symbolic_minimizer;
 
 // TODO: remove
 pub use foundry_common::traits::TestFilter;

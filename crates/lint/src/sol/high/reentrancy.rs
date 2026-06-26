@@ -1,7 +1,10 @@
 use super::ReentrancyEth;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{
+        Severity, SolLint,
+        analysis::helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
+    },
 };
 use solar::{
     ast::{
@@ -14,10 +17,10 @@ use solar::{
         hir::{
             self, CallArgs, CallArgsKind, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId,
         },
-        ty::TyKind,
+        ty::{TyFnKind, TyKind},
     },
 };
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 declare_forge_lint!(
     REENTRANCY_ETH,
@@ -34,7 +37,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for ReentrancyEth {
-    fn check_function_with_gcx(
+    fn check_function(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
@@ -48,6 +51,9 @@ impl<'hir> LateLintPass<'hir> for ReentrancyEth {
         let Some(body) = func.body else { return };
 
         let mut analyzer = Analyzer::new(ctx, gcx, hir);
+        if !analyzer.has_enabled_lints() {
+            return;
+        }
         let mut state = FlowState::default();
         analyzer.analyze_callable(func, body, &mut state);
     }
@@ -66,20 +72,20 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
     func.kind.is_function() && matches!(func.visibility, Visibility::Public | Visibility::External)
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 struct FlowState {
     state_reads: BTreeSet<VariableId>,
     pending_calls: Vec<PendingCall>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct PendingCall {
     span: Span,
     kind: ReentrantCallKind,
     state_reads: BTreeSet<VariableId>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum ReentrantCallKind {
     Eth,
     NoEth,
@@ -115,11 +121,45 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     emitted: HashSet<Span>,
     call_stack: Vec<FunctionId>,
+    inline_cache: HelperAnalysisCache<InlineCallKey, FlowState>,
+    recursive_cut_frontiers: HashMap<RecursiveFrontierKey, Vec<FunctionId>>,
+    direct_internal_calls: HashMap<FunctionId, Vec<FunctionId>>,
+    reentrancy_eth_enabled: bool,
+    reentrancy_no_eth_enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct InlineCallKey {
+    func_id: FunctionId,
+    /// First active function that can cut recursion from this callee.
+    recursive_cut: Option<FunctionId>,
+    state: FlowState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RecursiveFrontierKey {
+    func_id: FunctionId,
+    active_call_stack: Vec<FunctionId>,
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn new(ctx: &'ctx LintContext<'s, 'c>, gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { ctx, gcx, hir, emitted: HashSet::new(), call_stack: Vec::new() }
+        Self {
+            ctx,
+            gcx,
+            hir,
+            emitted: HashSet::new(),
+            call_stack: Vec::new(),
+            inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
+            recursive_cut_frontiers: HashMap::new(),
+            direct_internal_calls: HashMap::new(),
+            reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
+            reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
+        }
+    }
+
+    const fn has_enabled_lints(&self) -> bool {
+        self.reentrancy_eth_enabled || self.reentrancy_no_eth_enabled
     }
 
     fn analyze_callable(
@@ -272,7 +312,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     true
                 }
             }
-            StmtKind::Err(_) => true,
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
         }
     }
 
@@ -314,7 +354,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value, state);
                     }
                 }
@@ -325,7 +365,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 for func_id in resolved_function_ids(callee) {
                     self.analyze_internal_call(func_id, state);
                 }
-                if let Some(kind) = reentrant_call_kind(self.gcx, self.hir, callee, args, *opts) {
+                if !state.state_reads.is_empty()
+                    && let Some(kind) = self.reentrant_call_kind(callee, args, *opts)
+                {
                     state.push_call(expr.span, kind);
                 }
             }
@@ -384,7 +426,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     }
                 }
             }
-            ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -396,9 +438,219 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
+        let key = InlineCallKey {
+            func_id,
+            recursive_cut: self.first_recursive_cut(func_id),
+            state: state.clone(),
+        };
+        if self.inline_cache.is_in_progress(&key) {
+            return;
+        }
+        if let Some(cached) = self.inline_cache.get(&key) {
+            *state = cached.clone();
+            return;
+        }
+
+        let mut after = state.clone();
+        self.inline_cache.start(key.clone());
         self.call_stack.push(func_id);
-        self.analyze_callable(func, body, state);
+        self.analyze_callable(func, body, &mut after);
         self.call_stack.pop();
+
+        self.inline_cache.finish(key, after.clone());
+        *state = after;
+    }
+
+    fn first_recursive_cut(&mut self, func_id: FunctionId) -> Option<FunctionId> {
+        let active_call_stack = self.call_stack.iter().copied().collect::<BTreeSet<_>>();
+        if active_call_stack.is_empty() {
+            return None;
+        }
+
+        let active_call_stack = active_call_stack.into_iter().collect::<Vec<_>>();
+        let key = RecursiveFrontierKey { func_id, active_call_stack };
+        if let Some(frontier) = self.recursive_cut_frontiers.get(&key) {
+            return frontier.first().copied();
+        }
+
+        let active_call_stack = key.active_call_stack.iter().copied().collect::<BTreeSet<_>>();
+        let mut seen = HashSet::new();
+        let cut = self.first_recursive_cut_function(func_id, &active_call_stack, &mut seen);
+        self.recursive_cut_frontiers.insert(key, cut.into_iter().collect::<Vec<_>>());
+        cut
+    }
+
+    fn first_recursive_cut_function(
+        &mut self,
+        func_id: FunctionId,
+        active_call_stack: &BTreeSet<FunctionId>,
+        seen: &mut HashSet<FunctionId>,
+    ) -> Option<FunctionId> {
+        if !seen.insert(func_id) {
+            return None;
+        }
+
+        for callee_id in self.direct_internal_calls(func_id) {
+            if active_call_stack.contains(&callee_id) {
+                return Some(callee_id);
+            }
+            if let Some(cut) = self.first_recursive_cut_function(callee_id, active_call_stack, seen)
+            {
+                return Some(cut);
+            }
+        }
+        None
+    }
+
+    fn direct_internal_calls(&mut self, func_id: FunctionId) -> Vec<FunctionId> {
+        if let Some(calls) = self.direct_internal_calls.get(&func_id) {
+            return calls.clone();
+        }
+
+        let mut calls = BTreeSet::new();
+        let func = self.hir.function(func_id);
+        for modifier in func.modifiers {
+            for arg in modifier.args.exprs() {
+                self.collect_direct_internal_calls_expr(arg, &mut calls);
+            }
+            if let Some(modifier_id) = modifier.id.as_function() {
+                calls.insert(modifier_id);
+            }
+        }
+        if let Some(body) = func.body {
+            self.collect_direct_internal_calls_block(body, &mut calls);
+        }
+
+        let calls = calls.into_iter().collect::<Vec<_>>();
+        self.direct_internal_calls.insert(func_id, calls.clone());
+        calls
+    }
+
+    fn collect_direct_internal_calls_block(
+        &mut self,
+        block: hir::Block<'hir>,
+        calls: &mut BTreeSet<FunctionId>,
+    ) {
+        for stmt in block.stmts {
+            self.collect_direct_internal_calls_stmt(stmt, calls);
+        }
+    }
+
+    fn collect_direct_internal_calls_stmt(
+        &mut self,
+        stmt: &'hir hir::Stmt<'hir>,
+        calls: &mut BTreeSet<FunctionId>,
+    ) {
+        match stmt.kind {
+            StmtKind::DeclSingle(var_id) => {
+                if let Some(init) = self.hir.variable(var_id).initializer {
+                    self.collect_direct_internal_calls_expr(init, calls);
+                }
+            }
+            StmtKind::DeclMulti(_, expr)
+            | StmtKind::Expr(expr)
+            | StmtKind::Emit(expr)
+            | StmtKind::Revert(expr) => {
+                self.collect_direct_internal_calls_expr(expr, calls);
+            }
+            StmtKind::Return(expr) => {
+                if let Some(expr) = expr {
+                    self.collect_direct_internal_calls_expr(expr, calls);
+                }
+            }
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+                self.collect_direct_internal_calls_block(block, calls);
+            }
+            StmtKind::If(cond, then_stmt, else_stmt) => {
+                self.collect_direct_internal_calls_expr(cond, calls);
+                self.collect_direct_internal_calls_stmt(then_stmt, calls);
+                if let Some(else_stmt) = else_stmt {
+                    self.collect_direct_internal_calls_stmt(else_stmt, calls);
+                }
+            }
+            StmtKind::Try(try_stmt) => {
+                self.collect_direct_internal_calls_expr(&try_stmt.expr, calls);
+                for clause in try_stmt.clauses {
+                    self.collect_direct_internal_calls_block(clause.block, calls);
+                }
+            }
+            StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => {}
+        }
+    }
+
+    fn collect_direct_internal_calls_expr(
+        &mut self,
+        expr: &'hir hir::Expr<'hir>,
+        calls: &mut BTreeSet<FunctionId>,
+    ) {
+        match &expr.kind {
+            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+                self.collect_direct_internal_calls_expr(lhs, calls);
+                self.collect_direct_internal_calls_expr(rhs, calls);
+            }
+            ExprKind::Unary(_, inner)
+            | ExprKind::Delete(inner)
+            | ExprKind::Member(inner, _)
+            | ExprKind::Payable(inner) => {
+                self.collect_direct_internal_calls_expr(inner, calls);
+            }
+            ExprKind::Call(callee, args, opts) => {
+                self.collect_direct_internal_calls_expr(callee, calls);
+                if let Some(opts) = opts {
+                    for opt in opts.args {
+                        self.collect_direct_internal_calls_expr(&opt.value, calls);
+                    }
+                }
+                for arg in args.exprs() {
+                    self.collect_direct_internal_calls_expr(arg, calls);
+                }
+                for func_id in resolved_function_ids(callee) {
+                    calls.insert(func_id);
+                }
+            }
+            ExprKind::Index(base, index) => {
+                self.collect_direct_internal_calls_expr(base, calls);
+                if let Some(index) = index {
+                    self.collect_direct_internal_calls_expr(index, calls);
+                }
+            }
+            ExprKind::Slice(base, start, end) => {
+                self.collect_direct_internal_calls_expr(base, calls);
+                if let Some(start) = start {
+                    self.collect_direct_internal_calls_expr(start, calls);
+                }
+                if let Some(end) = end {
+                    self.collect_direct_internal_calls_expr(end, calls);
+                }
+            }
+            ExprKind::Ternary(cond, true_expr, false_expr) => {
+                self.collect_direct_internal_calls_expr(cond, calls);
+                self.collect_direct_internal_calls_expr(true_expr, calls);
+                self.collect_direct_internal_calls_expr(false_expr, calls);
+            }
+            ExprKind::Array(exprs) => {
+                for expr in *exprs {
+                    self.collect_direct_internal_calls_expr(expr, calls);
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                for expr in exprs.iter().copied().flatten() {
+                    self.collect_direct_internal_calls_expr(expr, calls);
+                }
+            }
+            ExprKind::Ident(_)
+            | ExprKind::Lit(_)
+            | ExprKind::New(_)
+            | ExprKind::TypeCall(_)
+            | ExprKind::Type(_)
+            | ExprKind::YulMember(..)
+            | ExprKind::Err(_) => {}
+        }
     }
 
     fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) {
@@ -462,6 +714,23 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
         }
     }
+
+    fn reentrant_call_kind(
+        &self,
+        callee: &'hir hir::Expr<'hir>,
+        args: &CallArgs<'hir>,
+        opts: Option<&hir::CallOptions<'hir>>,
+    ) -> Option<ReentrantCallKind> {
+        if self.reentrancy_eth_enabled && is_uncapped_value_call(self.hir, callee, opts) {
+            return Some(ReentrantCallKind::Eth);
+        }
+        if self.reentrancy_no_eth_enabled
+            && is_no_eth_reentrant_call(self.gcx, self.hir, callee, args, opts)
+        {
+            return Some(ReentrantCallKind::NoEth);
+        }
+        None
+    }
 }
 
 impl FlowState {
@@ -486,23 +755,10 @@ impl FlowState {
     }
 }
 
-fn reentrant_call_kind<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    callee: &'hir hir::Expr<'hir>,
-    args: &CallArgs<'hir>,
-    opts: Option<&'hir [hir::NamedArg<'hir>]>,
-) -> Option<ReentrantCallKind> {
-    if is_uncapped_value_call(hir, callee, opts) {
-        return Some(ReentrantCallKind::Eth);
-    }
-    is_no_eth_reentrant_call(gcx, hir, callee, args, opts).then_some(ReentrantCallKind::NoEth)
-}
-
 fn is_uncapped_value_call(
     hir: &hir::Hir<'_>,
     callee: &hir::Expr<'_>,
-    opts: Option<&[hir::NamedArg<'_>]>,
+    opts: Option<&hir::CallOptions<'_>>,
 ) -> bool {
     let Some(opts) = opts else { return false };
     let ExprKind::Member(_, member) = &callee.peel_parens().kind else { return false };
@@ -512,7 +768,7 @@ fn is_uncapped_value_call(
 
     let mut value = None;
     let mut gas = None;
-    for opt in opts {
+    for opt in opts.args {
         if opt.name.name == sym::value {
             value = Some(&opt.value);
         } else if opt.name.name == kw::Gas {
@@ -528,7 +784,7 @@ fn is_no_eth_reentrant_call<'hir>(
     hir: &'hir hir::Hir<'hir>,
     callee: &'hir hir::Expr<'hir>,
     args: &CallArgs<'hir>,
-    opts: Option<&'hir [hir::NamedArg<'hir>]>,
+    opts: Option<&hir::CallOptions<'hir>>,
 ) -> bool {
     if call_sends_eth(hir, opts) {
         return false;
@@ -544,9 +800,9 @@ fn is_no_eth_reentrant_call<'hir>(
     }
 }
 
-fn call_sends_eth(hir: &hir::Hir<'_>, opts: Option<&[hir::NamedArg<'_>]>) -> bool {
+fn call_sends_eth(hir: &hir::Hir<'_>, opts: Option<&hir::CallOptions<'_>>) -> bool {
     opts.is_some_and(|opts| {
-        opts.iter().any(|opt| opt.name.name == sym::value && !is_zero_value(hir, &opt.value))
+        opts.args.iter().any(|opt| opt.name.name == sym::value && !is_zero_value(hir, &opt.value))
     })
 }
 
@@ -563,7 +819,6 @@ fn external_member_call_can_reenter<'hir>(
 
     let Some(receiver_ty) = expr_ty(gcx, hir, receiver) else { return false };
     gcx.members_of(receiver_ty, base_item_source(hir, receiver), base_contract(hir, receiver))
-        .iter()
         .filter(|candidate| candidate.name == member)
         .any(|candidate| match (candidate.res, candidate.ty.kind) {
             (Some(Res::Item(ItemId::Function(function_id))), _) => {
@@ -572,8 +827,8 @@ fn external_member_call_can_reenter<'hir>(
                     && args_match_function(gcx, hir, args, function.parameters)
                     && function.mutates_state()
             }
-            (_, TyKind::FnPtr(function)) => {
-                is_externally_callable_fn_ptr(function.visibility)
+            (_, TyKind::Fn(function)) => {
+                is_externally_callable_fn_kind(function.kind)
                     && args_match_types(gcx, hir, args, function.parameters)
                     && !matches!(
                         function.state_mutability,
@@ -591,8 +846,8 @@ fn external_function_pointer_can_reenter<'hir>(
     args: &CallArgs<'hir>,
 ) -> bool {
     let Some(ty) = expr_ty(gcx, hir, callee) else { return false };
-    let TyKind::FnPtr(function) = ty.kind else { return false };
-    function.visibility == Visibility::External
+    let TyKind::Fn(function) = ty.kind else { return false };
+    function.kind == TyFnKind::External
         && args_match_types(gcx, hir, args, function.parameters)
         && !matches!(function.state_mutability, StateMutability::Pure | StateMutability::View)
 }
@@ -601,8 +856,8 @@ const fn is_externally_callable(func: &hir::Function<'_>) -> bool {
     matches!(func.visibility, Visibility::Public | Visibility::External)
 }
 
-const fn is_externally_callable_fn_ptr(visibility: Visibility) -> bool {
-    matches!(visibility, Visibility::Public | Visibility::External)
+const fn is_externally_callable_fn_kind(kind: TyFnKind) -> bool {
+    matches!(kind, TyFnKind::External | TyFnKind::Declaration | TyFnKind::DelegateCall)
 }
 
 fn args_match_function<'hir>(
@@ -698,11 +953,11 @@ fn expr_ty<'hir>(
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<Ty<'hir>> {
     match &expr.peel_parens().kind {
-        ExprKind::Array(_) => None,
+        ExprKind::Array(_) | ExprKind::YulMember(..) => None,
         ExprKind::Call(callee, args, _) => {
             let callee_ty = expr_ty(gcx, hir, callee)?;
             match callee_ty.kind {
-                TyKind::FnPtr(func) => fn_call_return_type(gcx, func.returns),
+                TyKind::Fn(func) => fn_call_return_type(gcx, func.returns),
                 TyKind::Type(to) => Some(explicit_cast_ty(gcx, to, args)),
                 _ => None,
             }
@@ -807,7 +1062,6 @@ fn member_ty<'hir>(
     let base_ty = expr_ty(gcx, hir, base)?;
     unique(
         gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
-            .iter()
             .filter(|member| member.name == member_name)
             .map(|member| member.ty),
     )
@@ -867,9 +1121,7 @@ fn referenced_item(expr: &hir::Expr<'_>) -> Option<ItemId> {
 
 fn variable_data_location(hir: &hir::Hir<'_>, var_id: VariableId) -> Option<DataLocation> {
     let var = hir.variable(var_id);
-    var.data_location.or_else(|| {
-        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
-    })
+    var.data_location.or_else(|| var.kind.is_state().then_some(DataLocation::Storage))
 }
 
 fn is_this(expr: &hir::Expr<'_>) -> bool {

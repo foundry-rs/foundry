@@ -21,6 +21,7 @@ use foundry_common::{
         ENCODING_BYTES, ENCODING_DYN_ARRAY, ENCODING_INPLACE, ENCODING_MAPPING, SlotIdentifier,
         SlotInfo,
     },
+    tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
@@ -270,7 +271,6 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for loadCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target, slot } = *self;
-        ccx.ensure_not_precompile(&target)?;
 
         ccx.ecx.journal_mut().load_account(target)?;
         let mut val = ccx
@@ -467,6 +467,16 @@ impl Cheatcode for lastCallGasCall {
             bail!("no external call was made yet");
         };
         Ok(last_call_gas.abi_encode())
+    }
+}
+
+impl Cheatcode for lastFrameGasCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        let Some(last_frame_gas) = &state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        Ok(last_frame_gas.abi_encode())
     }
 }
 
@@ -747,6 +757,20 @@ impl Cheatcode for storeCall {
     }
 }
 
+impl Cheatcode for setTip20LogoURICall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, newLogoURI } = self;
+        set_tip20_logo_uri(ccx, token, newLogoURI)
+    }
+}
+
+impl Cheatcode for setLogoURICall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { token, newLogoURI } = self;
+        set_tip20_logo_uri(ccx, token, newLogoURI)
+    }
+}
+
 impl Cheatcode for coolCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { target } = self;
@@ -842,6 +866,31 @@ impl Cheatcode for snapshotGasLastCall_1Call {
             Some(group.clone()),
             Some(name.clone()),
             last_call_gas.gasTotalUsed,
+        )
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_0Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name } = self;
+        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_frame_gas.gasTotalUsed)
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_1Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name, group } = self;
+        let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        inner_last_gas_snapshot(
+            ccx,
+            Some(group.clone()),
+            Some(name.clone()),
+            last_frame_gas.gasTotalUsed,
         )
     }
 }
@@ -1047,9 +1096,12 @@ impl Cheatcode for getStorageSlotsCall {
                 )
             })?;
             let num_slots = num_bytes.div_ceil(U256::from(32));
+            let num_slots = usize::try_from(num_slots).map_err(|_| {
+                fmt_err!("number_of_bytes {} exceeds host usize", storage_type.number_of_bytes)
+            })?;
 
             // Start from 1 since base slot is already added
-            for i in 1..num_slots.to::<usize>() {
+            for i in 1..num_slots {
                 slots.push(slot + U256::from(i));
             }
         }
@@ -1064,7 +1116,9 @@ impl Cheatcode for getStorageSlotsCall {
                 if length_byte & 1 == 1 {
                     // Calculate data slots for long bytes/string
                     let length: U256 = value.data >> 1;
-                    let num_data_slots = length.to::<usize>().div_ceil(32);
+                    let length = usize::try_from(length)
+                        .map_err(|_| fmt_err!("long bytes/string length exceeds host usize"))?;
+                    let num_data_slots = length.div_ceil(32);
                     let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
 
                     for i in 0..num_data_slots {
@@ -1680,6 +1734,125 @@ pub(super) fn ensure_loaded_account<CTX: ContextTr<Db: Database<Error = Database
     ecx.journal_mut().load_account(addr)?;
     ecx.journal_mut().touch_account(addr);
     Ok(())
+}
+
+// Tempo TIP-1026 stores logoURI in TIP-20 storage slot 5, reusing the
+// previously-unused domainSeparator slot. This mirrors Tempo's
+// crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
+// fixture, where `logoUri` has slot "5".
+const TIP20_LOGO_URI_SLOT_INDEX: u64 = 5;
+fn tip20_logo_uri_slot() -> U256 {
+    U256::from(TIP20_LOGO_URI_SLOT_INDEX)
+}
+
+fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    token: &Address,
+    new_logo_uri: &str,
+) -> Result {
+    validate_tip20_logo_uri(new_logo_uri).map_err(|err| match err {
+        Tip20LogoUriValidationError::LogoURITooLong => fmt_err!("LogoURITooLong"),
+        Tip20LogoUriValidationError::InvalidLogoURI => fmt_err!("InvalidLogoURI"),
+    })?;
+    ccx.ensure_not_precompile(token)?;
+    ensure_loaded_account(ccx.ecx, *token)?;
+    store_solidity_string(ccx.ecx, *token, tip20_logo_uri_slot(), new_logo_uri.as_bytes())
+}
+
+fn store_solidity_string<CTX>(
+    ecx: &mut CTX,
+    target: Address,
+    base_slot: U256,
+    bytes: &[u8],
+) -> Result
+where
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+{
+    cleanup_long_string_tail(ecx, target, base_slot, bytes.len())?;
+
+    if bytes.len() <= 31 {
+        ecx.journal_mut()
+            .sstore(target, base_slot, encode_short_string(bytes))
+            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI: {:?}", e))?;
+        return Ok(Default::default());
+    }
+
+    ecx.journal_mut()
+        .sstore(target, base_slot, U256::from(bytes.len() * 2 + 1))
+        .map_err(|e| fmt_err!("failed to store TIP-20 logo URI length: {:?}", e))?;
+
+    let slot_start = solidity_dynamic_data_slot(base_slot);
+    for (index, chunk) in bytes.chunks(32).enumerate() {
+        let mut chunk_bytes = [0u8; 32];
+        chunk_bytes[..chunk.len()].copy_from_slice(chunk);
+        ecx.journal_mut()
+            .sstore(target, slot_start + U256::from(index), U256::from_be_bytes(chunk_bytes))
+            .map_err(|e| fmt_err!("failed to store TIP-20 logo URI data: {:?}", e))?;
+    }
+
+    Ok(Default::default())
+}
+
+fn cleanup_long_string_tail<CTX>(
+    ecx: &mut CTX,
+    target: Address,
+    base_slot: U256,
+    new_len: usize,
+) -> Result<()>
+where
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+{
+    let previous = ecx
+        .journal_mut()
+        .sload(target, base_slot)
+        .map_err(|e| fmt_err!("failed to load previous TIP-20 logo URI: {:?}", e))?
+        .data;
+    if !is_long_string(previous) {
+        return Ok(());
+    }
+
+    let Some(previous_len) = long_string_length(previous) else {
+        return Ok(());
+    };
+    let previous_chunks = string_chunks(previous_len);
+    let new_chunks = if new_len > 31 { string_chunks(new_len) } else { 0 };
+    if previous_chunks <= new_chunks {
+        return Ok(());
+    }
+
+    let slot_start = solidity_dynamic_data_slot(base_slot);
+    for index in new_chunks..previous_chunks {
+        ecx.journal_mut()
+            .sstore(target, slot_start + U256::from(index), U256::ZERO)
+            .map_err(|e| fmt_err!("failed to clear previous TIP-20 logo URI data: {:?}", e))?;
+    }
+
+    Ok(())
+}
+
+fn encode_short_string(bytes: &[u8]) -> U256 {
+    let mut storage_bytes = [0u8; 32];
+    storage_bytes[..bytes.len()].copy_from_slice(bytes);
+    storage_bytes[31] =
+        u8::try_from(bytes.len() * 2).expect("short Solidity string length tag fits in u8");
+    U256::from_be_bytes(storage_bytes)
+}
+
+fn solidity_dynamic_data_slot(base_slot: U256) -> U256 {
+    U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0)
+}
+
+const fn is_long_string(slot_value: U256) -> bool {
+    (slot_value.to_be_bytes::<32>()[31] & 1) != 0
+}
+
+fn long_string_length(slot_value: U256) -> Option<usize> {
+    let length: U256 = (slot_value - U256::ONE) >> 1;
+    usize::try_from(length).ok().filter(|length| *length <= TIP20_MAX_LOGO_URI_BYTES)
+}
+
+const fn string_chunks(byte_length: usize) -> usize {
+    byte_length.div_ceil(32)
 }
 
 /// Consumes recorded account accesses and returns them as an abi encoded

@@ -96,7 +96,7 @@ interface Vm {
         address emitter;
     }
 
-    /// Gas used. Returned by `lastCallGas`.
+    /// Gas used. Returned by `lastCallGas` and `lastFrameGas`.
     struct Gas {
         /// The gas limit of the call.
         uint64 gasLimit;
@@ -597,6 +597,16 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Unsafe)]
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setTip20LogoURI(address token, string calldata newLogoURI) external;
+
+    /// Sets a TIP-20 token's logo URI directly in storage.
+    /// This bypasses the token admin check, but still validates the URI against T5 constraints.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function setLogoURI(address token, string calldata newLogoURI) external;
+
     /// Marks the slots of an account and the account address as cold.
     #[cheatcode(group = Evm, safety = Unsafe)]
     function cool(address target) external;
@@ -628,6 +638,16 @@ interface Vm {
     /// **Note:** The execution evm version is not the same as the compilation one.
     #[cheatcode(group = Evm, safety = Safe)]
     function setEvmVersion(string calldata evm) external;
+
+    /// Returns `true` if `spender` is on the active Tempo hardfork's implicit-approval list,
+    /// meaning it can pull TIP-20 tokens from `msg.sender` without a prior `approve()`.
+    /// Returns `false` on non-Tempo networks.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
+
+    /// Skips a fuzz/invariant input unless `spender` is implicitly approved.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function assumeImplicitApproval(address spender) external view;
 
     // -------- Call Manipulation --------
     // --- Mocks ---
@@ -758,13 +778,23 @@ interface Vm {
 
     // -------- Gas Snapshots --------
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
 
+    /// DEPRECATED: use `snapshotGasLastFrame` instead.
     /// Snapshot capture the gas usage of the last call by name in a group from the callee perspective.
-    #[cheatcode(group = Evm, safety = Unsafe)]
+    #[cheatcode(group = Evm, safety = Unsafe, status = Deprecated(Some("replaced by `snapshotGasLastFrame`")))]
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+
+    /// Snapshot capture the gas usage of the last call or create by name in a group from the callee perspective.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
 
     /// Start a snapshot capture of the current gas usage by name.
     /// The group name is derived from the contract name.
@@ -911,6 +941,16 @@ interface Vm {
         external
         returns (bytes memory data);
 
+    /// Performs an Ethereum JSON-RPC request to the current fork URL and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+
+    /// Performs an Ethereum JSON-RPC request to the given endpoint and returns the JSON result.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params)
+        external
+        returns (string memory data);
+
     /// Gets all the logs according to specified filter.
     #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)
@@ -982,9 +1022,14 @@ interface Vm {
 
     // -------- Gas Measurement --------
 
+    /// DEPRECATED: use `lastFrameGas` instead.
     /// Gets the gas used in the last call from the callee perspective.
-    #[cheatcode(group = Evm, safety = Safe)]
+    #[cheatcode(group = Evm, safety = Safe, status = Deprecated(Some("replaced by `lastFrameGas`")))]
     function lastCallGas() external view returns (Gas memory gas);
+
+    /// Gets the gas used in the last call or create from the callee perspective.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function lastFrameGas() external view returns (Gas memory gas);
 
     // ======== Test Assertions and Utilities ========
 
@@ -1151,6 +1196,25 @@ interface Vm {
     /// Expects the deployment of the specified bytecode by the specified address using the CREATE2 opcode
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectCreate2(bytes calldata bytecode, address deployer) external;
+
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.
+    ///
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
+
+    /// Expects a TIP-20 `LogoURIUpdated(address indexed updater, string newLogoURI)` event.
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
 
     /// Expects an error on next call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
@@ -1960,18 +2024,22 @@ interface Vm {
     function getArtifactPathByDeployedCode(bytes calldata deployedCode) external view returns (string memory path);
 
     /// Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional. Use <profile> to select artifacts compiled with a specific profile
+    /// from foundry.toml.
     #[cheatcode(group = Filesystem)]
     function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
@@ -1979,7 +2047,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
@@ -1987,7 +2056,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
@@ -1995,13 +2065,15 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments.
@@ -2009,7 +2081,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts `msg.value`.
@@ -2017,7 +2090,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);
 
     /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     /// Reverts if the target artifact contains unlinked library placeholders.
     ///
     /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
@@ -2025,7 +2099,8 @@ interface Vm {
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);
 
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
-    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    /// artifact in the form of <path>:<contract>:<version> or <path>:<contract>:<profile> where <contract> and
+    /// <version>/<profile> parts are optional.
     #[cheatcode(group = Filesystem)]
     function getDeployedCode(string calldata artifactPath) external view returns (bytes memory runtimeBytecode);
 
@@ -2764,6 +2839,20 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a secp256k1 access key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychain`.
+    #[cheatcode(group = Crypto)]
+    function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.
+    ///
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    #[cheatcode(group = Crypto)]
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
     /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
@@ -3034,7 +3123,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will output the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will output the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
@@ -3056,7 +3145,7 @@ interface Vm {
     ///     * bindings will be retrieved from the path configured in `foundry.toml`.
     ///
     ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
-    ///     * Note: the cheatcode will use the canonical type even if the input is malformated
+    ///     * Note: the cheatcode will use the canonical type even if the input is malformed
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);

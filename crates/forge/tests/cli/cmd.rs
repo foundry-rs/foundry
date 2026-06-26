@@ -53,13 +53,6 @@ Display options:
       --json
           Format log messages as JSON
 
-      --machine
-          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
-          help / version) in a structured envelope. Per-command machine output (declared
-          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
-          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
-          to keep machine-mode output unambiguous
-
       --md
           Format log messages as Markdown
 
@@ -119,6 +112,14 @@ solc = "0.8.5"
 Warning: Found unknown config section in foundry.toml: [default]
 This notation for profiles has been deprecated and may result in the profile not being registered in future versions.
 Please use [profile.default] instead or run `forge config --fix`.
+note[could-be-constant]: state variable could be declared constant
+  [FILE]:6:17
+  │
+6 │     uint public value = 42;
+  │                 ━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/could-be-constant
+
 
 "#]]);
     // `forge clear` should not warn
@@ -4159,6 +4160,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "experimental": false,
     "libraries": {}
   }
 }
@@ -4225,9 +4227,15 @@ forgetest_init!(gas_report_include_tests, |prj, cmd| {
         config.fuzz.runs = 1;
     });
 
-    cmd.args(["test", "--match-test", "test_Increment", "--gas-report"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.args([
+        "test",
+        "--match-test",
+        "test_Increment",
+        "--gas-report",
+        "--no-dynamic-test-linking",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
 ...
 ╭----------------------------------+-----------------+-------+--------+-------+---------╮
 | src/Counter.sol:Counter Contract |                 |       |        |       |         |
@@ -4269,7 +4277,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--match-test", "test_Increment", "--gas-report", "--md"])
+        .args([
+            "test",
+            "--match-test",
+            "test_Increment",
+            "--gas-report",
+            "--md",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(str![[r#"
 ...
@@ -4298,7 +4313,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.forge_fuse()
-        .args(["test", "--mt", "test_Increment", "--gas-report", "--json"])
+        .args([
+            "test",
+            "--mt",
+            "test_Increment",
+            "--gas-report",
+            "--json",
+            "--no-dynamic-test-linking",
+        ])
         .assert_success()
         .stdout_eq(
             str![[r#"

@@ -1310,10 +1310,7 @@ async fn can_get_node_info_tempo_t1() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deal_erc20_tempo() {
-    use alloy_primitives::address;
-    use foundry_evm::core::tempo::PATH_USD_ADDRESS;
-
-    const ALPHA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000001");
+    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
 
     let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
 

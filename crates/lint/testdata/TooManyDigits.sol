@@ -8,6 +8,7 @@ contract TooManyDigits {
 
     uint256 stateA = 1000000000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
     uint256 stateB = 100000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 fortyDigitDecimal = 1000000000000000000000000000000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
 
     function asReturn() public pure returns (uint256) {
         return 10000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
@@ -56,9 +57,21 @@ contract TooManyDigits {
     // Address literal (distinct AST kind, not flagged).
     address adr = 0x1234567890123456789012345678901234567890;
 
-    // Hex literal — intentional zero patterns (mask / padded value).
-    bytes32 mask = 0x0000000000000000000000000000000000000000000000000000000000000001;
-    uint256 hexNum = 0x100000;
+    // Non-address hex literals with long zero runs are flagged for Slither parity.
+    bytes32 mask = 0x0000000000000000000000000000000000000000000000000000000000000001; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 hexNum = 0x100000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 hexWithE = 0x7fffffe07fffffe03ff000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+    uint256 hexWithUpperE = 0x7FFFFFE07FFFFFE03FF000000000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+
+    function inAssembly() public pure returns (uint256 result) {
+        assembly {
+            result := 100000 //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+            result := add(result, 0x100000) //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+            result := add(result, 0x7fffffe07fffffe03ff000000000000) //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+            result := add(result, 10000)
+            result := add(result, 0x1234567890123456789012345678901234567890)
+        }
+    }
 
     // Small literals (< 5 consecutive zeros).
     uint256 small1 = 100;

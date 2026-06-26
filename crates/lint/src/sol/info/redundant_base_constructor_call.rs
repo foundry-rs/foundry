@@ -19,6 +19,7 @@ impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
@@ -32,6 +33,7 @@ impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
     fn check_function(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {

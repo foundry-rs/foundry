@@ -8,6 +8,14 @@ interface IReturnBombTarget {
     function value() external returns (uint256);
 }
 
+interface IReturnBombStructTarget {
+    struct Result {
+        bytes data;
+    }
+
+    function fetch() external returns (Result memory);
+}
+
 interface IReturnBombFalsePositiveTarget {
     function call(bytes calldata payload) external returns (uint256);
 }
@@ -208,6 +216,11 @@ contract ReturnBomb {
 
     function directHighLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public returns (bytes memory) {
         return target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
+    function highLevelDynamicStructReturn(IReturnBombStructTarget target, uint256 gasLimit) public {
+        IReturnBombStructTarget.Result memory result = target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.data.length >= 0);
     }
 
     function indexedHighLevelDynamicReturn(IReturnBombTarget[] memory targets, uint256 index, uint256 gasLimit) public {

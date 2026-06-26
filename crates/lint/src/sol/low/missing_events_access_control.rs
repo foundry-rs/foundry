@@ -24,6 +24,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
@@ -250,6 +251,8 @@ fn collect_access_control_state_vars_in_stmt(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => {}
     }
 }
@@ -272,7 +275,7 @@ fn collect_access_control_state_vars_in_expr(
                 collect_access_control_state_vars_in_expr(hir, arg, seen, sender_aliases, out);
             }
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_access_control_state_vars_in_expr(
                         hir,
                         &opt.value,
@@ -297,7 +300,7 @@ fn collect_access_control_state_vars_in_expr(
 
             collect_access_control_state_vars_in_expr(hir, callee, seen, sender_aliases, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_access_control_state_vars_in_expr(
                         hir,
                         &opt.value,
@@ -352,7 +355,7 @@ fn collect_access_control_state_vars_in_expr(
             }
         }
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+        ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
     }
 }
 
@@ -427,6 +430,8 @@ fn collect_state_vars_read_in_stmt(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => {}
     }
 }
@@ -458,7 +463,7 @@ fn collect_state_vars_read_in_expr(
 
             collect_state_vars_read_in_expr(hir, callee, seen, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_state_vars_read_in_expr(hir, &opt.value, seen, out);
                 }
             }
@@ -501,7 +506,7 @@ fn collect_state_vars_read_in_expr(
             }
         }
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::Err(_) => {}
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
     }
 }
 
@@ -715,7 +720,12 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                     self.analyze_expr(expr);
                 }
             }
-            StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {}
+            StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::AssemblyBlock(_)
+            | StmtKind::Switch(_)
+            | StmtKind::Err(_) => {}
         }
     }
 
@@ -777,7 +787,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
             ExprKind::Call(callee, args, opts) => {
                 self.analyze_expr(callee);
                 if let Some(opts) = opts {
-                    for opt in *opts {
+                    for opt in opts.args {
                         self.analyze_expr(&opt.value);
                     }
                 }
@@ -827,7 +837,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Err(_) => {}
+            ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
         }
     }
 
@@ -1050,7 +1060,7 @@ fn collect_value_sources_into(
         ExprKind::Call(callee, args, opts) => {
             collect_value_sources_into(hir, taint, callee, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_value_sources_into(hir, taint, &opt.value, out);
                 }
             }
@@ -1093,7 +1103,7 @@ fn collect_value_sources_into(
             }
         }
         ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
-        ExprKind::Lit(_) | ExprKind::Err(_) => {}
+        ExprKind::Lit(_) | ExprKind::YulMember(..) | ExprKind::Err(_) => {}
     }
 }
 
@@ -1370,6 +1380,8 @@ fn stmt_has_access_guard(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => false,
     }
 }
@@ -1401,7 +1413,8 @@ fn expr_has_access_guard(
 
             expr_has_access_guard(hir, callee, seen, sender_aliases)
                 || opts.is_some_and(|opts| {
-                    opts.iter()
+                    opts.args
+                        .iter()
                         .any(|opt| expr_has_access_guard(hir, &opt.value, seen, sender_aliases))
                 })
                 || args.exprs().any(|arg| expr_has_access_guard(hir, arg, seen, sender_aliases))
@@ -1482,7 +1495,9 @@ fn expr_reads_sender(
 
             expr_reads_sender(hir, callee, seen, sender_aliases)
                 || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_reads_sender(hir, &opt.value, seen, sender_aliases))
+                    opts.args
+                        .iter()
+                        .any(|opt| expr_reads_sender(hir, &opt.value, seen, sender_aliases))
                 })
                 || args.exprs().any(|arg| expr_reads_sender(hir, arg, seen, sender_aliases))
         }
@@ -1589,6 +1604,8 @@ fn stmt_reads_sender(
         | StmtKind::Break
         | StmtKind::Continue
         | StmtKind::Placeholder
+        | StmtKind::AssemblyBlock(_)
+        | StmtKind::Switch(_)
         | StmtKind::Err(_) => false,
     }
 }
@@ -1694,7 +1711,7 @@ fn collect_called_function_ids(expr: &hir::Expr<'_>, out: &mut HashSet<FunctionI
             out.extend(resolved_function_ids(callee));
             collect_called_function_ids(callee, out);
             if let Some(opts) = opts {
-                for opt in *opts {
+                for opt in opts.args {
                     collect_called_function_ids(&opt.value, out);
                 }
             }
@@ -1745,6 +1762,7 @@ fn collect_called_function_ids(expr: &hir::Expr<'_>, out: &mut HashSet<FunctionI
         | ExprKind::Type(_)
         | ExprKind::Ident(_)
         | ExprKind::Lit(_)
+        | ExprKind::YulMember(..)
         | ExprKind::Err(_) => {}
     }
 }

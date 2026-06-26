@@ -40,18 +40,13 @@ impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
             return;
         }
 
-        for (idx, span, req_str) in &entries {
-            let others = distinct
-                .iter()
-                .filter(|v| **v != req_str.as_str())
-                .copied()
-                .collect::<Vec<_>>()
-                .join(", ");
-            let msg = format!(
-                "'pragma solidity {req_str};' conflicts with other version requirements in the project: {others}"
-            );
-            ctx.emit_with_msg(&sources[*idx], &PRAGMA_INCONSISTENT, *span, msg);
-        }
+        let (idx, span, _) = entries[0];
+        let versions = distinct.join(", ");
+        let msg = format!(
+            "{} different Solidity pragma version requirements are used: {versions}",
+            distinct.len()
+        );
+        ctx.emit_with_msg(&sources[idx], &PRAGMA_INCONSISTENT, span, msg);
     }
 }
 

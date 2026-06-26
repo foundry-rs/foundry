@@ -36,6 +36,7 @@ alloy-evm = { workspace = true, features = ["rpc"] }
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["time"] }
 async-trait.workspace = true
 futures.workspace = true
 semver.workspace = true

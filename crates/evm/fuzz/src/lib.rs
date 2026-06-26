@@ -31,7 +31,7 @@ pub mod strategies;
 pub use strategies::LiteralMaps;
 
 mod inspector;
-pub use inspector::Fuzzer;
+pub use inspector::{Fuzzer, ObservedCall};
 
 /// Metadata needed to reproduce a fuzz run.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -349,6 +349,9 @@ pub struct FuzzTestResult {
     /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
     pub breakpoints: Option<Breakpoints>,
 
+    /// Runtime bytecodes for contracts seen in the debug trace.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
+
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
 
@@ -467,11 +470,19 @@ impl FuzzedCases {
 #[derive(Clone, Default, Debug)]
 pub struct FuzzFixtures {
     inner: Arc<HashMap<String, DynSolValue>>,
+    /// Variant counts for project enums, used to constrain fuzzed enum inputs.
+    enum_bounds: strategies::EnumBounds,
 }
 
 impl FuzzFixtures {
     pub fn new(fixtures: HashMap<String, DynSolValue>) -> Self {
-        Self { inner: Arc::new(fixtures) }
+        Self { inner: Arc::new(fixtures), enum_bounds: strategies::EnumBounds::default() }
+    }
+
+    /// Attaches collected enum variant counts.
+    pub fn with_enum_bounds(mut self, enum_bounds: strategies::EnumBounds) -> Self {
+        self.enum_bounds = enum_bounds;
+        self
     }
 
     /// Returns configured fixtures for `param_name` fuzzed parameter.
@@ -481,6 +492,12 @@ impl FuzzFixtures {
         } else {
             None
         }
+    }
+
+    /// Returns the variant count for an enum identified by an optional contract qualifier and name
+    /// (as found in an ABI `internalType`), or `None` if unknown.
+    pub fn enum_variant_count(&self, contract: Option<&str>, name: &str) -> Option<usize> {
+        self.enum_bounds.variant_count(contract, name)
     }
 }
 

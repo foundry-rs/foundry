@@ -18,9 +18,9 @@ uint256 constant screaming_snake_case_info = 0;
 contract ContractWithLints {
     uint256 VARIABLE_MIXED_CASE_INFO;
 
-    function incorrectShiftHigh() public {
-        uint256 localValue = 50;
-        uint256 result = 8 >> localValue;
+    function incorrectShiftHigh() public pure {
+        uint256 result = 8;
+        assembly { result := shr(result, 8) }
     }
     function divideBeforeMultiplyMedium() public {
         (1 / 2) * 3;
@@ -56,6 +56,24 @@ import "./ContractWithLints.sol";
 
 contract Dummy {
     bool foo;
+}
+"#;
+
+const DEFAULT_INFO_LINTS_IMPORT: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract UnusedSymbol {}
+"#;
+
+const DEFAULT_INFO_LINTS: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+
+contract DefaultInfoLints {
+    function BAD_CASE() public {}
 }
 "#;
 
@@ -248,8 +266,33 @@ note[mixed-case-function]: function names should use mixedCase
             ..Default::default()
         };
     });
-    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
 nothing to lint
+
+"#]]);
+});
+
+forgetest!(default_lint_severity_includes_info, |prj, cmd| {
+    prj.add_source("DefaultInfoLintsImport", DEFAULT_INFO_LINTS_IMPORT);
+    prj.add_source("DefaultInfoLints", DEFAULT_INFO_LINTS);
+
+    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+note[mixed-case-function]: function names should use mixedCase
+  [FILE]:8:14
+  │
+8 │     function BAD_CASE() public {}
+  │              ━━━━━━━━ help: consider using: `badCase`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[unused-import]: unused imports should be removed
+  [FILE]:5:10
+  │
+5 │ import { UnusedSymbol } from "./DefaultInfoLintsImport.sol";
+  │          ━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/unused-import
+
 
 "#]]);
 });
@@ -666,10 +709,10 @@ forgetest!(can_override_config_lint, |prj, cmd| {
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
         r#"
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
-   [FILE]:13:26
+   [FILE]:13:30
    │
-13 │         uint256 result = 8 >> localValue;
-   │                          ━━━━━━━━━━━━━━━
+13 │         assembly { result := shr(result, 8) }
+   │                              ━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
@@ -707,23 +750,11 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
-Warning (2072): Unused local variable.
-  [FILE]:13:9:
-   |
-13 |         uint256 result = 8 >> localValue;
-   |         ^^^^^^^^^^^^^^
-
 Warning (6133): Statement has no effect.
   [FILE]:16:9:
    |
 16 |         (1 / 2) * 3;
    |         ^^^^^^^^^^^
-
-Warning (2018): Function state mutability can be restricted to pure
-  [FILE]:11:5:
-   |
-11 |     function incorrectShiftHigh() public {
-   |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Warning (2018): Function state mutability can be restricted to pure
   [FILE]:15:5:
@@ -806,23 +837,11 @@ forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
-Warning (2072): Unused local variable.
-  [FILE]:13:9:
-   |
-13 |         uint256 result = 8 >> localValue;
-   |         ^^^^^^^^^^^^^^
-
 Warning (6133): Statement has no effect.
   [FILE]:16:9:
    |
 16 |         (1 / 2) * 3;
    |         ^^^^^^^^^^^
-
-Warning (2018): Function state mutability can be restricted to pure
-  [FILE]:11:5:
-   |
-11 |     function incorrectShiftHigh() public {
-   |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Warning (2018): Function state mutability can be restricted to pure
   [FILE]:15:5:
@@ -882,23 +901,11 @@ forgetest!(build_no_lint_flag_skips_lint, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
-Warning (2072): Unused local variable.
-  [FILE]:13:9:
-   |
-13 |         uint256 result = 8 >> localValue;
-   |         ^^^^^^^^^^^^^^
-
 Warning (6133): Statement has no effect.
   [FILE]:16:9:
    |
 16 |         (1 / 2) * 3;
    |         ^^^^^^^^^^^
-
-Warning (2018): Function state mutability can be restricted to pure
-  [FILE]:11:5:
-   |
-11 |     function incorrectShiftHigh() public {
-   |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Warning (2018): Function state mutability can be restricted to pure
   [FILE]:15:5:
@@ -1427,19 +1434,11 @@ forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity ^0.8.20;
   │ ━━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity 0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 
@@ -1538,27 +1537,11 @@ forgetest!(pragma_inconsistent_duplicates_among_conflict, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;
   │ ━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity 0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity ^0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 
@@ -1578,19 +1561,11 @@ forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+note[pragma-inconsistent]: 2 different Solidity pragma version requirements are used: 0.8.20, ^0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;
   │ ━━━━━━━━━━━━━━━━━━━━━━━
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
-
-note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
-  [FILE]:3:1
-  │
-3 │ pragma solidity ^0.8.20;
-  │ ━━━━━━━━━━━━━━━━━━━━━━━━
   │
   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 

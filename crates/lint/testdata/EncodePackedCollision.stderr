@@ -214,3 +214,11 @@ LL │ …     return keccak256(abi.encodePacked(StringLib.toStr(a), StringLib.t
    │
    ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
 
+warning[encode-packed-collision]: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+   ╭▸ ROOT/testdata/EncodePackedCollision.sol:LL:CC
+   │
+LL │ …     return keccak256(abi.encodePacked(f(x), s));
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/encode-packed-collision
+

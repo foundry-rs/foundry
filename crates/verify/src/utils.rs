@@ -1,11 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, Bytes, TxKind};
-use alloy_provider::{
-    Provider,
-    network::{AnyNetwork, AnyRpcBlock},
-};
+use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -14,12 +10,21 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, shell};
+use foundry_cli::utils::LoadConfig;
+use foundry_common::{
+    abi::encode_args,
+    compile::{PathOrContractInfo, ProjectCompiler},
+    find_matching_contract_artifact, ignore_metadata_hash, shell,
+};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::{decode::RevertDecoder, evm::EthEvmNetwork},
+    core::{
+        FoundryBlock as _,
+        decode::RevertDecoder,
+        evm::{BlockEnvFor, BlockResponseFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::TraceMode,
@@ -27,7 +32,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{bytecode::Bytecode, context::TxEnv, database::Database, primitives::hardfork::SpecId};
+use revm::{bytecode::Bytecode, context::Block as _, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -89,6 +94,15 @@ pub fn build_project(
 ) -> Result<CompactContractBytecode> {
     let project = config.project()?;
     let compiler = ProjectCompiler::new().quiet(true);
+
+    if args.contract.path.is_some() {
+        let contract = PathOrContractInfo::ContractInfo(args.contract.clone());
+        let target_path = project.root().join(contract.path().unwrap()).canonicalize()?;
+        let mut output = compiler.files([target_path.clone()]).compile(&project)?;
+        let artifact =
+            find_matching_contract_artifact(&mut output, &target_path, Some(&args.contract.name))?;
+        return Ok(artifact.into_contract_bytecode());
+    }
 
     let mut output = compiler.compile(&project)?;
 
@@ -263,20 +277,37 @@ pub fn check_args_len(
     Ok(())
 }
 
-pub async fn get_tracing_executor(
+pub fn load_fork_config_and_evm_opts(config: &Config) -> Result<(Config, EvmOpts)> {
+    let chain = config.chain;
+    let mut fork_config = config.clone();
+    fork_config.chain = None;
+
+    let (mut fork_config, mut evm_opts) = fork_config.load_config_and_evm_opts()?;
+    fork_config.chain = chain;
+    if let Some(chain) = chain {
+        evm_opts.env.chain_id = Some(chain.id());
+    }
+
+    Ok((fork_config, evm_opts))
+}
+
+pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
     evm_version: EvmVersion,
     evm_opts: EvmOpts,
-) -> Result<(EvmEnv, TxEnv, TracingExecutor<EthEvmNetwork>)> {
+) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
+where
+    FEN: FoundryEvmNetwork,
+{
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
     let (evm_env, tx_env, fork, _chain, networks) =
-        TracingExecutor::<EthEvmNetwork>::get_fork_material(fork_config, evm_opts).await?;
+        TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
 
-    let executor = TracingExecutor::<EthEvmNetwork>::new(
+    let executor = TracingExecutor::<FEN>::new(
         (evm_env.clone(), tx_env.clone()),
         fork,
         Some(fork_config.evm_version),
@@ -289,25 +320,33 @@ pub async fn get_tracing_executor(
     Ok((evm_env, tx_env, executor))
 }
 
-pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: NetworkConfigs) {
-    let number = evm_env.block_env.number;
-    evm_env.block_env = block_env_from_header(&block.header);
-    evm_env.block_env.number = number;
-    apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(evm_env, block, config);
+pub fn configure_env_block<FEN>(
+    evm_env: &mut EvmEnvFor<FEN>,
+    block: &BlockResponseFor<FEN>,
+    config: NetworkConfigs,
+) where
+    FEN: FoundryEvmNetwork,
+{
+    let number = evm_env.block_env.number();
+    evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
+    evm_env.block_env.set_number(number);
+    apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(evm_env, block, config);
 }
 
-pub fn deploy_contract(
-    executor: &mut TracingExecutor<EthEvmNetwork>,
-    evm_env: &EvmEnv,
-    tx_env: &TxEnv,
-    spec_id: SpecId,
-    to: Option<TxKind>,
-) -> Result<Address, eyre::ErrReport> {
+pub fn deploy_contract<FEN>(
+    executor: &mut TracingExecutor<FEN>,
+    evm_env: &EvmEnvFor<FEN>,
+    tx_env: &TxEnvFor<FEN>,
+    spec_id: SpecFor<FEN>,
+    to: TxKind,
+) -> Result<Address, eyre::ErrReport>
+where
+    FEN: FoundryEvmNetwork,
+{
     let mut evm_env = evm_env.clone();
     evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
 
-    if to.is_some_and(|to| to.is_call()) {
-        let TxKind::Call(to) = to.unwrap() else { unreachable!() };
+    if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!(
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
@@ -349,13 +388,16 @@ pub fn deploy_contract(
     }
 }
 
-pub async fn get_runtime_codes(
-    executor: &mut TracingExecutor<EthEvmNetwork>,
-    provider: &impl Provider<AnyNetwork>,
+pub async fn get_runtime_codes<FEN>(
+    executor: &mut TracingExecutor<FEN>,
+    provider: &impl Provider<FEN::Network>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,
-) -> Result<(Bytecode, Bytes)> {
+) -> Result<(Bytecode, Bytes)>
+where
+    FEN: FoundryEvmNetwork,
+{
     let fork_runtime_code = executor
         .backend_mut()
         .basic(fork_address)?
@@ -436,6 +478,57 @@ pub async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verify::VerifierArgs;
+    use foundry_cli::opts::EtherscanOpts;
+    use foundry_compilers::PathStyle;
+    use foundry_config::NamedChain;
+    use foundry_test_utils::TestProject;
+
+    #[test]
+    fn build_project_finds_artifact_by_relative_contract_path() {
+        let prj = TestProject::new("verify-bytecode-relative-path", PathStyle::Dapptools);
+        prj.add_source(
+            "Counter.sol",
+            r#"
+pragma solidity 0.8.16;
+
+contract Counter {
+    uint256 public number;
+}
+"#,
+        );
+
+        let mut config = Config::load_with_root(prj.root()).unwrap();
+        config.solc = Some("0.8.16".into());
+        let args = VerifyBytecodeArgs {
+            address: Address::ZERO,
+            contract: "src/Counter.sol:Counter".parse().unwrap(),
+            block: None,
+            constructor_args: None,
+            encoded_constructor_args: None,
+            constructor_args_path: None,
+            rpc_url: None,
+            network: None,
+            etherscan: EtherscanOpts::default(),
+            verifier: VerifierArgs::default(),
+            root: Some(prj.root().to_path_buf()),
+            ignore: None,
+        };
+
+        let artifact = build_project(&args, &config).unwrap();
+
+        assert!(artifact.bytecode.and_then(|bytecode| bytecode.into_bytes()).is_some());
+    }
+
+    #[test]
+    fn load_fork_config_and_evm_opts_serializes_chain_as_id() {
+        let config = Config { chain: Some(NamedChain::Mainnet.into()), ..Default::default() };
+
+        let (fork_config, evm_opts) = load_fork_config_and_evm_opts(&config).unwrap();
+
+        assert_eq!(fork_config.chain, Some(NamedChain::Mainnet.into()));
+        assert_eq!(evm_opts.env.chain_id, Some(1));
+    }
 
     #[test]
     fn test_host_only() {

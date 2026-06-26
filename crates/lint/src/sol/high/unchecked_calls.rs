@@ -9,7 +9,10 @@ use crate::{
 };
 use solar::{
     ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},
-    sema::hir::{self},
+    sema::{
+        Gcx,
+        hir::{self},
+    },
 };
 use std::ops::ControlFlow;
 
@@ -38,6 +41,7 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
     fn check_stmt(
         &mut self,
         ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {

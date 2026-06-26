@@ -1,6 +1,6 @@
 use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
 use alloy_primitives::{
-    Address, B64, B256, Bytes, TxHash, U256,
+    Address, B64, B256, Bytes, TxHash, U64, U256,
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types::{
@@ -165,6 +165,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
+    #[serde(rename = "eth_resend")]
+    EthResend(Box<WithOtherFields<TransactionRequest>>, Option<U256>, Option<U64>),
+
     #[serde(rename = "eth_sendTransactionSync", with = "sequence")]
     EthSendTransactionSync(Box<WithOtherFields<TransactionRequest>>),
 
@@ -173,6 +176,9 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
     EthSendRawTransactionSync(Bytes),
+
+    #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
+    AnvilClassifyTransaction(Bytes),
 
     #[serde(rename = "eth_call")]
     EthCall(

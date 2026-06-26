@@ -29,6 +29,7 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
     fn check_function(
         &mut self,
         ctx: &LintContext,
+        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -352,9 +353,9 @@ fn is_address_state_var_lhs(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> bool {
 /// Maps each direct-ident modifier argument back to its caller-side parameter, runs the same guard
 /// analysis on the modifier body, and records any caller params whose mapped modifier parameter is
 /// guarded.
-fn collect_modifier_guards(
-    hir: &hir::Hir<'_>,
-    invocation: &hir::Modifier<'_>,
+fn collect_modifier_guards<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    invocation: &hir::Modifier<'hir>,
     caller_params: &HashSet<hir::VariableId>,
     guarded: &mut HashSet<hir::VariableId>,
 ) {

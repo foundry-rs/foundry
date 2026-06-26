@@ -83,7 +83,7 @@ use foundry_common::{
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
+    FoundryTxReceipt, FoundryTxType, FoundryTypedTx, PaymentLaneClassification, PaymentLaneReason,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -101,6 +101,7 @@ use revm::{
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{sync::Arc, time::Duration};
+use tempo_chainspec::hardfork::TempoHardfork;
 use tokio::{
     sync::mpsc::{UnboundedReceiver, unbounded_channel},
     try_join,
@@ -833,7 +834,7 @@ impl<N: Network> EthApi<N> {
         self.max_priority_fee_per_gas()
     }
 
-    /// Returns the base fee per blob required to send a EIP-4844 tx.
+    /// Returns the base fee per blob required to send an EIP-4844 tx.
     ///
     /// Handler for ETH RPC call: `eth_blobBaseFee`
     pub fn blob_base_fee(&self) -> Result<U256> {
@@ -1357,6 +1358,45 @@ impl EthApi<FoundryNetwork> {
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
     ) -> Result<u128> {
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
+        )?
+        .or_zero_fees();
+
+        // get the highest possible gas limit, either the request's set value or the currently
+        // configured gas limit
+        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
+
+        // Tempo AA transactions pay fees in ERC-20 tokens, not ETH. Only treat requests as
+        // Tempo AA in Tempo mode, otherwise `feeToken` should not bypass ETH funds checks.
+        let is_tempo_aa_tx =
+            self.backend.is_tempo() && request.other.get("feeToken").is_some_and(|v| !v.is_null());
+
+        let gas_price = fees.gas_price.unwrap_or_default();
+        // Check transfer value before any fast path, and cap gas limit by sender balance when the
+        // request has a non-zero gas price. Only enforce this for explicit senders: calls without
+        // `from` historically estimate against the default caller and must not be capped by the
+        // zero address balance.
+        if !is_tempo_aa_tx && let Some(from) = request.from {
+            let mut available_funds = self.backend.get_balance_with_state(state, from)?;
+            if let Some(value) = request.value {
+                if value > available_funds {
+                    return Err(InvalidTransactionError::InsufficientFunds.into());
+                }
+                // safe: value <= available_funds
+                available_funds -= value;
+            }
+            if gas_price > 0 {
+                // amount of gas the sender can afford with the `gas_price`
+                let allowance =
+                    available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
+            }
+        }
+
         // If the request is a simple native token transfer we can optimize
         // We assume it's a transfer if we have no input data.
         // Skip this optimization for Tempo mode since native ETH transfers are not allowed
@@ -1372,47 +1412,13 @@ impl EthApi<FoundryNetwork> {
                 && request.blob_versioned_hashes.is_none();
 
             if maybe_transfer
+                && highest_gas_limit >= MIN_TRANSACTION_GAS
                 && let Some(to) = to
                 && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
                 && target_code.as_ref().is_empty()
             {
                 return Ok(MIN_TRANSACTION_GAS);
             }
-        }
-
-        let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-            request.max_fee_per_blob_gas,
-        )?
-        .or_zero_fees();
-
-        // get the highest possible gas limit, either the request's set value or the currently
-        // configured gas limit
-        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
-
-        // Tempo AA transactions pay fees in ERC-20 tokens, not ETH
-        let is_tempo_tx = request.other.get("feeToken").is_some_and(|v| !v.is_null());
-
-        let gas_price = fees.gas_price.unwrap_or_default();
-        // If we have non-zero gas price, cap gas limit by sender balance.
-        // Skip this check for Tempo transactions which pay with fee tokens, not ETH.
-        if gas_price > 0
-            && !is_tempo_tx
-            && let Some(from) = request.from
-        {
-            let mut available_funds = self.backend.get_balance_with_state(state, from)?;
-            if let Some(value) = request.value {
-                if value > available_funds {
-                    return Err(InvalidTransactionError::InsufficientFunds.into());
-                }
-                // safe: value < available_funds
-                available_funds -= value;
-            }
-            // amount of gas the sender can afford with the `gas_price`
-            let allowance = available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
-            highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
         }
 
         let mut call_to_estimate = request.clone();
@@ -1509,6 +1515,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).await.to_rpc_result()
             }
+            EthRequest::EthResend(request, gas_price, gas_limit) => {
+                self.resend_transaction(*request, gas_price, gas_limit).await.to_rpc_result()
+            }
             EthRequest::EthSendTransactionSync(request) => {
                 self.send_transaction_sync(*request).await.to_rpc_result()
             }
@@ -1586,6 +1595,9 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::EthSendRawTransactionSync(tx) => {
                 self.send_raw_transaction_sync(tx).await.to_rpc_result()
+            }
+            EthRequest::AnvilClassifyTransaction(tx) => {
+                self.anvil_classify_transaction(tx).to_rpc_result()
             }
             EthRequest::EthCall(call, block, state_override, block_overrides) => self
                 .call(call, block, EvmOverrides::new(state_override, block_overrides))
@@ -2216,6 +2228,65 @@ impl EthApi<FoundryNetwork> {
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
+    /// Resends a pending transaction with an updated gas price or gas limit.
+    ///
+    /// Handler for ETH RPC call: `eth_resend`
+    pub async fn resend_transaction(
+        &self,
+        mut request: WithOtherFields<TransactionRequest>,
+        gas_price: Option<U256>,
+        gas_limit: Option<U64>,
+    ) -> Result<TxHash> {
+        node_info!("eth_resend");
+
+        let from = request.from.map(Ok).unwrap_or_else(|| {
+            self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
+        })?;
+        let nonce = request.nonce.ok_or_else(|| {
+            BlockchainError::InvalidTransactionRequest(
+                "missing transaction nonce in transaction spec".to_string(),
+            )
+        })?;
+
+        if !self.pool.contains_sender_nonce(from, nonce) {
+            return Err(BlockchainError::TransactionNotFound);
+        }
+
+        if let Some(gas_price) = gas_price.filter(|gas_price| !gas_price.is_zero()) {
+            request.set_gas_price(gas_price.saturating_to());
+        }
+
+        if let Some(gas_limit) = gas_limit.filter(|gas_limit| *gas_limit != U64::ZERO) {
+            request.set_gas_limit(gas_limit.to());
+        }
+
+        let typed_tx = self.build_tx_request(request, nonce).await?;
+
+        let pending_transaction = if self.is_impersonated(from) {
+            let transaction = sign::build_impersonated(typed_tx);
+            self.ensure_typed_transaction_supported(&transaction)?;
+            trace!(target : "node", ?from, "eth_resend: impersonating");
+            PendingTransaction::with_impersonated(transaction, from)
+        } else {
+            let transaction = self.sign_request(&from, typed_tx)?;
+            self.ensure_typed_transaction_supported(&transaction)?;
+            PendingTransaction::new(transaction)?
+        };
+
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
+
+        let on_chain_nonce = self.backend.current_nonce(from).await?;
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
+        {
+            (requires, provides)
+        } else {
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+        };
+
+        self.add_pending_transaction(pending_transaction, requires, provides)
+    }
+
     /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
     async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<FoundryTxReceipt> {
         let mut stream = self.new_block_notifications();
@@ -2278,6 +2349,11 @@ impl EthApi<FoundryNetwork> {
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
+        if self.backend.is_tempo() && TempoHardfork::from(self.backend.hardfork()).is_t5() {
+            let classification = transaction.classify_t5_payment_lane();
+            trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
+        }
+
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
@@ -2303,6 +2379,35 @@ impl EthApi<FoundryNetwork> {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Classifies a raw transaction with the active Anvil Tempo/T5 payment-lane classifier.
+    pub fn anvil_classify_transaction(&self, tx: Bytes) -> Result<PaymentLaneClassification> {
+        node_info!("anvil_classifyTransaction");
+        let mut data = tx.as_ref();
+        if data.is_empty() {
+            return Err(BlockchainError::EmptyRawTransactionData);
+        }
+
+        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+
+        Ok(self.classify_transaction_envelope(&transaction))
+    }
+
+    fn classify_transaction_envelope(
+        &self,
+        transaction: &FoundryTxEnvelope,
+    ) -> PaymentLaneClassification {
+        if !self.backend.is_tempo() {
+            return PaymentLaneClassification::general(PaymentLaneReason::NotTempo);
+        }
+
+        if !TempoHardfork::from(self.backend.hardfork()).is_t5() {
+            return PaymentLaneClassification::general(PaymentLaneReason::T5NotActive);
+        }
+
+        transaction.classify_t5_payment_lane()
     }
 
     /// Sends signed transaction, returning its receipt.
@@ -3438,6 +3543,9 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<FoundryTypedTx> {
         let mut request = Into::<FoundryTransactionRequest>::into(request);
         let from = request.from().or(self.accounts()?.first().copied());
+        if let Some(from) = from {
+            request.set_from(from);
+        }
 
         // Fill common fields for all tx types
         request.chain_id().is_none().then(|| request.set_chain_id(self.chain_id()));
@@ -3453,16 +3561,18 @@ impl EthApi<FoundryNetwork> {
                     block_gas_limit
                 }
             };
-            request.set_gas_limit(
-                self.do_estimate_gas(
-                    request.as_ref().clone().into(),
-                    None,
-                    EvmOverrides::default(),
-                )
+            let estimated_gas = self
+                .do_estimate_gas(request.as_ref().clone().into(), None, EvmOverrides::default())
                 .await
                 .map(|v| v as u64)
-                .unwrap_or(fallback_gas_limit),
-            );
+                .unwrap_or_else(|_| {
+                    if is_simple_transfer_request(request.as_ref()) {
+                        MIN_TRANSACTION_GAS as u64
+                    } else {
+                        fallback_gas_limit
+                    }
+                });
+            request.set_gas_limit(estimated_gas);
         }
 
         // Fill missing tx type specific fields
@@ -3639,6 +3749,15 @@ impl EthApi<FoundryNetwork> {
     }
 }
 
+fn is_simple_transfer_request(request: &TransactionRequest) -> bool {
+    request.to.as_ref().and_then(TxKind::to).is_some()
+        && (request.input.input().is_none()
+            || request.input.input().is_some_and(|data| data.is_empty()))
+        && request.authorization_list.is_none()
+        && request.access_list.is_none()
+        && request.blob_versioned_hashes.is_none()
+}
+
 fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> Vec<TxMarker> {
     if provided_nonce == on_chain_nonce {
         return Vec::new();
@@ -3745,7 +3864,9 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 return_ok!() => Ok(Self::Success(gas)),
 
                 // Revert opcodes:
-                InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
+                InstructionResult::Revert => {
+                    Ok(Self::Revert(Some(output.map(|o| o.into_data()).unwrap_or_default())))
+                }
                 InstructionResult::CallTooDeep
                 | InstructionResult::OutOfFunds
                 | InstructionResult::CreateInitCodeStartingEF00

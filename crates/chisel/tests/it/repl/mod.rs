@@ -43,6 +43,14 @@ repl_test!(hex_string_interpretation, |repl| {
     repl.expect("0x1234");
 });
 
+// Hex literals in the generated inspector `abi.encode(...)` call are ABI-encoded as dynamic bytes.
+repl_test!(hex_literal_inspection_type, |repl| {
+    repl.sendln("hex\"6869\"");
+    repl.expect("Type: dynamic bytes");
+    repl.sendln("(hex\"6869\")");
+    repl.expect("Type: dynamic bytes");
+});
+
 // Test cheatcodes availability.
 repl_test!(cheatcodes_available, "", init = true, |repl| {
     repl.sendln("address alice = address(0x1)");
@@ -262,7 +270,7 @@ repl_test!(uint256_hex_formatting, |repl| {
 
 // Issue #9377: Test that full words are printed correctly.
 repl_test!(full_word_hex_formatting, |repl| {
-    repl.sendln(r#"keccak256(abi.encode(uint256(keccak256("AgoraStableSwapStorage.OracleStorage")) - 1)) & ~bytes32(uint256(0xff))"#);
+    repl.sendln(r#"uint256(keccak256(abi.encode(uint256(keccak256("AgoraStableSwapStorage.OracleStorage")) - 1))) & ~uint256(0xff)"#);
     repl.expect(
         "Hex (full word): 0x0a6b316b47a0cd26c1b582ae3dcffbd175283c221c3cb3d1c614e3e47f62a700",
     );

@@ -39,12 +39,13 @@ use foundry_common::{
 };
 use foundry_compilers::ArtifactId;
 use foundry_config::{
-    Config, figment,
+    Config, Eip1559FeeEstimatePreset, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
     },
 };
+use foundry_debugger::DebuggerLayout;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -52,7 +53,6 @@ use foundry_evm::{
     core::{
         Breakpoints, FoundryTransaction,
         evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
-        tempo::PATH_USD_ADDRESS,
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -77,9 +77,13 @@ mod providers;
 mod receipts;
 mod runner;
 mod sequence;
+mod session;
 mod simulate;
 mod transaction;
 mod verify;
+mod wallet_session;
+
+pub use wallet_session::ScriptWalletSessionArgs;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(ScriptArgs, build, evm);
@@ -124,6 +128,16 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub legacy: bool,
 
+    /// How to estimate EIP-1559 fees: `low`, `market` (default), or `aggressive`.
+    ///
+    /// The preset sets the priority-fee percentile and the `maxFeePerGas` buffer
+    /// (`low`: `base_fee * 1.5`, others: `* 2`); `low`'s tighter buffer is more
+    /// likely to stall if the base fee rises. `--with-gas-price` and
+    /// `--priority-gas-price` override only `maxFeePerGas` and
+    /// `maxPriorityFeePerGas` respectively. Ignored for `--legacy`.
+    #[arg(long = "estimate", value_name = "PRESET")]
+    pub eip1559_fee_estimate: Option<Eip1559FeeEstimatePreset>,
+
     /// Broadcasts the transactions.
     #[arg(long)]
     pub broadcast: bool,
@@ -139,6 +153,10 @@ pub struct ScriptArgs {
     /// Tempo transaction options.
     #[command(flatten)]
     pub tempo: TempoOpts,
+
+    /// Create a temporary Tempo wallet session, run this script with it, then revoke it.
+    #[command(flatten)]
+    pub wallet_session: ScriptWalletSessionArgs,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -173,6 +191,10 @@ pub struct ScriptArgs {
     /// Takes precedence over broadcast.
     #[arg(long)]
     pub debug: bool,
+
+    /// Debugger layout to use.
+    #[arg(long = "debug-layout", requires = "debug", value_enum)]
+    pub debug_layout: Option<DebuggerLayout>,
 
     /// Dumps all debugger steps to file.
     #[arg(
@@ -243,11 +265,15 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
+    fn has_tempo_session(&self) -> Result<bool> {
+        Ok(self.tempo.session_id()?.is_some())
+    }
+
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
-        if self.tempo.is_tempo() || self.tempo.session_id()?.is_some() {
+        if self.tempo.is_tempo() || self.has_tempo_session()? {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else {
@@ -263,22 +289,25 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let session_sender = if self.resume {
+        let args = self;
+        let mut tempo = args.tempo.clone();
+
+        let session_sender = if args.resume {
             None
         } else {
             // Initial scripts may only reveal multi-chain transactions during execution. Use the
             // session root as the script sender here and validate chain scope during broadcast.
-            self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
+            tempo.session_sender_for_multi_wallet(&args.wallets, args.evm.sender)?
         };
 
-        let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
-        let browser_wallet = self.wallets.browser_signer::<FEN::Network>().await?;
+        let script_wallets = Wallets::new(args.wallets.get_multi_wallet().await?, args.evm.sender);
+        let browser_wallet = args.wallets.browser_signer::<FEN::Network>().await?;
 
         if let Some(sender) = session_sender {
             evm_opts.sender = sender;
-        } else if let Some(sender) = self.maybe_load_private_key()? {
+        } else if let Some(sender) = args.maybe_load_private_key()? {
             evm_opts.sender = sender;
-        } else if self.evm.sender.is_none() {
+        } else if args.evm.sender.is_none() {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
@@ -291,21 +320,20 @@ impl ScriptArgs {
             }
         }
 
-        let mut tempo = self.tempo.clone();
         tempo.resolve_expires();
 
-        if evm_opts.networks.is_tempo() && tempo.fee_token.is_none() {
-            tempo.fee_token = Some(PATH_USD_ADDRESS);
-        }
-
-        let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
-        Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
+        let script_config = ScriptConfig::new(config, evm_opts, args.batch, tempo).await?;
+        Ok(PreprocessedState { args, script_config, script_wallets, browser_wallet })
     }
 
     /// Executes the script
     #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
+
+        if self.wallet_session.enabled {
+            return self.run_wallet_session_wrapper();
+        }
 
         let (config, evm_opts) = self.resolved_evm_opts().await?;
 
@@ -315,34 +343,43 @@ impl ScriptArgs {
             eyre::bail!("--batch mode is only supported on Tempo networks");
         }
 
-        if self.unlocked && self.tempo.session_id()?.is_some() {
+        if self.unlocked && self.has_tempo_session()? {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
 
+        // Box each branch's future to keep its large async state off `run_script`'s future;
+        // otherwise `run_command` trips `clippy::large_stack_frames` by a small margin.
         if is_tempo {
             let batch = self.batch;
-            let bundled = match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
-                Some(bundled) => bundled,
-                None => return Ok(()),
-            };
-            // batch mode owns its own pending recovery inside broadcast_batch(); running the
-            // generic wait_for_pending() first would race with that and could double-process
-            // an already-confirmed batch hash.
-            let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
-            let broadcasted =
-                if batch { bundled.broadcast_batch().await? } else { bundled.broadcast().await? };
-            if broadcasted.args.verify {
-                broadcasted.verify().await?;
-            }
-            return Ok(());
+            return Box::pin(async move {
+                let bundled =
+                    match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
+                        Some(bundled) => bundled,
+                        None => return Ok(()),
+                    };
+                // batch mode owns its own pending recovery inside broadcast_batch(); running the
+                // generic wait_for_pending() first would race with that and could double-process
+                // an already-confirmed batch hash.
+                let bundled = if batch { bundled } else { bundled.wait_for_pending().await? };
+                let broadcasted = if batch {
+                    bundled.broadcast_batch().await?
+                } else {
+                    bundled.broadcast().await?
+                };
+                if broadcasted.args.verify {
+                    broadcasted.verify().await?;
+                }
+                Ok(())
+            })
+            .await;
         }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await;
+            return Box::pin(self.run_generic_script::<OpEvmNetwork>(config, evm_opts)).await;
         }
 
-        self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
+        Box::pin(self.run_generic_script::<EthEvmNetwork>(config, evm_opts)).await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -413,8 +450,10 @@ impl ScriptArgs {
 
             let size_limits = pre_simulation
                 .script_config
-                .config
+                .evm_opts
+                .env
                 .code_size_limit
+                .or(pre_simulation.script_config.config.code_size_limit)
                 .map(ContractSizeLimits::with_runtime_limit)
                 .unwrap_or_default();
             pre_simulation.args.check_contract_sizes(
@@ -444,7 +483,7 @@ impl ScriptArgs {
 
         // Exit early if something is wrong with verification options.
         if bundled.args.verify {
-            bundled.verify_preflight_check()?;
+            bundled.verify_preflight_check().await?;
         }
 
         Ok(Some(bundled))
@@ -644,6 +683,13 @@ impl Provider for ScriptArgs {
             dict.insert("transaction_timeout".to_string(), timeout.into());
         }
 
+        if let Some(preset) = self.eip1559_fee_estimate {
+            dict.insert(
+                "eip1559_fee_estimate".to_string(),
+                figment::value::Value::from(preset.to_string()),
+            );
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -657,6 +703,8 @@ pub struct ScriptResult<N: Network> {
     pub traces: Traces,
     pub gas_used: u64,
     pub labeled_addresses: AddressHashMap<String>,
+    #[serde(skip)]
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
@@ -675,6 +723,7 @@ impl<N: Network> Default for ScriptResult<N> {
             traces: Default::default(),
             gas_used: Default::default(),
             labeled_addresses: Default::default(),
+            debug_bytecodes: Default::default(),
             transactions: Default::default(),
             returned: Default::default(),
             exit_reason: Default::default(),
@@ -851,13 +900,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
+        Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
+            .with_debug_bytecodes(debug))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_chains::NamedChain;
     use alloy_network::Ethereum;
     use alloy_primitives::{B256, address};
     use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
@@ -865,13 +916,16 @@ mod tests {
         KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
         upsert_session_entry,
     };
-    use foundry_config::{NamedChain, UnresolvedEnvVarError};
+    use foundry_config::UnresolvedEnvVarError;
     use std::{fs, sync::LazyLock};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, MutexGuard};
 
     const SESSION_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+    const SESSION_ID_HEX: &str =
+        "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const SESSION_ROOT_ADDRESS: &str = "0x1111111111111111111111111111111111111111";
     static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn active_session_entry(
@@ -923,6 +977,10 @@ mod tests {
         }
     }
 
+    fn session_root() -> Address {
+        SESSION_ROOT_ADDRESS.parse().unwrap()
+    }
+
     #[test]
     fn can_parse_sig() {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
@@ -954,15 +1012,12 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--tempo.sponsor",
-            "0x1111111111111111111111111111111111111111",
+            SESSION_ROOT_ADDRESS,
             "--tempo.sponsor-signer",
             "env://TEMPO_SPONSOR_PK",
         ]);
 
-        assert_eq!(
-            args.tempo.sponsor,
-            Some(address!("0x1111111111111111111111111111111111111111"))
-        );
+        assert_eq!(args.tempo.sponsor, Some(session_root()));
         assert_eq!(args.tempo.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
     }
 
@@ -980,7 +1035,7 @@ mod tests {
             "foundry-cli",
             "Contract.sol",
             "--tempo.session",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            SESSION_ID_HEX,
         ]);
 
         assert_eq!(args.tempo.session, Some(B256::from([0x11; 32])),);
@@ -990,7 +1045,7 @@ mod tests {
     async fn tempo_session_sets_script_sender_to_root_account() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x22; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1016,7 +1071,7 @@ mod tests {
     async fn tempo_session_resume_multi_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x55; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1040,7 +1095,7 @@ mod tests {
     async fn tempo_session_resume_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x77; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1063,7 +1118,7 @@ mod tests {
     async fn tempo_session_non_resume_multi_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x66; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1086,7 +1141,7 @@ mod tests {
     async fn tempo_session_initial_broadcast_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x88; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = 4217;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1123,7 +1178,7 @@ mod tests {
     async fn tempo_session_rejects_explicit_script_wallet_signer() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x33; 32]);
-        let root = address!("0x1111111111111111111111111111111111111111");
+        let root = session_root();
         let chain_id = foundry_common::DEV_CHAIN_ID;
 
         let _guard = TempoHomeGuard::set(temp.path()).await;
@@ -1236,6 +1291,22 @@ mod tests {
             "50000",
         ]);
         assert_eq!(args.evm.env.code_size_limit, Some(50000));
+    }
+
+    /// `--code-size-limit` on the CLI should be used by `check_contract_sizes`, not silently
+    /// ignored in favour of the foundry.toml value (which defaults to None → EIP-170's 24576).
+    #[test]
+    fn cli_code_size_limit_is_honoured_by_check() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--code-size-limit",
+            "2147483647",
+        ]);
+        // The CLI flag must land in evm_opts so that the size_limits computation in run() picks
+        // it up via `.evm_opts.env.code_size_limit.or(config.code_size_limit)`.
+        assert_eq!(args.evm.env.code_size_limit, Some(2147483647));
     }
 
     #[test]
@@ -1406,6 +1477,16 @@ mod tests {
         let args =
             ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--priority-gas-price", "100"]);
         assert!(args.priority_gas_price.is_some());
+    }
+
+    #[test]
+    fn test_eip1559_fee_estimate() {
+        // Defaults to unset (config provides `market`).
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1"]);
+        assert!(args.eip1559_fee_estimate.is_none());
+
+        let args = ScriptArgs::parse_from(["foundry-cli", "DeployV1", "--estimate", "aggressive"]);
+        assert_eq!(args.eip1559_fee_estimate, Some(Eip1559FeeEstimatePreset::Aggressive));
     }
 
     // <https://github.com/foundry-rs/foundry/issues/5910>

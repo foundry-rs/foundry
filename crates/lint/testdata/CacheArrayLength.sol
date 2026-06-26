@@ -27,7 +27,7 @@ contract CacheArrayLength {
     }
 
     function memoryArrayLength(uint256[] memory values) public pure returns (uint256 sum) {
-        for (uint256 i = 0; i <= values.length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i <= values.length; ++i) {
             if (i < values.length) {
                 sum += values[i];
             }
@@ -35,37 +35,37 @@ contract CacheArrayLength {
     }
 
     function calldataArrayLength(uint256[] calldata values) external pure returns (uint256 sum) {
-        for (uint256 i = 0; values.length > i; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; values.length > i; ++i) {
             sum += values[i];
         }
     }
 
     function bytesLength() external view returns (uint256 sum) {
-        for (uint256 i = 0; i < data.length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < data.length; ++i) {
             sum += uint8(data[i]);
         }
     }
 
     function bytesCastLength(string memory value) public pure returns (uint256 sum) {
-        for (uint256 i = 0; i < bytes(value).length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < bytes(value).length; ++i) {
             sum += uint8(bytes(value)[i]);
         }
     }
 
     function nestedArrayLength(uint256[][] memory values) public pure returns (uint256 sum) {
-        for (uint256 i = 0; i < values[0].length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < values[0].length; ++i) {
             sum += values[0][i];
         }
     }
 
     function mappingValueArrayLength(uint256 key) external view returns (uint256 sum) {
-        for (uint256 i = 0; i < buckets[key].length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < buckets[key].length; ++i) {
             sum += buckets[key][i];
         }
     }
 
     function structFieldArrayLength() external view returns (uint256 sum) {
-        for (uint256 i = 0; i < bag.values.length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < bag.values.length; ++i) {
             sum += bag.values[i];
         }
     }
@@ -75,14 +75,13 @@ contract CacheArrayLength {
         pure
         returns (uint256 sum)
     {
-        for (uint256 i = 0; i < left.length && i < right.length; ++i) { //~NOTE: array length read in loop condition
-            //~^NOTE: array length read in loop condition
+        for (uint256 i = 0; i < left.length && i < right.length; ++i) {
             sum += left[i] + right[i];
         }
     }
 
     function functionReturnArrayLength() public pure returns (uint256 sum) {
-        for (uint256 i = 0; i < generatedValues().length; ++i) { //~NOTE: array length read in loop condition
+        for (uint256 i = 0; i < generatedValues().length; ++i) {
             sum += i;
         }
     }

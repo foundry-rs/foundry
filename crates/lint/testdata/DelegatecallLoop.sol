@@ -21,6 +21,14 @@ contract ParentOrdinaryDelegatecall {
     }
 }
 
+contract ExternalDelegatecallReader {
+    function publicDelegate(bytes calldata payload) public {
+        address target = address(this);
+        (bool ok,) = target.delegatecall(payload);
+        require(ok);
+    }
+}
+
 contract ParentDelegatecallHelper {
     function superDelegate(bytes calldata payload) internal {
         address target = address(this);
@@ -161,6 +169,15 @@ contract DelegatecallLoop is
     function payableLoopWithPublicDelegatecall(bytes[] calldata payloads) external payable {
         for (uint256 i = 0; i < payloads.length; ++i) {
             publicDelegate(payloads[i]);
+        }
+    }
+
+    function payableLoopWithExternalDelegatecallReader(
+        ExternalDelegatecallReader reader,
+        bytes[] calldata payloads
+    ) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            reader.publicDelegate(payloads[i]);
         }
     }
 

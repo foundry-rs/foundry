@@ -216,8 +216,8 @@ impl InvariantWorkerOutput {
 ///   earlier logical worker;
 /// - optimization mode keeps the maximum value, with ties preserving the earlier logical worker;
 /// - `failed_corpus_replays` is a master-worker-only value from worker `0`;
-/// - cases, reverts, gas traces, selector metrics, and line coverage accumulate into the logical
-///   campaign result.
+/// - run/call counts, reverts, gas traces, selector metrics, and line coverage accumulate into the
+///   logical campaign result.
 #[derive(Debug)]
 pub struct InvariantCampaignAggregator {
     spec: InvariantCampaignSpec,
@@ -256,7 +256,7 @@ impl InvariantCampaignAggregator {
     /// Timeout campaigns share a wall-clock deadline across workers. When the deadline hits, any
     /// worker may have completed fewer than its assigned runs, so the original static ranges can
     /// contain gaps. The merge still validates worker identity and preserves deterministic worker
-    /// order, but final run count is derived from the completed cases.
+    /// order, but final run count is derived from the completed worker counters.
     pub fn finish_partial_with_corpus_entries(
         mut self,
     ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
@@ -271,9 +271,11 @@ impl InvariantCampaignAggregator {
 fn fold_outputs(
     outputs: Vec<InvariantWorkerOutput>,
 ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+    let workers = outputs.len();
     let mut errors = HashMap::default();
     let mut handler_errors = HashMap::default();
-    let mut cases = Vec::new();
+    let mut runs = 0;
+    let mut calls = 0;
     let mut reverts = 0;
     let mut last_run_inputs = Vec::new();
     let mut gas_report_traces = Vec::new();
@@ -292,7 +294,8 @@ fn fold_outputs(
         }
         merge_handler_errors(&mut handler_errors, result.handler_errors);
         corpus_entries.extend(worker_entries);
-        cases.extend(result.cases);
+        runs += result.runs;
+        calls += result.calls;
         reverts += result.reverts;
         if !result.last_run_inputs.is_empty() {
             last_run_inputs = result.last_run_inputs;
@@ -312,13 +315,15 @@ fn fold_outputs(
         InvariantFuzzTestResult::new(
             errors,
             handler_errors,
-            cases,
+            runs,
+            calls,
             reverts,
             last_run_inputs,
             gas_report_traces,
             line_coverage,
             metrics,
             failed_corpus_replays,
+            workers,
             optimization_best_value,
             optimization_best_sequence,
         ),
@@ -433,7 +438,7 @@ mod tests {
     };
     use alloy_primitives::{B256, Bytes};
     use foundry_evm_coverage::HitMap;
-    use foundry_evm_fuzz::{CallDetails, FuzzCase, FuzzedCases};
+    use foundry_evm_fuzz::CallDetails;
     use proptest::test_runner::TestError;
     use revm_inspectors::tracing::CallTraceArena;
 
@@ -441,13 +446,15 @@ mod tests {
         InvariantFuzzTestResult::new(
             HashMap::default(),
             HashMap::default(),
-            Vec::new(),
+            0,
+            0,
             reverts,
             Vec::new(),
             Vec::new(),
             None,
             HashMap::default(),
             failed_corpus_replays,
+            1,
             None,
             Vec::new(),
         )
@@ -477,7 +484,6 @@ mod tests {
 
     /// Builds a worker-local result fixture with the fields merged by the aggregator.
     fn worker_result(
-        case_gas: u64,
         reverts: usize,
         last_input_sender: u8,
         metric_name: &str,
@@ -486,7 +492,8 @@ mod tests {
         failed_corpus_replays: usize,
     ) -> InvariantFuzzTestResult {
         let mut result = empty_result(reverts, failed_corpus_replays);
-        result.cases.push(FuzzedCases::new(vec![FuzzCase { gas: case_gas, stipend: 0 }]));
+        result.runs = 1;
+        result.calls = metrics.calls;
         result.last_run_inputs = vec![basic_tx(last_input_sender)];
         result.gas_report_traces.push(vec![CallTraceArena::default()]);
         result.line_coverage = Some(hit_maps(7, coverage_hits));
@@ -669,7 +676,6 @@ mod tests {
         aggregator.push(InvariantWorkerOutput::new(
             plans[2],
             worker_result(
-                30,
                 3,
                 0x30,
                 "transfer(address)",
@@ -681,7 +687,6 @@ mod tests {
         aggregator.push(InvariantWorkerOutput::new(
             plans[0],
             worker_result(
-                10,
                 1,
                 0x10,
                 "transfer(address)",
@@ -693,7 +698,6 @@ mod tests {
         aggregator.push(InvariantWorkerOutput::new(
             plans[1],
             worker_result(
-                20,
                 2,
                 0x20,
                 "approve(address)",
@@ -705,9 +709,8 @@ mod tests {
 
         let result = aggregator.finish().unwrap();
 
-        let merged_case_gas =
-            result.cases.iter().map(|cases| cases.last().unwrap().gas).collect::<Vec<_>>();
-        assert_eq!(merged_case_gas, vec![10, 20, 30]);
+        assert_eq!(result.runs, 3);
+        assert_eq!(result.calls, 6);
         assert_eq!(result.reverts, 6);
         assert_eq!(result.gas_report_traces.len(), 3);
         assert_eq!(result.last_run_inputs[0].sender, Address::repeat_byte(0x30));
@@ -723,17 +726,40 @@ mod tests {
     }
 
     #[test]
+    fn aggregator_preserves_run_and_call_counts() {
+        let spec = InvariantCampaignSpec::new(3);
+        let plans = [
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 2 },
+        ];
+        let mut first = empty_result(0, 0);
+        first.runs = 1;
+        first.calls = 1000;
+        let mut second = empty_result(0, 0);
+        second.runs = 2;
+        second.calls = 2000;
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(InvariantWorkerOutput::new(plans[1], second));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], first));
+        let result = aggregator.finish().unwrap();
+
+        assert_eq!(result.runs, 3);
+        assert_eq!(result.calls, 3000);
+    }
+
+    #[test]
     fn timeout_aggregator_accepts_partial_outputs_with_range_gaps() {
-        fn result_with_cases(
-            gases: &[u64],
+        fn result_with_counts(
+            runs: usize,
+            calls: usize,
+            has_last_run: bool,
             failed_corpus_replays: usize,
         ) -> InvariantFuzzTestResult {
             let mut result = empty_result(0, failed_corpus_replays);
-            result.cases = gases
-                .iter()
-                .map(|&gas| FuzzedCases::new(vec![FuzzCase { gas, stipend: 0 }]))
-                .collect();
-            result.last_run_inputs = gases.last().map_or_else(Vec::new, |_| vec![basic_tx(0x44)]);
+            result.runs = runs;
+            result.calls = calls;
+            result.last_run_inputs = if has_last_run { vec![basic_tx(0x44)] } else { Vec::new() };
             result
         }
 
@@ -741,15 +767,15 @@ mod tests {
         let outputs = [
             InvariantWorkerOutput::new(
                 InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 2 },
-                result_with_cases(&[10, 11], 5),
+                result_with_counts(2, 20, true, 5),
             ),
             InvariantWorkerOutput::new(
                 InvariantWorkerPlan { worker_id: 1, first_global_run: 4, runs: 0 },
-                result_with_cases(&[], 0),
+                result_with_counts(0, 0, false, 0),
             ),
             InvariantWorkerOutput::new(
                 InvariantWorkerPlan { worker_id: 2, first_global_run: 7, runs: 1 },
-                result_with_cases(&[20], 0),
+                result_with_counts(1, 10, true, 0),
             ),
         ];
 
@@ -763,22 +789,21 @@ mod tests {
         let mut partial = InvariantCampaignAggregator::new(spec);
         partial.push(InvariantWorkerOutput::new(
             InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 2 },
-            result_with_cases(&[10, 11], 5),
+            result_with_counts(2, 20, true, 5),
         ));
         partial.push(InvariantWorkerOutput::new(
             InvariantWorkerPlan { worker_id: 1, first_global_run: 4, runs: 0 },
-            result_with_cases(&[], 0),
+            result_with_counts(0, 0, false, 0),
         ));
         partial.push(InvariantWorkerOutput::new(
             InvariantWorkerPlan { worker_id: 2, first_global_run: 7, runs: 1 },
-            result_with_cases(&[20], 0),
+            result_with_counts(1, 10, true, 0),
         ));
 
         let (result, corpus_entries) = partial.finish_partial_with_corpus_entries().unwrap();
 
-        let merged_case_gas =
-            result.cases.iter().map(|cases| cases.last().unwrap().gas).collect::<Vec<_>>();
-        assert_eq!(merged_case_gas, vec![10, 11, 20]);
+        assert_eq!(result.runs, 3);
+        assert_eq!(result.calls, 30);
         assert_eq!(result.failed_corpus_replays, 5);
         assert!(corpus_entries.is_empty());
     }

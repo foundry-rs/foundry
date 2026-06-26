@@ -152,6 +152,7 @@ interface Vm {
     function assertTrue(bool condition) external pure;
     function assertTrue(bool condition, string calldata err) external pure;
     function assume(bool condition) external pure;
+    function assumeImplicitApproval(address spender) external view;
     function assumeNoRevert() external pure;
     function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;
     function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;
@@ -273,6 +274,9 @@ interface Vm {
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter, uint64 count) external;
     function expectEmit(uint64 count) external;
     function expectEmit(address emitter, uint64 count) external;
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
+    function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
+    function expectLogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function expectPartialRevert(bytes4 revertData) external;
     function expectPartialRevert(bytes4 revertData, address reverter) external;
     function expectRevert() external;
@@ -289,6 +293,7 @@ interface Vm {
     function expectRevert(address reverter, uint64 count) external;
     function expectSafeMemory(uint64 min, uint64 max) external;
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
+    function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
     function foundryVersionAtLeast(string calldata version) external view returns (bool);
@@ -333,12 +338,14 @@ interface Vm {
     function isContext(ForgeContext context) external view returns (bool result);
     function isDir(string calldata path) external view returns (bool result);
     function isFile(string calldata path) external view returns (bool result);
+    function isImplicitlyApproved(address spender) external view returns (bool implicitlyApproved);
     function isPersistent(address account) external view returns (bool persistent);
     function keyExists(string calldata json, string calldata key) external view returns (bool);
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
     function keyExistsToml(string calldata toml, string calldata key) external view returns (bool);
     function label(address account, string calldata newLabel) external;
     function lastCallGas() external view returns (Gas memory gas);
+    function lastFrameGas() external view returns (Gas memory gas);
     function load(address target, bytes32 slot) external view returns (bytes32 data);
     function loadAllocs(string calldata pathToAllocsJson) external;
     function makePersistent(address account) external;
@@ -461,6 +468,8 @@ interface Vm {
     function rollFork(bytes32 txHash) external;
     function rollFork(uint256 forkId, uint256 blockNumber) external;
     function rollFork(uint256 forkId, bytes32 txHash) external;
+    function rpcJson(string calldata method, string calldata params) external returns (string memory data);
+    function rpcJson(string calldata urlOrAlias, string calldata method, string calldata params) external returns (string memory data);
     function rpcUrl(string calldata rpcAlias) external view returns (string memory json);
     function rpcUrlStructs() external view returns (Rpc[] memory urls);
     function rpcUrls() external view returns (string[2][] memory urls);
@@ -490,9 +499,11 @@ interface Vm {
     function setBlockhash(uint256 blockNumber, bytes32 blockHash) external;
     function setEnv(string calldata name, string calldata value) external;
     function setEvmVersion(string calldata evm) external;
+    function setLogoURI(address token, string calldata newLogoURI) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
     function setSeed(uint256 seed) external;
+    function setTip20LogoURI(address token, string calldata newLogoURI) external;
     function shuffle(uint256[] calldata array) external returns (uint256[] memory);
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
     function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
@@ -505,6 +516,8 @@ interface Vm {
     function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
     function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
     function signEd25519(bytes calldata namespace, bytes calldata message, bytes32 privateKey) external pure returns (bytes memory signature);
+    function signKeychain(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest) external pure returns (bytes memory signature);
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
     function signWithNonceUnsafe(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(Wallet calldata wallet, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
@@ -517,6 +530,8 @@ interface Vm {
     function snapshot() external returns (uint256 snapshotId);
     function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
     function snapshotGasLastCall(string calldata group, string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastFrame(string calldata group, string calldata name) external returns (uint256 gasUsed);
     function snapshotState() external returns (uint256 snapshotId);
     function snapshotValue(string calldata name, uint256 value) external;
     function snapshotValue(string calldata group, string calldata name, uint256 value) external;

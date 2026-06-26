@@ -19,7 +19,10 @@ use alloy_primitives::{
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
     EvmEnv, FoundryBlock, FoundryTransaction,
-    backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
+    backend::{
+        Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
+        GLOBAL_FAIL_SLOT,
+    },
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
@@ -32,6 +35,7 @@ use foundry_evm_core::{
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
+use foundry_evm_fuzz::ObservedCall;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     bytecode::Bytecode,
@@ -325,6 +329,36 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         Ok(())
     }
 
+    /// Apply prestate trace data to the executor's backend.
+    ///
+    /// This is used to set up the EVM state based on the prestate trace from
+    /// `debug_traceTransaction`, which provides all accounts and storage slots
+    /// that will be accessed during transaction execution.
+    pub fn apply_prestate_trace(
+        &mut self,
+        prestate: std::collections::BTreeMap<Address, alloy_rpc_types::trace::geth::AccountState>,
+    ) -> eyre::Result<()> {
+        let backend = self.backend_mut();
+        for (address, account_state) in prestate {
+            let code = account_state.code.map(Bytecode::new_raw).unwrap_or_default();
+            let info = revm::state::AccountInfo {
+                nonce: account_state.nonce.unwrap_or_default(),
+                balance: account_state.balance.unwrap_or_default(),
+                code_hash: keccak256(code.original_byte_slice()),
+                code: Some(code),
+                account_id: Default::default(),
+            };
+            backend.insert_account_info(address, info);
+
+            for (slot, value) in account_state.storage {
+                let slot = U256::from_be_bytes(slot.0);
+                let value = U256::from_be_bytes(value.0);
+                backend.insert_account_storage(address, slot, value)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
@@ -556,12 +590,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
         };
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
             stack,
             result,
-            backend.has_state_snapshot_failure(),
+            &backend,
+            has_state_snapshot_failure,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -588,12 +624,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
         };
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
             stack,
             result,
-            backend.has_state_snapshot_failure(),
+            &*backend,
+            has_state_snapshot_failure,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -984,12 +1022,16 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub labels: AddressHashMap<String>,
     /// The traces of the call
     pub traces: Option<SparsedTraceArena>,
+    /// Runtime bytecodes for contracts seen in the trace, used by debug source mapping.
+    pub debug_bytecodes: AddressHashMap<Bytes>,
     /// The line coverage info collected during the call
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<EdgeCoverage>,
     /// EVM comparison operands collected during the call.
     pub evm_cmp_values: Option<Vec<CmpOperands>>,
+    /// Observed sub-calls collected during the call.
+    pub observed_calls: Vec<ObservedCall>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,
@@ -1025,9 +1067,11 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             logs: Vec::new(),
             labels: HashMap::default(),
             traces: None,
+            debug_bytecodes: HashMap::default(),
             line_coverage: None,
             edge_coverage: None,
             evm_cmp_values: None,
+            observed_calls: Vec::new(),
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
@@ -1248,8 +1292,9 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
 fn convert_executed_result<FEN: FoundryEvmNetwork>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
-    inspector: InspectorStack<FEN>,
+    mut inspector: InspectorStack<FEN>,
     ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
+    db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
 ) -> eyre::Result<RawCallResult<FEN>> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
@@ -1272,6 +1317,12 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         Some(Output::Call(data)) => data.clone(),
         _ => Bytes::new(),
     };
+    let observed_calls = inspector
+        .inner
+        .fuzzer
+        .as_mut()
+        .map(|fuzzer| fuzzer.take_observed_calls())
+        .unwrap_or_default();
 
     let InspectorData {
         mut logs,
@@ -1284,6 +1335,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         chisel_state,
         reverter,
     } = inspector.collect();
+    let debug_bytecodes = collect_debug_bytecodes(traces.as_ref(), db);
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -1305,9 +1357,11 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         logs,
         labels,
         traces,
+        debug_bytecodes,
         line_coverage,
         edge_coverage,
         evm_cmp_values,
+        observed_calls,
         sancov_coverage: None,
         sancov_cmp_values: None,
         transactions,
@@ -1319,6 +1373,32 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         chisel_state,
         reverter,
     })
+}
+
+fn collect_debug_bytecodes(
+    traces: Option<&SparsedTraceArena>,
+    db: &dyn DatabaseRef<Error = DatabaseError>,
+) -> AddressHashMap<Bytes> {
+    let mut bytecodes = HashMap::default();
+    let Some(traces) = traces else { return bytecodes };
+
+    for node in traces.arena.nodes() {
+        let address = node.trace.address;
+        if bytecodes.contains_key(&address) {
+            continue;
+        }
+
+        let Ok(Some(account)) = db.basic_ref(address) else { continue };
+        let code: Option<Bytecode> =
+            account.code.or_else(|| db.code_by_hash_ref(account.code_hash).ok());
+        let code: Bytes = code.map(|code| code.original_bytes()).unwrap_or_default();
+
+        if !code.is_empty() {
+            bytecodes.insert(address, code);
+        }
+    }
+
+    bytecodes
 }
 
 /// Timer for a fuzz test.

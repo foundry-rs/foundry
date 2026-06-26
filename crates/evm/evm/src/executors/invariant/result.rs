@@ -19,7 +19,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    BasicTxDetails, FuzzedCases,
+    BasicTxDetails,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
 use proptest::test_runner::TestError;
@@ -35,8 +35,10 @@ pub struct InvariantFuzzTestResult {
     /// Handler-side assertion bugs, keyed by `(reverter, selector)` site (deduped per
     /// handler function). Each entry is [`InvariantFuzzError::HandlerAssertion`].
     pub handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
-    /// Every successful fuzz test case
-    pub cases: Vec<FuzzedCases>,
+    /// Number of completed invariant runs.
+    pub runs: usize,
+    /// Number of completed fuzzed calls across all invariant runs.
+    pub calls: usize,
     /// Number of reverted fuzz calls
     pub reverts: usize,
     /// The entire inputs of the last run of the invariant campaign, used for
@@ -50,6 +52,8 @@ pub struct InvariantFuzzTestResult {
     pub metrics: HashMap<String, InvariantMetrics>,
     /// Number of failed replays from persisted corpus.
     pub failed_corpus_replays: usize,
+    /// Actual number of workers used for this logical campaign.
+    pub workers: usize,
     /// For optimization mode (int256 return): the best (maximum) value achieved.
     /// None means standard invariant check mode.
     pub optimization_best_value: Option<I256>,
@@ -62,26 +66,30 @@ impl InvariantFuzzTestResult {
     pub(crate) const fn new(
         errors: HashMap<String, InvariantFuzzError>,
         handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
-        cases: Vec<FuzzedCases>,
+        runs: usize,
+        calls: usize,
         reverts: usize,
         last_run_inputs: Vec<BasicTxDetails>,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         line_coverage: Option<HitMaps>,
         metrics: HashMap<String, InvariantMetrics>,
         failed_corpus_replays: usize,
+        workers: usize,
         optimization_best_value: Option<I256>,
         optimization_best_sequence: Vec<BasicTxDetails>,
     ) -> Self {
         Self {
             errors,
             handler_errors,
-            cases,
+            runs,
+            calls,
             reverts,
             last_run_inputs,
             gas_report_traces,
             line_coverage,
             metrics,
             failed_corpus_replays,
+            workers,
             optimization_best_value,
             optimization_best_sequence,
         }

@@ -62,6 +62,7 @@ Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055Test
 Encountered a total of 3 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -118,6 +119,7 @@ Encountered 1 failing test in test/Issue3189.t.sol:Issue3189Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -169,6 +171,7 @@ Encountered 1 failing test in test/Issue3596.t.sol:Issue3596Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -255,18 +258,19 @@ contract Issue6170Test is Test {
 Compiler run successful!
 
 Ran 1 test for test/Issue6170.t.sol:Issue6170Test
-[FAIL: log != expected log] test() ([GAS])
+[FAIL: Values indexed topic count mismatch: expected 1, got 2] test() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/Issue6170.t.sol:Issue6170Test
-[FAIL: log != expected log] test() ([GAS])
+[FAIL: Values indexed topic count mismatch: expected 1, got 2] test() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -330,6 +334,7 @@ Encountered 2 failing tests in test/Issue6355.t.sol:Issue6355Test
 Encountered a total of 2 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });

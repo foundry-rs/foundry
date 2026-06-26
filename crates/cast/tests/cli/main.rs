@@ -4,11 +4,14 @@ use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest};
+use alloy_rpc_types::{
+    Authorization, BlockNumberOrTag, Index, TransactionRequest, engine::JwtSecret,
+};
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{
@@ -21,7 +24,8 @@ use foundry_test_utils::{
     util::OutputExt,
 };
 use serde_json::json;
-use std::{fs, path::Path, str::FromStr};
+use std::{fs, path::Path, process::Command, str::FromStr};
+use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::TempoTxEnvelope;
 
 #[macro_use]
@@ -82,13 +86,6 @@ Display options:
 
       --json
           Format log messages as JSON
-
-      --machine
-          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
-          help / version) in a structured envelope. Per-command machine output (declared
-          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
-          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
-          to keep machine-mode output unambiguous
 
       --md
           Format log messages as Markdown
@@ -244,6 +241,45 @@ casttest!(block_raw_tempo, |_prj, cmd| {
     );
 });
 
+casttest!(channel_id_defaults, async |_prj, cmd| {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+
+    let payer = address!("0000000000000000000000000000000000000101");
+    let payee = address!("0000000000000000000000000000000000000202");
+    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
+    let expected = keccak256(
+        (
+            payer,
+            payee,
+            Address::ZERO,
+            PATH_USD_ADDRESS,
+            salt,
+            Address::ZERO,
+            B256::ZERO,
+            TIP20_CHANNEL_RESERVE_ADDRESS,
+            U256::from(chain_id),
+        )
+            .abi_encode(),
+    );
+
+    cmd.args([
+        "channel-id",
+        &payer.to_string(),
+        &payee.to_string(),
+        &PATH_USD_ADDRESS.to_string(),
+        &salt.to_string(),
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(format!("{expected:#x}\n"));
+});
+
 // tests that the `cast find-block` command works correctly
 casttest!(finds_block, |_prj, cmd| {
     // Construct args
@@ -297,13 +333,19 @@ Successfully created new keypair.
 casttest!(new_wallet_json, |_prj, cmd| {
     cmd.args(["wallet", "new", "--json"]).assert_success().stdout_eq(
         str![[r#"
-[
-  {
-    "address": "{...}",
-    "public_key": "{...}",
-    "private_key": "{...}"
-  }
-]
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "public_key": "{...}",
+      "private_key": "{...}"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
 "#]]
         .is_json(),
@@ -314,17 +356,74 @@ casttest!(new_wallet_json, |_prj, cmd| {
 casttest!(new_wallet_json_verbose, |_prj, cmd| {
     cmd.args(["wallet", "new", "--json", "-v"]).assert_success().stdout_eq(
         str![[r#"
-[
-  {
-    "address": "{...}",
-    "public_key": "{...}",
-    "private_key": "{...}"
-  }
-]
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "public_key": "{...}",
+      "private_key": "{...}"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
 "#]]
         .is_json(),
     );
+});
+
+// tests that `cast wallet address --json` wraps output in envelope
+casttest!(wallet_address_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "address",
+        "--json",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":"0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf","errors":[],"warnings":[]}
+
+"#]]);
+});
+
+// tests that `cast wallet sign --json` wraps signature in envelope
+casttest!(wallet_sign_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--json",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "test",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":"0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c","errors":[],"warnings":[]}
+
+"#]]);
+});
+
+// tests that `cast wallet sign -v --json` wraps verbose output in envelope
+casttest!(wallet_sign_json_verbose, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--json",
+        "-v",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "test",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":{"message":"test","address":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","signature":"fe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c"},"errors":[],"warnings":[]}
+
+"#]]);
 });
 
 // tests that keystore `--json` output includes address, public_key, path
@@ -333,13 +432,19 @@ casttest!(new_wallet_keystore_json, |_prj, cmd| {
         .assert_success()
         .stdout_eq(
             str![[r#"
-[
-  {
-    "address": "{...}",
-    "public_key": "{...}",
-    "path": "{...}"
-  }
-]
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "public_key": "{...}",
+      "path": "{...}"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
 "#]]
             .is_json(),
@@ -352,13 +457,19 @@ casttest!(new_wallet_keystore_json_verbose, |_prj, cmd| {
         .assert_success()
         .stdout_eq(
             str![[r#"
-[
-  {
-    "address": "{...}",
-    "public_key": "{...}",
-    "path": "{...}"
-  }
-]
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "public_key": "{...}",
+      "path": "{...}"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
 "#]]
             .is_json(),
@@ -620,13 +731,9 @@ casttest!(wallet_sign_message_json, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "test",
     ])
-    .assert_success()
-    .stdout_eq(str![[r#"
-{
-  "message": "test",
-  "address": "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
-  "signature": "fe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c"
-}
+.assert_success()
+.stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":"0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c","errors":[],"warnings":[]}
 
 "#]]);
 });
@@ -986,6 +1093,60 @@ Created new encrypted keystore file: [..]
     ]);
 });
 
+// tests that `cast wallet list --json --dir` wraps local accounts in the shared envelope
+casttest!(wallet_list_local_accounts_json, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.args(["wallet", "new", "keystore", "--unsafe-password", "test"]).assert_success();
+
+    cmd.cast_fuse()
+        .args(["wallet", "list", "--json", "--dir", "keystore"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "source": "Local"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
+
+"#]]
+            .is_json(),
+        );
+});
+
+// tests that `cast wallet vanity --json --nonce` wraps wallet and contract address output
+casttest!(wallet_vanity_json_nonce_contract_address, |_prj, cmd| {
+    cmd.args(["wallet", "vanity", "--starts-with", ".", "--nonce", "1", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": {
+    "address": "{...}",
+    "private_key": "{...}",
+    "contract_address": "{...}"
+  },
+  "errors": [],
+  "warnings": []
+}
+
+"#]]
+            .is_json(),
+        );
+});
+
 // tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic
 casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
     cmd.args([
@@ -1076,26 +1237,35 @@ casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
         "--json",
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
+    .stdout_eq(
+        str![[r#"
 {
-  "mnemonic": "test test test test test test test test test test test junk",
-  "accounts": [
-    {
-      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-    },
-    {
-      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-    },
-    {
-      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-      "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
-    }
-  ]
+  "schema_version": 1,
+  "success": true,
+  "data": {
+    "mnemonic": "test test test test test test test test test test test junk",
+    "accounts": [
+      {
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      },
+      {
+        "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+      },
+      {
+        "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+      }
+    ]
+  },
+  "errors": [],
+  "warnings": []
 }
 
-"#]]);
+"#]]
+        .is_json(),
+    );
 });
 
 // tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic (verbose variant)
@@ -1110,30 +1280,37 @@ casttest!(wallet_mnemonic_from_entropy_json_verbose, |_prj, cmd| {
         "--json",
         "-v",
     ])
-    .assert_success()
-    .stdout_eq(str![[r#"
+.assert_success()
+.stdout_eq(str![[r#"
 {
-  "mnemonic": "test test test test test test test test test test test junk",
-  "accounts": [
-    {
-      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      "public_key": "0x8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5",
-      "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-    },
-    {
-      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      "public_key": "0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4",
-      "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-    },
-    {
-      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-      "public_key": "0x9d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f0464b8bbafe1535f2301c72c2cb3535b172da30b02686ab0393d348614f157fbdb",
-      "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
-    }
-  ]
+  "schema_version": 1,
+  "success": true,
+  "data": {
+    "mnemonic": "test test test test test test test test test test test junk",
+    "accounts": [
+      {
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "public_key": "0x8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5",
+        "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      },
+      {
+        "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "public_key": "0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4",
+        "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+      },
+      {
+        "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "public_key": "0x9d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f0464b8bbafe1535f2301c72c2cb3535b172da30b02686ab0393d348614f157fbdb",
+        "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+      }
+    ]
+  },
+  "errors": [],
+  "warnings": []
 }
 
-"#]]);
+"#]]
+.is_json());
 });
 
 // tests that `cast wallet derive` outputs the addresses of the accounts derived from the mnemonic
@@ -1201,20 +1378,29 @@ casttest!(wallet_derive_mnemonic_json, |_prj, cmd| {
         "test test test test test test test test test test test junk",
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
-[
-  {
-    "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-  },
-  {
-    "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-  },
-  {
-    "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
-  }
-]
+    .stdout_eq(
+        str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    },
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+    },
+    {
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
-"#]]);
+"#]]
+        .is_json(),
+    );
 });
 
 // tests that `cast wallet derive` with insecure and json flag outputs the addresses and private
@@ -1230,23 +1416,32 @@ casttest!(wallet_derive_mnemonic_insecure_json, |_prj, cmd| {
         "test test test test test test test test test test test junk",
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
-[
-  {
-    "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-    "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-  },
-  {
-    "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-    "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-  },
-  {
-    "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-    "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
-  }
-]
+    .stdout_eq(
+        str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    },
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    },
+    {
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
-"#]]);
+"#]]
+        .is_json(),
+    );
 });
 
 // tests that `cast wallet private-key` with arguments outputs the private key
@@ -1746,15 +1941,14 @@ Transaction successfully executed.
 
 // tests that `cast --to-base` commands are working correctly.
 casttest!(to_base, |_prj, cmd| {
+    // One value per distinct code path (small positive, u256 max in decimal and
+    // hex form, small negative, i256 min) to keep the number of spawned `cast`
+    // processes low and avoid timing out on slow Windows/macOS/ARM CI runners.
     let values = [
         "1",
-        "100",
-        "100000",
         "115792089237316195423570985008687907853269984665640564039457584007913129639935",
         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         "-1",
-        "-100",
-        "-100000",
         "-57896044618658097711785492504343953926634992332820282019728792003956564819968",
     ];
     for value in values {
@@ -1914,6 +2108,37 @@ access list:
 "#]]);
 });
 
+casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let stderr = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "0x0000000000000000000000000000000000000001",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--access-list",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "2",
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("Error: max priority fee per gas (2) cannot exceed max fee per gas (1)"),
+        "{stderr}"
+    );
+});
+
 casttest!(logs_topics, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
     cmd.args([
@@ -1985,22 +2210,36 @@ casttest!(logs_sig_2, |_prj, cmd| {
     .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
 });
 
-casttest!(logs_chunked_large_range, |_prj, cmd| {
+// Queries a 60k-block range (which `--query-size` splits into multiple chunks) and asserts the
+// chunked result is byte-for-byte identical to a single unchunked request. This proves chunking
+// collects logs from every chunk without gaps, duplicates, or reordering, and that the inclusive
+// `to` block is covered.
+casttest!(logs_chunked, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
-    cmd.args([
+    let args = [
         "logs",
         "--rpc-url",
         rpc.as_str(),
         "--from-block",
-        "18000000",
+        "12400000",
         "--to-block",
-        "18050000",
-        "--query-size",
-        "1000",
+        "12460000",
         "Transfer(address indexed from, address indexed to, uint256 value)",
-        "0xA0b86a33E6441d02dd8C6B2b7E5D1E3eD7F73b4b",
-    ])
-    .assert_success();
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+    ];
+
+    // Baseline: single request over the whole range.
+    let unchunked = cmd.args(args).assert_success().get_output().stdout_lossy();
+
+    // Same query split into 10k-block chunks (6 chunks).
+    cmd.cast_fuse();
+    let chunked =
+        cmd.args(args).args(["--query-size", "10000"]).assert_success().get_output().stdout_lossy();
+
+    assert_eq!(chunked, unchunked, "chunked logs must match the unchunked result");
+    // Sanity check: results actually span the first and last chunk of the range.
+    assert!(chunked.contains("12400314"), "missing log from the first chunk");
+    assert!(chunked.contains("12454418"), "missing log from the last chunk");
 });
 
 // tests that `cast create2` writes `address\tsalt` to stdout and prose to stderr
@@ -2142,6 +2381,41 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
 
 "#
     ]]);
+});
+
+casttest!(mktx_raw_unsigned_curl_skips_unknown_fee_token_symbol_lookup, |_prj, cmd| {
+    let output = cmd
+        .args([
+            "mktx",
+            "0x0000000000000000000000000000000000001234",
+            "--chain",
+            "tempo",
+            "--rpc-url",
+            "https://example.invalid",
+            "--curl",
+            "--tempo.fee-token",
+            "0x20C00000000000000000000014f22CA97301EB73",
+            "--from",
+            "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "100000",
+            "--gas-price",
+            "1000000000",
+            "--priority-gas-price",
+            "1000000000",
+            "--value",
+            "0",
+            "--raw-unsigned",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.starts_with("0x"), "expected raw transaction hex, got:\n{output}");
+    assert!(!output.contains("eth_call"), "unexpected fee-token symbol lookup curl:\n{output}");
+    assert!(!output.contains("0x95d89b41"), "unexpected symbol() calldata:\n{output}");
 });
 
 casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
@@ -3417,6 +3691,7 @@ contract LocalProjectScript is Script {
 
     cmd.args([
         "script",
+        "--no-dynamic-test-linking",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         "--rpc-url",
@@ -3499,6 +3774,138 @@ Executing previous transactions from the block.
 ...
 
 "#]]);
+});
+
+// Deploys the default Counter and sends a `setNumber(111)` tx, returning its hash.
+// Used by the `--prestate-tracer` tests below.
+async fn deploy_counter_and_set_number(
+    prj: &foundry_test_utils::TestProject,
+    cmd: &mut foundry_test_utils::TestCommand,
+    api: &anvil::eth::EthApi<foundry_primitives::FoundryNetwork>,
+    endpoint: &str,
+) -> alloy_primitives::TxHash {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    // Deploy counter contract.
+    let mut forge = Command::new(prj.ensure_foundry_bin("forge"));
+    forge.current_dir(prj.root());
+    forge.env("NO_COLOR", "1");
+    cmd.set_cmd(forge)
+        .args([
+            "script",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+            "--broadcast",
+            "CounterScript",
+        ])
+        .assert_success();
+
+    // Send tx to change counter storage value.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "setNumber(uint256)",
+            "111",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            endpoint,
+        ])
+        .assert_success();
+
+    api.transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .await
+        .unwrap()
+        .unwrap()
+        .tx_hash()
+}
+
+// `cast run --prestate-tracer` uses the prestate tracer when the node exposes the debug API
+// (Anvil does), skipping the block replay while still producing correct traces. The block replay
+// message must be absent from stderr.
+forgetest_async!(cast_run_prestate_tracer, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    let assert = cmd
+        .cast_fuse()
+        .args(["run", "--prestate-tracer", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Stop]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+    assert!(
+        !assert
+            .get_output()
+            .stderr_lossy()
+            .contains("Executing previous transactions from the block."),
+        "prestate tracer path should not replay previous block transactions"
+    );
+});
+
+// `cast run` defaults to replaying the block (conservative default) even on a node that supports
+// the debug API. The prestate tracer must be explicitly opted into via `--prestate-tracer`, so the
+// block replay message is present on stderr.
+forgetest_async!(cast_run_default_uses_block_replay, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    cmd.cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+    └─ ← [Stop]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+...
+Executing previous transactions from the block.
+...
+
+"#]]);
+});
+
+// The prestate tracer path produces the same traces as the block replay path, proving the prestate
+// is applied correctly before execution.
+forgetest_async!(cast_run_prestate_tracer_matches_block_replay, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let tx_hash = deploy_counter_and_set_number(&prj, &mut cmd, &api, &endpoint).await;
+
+    let replay = cmd
+        .cast_fuse()
+        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let prestate = cmd
+        .cast_fuse()
+        .args(["run", "--prestate-tracer", format!("{tx_hash}").as_str(), "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_eq!(replay, prestate, "prestate tracer traces must match block replay traces");
 });
 
 // tests cast can decode traces when running with verbosity level > 4
@@ -3673,89 +4080,6 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
             &chain_id.to_string(),
         ])
         .assert_success();
-});
-
-// `cast --machine call` emits a single envelope on stdout against an
-// empty account, returning the deterministic `0x` result.
-forgetest_async!(cast_call_machine_mode_emits_envelope, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let http_endpoint = handle.http_endpoint();
-
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            &http_endpoint,
-        ])
-        .assert_success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
-
-    assert_eq!(envelope["schema_version"], 1);
-    assert_eq!(envelope["success"], true);
-    assert_eq!(envelope["data"]["raw"], "0x");
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    assert_eq!(envelope["warnings"], serde_json::json!([]));
-});
-
-// `--machine` rejects flags that would corrupt the envelope-only stdout
-// contract. Asserts the stable `code` + exit code, not just message text.
-forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let http_endpoint = handle.http_endpoint();
-
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "--trace",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            &http_endpoint,
-        ])
-        .assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
-    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
-    assert_eq!(
-        envelope["errors"][0]["details"]["unsupported_flags"],
-        serde_json::json!(["--trace"]),
-        "missing structured unsupported_flags details: {envelope}"
-    );
-});
-
-// Transport/connectivity failures (here: unreachable RPC URL) emit a typed
-// `network.rpc.error` envelope and exit `Network (6)`.
-forgetest_async!(cast_call_machine_mode_rpc_failure_emits_network_envelope, |_prj, cmd| {
-    let assert = cmd
-        .cast_fuse()
-        .args([
-            "--machine",
-            "call",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            // Unreachable: port 1 is reserved and nothing accepts here.
-            "http://127.0.0.1:1",
-        ])
-        .assert_failure();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    let envelope: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
-
-    assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "network.rpc.error");
-    assert_eq!(assert.get_output().status.code(), Some(6));
 });
 
 // https://github.com/foundry-rs/foundry/issues/10848
@@ -4767,6 +5091,78 @@ casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
     }
 });
 
+// tests that `cast call --trace` executes the call with the gas limit given via `--gas-limit`,
+// matching a plain `cast call` rather than running with an unbounded gas limit.
+// <https://github.com/foundry-rs/foundry/issues/15357>
+forgetest_async!(cast_call_trace_respects_gas_limit, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Contract that reverts when the call is given an unrealistically large gas limit.
+    prj.add_source(
+        "GasDependent",
+        r#"
+contract GasDependent {
+    function run() external view returns (uint256) {
+        require(gasleft() < 30_000_000, "unrealistic gas limit");
+        return gasleft();
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    let bytecode_path = prj.root().join("out/GasDependent.sol/GasDependent.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    let deploy_output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--json",
+            "--create",
+            bytecode,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = serde_json::from_str(&deploy_output).unwrap();
+    let address = receipt["contractAddress"].as_str().unwrap().to_string();
+
+    // A plain `cast call` (eth_call) uses a realistic gas limit, so it succeeds.
+    cmd.cast_fuse()
+        .args(["call", &address, "run()(uint256)", "--rpc-url", &endpoint])
+        .assert_success();
+
+    // `--trace` with an explicit `--gas-limit` executes the call with that limit, so it succeeds
+    // too instead of reverting.
+    let trace_output = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &address,
+            "run()(uint256)",
+            "--trace",
+            "--gas-limit",
+            "1000000",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        trace_output.contains("[Return]") && !trace_output.contains("unrealistic gas limit"),
+        "expected traced call to respect --gas-limit and succeed, got:\n{trace_output}"
+    );
+});
+
 // tests that cast call properly applies state diff override
 // <https://github.com/foundry-rs/foundry/issues/10930>
 casttest!(cast_call_can_override_state_diff, |_prj, cmd| {
@@ -5252,6 +5648,75 @@ casttest!(curl_rpc, |_prj, cmd| {
     assert!(output.contains(rpc));
 });
 
+// tests that the --jwt-secret flag outputs a valid curl command with Authorization header
+casttest!(curl_call_with_jwt, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let jwt_secret = "cabee703106087906e50f3e75a6ddbab60809f980511d1d1548d449d52220795";
+    let to = "0xdead000000000000000000000000000000000000";
+
+    let output = cmd
+        .args([
+            "call",
+            to,
+            "balanceOf(address)(uint256)",
+            to,
+            "--rpc-url",
+            rpc,
+            "--jwt-secret",
+            jwt_secret,
+            "--curl",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("-H 'Content-Type: application/json'"));
+    assert!(output.contains("eth_call"));
+    assert!(output.contains("jsonrpc"));
+    assert!(output.contains(rpc));
+
+    let jwt = output
+        .split("Authorization: Bearer ")
+        .nth(1)
+        .expect("missing Authorization header")
+        .split('\'')
+        .next()
+        .expect("malformed Authorization header");
+    let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+    secret.validate(jwt).unwrap();
+});
+
+// tests that the --jwt-secret flag outputs a valid curl command with Authorization header
+casttest!(curl_rpc_with_jwt, |_prj, cmd| {
+    let rpc = "https://eth.example.com";
+    let jwt_secret = "cabee703106087906e50f3e75a6ddbab60809f980511d1d1548d449d52220795";
+
+    let output = cmd
+        .args(["rpc", "eth_blockNumber", "--rpc-url", rpc, "--jwt-secret", jwt_secret, "--curl"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify curl command structure
+    assert!(output.contains("curl -X POST"));
+    assert!(output.contains("-H 'Content-Type: application/json'"));
+    assert!(output.contains("eth_blockNumber"));
+    assert!(output.contains("jsonrpc"));
+    assert!(output.contains(rpc));
+
+    let jwt = output
+        .split("Authorization: Bearer ")
+        .nth(1)
+        .expect("missing Authorization header")
+        .split('\'')
+        .next()
+        .expect("malformed Authorization header");
+    let secret = JwtSecret::from_hex(jwt_secret).unwrap();
+    secret.validate(jwt).unwrap();
+});
+
 // tests that the --curl flag outputs a valid curl command for cast block-number
 casttest!(curl_block_number, |_prj, cmd| {
     let rpc = "https://eth.example.com";
@@ -5553,9 +6018,9 @@ Virtual addresses:
 
 // End-to-end `cast vaddr` tests against a local Anvil Tempo node.
 //
-// These tests exercise the full TIP-1022 lifecycle. Mining a 4-byte PoW salt is CPU-bound;
-// we use all available CPUs so each test does not stall a nextest worker long enough to trip
-// its per-test timeout.
+// These tests exercise the full TIP-1022 lifecycle, including mining a 4-byte PoW salt.
+// Keep them out of the default local suite because the mining step is intentionally CPU-bound
+// and can saturate developer machines. Run explicitly with `--ignored` when changing this flow.
 mod vaddr_e2e {
     use super::*;
     use std::{
@@ -5612,208 +6077,225 @@ mod vaddr_e2e {
             .unwrap_or_else(|| panic!("could not parse vaddr from create output:\n{out}"))
     }
 
-    casttest!(vaddr_create_register_json_includes_tx_hash, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-        let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
-        let owner_addr = format!("{:#x}", owner.address());
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_create_register_json_includes_tx_hash,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
+            let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
+            let owner_addr = format!("{:#x}", owner.address());
 
-        let out = cmd
-            .cast_fuse()
-            .args([
-                "--json",
-                "vaddr",
-                "create",
-                "--owner",
-                &owner_addr,
-                "--private-key",
-                &owner_pk,
-                "-j",
-                &mining_threads(),
-                "--rpc-url",
-                &rpc,
-            ])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-
-        let envelope: serde_json::Value =
-            serde_json::from_str(out.trim()).expect("create --json output is valid JSON");
-        let tx_hash = envelope["data"]["registration_tx_hash"]
-            .as_str()
-            .expect("registration_tx_hash is a string");
-        B256::from_str(tx_hash).expect("registration_tx_hash is a valid tx hash");
-    });
-
-    // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,
-    // and `cast vaddr resolve` returns the registered owner.
-    casttest!(vaddr_create_register_and_resolve, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-
-        let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
-
-        let resolve_out = cmd
-            .cast_fuse()
-            .args(["--json", "vaddr", "resolve", &vaddr, "--rpc-url", &rpc])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-
-        let v: serde_json::Value =
-            serde_json::from_str(resolve_out.trim()).expect("resolve --json output is valid JSON");
-        assert_eq!(
-            v["address"].as_str().unwrap().to_lowercase(),
-            vaddr.to_lowercase(),
-            "resolve.address mismatch: {resolve_out}"
-        );
-        assert_eq!(
-            v["master_address"].as_str().unwrap().to_lowercase(),
-            format!("{:#x}", owner.address()),
-            "resolve.master_address should match the registered owner: {resolve_out}"
-        );
-    });
-
-    // Transferring a TIP-20 fee token to a registered virtual address must
-    // auto-forward the deposit to the master wallet at the protocol level.
-    casttest!(vaddr_auto_forward_to_master, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-        let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
-        let owner_addr = format!("{:#x}", owner.address());
-
-        let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
-
-        let balance = |cmd: &mut foundry_test_utils::TestCommand| -> u128 {
             let out = cmd
                 .cast_fuse()
                 .args([
-                    "call",
-                    &DEFAULT_FEE_TOKEN.to_string(),
-                    "balanceOf(address)(uint256)",
+                    "--json",
+                    "vaddr",
+                    "create",
+                    "--owner",
                     &owner_addr,
+                    "--private-key",
+                    &owner_pk,
+                    "-j",
+                    &mining_threads(),
                     "--rpc-url",
                     &rpc,
                 ])
                 .assert_success()
                 .get_output()
                 .stdout_lossy();
-            // `cast call` with a typed signature prints e.g. `1000000000000 [1e12]`.
-            out.split_whitespace().next().unwrap().parse().unwrap()
-        };
 
-        let before = balance(&mut cmd);
+            let envelope: serde_json::Value =
+                serde_json::from_str(out.trim()).expect("create --json output is valid JSON");
+            let tx_hash = envelope["data"]["registration_tx_hash"]
+                .as_str()
+                .expect("registration_tx_hash is a string");
+            B256::from_str(tx_hash).expect("registration_tx_hash is a valid tx hash");
+        }
+    );
 
-        let amount: u128 = 1_000_000;
-        cmd.cast_fuse()
-            .args([
-                "send",
-                &DEFAULT_FEE_TOKEN.to_string(),
-                "transfer(address,uint256)",
-                &vaddr,
-                &amount.to_string(),
-                "--rpc-url",
-                &rpc,
-                "--private-key",
-                &sender_pk,
-            ])
-            .assert_success();
+    // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,
+    // and `cast vaddr resolve` returns the registered owner.
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_create_register_and_resolve,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
 
-        let after = balance(&mut cmd);
-        assert_eq!(
-            after - before,
-            amount,
-            "transfer to virtual address should auto-forward to master (before={before}, after={after})"
-        );
-    });
+            let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
+
+            let resolve_out = cmd
+                .cast_fuse()
+                .args(["--json", "vaddr", "resolve", &vaddr, "--rpc-url", &rpc])
+                .assert_success()
+                .get_output()
+                .stdout_lossy();
+
+            let v: serde_json::Value = serde_json::from_str(resolve_out.trim())
+                .expect("resolve --json output is valid JSON");
+            assert_eq!(
+                v["address"].as_str().unwrap().to_lowercase(),
+                vaddr.to_lowercase(),
+                "resolve.address mismatch: {resolve_out}"
+            );
+            assert_eq!(
+                v["master_address"].as_str().unwrap().to_lowercase(),
+                format!("{:#x}", owner.address()),
+                "resolve.master_address should match the registered owner: {resolve_out}"
+            );
+        }
+    );
+
+    // Transferring a TIP-20 fee token to a registered virtual address must
+    // auto-forward the deposit to the master wallet at the protocol level.
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_auto_forward_to_master,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
+            let sender = handle.dev_wallets().nth(1).unwrap();
+            let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+            let owner_addr = format!("{:#x}", owner.address());
+
+            let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
+
+            let balance = |cmd: &mut foundry_test_utils::TestCommand| -> u128 {
+                let out = cmd
+                    .cast_fuse()
+                    .args([
+                        "call",
+                        &DEFAULT_FEE_TOKEN.to_string(),
+                        "balanceOf(address)(uint256)",
+                        &owner_addr,
+                        "--rpc-url",
+                        &rpc,
+                    ])
+                    .assert_success()
+                    .get_output()
+                    .stdout_lossy();
+                // `cast call` with a typed signature prints e.g. `1000000000000 [1e12]`.
+                out.split_whitespace().next().unwrap().parse().unwrap()
+            };
+
+            let before = balance(&mut cmd);
+
+            let amount: u128 = 1_000_000;
+            cmd.cast_fuse()
+                .args([
+                    "send",
+                    &DEFAULT_FEE_TOKEN.to_string(),
+                    "transfer(address,uint256)",
+                    &vaddr,
+                    &amount.to_string(),
+                    "--rpc-url",
+                    &rpc,
+                    "--private-key",
+                    &sender_pk,
+                ])
+                .assert_success();
+
+            let after = balance(&mut cmd);
+            assert_eq!(
+                after - before,
+                amount,
+                "transfer to virtual address should auto-forward to master (before={before}, after={after})"
+            );
+        }
+    );
 
     // `cast vaddr watch --from-block` must replay historical TIP-20 Transfer
     // logs targeted at the virtual address. The command then polls forever, so
     // we spawn it as a child process and kill it once we observe the expected
     // historical line (or the deadline elapses).
-    casttest!(vaddr_watch_historical, async |_prj, cmd| {
-        let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
-        let rpc = handle.http_endpoint();
-        let owner = handle.dev_wallets().next().unwrap();
-        let sender = handle.dev_wallets().nth(1).unwrap();
-        let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
-        let sender_addr = format!("{:#x}", sender.address());
+    casttest!(
+        #[ignore = "mines a TIP-1022 salt and saturates local CPUs"]
+        vaddr_watch_historical,
+        async |_prj, cmd| {
+            let (_api, handle) = anvil::spawn(tempo_t3_config()).await;
+            let rpc = handle.http_endpoint();
+            let owner = handle.dev_wallets().next().unwrap();
+            let sender = handle.dev_wallets().nth(1).unwrap();
+            let sender_pk = format!("0x{}", hex::encode(sender.credential().to_bytes()));
+            let sender_addr = format!("{:#x}", sender.address());
 
-        let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
+            let vaddr = create_and_register_vaddr(&mut cmd, &rpc, &owner);
 
-        // Capture the block before the transfer so `--from-block` replays it.
-        let block_before_out = cmd
-            .cast_fuse()
-            .args(["block-number", "--rpc-url", &rpc])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let block_before: u64 = block_before_out.trim().parse().unwrap();
+            // Capture the block before the transfer so `--from-block` replays it.
+            let block_before_out = cmd
+                .cast_fuse()
+                .args(["block-number", "--rpc-url", &rpc])
+                .assert_success()
+                .get_output()
+                .stdout_lossy();
+            let block_before: u64 = block_before_out.trim().parse().unwrap();
 
-        let amount: u128 = 1_000_000;
-        cmd.cast_fuse()
-            .args([
-                "send",
-                &DEFAULT_FEE_TOKEN.to_string(),
-                "transfer(address,uint256)",
+            let amount: u128 = 1_000_000;
+            cmd.cast_fuse()
+                .args([
+                    "send",
+                    &DEFAULT_FEE_TOKEN.to_string(),
+                    "transfer(address,uint256)",
+                    &vaddr,
+                    &amount.to_string(),
+                    "--rpc-url",
+                    &rpc,
+                    "--private-key",
+                    &sender_pk,
+                ])
+                .assert_success();
+
+            // Spawn `cast vaddr watch` as a child process (it loops indefinitely).
+            cmd.cast_fuse().args([
+                "vaddr",
+                "watch",
                 &vaddr,
-                &amount.to_string(),
+                "--token",
+                &DEFAULT_FEE_TOKEN.to_string(),
+                "--from-block",
+                &block_before.to_string(),
                 "--rpc-url",
                 &rpc,
-                "--private-key",
-                &sender_pk,
-            ])
-            .assert_success();
+            ]);
+            let mut child =
+                cmd.cmd().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
 
-        // Spawn `cast vaddr watch` as a child process (it loops indefinitely).
-        cmd.cast_fuse().args([
-            "vaddr",
-            "watch",
-            &vaddr,
-            "--token",
-            &DEFAULT_FEE_TOKEN.to_string(),
-            "--from-block",
-            &block_before.to_string(),
-            "--rpc-url",
-            &rpc,
-        ]);
-        let mut child = cmd.cmd().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+            let mut stdout = BufReader::new(child.stdout.take().unwrap());
+            let expected = format!(
+                "token={} from={} amount={}",
+                DEFAULT_FEE_TOKEN.to_string().to_lowercase(),
+                sender_addr,
+                amount
+            );
 
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let expected = format!(
-            "token={} from={} amount={}",
-            DEFAULT_FEE_TOKEN.to_string().to_lowercase(),
-            sender_addr,
-            amount
-        );
-
-        let deadline = Instant::now() + Duration::from_secs(15);
-        let mut captured = String::new();
-        let mut found = false;
-        while Instant::now() < deadline {
-            let mut line = String::new();
-            match stdout.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
-                    captured.push_str(&line);
-                    if line.to_lowercase().contains(&expected) {
-                        found = true;
-                        break;
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut captured = String::new();
+            let mut found = false;
+            while Instant::now() < deadline {
+                let mut line = String::new();
+                match stdout.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        captured.push_str(&line);
+                        if line.to_lowercase().contains(&expected) {
+                            found = true;
+                            break;
+                        }
                     }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
+            let _ = child.kill();
+            let _ = child.wait();
 
-        assert!(
-            found,
-            "cast vaddr watch did not emit historical transfer; expected substring `{expected}` in:\n{captured}"
-        );
-    });
+            assert!(
+                found,
+                "cast vaddr watch did not emit historical transfer; expected substring `{expected}` in:\n{captured}"
+            );
+        }
+    );
 }

@@ -7,11 +7,13 @@ use solar::{
     ast::{ContractKind, ElementaryType, LitKind, StateMutability, Visibility},
     interface::{Symbol, kw, sym},
     sema::{
+        Gcx, Ty,
         builtins::Builtin,
         hir::{
             self, CallArgs, CallArgsKind, ExprKind, FunctionId, FunctionKind, ItemId, Res,
             StmtKind, TypeKind, VariableId, Visit as _,
         },
+        ty::TyKind,
     },
 };
 use std::{collections::HashSet, fmt::Write as _, ops::ControlFlow};
@@ -27,6 +29,7 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract_id: hir::ContractId,
     ) {
@@ -86,6 +89,7 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
             for modifier in func.modifiers {
                 for arg in modifier.args.exprs() {
                     let mut checker = SendChecker {
+                        gcx,
                         hir,
                         bases: contract.linearized_bases,
                         call_site,
@@ -103,6 +107,7 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
 
             if let Some(body) = func.body {
                 let mut checker = SendChecker {
+                    gcx,
                     hir,
                     bases: contract.linearized_bases,
                     call_site,
@@ -189,7 +194,7 @@ fn is_unconditional_revert_call(expr: &hir::Expr<'_>) -> bool {
     let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
     reses.iter().any(|r| match r {
         Res::Builtin(Builtin::Revert | Builtin::RevertMsg) => true,
-        Res::Builtin(Builtin::Require | Builtin::RequireMsg | Builtin::Assert) => {
+        Res::Builtin(Builtin::Require | Builtin::Assert) => {
             args.exprs().next().is_some_and(is_literal_false)
         }
         _ => false,
@@ -287,6 +292,7 @@ fn write_type_signature(ty: &TypeKind<'_>, out: &mut String) {
 /// HIR visitor that short-circuits on the first ETH-sending expression and queues
 /// internally-resolved callees for transitive exploration by the outer worklist loop.
 struct SendChecker<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     /// Linearization of the contract being linted; used to resolve `this`.
     bases: &'a [hir::ContractId],
@@ -301,9 +307,9 @@ impl<'hir> SendChecker<'_, 'hir> {
     /// Queues the overload of `member` actually invoked on `receiver`.
     fn queue_member_callee(
         &mut self,
-        receiver: &hir::Expr<'_>,
+        receiver: &hir::Expr<'hir>,
         member: solar::interface::Ident,
-        args: &CallArgs<'_>,
+        args: &CallArgs<'hir>,
     ) {
         let ExprKind::Ident(reses) = &receiver.peel_parens().kind else { return };
         for res in *reses {
@@ -333,7 +339,7 @@ impl<'hir> SendChecker<'_, 'hir> {
     /// most-derived override of the same `(name, parameter signature)`. If `fid` is not
     /// inheritable from the linted contract (free function, library helper, private,
     /// constructor/modifier), it is returned as-is.
-    fn resolve_virtual(&self, fid: FunctionId, args: &CallArgs<'_>) -> FunctionId {
+    fn resolve_virtual(&self, fid: FunctionId, args: &CallArgs<'hir>) -> FunctionId {
         let func = self.hir.function(fid);
         let Some(origin) = func.contract else { return fid };
         if !self.bases.contains(&origin)
@@ -350,7 +356,7 @@ impl<'hir> SendChecker<'_, 'hir> {
                 if matches!(c.kind, FunctionKind::Function)
                     && c.name.is_some_and(|n| n.name == name.name)
                     && parameter_signature(self.hir, c.parameters) == sig
-                    && args_match(self.hir, args, c.parameters)
+                    && args_match(self.gcx, self.hir, args, c.parameters)
                 {
                     return cand;
                 }
@@ -364,14 +370,14 @@ impl<'hir> SendChecker<'_, 'hir> {
         &mut self,
         contracts: &[hir::ContractId],
         name: solar::interface::Symbol,
-        args: &CallArgs<'_>,
+        args: &CallArgs<'hir>,
     ) {
         for &cid in contracts {
             let mut found = false;
             for fid in self.hir.contract(cid).all_functions() {
                 let func = self.hir.function(fid);
                 if func.name.is_some_and(|n| n.name == name)
-                    && args_match(self.hir, args, func.parameters)
+                    && args_match(self.gcx, self.hir, args, func.parameters)
                 {
                     found = true;
                     if !self.visited.contains(&fid) {
@@ -389,6 +395,7 @@ impl<'hir> SendChecker<'_, 'hir> {
 /// Returns `true` if `args` can target `params` by arity and (when inferable) by type at each
 /// position. Arguments whose type cannot be inferred do not reject a candidate.
 fn args_match<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     args: &CallArgs<'hir>,
     params: &[VariableId],
@@ -397,8 +404,8 @@ fn args_match<'hir>(
         return false;
     }
     let compatible = |arg: &hir::Expr<'hir>, param: VariableId| -> bool {
-        match expr_type(hir, arg) {
-            Some(at) => types_compatible(&at, &hir.variable(param).ty.kind),
+        match expr_ty(gcx, arg) {
+            Some(at) => at.convert_implicit_to(gcx.type_of_item(param.into()), gcx),
             None => true,
         }
     };
@@ -418,151 +425,12 @@ fn args_match<'hir>(
     }
 }
 
-/// Best-effort static type of an expression. Returns `None` when the type cannot be inferred
-/// from the expression's shape alone; callers treat that as "do not narrow on this position".
-fn expr_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &hir::Expr<'hir>,
-) -> Option<hir::TypeKind<'hir>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Payable(_) => Some(TypeKind::Elementary(ElementaryType::Address(true))),
-        ExprKind::Lit(lit) => match &lit.kind {
-            LitKind::Address(_) => Some(TypeKind::Elementary(ElementaryType::Address(false))),
-            LitKind::Bool(_) => Some(TypeKind::Elementary(ElementaryType::Bool)),
-            // Numeric / string / hex literals are implicitly convertible to many widths; leave
-            // unknown so they don't reject candidates.
-            _ => None,
-        },
-        ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
-            // `T(x)` elementary cast.
-            ExprKind::Type(ty) => Some(ty.kind.clone()),
-            // `f(...)` — single-return function call.
-            ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-                Res::Item(ItemId::Function(fid)) => single_return_type(hir, *fid),
-                _ => None,
-            }),
-            // `obj.method(...)` — single-return method on a contract-typed receiver.
-            ExprKind::Member(base, member) => {
-                let TypeKind::Custom(ItemId::Contract(cid)) = expr_type(hir, base)? else {
-                    return None;
-                };
-                resolve_member_return_type(hir, cid, member.name, args)
-            }
-            _ => None,
-        },
-        ExprKind::New(ty) => Some(ty.kind.clone()),
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Variable(id)) => Some(hir.variable(*id).ty.kind.clone()),
-            Res::Item(ItemId::Contract(id)) => Some(TypeKind::Custom(ItemId::Contract(*id))),
-            _ => None,
-        }),
-        ExprKind::Member(base, member) => {
-            if is_address_builtin_member(base, member.name) {
-                return Some(TypeKind::Elementary(ElementaryType::Address(false)));
-            }
-            // Struct field access: `s.field`.
-            match expr_type(hir, base)? {
-                TypeKind::Custom(ItemId::Struct(sid)) => struct_field_type(hir, sid, member.name),
-                _ => None,
-            }
-        }
-        // `m[i]` for mappings and arrays.
-        ExprKind::Index(base, _) => match expr_type(hir, base)? {
-            TypeKind::Mapping(m) => Some(m.value.kind.clone()),
-            TypeKind::Array(a) => Some(a.element.kind.clone()),
-            _ => None,
-        },
-        // `c ? a : b` — branches must agree per Solidity, so either type suffices.
-        ExprKind::Ternary(_, then_e, else_e) => {
-            expr_type(hir, then_e).or_else(|| expr_type(hir, else_e))
-        }
-        _ => None,
-    }
+fn expr_ty<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> Option<Ty<'hir>> {
+    gcx.type_of_expr(expr.peel_parens().id)
 }
 
-/// Type of struct field `name` declared in `sid`.
-fn struct_field_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    sid: hir::StructId,
-    name: Symbol,
-) -> Option<hir::TypeKind<'hir>> {
-    hir.strukt(sid).fields.iter().find_map(|&fid| {
-        let var = hir.variable(fid);
-        (var.name?.name == name).then(|| var.ty.kind.clone())
-    })
-}
-
-/// Return type of `fid` when it has exactly one return value.
-fn single_return_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    fid: FunctionId,
-) -> Option<hir::TypeKind<'hir>> {
-    let func = hir.function(fid);
-    (func.returns.len() == 1).then(|| hir.variable(func.returns[0]).ty.kind.clone())
-}
-
-/// Single-return type of `name` defined on `cid` or any of its bases, restricted to
-/// overloads compatible with `args`. Walks the linearization most-derived first.
-fn resolve_member_return_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    cid: hir::ContractId,
-    name: Symbol,
-    args: &CallArgs<'hir>,
-) -> Option<hir::TypeKind<'hir>> {
-    let contract = hir.contract(cid);
-    let bases: &[hir::ContractId] = if contract.linearization_failed() {
-        std::slice::from_ref(&cid)
-    } else {
-        contract.linearized_bases
-    };
-    for &bid in bases {
-        for fid in hir.contract(bid).all_functions() {
-            let func = hir.function(fid);
-            if func.name.is_some_and(|n| n.name == name)
-                && args_match(hir, args, func.parameters)
-                && let Some(ty) = single_return_type(hir, fid)
-            {
-                return Some(ty);
-            }
-        }
-    }
-    None
-}
-
-/// Conservative type-compatibility check: only obvious matches and standard widenings count.
-/// Anything else returns `false`.
-fn types_compatible(arg: &hir::TypeKind<'_>, param: &hir::TypeKind<'_>) -> bool {
-    match (arg, param) {
-        // `address payable` fits an `address` slot; `address` does not fit `address payable`.
-        (
-            TypeKind::Elementary(ElementaryType::Address(a_pay)),
-            TypeKind::Elementary(ElementaryType::Address(p_pay)),
-        ) => !p_pay || *a_pay,
-        // Contract values implicitly convert to `address` / `address payable`.
-        (
-            TypeKind::Custom(ItemId::Contract(_)),
-            TypeKind::Elementary(ElementaryType::Address(_)),
-        ) => true,
-        (TypeKind::Array(a), TypeKind::Array(b)) => {
-            a.size.is_some() == b.size.is_some()
-                && types_compatible(&a.element.kind, &b.element.kind)
-        }
-        (TypeKind::Mapping(a), TypeKind::Mapping(b)) => {
-            types_compatible(&a.key.kind, &b.key.kind)
-                && types_compatible(&a.value.kind, &b.value.kind)
-        }
-        (TypeKind::Function(a), TypeKind::Function(b)) => {
-            a.visibility == b.visibility
-                && a.state_mutability == b.state_mutability
-                && a.parameters.len() == b.parameters.len()
-                && a.returns.len() == b.returns.len()
-        }
-        (TypeKind::Elementary(a), TypeKind::Elementary(b)) => a == b,
-        (TypeKind::Custom(a), TypeKind::Custom(b)) => a == b,
-        // Don't reject when either side errored out in semantic analysis.
-        (TypeKind::Err(_), _) | (_, TypeKind::Err(_)) => true,
-        _ => false,
-    }
+fn ty_is_address(ty: Ty<'_>) -> bool {
+    matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
 }
 
 impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
@@ -572,20 +440,20 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
         self.hir
     }
 
-    /// Inline assembly is lowered to `StmtKind::Err` by Solar; we cannot soundly inspect it
-    /// for ETH-sending opcodes (`call`, `selfdestruct`, ...). Bail conservatively to avoid
-    /// false positives on contracts whose only exit lives in assembly. Reusing `Break(())`
-    /// here is intentional: the outer loop treats it the same as "found an exit" — skip
-    /// the warning for this contract.
+    /// Inline assembly can contain ETH-sending opcodes (`call`, `selfdestruct`, ...). Bail
+    /// conservatively to avoid false positives on contracts whose only exit lives in assembly.
+    /// Reusing `Break(())` here is intentional: the outer loop treats it the same as "found an
+    /// exit" — skip the warning for this contract.
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-        if matches!(stmt.kind, StmtKind::Err(_)) {
+        if matches!(stmt.kind, StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_))
+        {
             return ControlFlow::Break(());
         }
         self.walk_stmt(stmt)
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if expr_sends_ether(self.hir, expr) {
+        if expr_sends_ether(self.gcx, expr) {
             return ControlFlow::Break(());
         }
 
@@ -597,6 +465,7 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
                         match res {
                             Res::Item(ItemId::Function(fid))
                                 if args_match(
+                                    self.gcx,
                                     self.hir,
                                     args,
                                     self.hir.function(*fid).parameters,
@@ -639,7 +508,7 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
 /// call option, `.transfer`/`.send` with a non-zero amount, low-level `.delegatecall`/`.callcode`
 /// (drainable via `selfdestruct`), or the `selfdestruct` builtin. Only literal `0` is treated as
 /// a zero amount; any other expression is assumed non-zero.
-fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn expr_sends_ether<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     let ExprKind::Call(callee, args, named_args) = &expr.kind else {
         return false;
     };
@@ -648,7 +517,7 @@ fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     // `foo{value: x}(...)` / `new C{value: x}(...)` with `x != 0`. Targeting `self`
     // keeps the ETH in this contract, so it is not an exit.
     if let Some(opts) = named_args
-        && opts.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
+        && opts.args.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
     {
         let self_call =
             matches!(&callee.kind, ExprKind::Member(receiver, _) if is_self_address(receiver));
@@ -660,7 +529,7 @@ fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &callee.kind {
         ExprKind::Member(receiver, member) => {
             // Only address-typed receivers that aren't `self` can move ETH out.
-            if !receiver_is_address(hir, receiver) || is_self_address(receiver) {
+            if !receiver_is_address(gcx, receiver) || is_self_address(receiver) {
                 return false;
             }
             // Single-arg `.transfer`/`.send` to disambiguate from ERC20's 2-arg `transfer`.
@@ -728,20 +597,8 @@ fn is_type_cast_callee(callee: &hir::Expr<'_>) -> bool {
 /// Returns `true` if `expr` is statically typed as `address`/`address payable`. Contract-typed
 /// receivers are intentionally rejected: `.transfer` / `.send` on them dispatch to a user-defined
 /// member, not the EVM opcode.
-fn receiver_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    matches!(expr_type(hir, expr), Some(TypeKind::Elementary(ElementaryType::Address(_))))
-}
-
-/// `msg.sender`, `tx.origin`, `block.coinbase`.
-fn is_address_builtin_member(base: &hir::Expr<'_>, member: Symbol) -> bool {
-    let ExprKind::Ident(reses) = &base.peel_parens().kind else { return false };
-    reses.iter().any(|res| {
-        let Res::Builtin(builtin) = res else { return false };
-        matches!(
-            (builtin.name(), member),
-            (sym::msg, sym::sender) | (sym::tx, kw::Origin) | (sym::block, kw::Coinbase)
-        )
-    })
+fn receiver_is_address<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+    expr_ty(gcx, expr).is_some_and(ty_is_address)
 }
 
 /// Returns `true` if the expression is the integer literal `0`.

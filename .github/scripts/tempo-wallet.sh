@@ -44,10 +44,16 @@ fund_and_wait() {
   done
 }
 
+wallet_json_field() {
+  local wallet_json="$1"
+  local field="$2"
+  jq -r --arg field "$field" '(.data // .)[0][$field]' <<<"$wallet_json"
+}
+
 echo -e "\n=== CREATE DIRECT-MODE WALLET ==="
 wallet_json="$(cast wallet new --json)"
-WALLET_ADDR="$(jq -r '.[0].address' <<<"$wallet_json")"
-WALLET_PK="$(jq -r '.[0].private_key' <<<"$wallet_json")"
+WALLET_ADDR="$(wallet_json_field "$wallet_json" address)"
+WALLET_PK="$(wallet_json_field "$wallet_json" private_key)"
 printf "address: %s\n" "$WALLET_ADDR"
 
 echo -e "\n=== WRITE keys.toml ==="

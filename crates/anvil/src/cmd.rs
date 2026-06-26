@@ -105,6 +105,8 @@ pub struct NodeArgs {
     #[arg(long, visible_alias = "no-mine", conflicts_with = "block_time")]
     pub no_mining: bool,
 
+    /// Enable mixed mining mode. Blocks are mined on a timer (set by `--block-time`),
+    /// but also whenever a transaction is submitted. Requires `--block-time` to be set.
     #[arg(long, requires = "block_time")]
     pub mixed_mining: bool,
 
@@ -455,16 +457,7 @@ impl NodeArgs {
                 // cleaning up and shutting down
                 // this will make sure that the fork RPC cache is flushed if caching is configured
             }
-            // Triggered by SIGINT / SIGTERM after a clean cache flush. Under
-            // the agent contract this is `Interrupted` (8); legacy human
-            // invocations preserve the historical exit-0 contract for
-            // backward compatibility.
-            let code = if foundry_cli::is_machine() {
-                foundry_cli::ExitCode::Interrupted.to_i32()
-            } else {
-                0
-            };
-            std::process::exit(code);
+            std::process::exit(0);
         });
 
         ctrlc::set_handler(move || {
@@ -663,11 +656,11 @@ pub struct AnvilEvmArgs {
     #[arg(long, visible_alias = "tracing")]
     pub steps_tracing: bool,
 
-    /// Disable printing of `console.log` invocations to stderr.
+    /// Disable printing of `console.log` invocations to stdout.
     #[arg(long, visible_alias = "no-console-log")]
     pub disable_console_log: bool,
 
-    /// Enable printing of traces for executed transactions and `eth_call` to stderr.
+    /// Enable printing of traces for executed transactions and `eth_call` to stdout.
     #[arg(long, visible_alias = "enable-trace-printing")]
     pub print_traces: bool,
 

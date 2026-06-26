@@ -239,6 +239,28 @@ contract MissingEventsArithmetic {
     }
 }
 
+contract MissingEventsArithmeticNoProtectedMutatingEntryPoint {
+    address public owner = msg.sender;
+    uint256 public price;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setPrice(uint256 newPrice) external {
+        price = newPrice;
+    }
+
+    function quote(uint256 amount) external view returns (uint256) {
+        return amount * price;
+    }
+
+    function protectedQuote(uint256 amount) external view onlyOwner returns (uint256) {
+        return amount / price;
+    }
+}
+
 // Reproduction cases for oracle findings.
 
 contract ReproEmittedEventIsSticky {

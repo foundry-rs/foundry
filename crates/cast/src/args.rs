@@ -1,7 +1,6 @@
 use crate::{
     Cast, SimpleCast,
     cmd::erc20::IERC20,
-    introspect::REGISTRY,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
@@ -9,11 +8,11 @@ use crate::{
 use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
-use clap::CommandFactory;
+use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -33,22 +32,20 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
+use foundry_primitives::{FoundryTxEnvelope, PaymentLaneClassification};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
+use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
-    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
-    // by panic-handler / tracing init failures and avoid that init's cost.
-    foundry_cli::machine::check_machine();
-    foundry_cli::opts::GlobalArgs::check_introspect_with(CastArgs::command, &REGISTRY);
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
     setup()?;
 
-    let args = foundry_cli::parse_or_exit::<CastArgs>();
+    let args = CastArgs::parse();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))
 }
@@ -622,6 +619,51 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = Cast::new(provider).storage_root(who, slots, block).await?;
             print_scalar(out)?;
         }
+        CastSubcommand::ChannelId {
+            payer,
+            payee,
+            token,
+            salt,
+            operator,
+            authorized_signer,
+            expiring_nonce_hash,
+            reserve,
+            block,
+            rpc,
+        } => {
+            let config = rpc.load_config()?;
+            let provider = utils::get_provider(&config)?;
+            let payer = payer.resolve(&provider).await?;
+            let payee = payee.resolve(&provider).await?;
+            let token = token.resolve(&provider).await?;
+            let operator = match operator {
+                Some(operator) => operator.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let authorized_signer = match authorized_signer {
+                Some(authorized_signer) => authorized_signer.resolve(&provider).await?,
+                None => Address::ZERO,
+            };
+            let reserve = match reserve {
+                Some(reserve) => reserve.resolve(&provider).await?,
+                None => TIP20_CHANNEL_RESERVE_ADDRESS,
+            };
+
+            let channel_id = ITIP20ChannelReserve::new(reserve, &provider)
+                .computeChannelId(
+                    payer,
+                    payee,
+                    operator,
+                    token,
+                    salt,
+                    authorized_signer,
+                    expiring_nonce_hash,
+                )
+                .block(block.unwrap_or_default())
+                .call()
+                .await?;
+            print_scalar(format!("{channel_id:#x}"))?;
+        }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
@@ -668,7 +710,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchMakeTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchSend(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request, network } => {
+        CastSubcommand::Classify { raw_tx } => {
+            let raw_tx = stdin::unwrap_line(raw_tx)?;
+            print_json_value_or_scalar(classify_raw_transaction_output(&raw_tx)?)?
+        }
+        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, lane, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
@@ -678,21 +724,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
 
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
                 Some(NetworkVariant::Tempo) => {
                     let provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
                 // Ethereum (default) or no --raw flag
                 _ => {
                     let provider = utils::get_provider(&config)?;
                     Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request)
+                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
                         .await?
                 }
             };
@@ -912,8 +958,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
+        CastSubcommand::ReceivePolicy { command } => command.run().await?,
+        CastSubcommand::Tip403 { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
-        CastSubcommand::KeyAuth { command } => command.run().await?,
+        CastSubcommand::KeyAuthorization { command } => command.run().await?,
         CastSubcommand::Tempo { command } => command.run().await?,
         CastSubcommand::VirtualAddress { command } => command.run().await?,
         #[cfg(feature = "optimism")]
@@ -926,101 +974,20 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_cli::introspect::{
-        CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, OutputMode, build_document,
-        capability_violations, duplicate_command_ids, render_introspect_document,
-    };
+pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
+    let raw_tx = hex::decode(raw_tx)?;
+    let mut data = raw_tx.as_slice();
+    let tx =
+        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
+    format_lane_classification(&tx.classify_t5_payment_lane())
+}
 
-    /// Every `command_id` exposed by `cast --introspect` MUST be unique.
-    /// This is the foundation of the agent contract — agents key on
-    /// `command_id` to identify commands, and duplicates would silently break
-    /// downstream tooling.
-    ///
-    /// Cast's clap tree is large and exhausts the default test-thread stack
-    /// (2 MiB) when constructed in debug builds, so we spawn a worker thread
-    /// with an explicit, generous stack size.
-    #[test]
-    fn introspect_command_ids_are_unique() {
-        let dups = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = CastArgs::command();
-                let doc = build_document(&cmd, &REGISTRY);
-                duplicate_command_ids(&doc)
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        assert!(dups.is_empty(), "duplicate cast command_ids: {dups:?}");
-    }
-
-    /// `cast --introspect` must produce a JSON document that parses back into
-    /// the canonical `IntrospectDocument` shape. Runs on a 16 MiB worker
-    /// thread for the same reason as the uniqueness check above.
-    #[test]
-    fn introspect_document_is_valid_json() {
-        let json = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = CastArgs::command();
-                render_introspect_document(&cmd, &CommandRegistry::EMPTY)
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
-        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
-        assert_eq!(doc.binary.name, "cast");
-    }
-
-    /// Capability self-consistency: any command declaring an output mode
-    /// must wire the matching schema reference. See
-    /// [`capability_violations`].
-    #[test]
-    fn introspect_capabilities_are_consistent() {
-        let v = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = CastArgs::command();
-                let doc = build_document(&cmd, &REGISTRY);
-                capability_violations(&doc)
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        assert!(v.is_empty(), "cast capability violations: {v:?}");
-    }
-
-    /// Every adopted command (`output_mode = Envelope`) must pin a stable
-    /// `command_id` matching its registry entry.
-    #[test]
-    fn registered_commands_pin_stable_ids() {
-        let ids = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = <CastArgs as clap::CommandFactory>::command();
-                let doc = build_document(&cmd, &REGISTRY);
-                fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<String> {
-                    let mut out = Vec::new();
-                    if matches!(c.capabilities.output_mode, OutputMode::Envelope) {
-                        out.push(c.command_id.clone());
-                    }
-                    for sub in &c.subcommands {
-                        out.extend(walk(sub));
-                    }
-                    out
-                }
-                doc.commands.iter().flat_map(walk).collect::<Vec<_>>()
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        assert!(
-            ids.iter().any(|s| s == "cast.call"),
-            "cast.call missing from envelope ids: {ids:?}"
-        );
+pub(crate) fn format_lane_classification(
+    classification: &PaymentLaneClassification,
+) -> Result<String> {
+    if shell::is_json() {
+        Ok(serde_json::to_string_pretty(classification)?)
+    } else {
+        Ok(serde_json::to_string(classification)?)
     }
 }

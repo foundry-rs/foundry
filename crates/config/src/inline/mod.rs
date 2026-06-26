@@ -26,6 +26,9 @@ pub enum InlineConfigErrorKind {
     /// An invalid profile has been provided.
     #[error("invalid profile `{0}`; valid profiles: {1}")]
     InvalidProfile(String, String),
+    /// A legacy Halmos inline annotation could not be translated.
+    #[error("invalid @custom:halmos annotation: {0}")]
+    InvalidHalmosConfig(String),
 }
 
 /// Wrapper error struct that catches config parsing errors, enriching them with context information
@@ -78,23 +81,12 @@ impl InlineConfig {
         } else {
             self.contract_level.entry(natspec.contract.clone()).or_default()
         };
-        let joined = natspec
-            .config_values()
-            .map(|s| {
-                // Replace `-` with `_` for backwards compatibility with the old parser.
-                if let Some(idx) = s.find('=') {
-                    s[..idx].replace('-', "_") + &s[idx..]
-                } else {
-                    s.to_string()
-                }
-            })
-            .format("\n")
-            .to_string();
-        let data = toml::from_str::<DataMap>(&joined).map_err(|e| InlineConfigError {
-            location: natspec.location_string(),
-            kind: InlineConfigErrorKind::Parse(e),
-        })?;
-        extend_data_map(map, &data);
+        if let Some(data) = parse_config_values(natspec, natspec.halmos_config_values()?)? {
+            extend_data_map(map, &data);
+        }
+        if let Some(data) = parse_config_values(natspec, natspec.config_values())? {
+            extend_data_map(map, &data);
+        }
         Ok(())
     }
 
@@ -172,6 +164,33 @@ impl InlineConfig {
     }
 }
 
+fn parse_config_values<'a>(
+    natspec: &NatSpec,
+    values: impl IntoIterator<Item = impl std::borrow::Borrow<str> + 'a>,
+) -> Result<Option<DataMap>, InlineConfigError> {
+    let joined = values
+        .into_iter()
+        .map(|s| {
+            let s = s.borrow();
+            // Replace `-` with `_` for backwards compatibility with the old parser.
+            if let Some(idx) = s.find('=') {
+                s[..idx].replace('-', "_") + &s[idx..]
+            } else {
+                s.to_string()
+            }
+        })
+        .format("\n")
+        .to_string();
+    if joined.is_empty() {
+        return Ok(None);
+    }
+    let data = toml::from_str::<DataMap>(&joined).map_err(|e| InlineConfigError {
+        location: natspec.location_string(),
+        kind: InlineConfigErrorKind::Parse(e),
+    })?;
+    Ok(Some(data))
+}
+
 /// [`figment::Provider`] for [`InlineConfig`] at a given contract and function level.
 ///
 /// Created by [`InlineConfig::provide`].
@@ -225,5 +244,83 @@ fn extend_value(value: &mut Value, new: &Value) {
             extend_dict(dict, new_dict);
         }
         (value, new) => *value = new.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn natspec(docs: &str) -> NatSpec {
+        NatSpec {
+            contract: "test/Symbolic.t.sol:Symbolic".to_string(),
+            function: Some("check".to_string()),
+            line: "10:5".to_string(),
+            docs: docs.to_string(),
+        }
+    }
+
+    #[test]
+    fn legacy_halmos_array_lengths_feed_symbolic_inline_config() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&natspec(
+                "@custom:halmos --array-lengths 2,4 --invariant-depth 12 --width 8 --depth 99",
+            ))
+            .unwrap();
+
+        let config = Config::default()
+            .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+            .unwrap();
+
+        assert_eq!(config.symbolic.array_lengths, vec![2, 4]);
+        assert_eq!(config.symbolic.invariant_depth, 12);
+        assert_eq!(config.symbolic.width, Some(8));
+        assert_eq!(config.symbolic.depth, Some(99));
+    }
+
+    #[test]
+    fn legacy_halmos_named_and_default_lengths_feed_symbolic_inline_config() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&natspec(
+                "@custom:halmos --array-lengths values={2,4},data=8 --default-array-lengths 0,1 --default-bytes-lengths 0,65",
+            ))
+            .unwrap();
+
+        let config = Config::default()
+            .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+            .unwrap();
+
+        assert_eq!(
+            config.symbolic.dynamic_lengths,
+            std::collections::BTreeMap::from([
+                ("data".to_string(), vec![8]),
+                ("values".to_string(), vec![2, 4]),
+            ])
+        );
+        assert_eq!(config.symbolic.default_array_lengths, vec![0, 1]);
+        assert_eq!(config.symbolic.default_bytes_lengths, vec![0, 65]);
+    }
+
+    #[test]
+    fn native_symbolic_inline_config_overrides_legacy_halmos_translation() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&natspec(
+                r#"
+@custom:halmos --array-lengths 2
+forge-config: default.symbolic.array_lengths = [3]
+forge-config: default.symbolic.default_dynamic_length = 4
+"#,
+            ))
+            .unwrap();
+
+        let config = Config::default()
+            .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+            .unwrap();
+
+        assert_eq!(config.symbolic.array_lengths, vec![3]);
+        assert_eq!(config.symbolic.default_dynamic_length, 4);
     }
 }

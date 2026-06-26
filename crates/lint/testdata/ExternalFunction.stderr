@@ -41,6 +41,14 @@ LL │     function calledOnlyExternally(bytes memory payload) public {
 note[external-function]: public function can be declared external
    ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
    │
+LL │     function localUnaryStillExternal(bytes memory data) public {
+   │              ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/external-function
+
+note[external-function]: public function can be declared external
+   ╭▸ ROOT/testdata/ExternalFunction.sol:LL:CC
+   │
 LL │     function isolatedSuperTarget(bytes memory data) public {
    │              ━━━━━━━━━━━━━━━━━━━
    │

@@ -1024,6 +1024,9 @@ impl<'ast> State<'_, 'ast> {
 
             self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
+            if override_.is_some() {
+                self.end();
+            }
             self.end();
         }
         self.end();
@@ -2463,6 +2466,13 @@ impl<'ast> State<'_, 'ast> {
         }
 
         // If the parent would fit, check all of its children.
+        if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &then.kind {
+            let child_decision =
+                self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
+            if !child_decision.outcome {
+                return child_decision;
+            }
+        }
         if let Some(stmt) = els_opt {
             if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &stmt.kind {
                 return self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());

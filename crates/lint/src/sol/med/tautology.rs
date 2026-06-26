@@ -6,7 +6,10 @@ use crate::{
 use alloy_primitives::U256;
 use solar::{
     ast::{BinOpKind, LitKind, UnOpKind},
-    sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind},
+    sema::{
+        Gcx,
+        hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind},
+    },
 };
 
 declare_forge_lint!(
@@ -20,6 +23,7 @@ impl<'hir> LateLintPass<'hir> for TypeBasedTautology {
     fn check_expr(
         &mut self,
         ctx: &LintContext,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {

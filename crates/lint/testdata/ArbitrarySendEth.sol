@@ -826,3 +826,34 @@ contract TrailingReturnHelperOk {
     modifier onlyOwner() { _checkOwner(); _; }
     function withdraw(address payable to, uint256 amt) external onlyOwner { to.transfer(amt); }
 }
+
+abstract contract OwnableStateGuard {
+    address private _owner;
+
+    function _msgSender() internal view returns (address) { return msg.sender; }
+    function owner() public view returns (address) { return _owner; }
+    function _checkOwner() internal view { require(owner() == _msgSender(), "not owner"); }
+    modifier onlyOwner() { _checkOwner(); _; }
+    function _transferOwnership(address newOwner) internal {
+        address oldOwner = _owner;
+        _owner = newOwner;
+        oldOwner;
+    }
+}
+
+contract OwnableModifierNoSinkRegression is OwnableStateGuard {
+    uint256 public value;
+
+    function init(address newOwner) external { _transferOwnership(newOwner); }
+    function set0(uint256 x) external onlyOwner { value = x; }
+    function set1(uint256 x) external onlyOwner { value = x; }
+    function set2(uint256 x) external onlyOwner { value = x; }
+    function set3(uint256 x) external onlyOwner { value = x; }
+    function set4(uint256 x) external onlyOwner { value = x; }
+    function set5(uint256 x) external onlyOwner { value = x; }
+    function set6(uint256 x) external onlyOwner { value = x; }
+    function set7(uint256 x) external onlyOwner { value = x; }
+    function restrictedPay(address payable to, uint256 amount) external onlyOwner {
+        to.transfer(amount);
+    }
+}

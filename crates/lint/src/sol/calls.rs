@@ -31,12 +31,12 @@ pub(crate) fn is_call_with_gas_limit(expr: &hir::Expr<'_>) -> bool {
         return false;
     };
 
-    opts.iter().any(|opt| opt.name.name == kw::Gas)
+    opts.args.iter().any(|opt| opt.name.name == kw::Gas)
 }
 
 fn call_with_options<'hir>(
     expr: &'hir hir::Expr<'hir>,
-) -> Option<(&'hir hir::Expr<'hir>, &'hir [hir::NamedArg<'hir>])> {
+) -> Option<(&'hir hir::Expr<'hir>, &'hir hir::CallOptions<'hir>)> {
     let hir::ExprKind::Call(callee, _, Some(opts)) = &expr.peel_parens().kind else {
         return None;
     };

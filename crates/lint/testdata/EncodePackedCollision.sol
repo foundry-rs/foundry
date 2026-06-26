@@ -281,16 +281,13 @@ contract LibraryCallCollision {
     }
 }
 
-// KNOWN FALSE NEGATIVE: overload where the selected overload returns string.
-// f(uint256) and f(bytes32) both have arity 1, so call_return_type cannot disambiguate
-// without full type-based overload resolution. It bails and produces no warning even though
-// f(x) with a uint256 argument resolves to the dynamic-returning overload.
+// SHOULD WARN: overload where the selected overload returns string.
 contract OverloadShouldWarnFN {
     function f(uint256) internal pure returns (string memory) { return ""; }
     function f(bytes32) internal pure returns (uint256) { return 0; }
 
-    // f(x) resolves to f(uint256) → string (dynamic); SHOULD warn but doesn't (known FN)
+    // f(x) resolves to f(uint256) -> string (dynamic)
     function g(uint256 x, string memory s) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(f(x), s));
+        return keccak256(abi.encodePacked(f(x), s)); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
     }
 }

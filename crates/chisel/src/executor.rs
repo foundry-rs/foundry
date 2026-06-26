@@ -17,13 +17,9 @@ use foundry_evm::{
     traces::TraceMode,
 };
 use solar::{
-    ast::{BinOpKind, ElementaryType, FunctionKind, LitKind, StateMutability, StrKind, UnOpKind},
-    interface::Symbol,
+    ast::{ElementaryType, LitKind, StrKind, UnOpKind},
     sema::{
-        hir::{
-            ContractId, Event, Expr, ExprKind, Function, ItemId, Res, StmtKind, Type as HirType,
-            TypeKind, Visibility,
-        },
+        hir::{Event, Expr, ExprKind, StmtKind},
         ty::{Gcx, Ty, TyKind},
     },
 };
@@ -140,13 +136,8 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         let res_ty = generated_output.enter(|out| -> Option<(bool, DynSolType)> {
             let gcx = out.gcx();
 
-            // Try direct lookup of `input` as a named variable in the REPL contract.
-            if let Some(direct_ty) = lookup_named_variable_type(gcx, input) {
-                return Some((false, direct_ty));
-            }
-
-            // Otherwise, find the appended `bytes memory inspectoor = abi.encode(<input>);`
-            // and pull out the first call argument.
+            // Find the appended `bytes memory inspectoor = abi.encode(<input>);` and pull out the
+            // first call argument.
             let block = out.run_func_body();
             let last = block.last()?;
             let StmtKind::DeclSingle(vid) = last.kind else { return None };
@@ -155,12 +146,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             let ExprKind::Call(_callee, args, _) = &init.kind else { return None };
             let inner_expr = args.exprs().next()?;
 
-            // If the call is `func()` returning a single value, prefer the function return type.
-            if let Some(ty) = get_function_return_type(gcx, inner_expr) {
-                return Some((should_continue(inner_expr), ty));
-            }
-
-            let ty = expr_to_dyn(gcx, inner_expr, true)?;
+            let ty = expr_to_dyn(gcx, inner_expr)?;
             Some((should_continue(inner_expr), ty))
         });
 
@@ -229,51 +215,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
-}
-
-/// Looks up `name` as a named variable in the REPL contract (state variables or run() locals)
-/// and returns its type as a [`DynSolType`].
-///
-/// Only top-level statements of `run()` are scanned. Variables declared inside nested blocks
-/// (`if`, `for`, `while`, `unchecked`, etc.) are not visible here; the caller falls back to
-/// the `inspectoor`-based path for those cases.
-fn lookup_named_variable_type(gcx: Gcx<'_>, name: &str) -> Option<DynSolType> {
-    let hir = &gcx.hir;
-    let repl = hir.contracts().find(|c| c.name.as_str() == "REPL")?;
-
-    // State variables.
-    for vid in repl.variables() {
-        let var = hir.variable(vid);
-        if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
-            return solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into()));
-        }
-    }
-
-    // Locals declared in run().
-    let run_fid = repl
-        .functions()
-        .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some("run"))?;
-    let body = hir.function(run_fid).body?;
-    for stmt in body.stmts {
-        match stmt.kind {
-            StmtKind::DeclSingle(vid) => {
-                let var = hir.variable(vid);
-                if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
-                    return solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into()));
-                }
-            }
-            StmtKind::DeclMulti(vids, _) => {
-                for vid in vids.iter().flatten() {
-                    let var = hir.variable(*vid);
-                    if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
-                        return solar_ty_to_dyn(gcx, gcx.type_of_item((*vid).into()));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Formats a value into an inspection message
@@ -429,609 +370,9 @@ fn format_event_definition(gcx: Gcx<'_>, event: &Event<'_>) -> Result<String> {
     ))
 }
 
-// =============================================
-// Modified from
-// [soli](https://github.com/jpopesculian/soli)
-// =============================================
-
 /// Converts an [`Expr`] directly to a [`DynSolType`] for ABI inspection.
-///
-/// `lookup` controls whether user-defined type names are resolved via the HIR.
-fn expr_to_dyn(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
-    match &expr.kind {
-        // Elementary type expression: `uint256`, `address`, etc.
-        ExprKind::Type(ty) => hir_ty_to_dyn(gcx, ty),
-
-        // `type(T)`: only meaningful as the lhs of a member access.
-        ExprKind::TypeCall(_) => None,
-
-        // Literals.
-        ExprKind::Lit(lit) => match &lit.kind {
-            LitKind::Address(_) => Some(DynSolType::Address),
-            LitKind::Bool(_) => Some(DynSolType::Bool),
-            LitKind::Str(kind, _, _) => match kind {
-                StrKind::Hex => Some(DynSolType::Bytes),
-                StrKind::Str | StrKind::Unicode => Some(DynSolType::String),
-            },
-            LitKind::Number(_) | LitKind::Rational(_) => Some(DynSolType::Uint(256)),
-            LitKind::Err(_) => None,
-        },
-
-        // Resolved identifier: `foo`.
-        ExprKind::Ident(reses) => {
-            let res = reses.first()?;
-            match *res {
-                Res::Item(ItemId::Variable(vid)) => {
-                    solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into()))
-                }
-                Res::Item(ItemId::Struct(sid)) => {
-                    // Struct reference used as a constructor produces a tuple of field types.
-                    Some(DynSolType::Tuple(
-                        gcx.struct_field_types(sid)
-                            .iter()
-                            .filter_map(|&t| solar_ty_to_dyn(gcx, t))
-                            .collect(),
-                    ))
-                }
-                // Other items and builtins: handled by enclosing Call/Member expressions.
-                _ => None,
-            }
-        }
-
-        // Index/access: `arr[i]`, `MyType[]`, `MyType[N]`.
-        ExprKind::Index(base, idx) => {
-            let base_ty = expr_to_dyn(gcx, base, lookup)?;
-            let num =
-                idx.and_then(|e| parse_number_literal(e)).and_then(|n| usize::try_from(n).ok());
-            match &base.kind {
-                // Type-level indexing builds an array type expression.
-                ExprKind::Type(_) | ExprKind::TypeCall(_) => {
-                    if let Some(n) = num {
-                        Some(DynSolType::FixedArray(Box::new(base_ty), n))
-                    } else {
-                        Some(DynSolType::Array(Box::new(base_ty)))
-                    }
-                }
-                // Runtime indexing returns the element type.
-                _ => match base_ty {
-                    DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => Some(*inner),
-                    DynSolType::Bytes | DynSolType::String | DynSolType::FixedBytes(_) => {
-                        Some(DynSolType::FixedBytes(1))
-                    }
-                    other => Some(other),
-                },
-            }
-        }
-
-        // Slice: same type as the base.
-        ExprKind::Slice(base, _, _) => expr_to_dyn(gcx, base, lookup),
-
-        // Array literal `[a, b, c]`.
-        ExprKind::Array(values) => values
-            .first()
-            .and_then(|e| expr_to_dyn(gcx, e, lookup))
-            .map(|ty| DynSolType::FixedArray(Box::new(ty), values.len())),
-
-        // Tuple expression `(a, b, c)`.
-        ExprKind::Tuple(items) => Some(DynSolType::Tuple(
-            items.iter().filter_map(|opt| opt.and_then(|e| expr_to_dyn(gcx, e, lookup))).collect(),
-        )),
-
-        // Member access `lhs.member`.
-        ExprKind::Member(_, _) => resolve_member(gcx, expr, lookup),
-
-        // Function/constructor call.
-        ExprKind::Call(_, _, _) => resolve_call(gcx, expr, lookup),
-
-        // `new T`: produces a value of type T.
-        ExprKind::New(ty) => hir_ty_to_dyn(gcx, ty),
-
-        // `payable(addr)`.
-        ExprKind::Payable(_) => Some(DynSolType::Address),
-
-        // Ternary: prefer truthy branch's type, fall back to else branch.
-        ExprKind::Ternary(_, t, e) => {
-            expr_to_dyn(gcx, t, lookup).or_else(|| expr_to_dyn(gcx, e, lookup))
-        }
-
-        // Delete has no return type.
-        ExprKind::Delete(_) => None,
-
-        // Unary operations.
-        ExprKind::Unary(op, inner) => match op.kind {
-            UnOpKind::Neg => expr_to_dyn(gcx, inner, lookup).map(|ty| match ty {
-                DynSolType::Uint(n) => DynSolType::Int(n),
-                DynSolType::Int(n) => DynSolType::Uint(n),
-                x => x,
-            }),
-            UnOpKind::Not => Some(DynSolType::Bool),
-            UnOpKind::BitNot
-            | UnOpKind::PreInc
-            | UnOpKind::PreDec
-            | UnOpKind::PostInc
-            | UnOpKind::PostDec => expr_to_dyn(gcx, inner, lookup),
-        },
-
-        // Binary operations.
-        ExprKind::Binary(lhs, op, rhs) => match op.kind {
-            BinOpKind::Lt
-            | BinOpKind::Le
-            | BinOpKind::Gt
-            | BinOpKind::Ge
-            | BinOpKind::Eq
-            | BinOpKind::Ne
-            | BinOpKind::And
-            | BinOpKind::Or => Some(DynSolType::Bool),
-            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div => {
-                match (expr_to_dyn(gcx, lhs, false), expr_to_dyn(gcx, rhs, false)) {
-                    (Some(DynSolType::Int(_) | DynSolType::Uint(_)), Some(DynSolType::Int(_)))
-                    | (Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) => {
-                        Some(DynSolType::Int(256))
-                    }
-                    _ => Some(DynSolType::Uint(256)),
-                }
-            }
-            BinOpKind::Rem
-            | BinOpKind::Pow
-            | BinOpKind::BitAnd
-            | BinOpKind::BitOr
-            | BinOpKind::BitXor
-            | BinOpKind::Shl
-            | BinOpKind::Shr
-            | BinOpKind::Sar => Some(DynSolType::Uint(256)),
-        },
-
-        // Assignments: type of the lhs.
-        ExprKind::Assign(lhs, _, _) => expr_to_dyn(gcx, lhs, lookup),
-
-        ExprKind::Err(_) => None,
-    }
-}
-
-/// Converts a [`HirType`] to a [`DynSolType`].
-fn hir_ty_to_dyn(gcx: Gcx<'_>, ty: &HirType<'_>) -> Option<DynSolType> {
-    match &ty.kind {
-        TypeKind::Elementary(et) => elementary_to_dyn(*et),
-        TypeKind::Array(arr) => {
-            let elem = hir_ty_to_dyn(gcx, &arr.element)?;
-            if let Some(size) = arr.size {
-                let n = parse_number_literal(size).and_then(|n| usize::try_from(n).ok());
-                if let Some(n) = n {
-                    Some(DynSolType::FixedArray(Box::new(elem), n))
-                } else {
-                    Some(DynSolType::Array(Box::new(elem)))
-                }
-            } else {
-                Some(DynSolType::Array(Box::new(elem)))
-            }
-        }
-        TypeKind::Function(f) => match f.returns.len() {
-            0 => None,
-            1 => {
-                let var = gcx.hir.variable(f.returns[0]);
-                hir_ty_to_dyn(gcx, &var.ty)
-            }
-            _ => Some(DynSolType::Tuple(
-                f.returns
-                    .iter()
-                    .filter_map(|&pid| hir_ty_to_dyn(gcx, &gcx.hir.variable(pid).ty))
-                    .collect(),
-            )),
-        },
-        TypeKind::Mapping(m) => hir_ty_to_dyn(gcx, &m.value),
-        TypeKind::Custom(item) => solar_ty_to_dyn(gcx, gcx.type_of_item(*item)),
-        TypeKind::Err(_) => None,
-    }
-}
-
-/// Resolves a member-access expression (`lhs.member`) to its [`DynSolType`].
-///
-/// `expr` must be `ExprKind::Member`.
-fn resolve_member(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
-    let ExprKind::Member(lhs, ident) = &expr.kind else { return None };
-    let member = ident.name;
-
-    // `type(T).member` — type introspection.
-    if let ExprKind::TypeCall(ty) = &lhs.kind {
-        return match member.as_str() {
-            "name" => Some(DynSolType::String),
-            "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
-            "interfaceId" => Some(DynSolType::FixedBytes(4)),
-            // Only valid for integer types; custom types (enums) fall back to Uint(256).
-            "min" | "max" => match &ty.kind {
-                TypeKind::Elementary(et) => elementary_to_dyn(*et),
-                _ => Some(DynSolType::Uint(256)),
-            },
-            _ => None,
-        };
-    }
-
-    // Built-in namespace identifier: `block.timestamp`, `msg.sender`, `abi.encode`, etc.
-    if let ExprKind::Ident(reses) = &lhs.kind
-        && let Some(Res::Builtin(b)) = reses.first()
-        && let Some(ty) = builtin_member(b.name().as_str(), member.as_str())
-    {
-        return Some(ty);
-    }
-
-    // Elementary type used as a namespace: `address.balance`, `bytes.concat`, etc.
-    if let ExprKind::Type(ty) = &lhs.kind
-        && let TypeKind::Elementary(et) = &ty.kind
-    {
-        return match et {
-            ElementaryType::Address(_) => match member.as_str() {
-                "balance" => Some(DynSolType::Uint(256)),
-                "code" => Some(DynSolType::Bytes),
-                "codehash" => Some(DynSolType::FixedBytes(32)),
-                "send" => Some(DynSolType::Bool),
-                _ => None,
-            },
-            ElementaryType::Bytes => match member.as_str() {
-                "concat" => Some(DynSolType::Bytes),
-                _ => None,
-            },
-            ElementaryType::String => match member.as_str() {
-                "concat" => Some(DynSolType::String),
-                _ => None,
-            },
-            _ => None,
-        };
-    }
-
-    // Members on a resolved DynSolType (`.length`, `.pop`, `.selector`, `.address`).
-    if let Some(lhs_ty) = expr_to_dyn(gcx, lhs, lookup)
-        && let Some(ty) = dyn_member(&lhs_ty, member.as_str())
-    {
-        return Some(ty);
-    }
-
-    // HIR lookup for user-defined type members.
-    if lookup && let Some(mut chain) = expr_name_chain(gcx, lhs) {
-        chain.insert(0, member);
-        return infer_custom_type(gcx, &mut chain, None).ok().flatten();
-    }
-
-    None
-}
-
-/// Returns the type of `builtin_ns.member` for built-in global namespaces.
-fn builtin_member(builtin: &str, member: &str) -> Option<DynSolType> {
-    match builtin {
-        "block" => match member {
-            "coinbase" => Some(DynSolType::Address),
-            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit" | "chainid"
-            | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
-            _ => None,
-        },
-        "msg" => match member {
-            "sender" => Some(DynSolType::Address),
-            "gas" | "value" => Some(DynSolType::Uint(256)),
-            "data" => Some(DynSolType::Bytes),
-            "sig" => Some(DynSolType::FixedBytes(4)),
-            _ => None,
-        },
-        "tx" => match member {
-            "origin" => Some(DynSolType::Address),
-            "gasprice" => Some(DynSolType::Uint(256)),
-            _ => None,
-        },
-        "address" => match member {
-            "balance" => Some(DynSolType::Uint(256)),
-            "code" => Some(DynSolType::Bytes),
-            "codehash" => Some(DynSolType::FixedBytes(32)),
-            "send" => Some(DynSolType::Bool),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Returns the type of `ty.member` for a known [`DynSolType`].
-fn dyn_member(ty: &DynSolType, member: &str) -> Option<DynSolType> {
-    match member {
-        "length" => match ty {
-            DynSolType::Array(_)
-            | DynSolType::FixedArray(_, _)
-            | DynSolType::Bytes
-            | DynSolType::String
-            | DynSolType::FixedBytes(_) => Some(DynSolType::Uint(256)),
-            _ => None,
-        },
-        "pop" => match ty {
-            DynSolType::Array(inner) => Some(*inner.clone()),
-            _ => None,
-        },
-        // Address members.
-        "balance" => match ty {
-            DynSolType::Address => Some(DynSolType::Uint(256)),
-            _ => None,
-        },
-        "code" => match ty {
-            DynSolType::Address => Some(DynSolType::Bytes),
-            _ => None,
-        },
-        "codehash" => match ty {
-            DynSolType::Address => Some(DynSolType::FixedBytes(32)),
-            _ => None,
-        },
-        "send" => match ty {
-            DynSolType::Address => Some(DynSolType::Bool),
-            _ => None,
-        },
-        // External function members.
-        "selector" => Some(DynSolType::FixedBytes(4)),
-        "address" => Some(DynSolType::Address),
-        _ => None,
-    }
-}
-
-/// Resolves a call expression to its return [`DynSolType`].
-///
-/// `expr` must be `ExprKind::Call`.
-fn resolve_call(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
-    let ExprKind::Call(callee, args, _named) = &expr.kind else { return None };
-
-    // Type cast: `uint256(x)`, `address(y)`, etc.
-    if let ExprKind::Type(ty) = &callee.kind {
-        return hir_ty_to_dyn(gcx, ty);
-    }
-
-    // Member call: `ns.method(...)`.
-    if let ExprKind::Member(lhs, method) = &callee.kind
-        && let ExprKind::Ident(reses) = &lhs.kind
-        && let Some(Res::Builtin(b)) = reses.first()
-    {
-        match b.name().as_str() {
-            "abi" => {
-                return match method.as_str() {
-                    "decode" => {
-                        let last = args.exprs().last()?;
-                        match expr_to_dyn(gcx, last, false)? {
-                            DynSolType::Tuple(tys) => Some(DynSolType::Tuple(tys)),
-                            ty => Some(DynSolType::Tuple(vec![ty])),
-                        }
-                    }
-                    s if s.starts_with("encode") => Some(DynSolType::Bytes),
-                    _ => None,
-                };
-            }
-            "string" if method.as_str() == "concat" => return Some(DynSolType::String),
-            "bytes" if method.as_str() == "concat" => return Some(DynSolType::Bytes),
-            _ => {}
-        }
-    }
-
-    // Simple identifier call: built-in global functions and HIR function calls.
-    if let ExprKind::Ident(reses) = &callee.kind {
-        match reses.first() {
-            Some(Res::Builtin(b)) => {
-                return match b.name().as_str() {
-                    "gasleft" | "addmod" | "mulmod" => Some(DynSolType::Uint(256)),
-                    "keccak256" | "sha256" | "blockhash" => Some(DynSolType::FixedBytes(32)),
-                    "ripemd160" => Some(DynSolType::FixedBytes(20)),
-                    "ecrecover" => Some(DynSolType::Address),
-                    _ => None,
-                };
-            }
-            Some(Res::Item(ItemId::Function(fid))) if lookup => {
-                let func = gcx.hir.function(*fid);
-                if !matches!(func.state_mutability, StateMutability::View | StateMutability::Pure) {
-                    return None;
-                }
-                let ret_id = *func.returns.first()?;
-                return solar_ty_to_dyn(gcx, gcx.type_of_item(ret_id.into()));
-            }
-            _ => {}
-        }
-    }
-
-    // Fall back to the callee's resolved type.
-    expr_to_dyn(gcx, callee, lookup)
-}
-
-/// Extracts a name chain from a member-access expression tree for HIR lookup.
-///
-/// The chain is ordered outermost-first so `a.b.c` produces `["c", "b", "a"]` with the root
-/// identifier at the back. This matches the convention expected by [`infer_custom_type`].
-fn expr_name_chain(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Vec<Symbol>> {
-    match &expr.kind {
-        ExprKind::Ident(reses) => {
-            let res = reses.first()?;
-            let name = match *res {
-                Res::Item(ItemId::Variable(vid)) => gcx.hir.variable(vid).name?.name,
-                Res::Item(ItemId::Function(fid)) => gcx.hir.function(fid).name?.name,
-                Res::Item(ItemId::Contract(cid)) => gcx.hir.contract(cid).name.name,
-                Res::Builtin(b) => b.name(),
-                _ => return None,
-            };
-            Some(vec![name])
-        }
-        ExprKind::Member(lhs, ident) => {
-            let mut chain = expr_name_chain(gcx, lhs)?;
-            chain.insert(0, ident.name);
-            Some(chain)
-        }
-        _ => None,
-    }
-}
-
-/// Infers a custom type's true type by recursing through the HIR.
-///
-/// `custom_type` is a name chain ordered outermost-first (root at back). This is mutated during
-/// resolution. `contract_id` narrows the search to a specific contract scope.
-fn infer_custom_type(
-    gcx: Gcx<'_>,
-    custom_type: &mut Vec<Symbol>,
-    contract_id: Option<ContractId>,
-) -> Result<Option<DynSolType>> {
-    if let Some(last) = custom_type.last()
-        && (last.as_str() == "this" || last.as_str() == "super")
-    {
-        custom_type.pop();
-    }
-    if custom_type.is_empty() {
-        return Ok(None);
-    }
-
-    if let Some(cid) = contract_id {
-        let hir = &gcx.hir;
-        let contract = hir.contract(cid);
-
-        let cur_name = *custom_type.last().unwrap();
-        let cur = cur_name.as_str();
-
-        // Function?
-        if let Some(fid) = contract
-            .functions()
-            .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str() == cur).unwrap_or(false))
-        {
-            let func = hir.function(fid);
-            if let res @ Some(_) = func_members(func, custom_type) {
-                return Ok(res);
-            }
-
-            if func.returns.is_empty() {
-                eyre::bail!(
-                    "This call expression does not return any values to inspect. Insert as statement."
-                )
-            }
-
-            let sm = func.state_mutability;
-            if !matches!(sm, StateMutability::View | StateMutability::Pure) {
-                eyre::bail!("This function mutates state. Insert as a statement.")
-            }
-
-            let ret_id = func.returns[0];
-            let ret_var = hir.variable(ret_id);
-            return Ok(solar_ty_to_dyn(gcx, gcx.type_of_item(ret_id.into()))
-                .or_else(|| hir_ty_to_dyn(gcx, &ret_var.ty)));
-        }
-
-        // Variable?
-        if let Some(vid) = contract
-            .variables()
-            .find(|&v| hir.variable(v).name.as_ref().map(|n| n.as_str() == cur).unwrap_or(false))
-        {
-            if let Some(ty) = solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into())) {
-                custom_type.pop();
-                if custom_type.is_empty() {
-                    return Ok(Some(ty));
-                }
-                let next_member = custom_type.drain(..).next().unwrap_or(Symbol::DUMMY);
-                return Ok(dyn_member(&ty, next_member.as_str()).or(Some(ty)));
-            }
-            let var = hir.variable(vid);
-            return infer_var_ty(gcx, &var.ty, custom_type);
-        }
-
-        // Struct?
-        if let Some(sid) = contract.items.iter().find_map(|i| {
-            if let ItemId::Struct(sid) = i
-                && hir.strukt(*sid).name.as_str() == cur
-            {
-                Some(*sid)
-            } else {
-                None
-            }
-        }) {
-            let inner = gcx
-                .struct_field_types(sid)
-                .iter()
-                .map(|&t| {
-                    solar_ty_to_dyn(gcx, t)
-                        .ok_or_else(|| eyre::eyre!("Struct `{cur}` has invalid fields"))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            return Ok(Some(DynSolType::Tuple(inner)));
-        }
-
-        eyre::bail!(
-            "Could not find any definition in contract \"{}\" for type: {custom_type:?}",
-            contract.name.as_str()
-        )
-    }
-
-    let repl_id = gcx
-        .hir
-        .contracts_enumerated()
-        .find_map(|(cid, c)| (c.name.as_str() == "REPL").then_some(cid));
-    if let Some(repl_id) = repl_id
-        && let Ok(res) = infer_custom_type(gcx, custom_type, Some(repl_id))
-    {
-        return Ok(res);
-    }
-
-    let last_name = *custom_type.last().unwrap();
-    let last = last_name.as_str();
-    let contract_match = gcx
-        .hir
-        .contracts_enumerated()
-        .find_map(|(cid, c)| (c.name.as_str() == last).then_some(cid));
-    if let Some(cid) = contract_match {
-        custom_type.pop();
-        return infer_custom_type(gcx, custom_type, Some(cid));
-    }
-
-    Ok(None)
-}
-
-/// Infers the type from a variable's HIR type, optionally accessing a named member.
-fn infer_var_ty(
-    gcx: Gcx<'_>,
-    ty: &HirType<'_>,
-    custom_type: &mut Vec<Symbol>,
-) -> Result<Option<DynSolType>> {
-    let Some(ty) = hir_ty_to_dyn(gcx, ty) else { return Ok(None) };
-    let next_member = custom_type.drain(..).next();
-    if let Some(m) = next_member {
-        Ok(dyn_member(&ty, m.as_str()).or(Some(ty)))
-    } else {
-        Ok(Some(ty))
-    }
-}
-
-/// Get the return type of a contract method call `receiver.method()`.
-fn get_function_return_type(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<DynSolType> {
-    let ExprKind::Call(callee, _, _) = &expr.kind else { return None };
-    let ExprKind::Member(obj, fn_ident) = &callee.kind else { return None };
-    let ExprKind::Ident(reses) = &obj.kind else { return None };
-    let res = reses.first()?;
-    let var_id = match res {
-        Res::Item(ItemId::Variable(vid)) => *vid,
-        _ => return None,
-    };
-    let var_ty = gcx.type_of_item(var_id.into()).peel_refs();
-    let cid = match var_ty.kind {
-        TyKind::Contract(cid) => cid,
-        _ => return None,
-    };
-
-    let hir = &gcx.hir;
-    let contract = hir.contract(cid);
-    let fid = contract
-        .functions()
-        .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some(fn_ident.as_str()))?;
-    let func = hir.function(fid);
-    let ret_id = *func.returns.first()?;
-    solar_ty_to_dyn(gcx, gcx.type_of_item(ret_id.into()))
-}
-
-/// Returns Some if the custom type is a function member access.
-///
-/// Ref: <https://docs.soliditylang.org/en/latest/types.html#function-types>
-#[inline]
-fn func_members(func: &Function<'_>, custom_type: &[Symbol]) -> Option<DynSolType> {
-    if !matches!(func.kind, FunctionKind::Function) {
-        return None;
-    }
-    if !matches!(func.visibility, Visibility::External | Visibility::Public) {
-        return None;
-    }
-    match custom_type.first().unwrap().as_str() {
-        "address" => Some(DynSolType::Address),
-        "selector" => Some(DynSolType::FixedBytes(4)),
-        _ => None,
-    }
+fn expr_to_dyn(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<DynSolType> {
+    gcx.type_of_expr(expr.id).and_then(|ty| solar_expr_ty_to_dyn(gcx, ty, expr))
 }
 
 /// Whether execution should continue after inspecting this expression.
@@ -1054,20 +395,6 @@ fn should_continue(expr: &Expr<'_>) -> bool {
     }
 }
 
-/// Parses an [`Expr`] number/hex literal into a `U256`. Returns `None` if the expression
-/// is not a numeric literal.
-///
-/// SubDenominations are already applied to numeric literals in solar's HIR.
-const fn parse_number_literal(expr: &Expr<'_>) -> Option<U256> {
-    match &expr.kind {
-        ExprKind::Lit(lit) => match &lit.kind {
-            LitKind::Number(n) => Some(*n),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// Maps a solar [`ElementaryType`] to a [`DynSolType`].
 const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
     Some(match et {
@@ -1084,6 +411,19 @@ const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
 }
 
 /// Maps a solar [`Ty`] to a [`DynSolType`].
+fn solar_expr_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>, expr: &Expr<'_>) -> Option<DynSolType> {
+    // `expr` is the inspected expression inside Chisel's generated `abi.encode(...)` call. Solar
+    // currently reports hex string literals as `StringLiteral`, but solc ABI-encodes
+    // `hex"..."` literals as dynamic bytes in that context.
+    let expr = expr.peel_parens();
+    if matches!(expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Str(StrKind::Hex, ..)))
+    {
+        return Some(DynSolType::Bytes);
+    }
+
+    solar_ty_to_dyn(gcx, ty)
+}
+
 fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
     match ty.kind {
         TyKind::Elementary(et) => elementary_to_dyn(et),
@@ -1093,10 +433,11 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
             let size: usize = n.try_into().ok()?;
             Some(DynSolType::FixedArray(Box::new(inner), size))
         }
-        TyKind::DynArray(elem) | TyKind::Slice(elem) => {
+        TyKind::DynArray(elem) => {
             let inner = solar_ty_to_dyn(gcx, elem)?;
             Some(DynSolType::Array(Box::new(inner)))
         }
+        TyKind::Slice(array) => solar_ty_to_dyn(gcx, array),
         TyKind::Tuple(tys) => {
             Some(DynSolType::Tuple(tys.iter().filter_map(|t| solar_ty_to_dyn(gcx, *t)).collect()))
         }
@@ -1111,7 +452,7 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         // representation of the pointer itself. This is intentional: chisel inspects values, so
         // the interesting type is the returned value.  A zero-return function pointer has no
         // inspectable value, so we return `None`.
-        TyKind::FnPtr(f) => match f.returns.len() {
+        TyKind::Fn(f) => match f.returns.len() {
             0 => None,
             1 => solar_ty_to_dyn(gcx, f.returns[0]),
             _ => Some(DynSolType::Tuple(
@@ -1120,7 +461,7 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
         },
         TyKind::Type(inner) => solar_ty_to_dyn(gcx, inner),
         TyKind::Meta(inner) => solar_ty_to_dyn(gcx, inner),
-        TyKind::IntLiteral(neg, size) => {
+        TyKind::IntLiteral(neg, size, _) => {
             let bits = (size.bits() as usize).max(8);
             // Round up to the nearest multiple of 8 bits, capped at 256.
             let bits = bits.div_ceil(8) * 8;
@@ -1164,42 +505,41 @@ mod tests {
             &[
                 // units
                 // uint
-                ("1 seconds", Uint(256)),
-                ("1 minutes", Uint(256)),
-                ("1 hours", Uint(256)),
-                ("1 days", Uint(256)),
-                ("1 weeks", Uint(256)),
-                ("1 wei", Uint(256)),
-                ("1 gwei", Uint(256)),
-                ("1 ether", Uint(256)),
+                ("1 seconds", Uint(8)),
+                ("1 minutes", Uint(8)),
+                ("1 hours", Uint(16)),
+                ("1 days", Uint(24)),
+                ("1 weeks", Uint(24)),
+                ("1 wei", Uint(8)),
+                ("1 gwei", Uint(32)),
+                ("1 ether", Uint(64)),
                 // int
-                ("-1 seconds", Int(256)),
-                ("-1 minutes", Int(256)),
-                ("-1 hours", Int(256)),
-                ("-1 days", Int(256)),
-                ("-1 weeks", Int(256)),
-                ("-1 wei", Int(256)),
-                ("-1 gwei", Int(256)),
-                ("-1 ether", Int(256)),
+                ("-1 seconds", Int(8)),
+                ("-1 minutes", Int(8)),
+                ("-1 hours", Int(16)),
+                ("-1 days", Int(24)),
+                ("-1 weeks", Int(24)),
+                ("-1 wei", Int(8)),
+                ("-1 gwei", Int(32)),
+                ("-1 ether", Int(64)),
                 //
-                ("true ? 1 : 0", Uint(256)),
-                ("true ? -1 : 0", Int(256)),
+                ("true ? 1 : 0", Uint(8)),
                 // misc
                 //
 
                 // ops
                 // uint
-                ("1 + 1", Uint(256)),
-                ("1 - 1", Uint(256)),
-                ("1 * 1", Uint(256)),
-                ("1 / 1", Uint(256)),
-                ("1 % 1", Uint(256)),
-                ("1 ** 1", Uint(256)),
-                ("1 | 1", Uint(256)),
-                ("1 & 1", Uint(256)),
-                ("1 ^ 1", Uint(256)),
-                ("1 >> 1", Uint(256)),
-                ("1 << 1", Uint(256)),
+                ("1 + 1", Uint(8)),
+                ("1 - 1", Uint(8)),
+                ("1 * 1", Uint(8)),
+                ("1 / 1", Uint(8)),
+                ("1 % 1", Uint(8)),
+                ("1 ** 1", Uint(8)),
+                ("1 | 1", Uint(8)),
+                ("1 & 1", Uint(8)),
+                ("1 ^ 1", Uint(8)),
+                ("1 >> 1", Uint(8)),
+                ("1 << 1", Uint(8)),
                 // int
                 ("int(1) + 1", Int(256)),
                 ("int(1) - 1", Int(256)),
@@ -1234,10 +574,6 @@ mod tests {
                 ("true || true", Bool),
                 ("true == true", Bool),
                 ("true != true", Bool),
-                ("true < true", Bool),
-                ("true <= true", Bool),
-                ("true > true", Bool),
-                ("true >= true", Bool),
                 ("!true", Bool),
                 //
             ]
@@ -1246,12 +582,11 @@ mod tests {
         let source = &mut source();
 
         let array_expressions: &[(&str, DynSolType)] = &[
-            ("[1, 2, 3]", fixed_array(DynSolType::Uint(256), 3)),
+            ("[1, 2, 3]", fixed_array(DynSolType::Uint(8), 3)),
             ("[uint8(1), 2, 3]", fixed_array(DynSolType::Uint(8), 3)),
             ("[int8(1), 2, 3]", fixed_array(DynSolType::Int(8), 3)),
             ("new uint256[](3)", array(DynSolType::Uint(256))),
             ("uint256[] memory a = new uint256[](3);\na[0]", DynSolType::Uint(256)),
-            ("uint256[] memory a = new uint256[](3);\na[0:3]", array(DynSolType::Uint(256))),
         ];
         generic_type_test(source, array_expressions);
         generic_type_test(source, EXPRESSIONS);
@@ -1271,13 +606,13 @@ mod tests {
                 // int and uint
                 ("uint", Uint(256)),
                 ("uint(1)", Uint(256)),
-                ("1", Uint(256)),
-                ("0x01", Uint(256)),
+                ("1", Uint(8)),
+                ("0x01", Uint(8)),
                 ("int", Int(256)),
                 ("int(1)", Int(256)),
                 ("int(-1)", Int(256)),
-                ("-1", Int(256)),
-                ("-0x01", Int(256)),
+                ("-1", Int(8)),
+                ("-0x01", Int(8)),
                 //
 
                 // address
@@ -1311,7 +646,7 @@ mod tests {
             types.push((format!("bytes{b}(0x00)"), DynSolType::FixedBytes(b)));
         }
 
-        for n in 0..=32 {
+        for n in 1..=32 {
             types.push((
                 format!("uint256[{n}]"),
                 DynSolType::FixedArray(Box::new(DynSolType::Uint(256)), n),
@@ -1331,23 +666,22 @@ mod tests {
             use DynSolType::*;
             &[
                 // abi
-                ("abi.decode(bytes, (uint8[13]))", Tuple(vec![FixedArray(Box::new(Uint(8)), 13)])),
-                ("abi.decode(bytes, (address, bytes))", Tuple(vec![Address, Bytes])),
-                ("abi.decode(bytes, (uint112, uint48))", Tuple(vec![Uint(112), Uint(48)])),
-                ("abi.encode(_, _)", Bytes),
-                ("abi.encodePacked(_, _)", Bytes),
-                ("abi.encodeWithSelector(bytes4, _, _)", Bytes),
-                ("abi.encodeCall(func(), (_, _))", Bytes),
-                ("abi.encodeWithSignature(string, _, _)", Bytes),
+                ("abi.decode(bytes(\"\"), (uint8[13]))", FixedArray(Box::new(Uint(8)), 13)),
+                ("abi.decode(bytes(\"\"), (address, bytes))", Tuple(vec![Address, Bytes])),
+                ("abi.decode(bytes(\"\"), (uint112, uint48))", Tuple(vec![Uint(112), Uint(48)])),
+                ("abi.encode(1, 2)", Bytes),
+                ("abi.encodePacked(uint256(1), uint256(2))", Bytes),
+                ("abi.encodeWithSelector(bytes4(0), 1, 2)", Bytes),
+                ("abi.encodeWithSignature(\"f(uint256)\", 1)", Bytes),
                 //
 
                 //
                 ("bytes.concat()", Bytes),
-                ("bytes.concat(_)", Bytes),
-                ("bytes.concat(_, _)", Bytes),
+                ("bytes.concat(bytes(\"\"))", Bytes),
+                ("bytes.concat(bytes(\"\"), bytes(\"\"))", Bytes),
                 ("string.concat()", String),
-                ("string.concat(_)", String),
-                ("string.concat(_, _)", String),
+                ("string.concat(\"\")", String),
+                ("string.concat(\"\", \"\")", String),
                 //
 
                 // block
@@ -1378,24 +712,24 @@ mod tests {
                 //
 
                 //
-                ("blockhash(uint)", FixedBytes(32)),
-                ("keccak256(bytes)", FixedBytes(32)),
-                ("sha256(bytes)", FixedBytes(32)),
-                ("ripemd160(bytes)", FixedBytes(20)),
-                ("ecrecover(bytes32, uint8, bytes32, bytes32)", Address),
-                ("addmod(uint, uint, uint)", Uint(256)),
-                ("mulmod(uint, uint, uint)", Uint(256)),
+                ("blockhash(0)", FixedBytes(32)),
+                ("keccak256(bytes(\"\"))", FixedBytes(32)),
+                ("sha256(bytes(\"\"))", FixedBytes(32)),
+                ("ripemd160(bytes(\"\"))", FixedBytes(20)),
+                ("ecrecover(bytes32(0), 0, bytes32(0), bytes32(0))", Address),
+                ("addmod(1, 2, 3)", Uint(256)),
+                ("mulmod(1, 2, 3)", Uint(256)),
                 //
 
                 // address
-                ("address(_)", Address),
+                ("address(0)", Address),
                 ("address(this)", Address),
                 // ("super", Type::Custom("super".to_string))
                 // (selfdestruct(address payable), None)
-                ("address.balance", Uint(256)),
-                ("address.code", Bytes),
-                ("address.codehash", FixedBytes(32)),
-                ("address.send(uint256)", Bool),
+                ("address(0).balance", Uint(256)),
+                ("address(0).code", Bytes),
+                ("address(0).codehash", FixedBytes(32)),
+                ("payable(address(0)).send(1)", Bool),
                 // (address.transfer(uint256), None)
                 //
 
@@ -1410,8 +744,8 @@ mod tests {
                 ("type(uint256).max", Uint(256)),
                 ("type(int128).max", Int(128)),
                 ("type(int256).max", Int(256)),
-                ("type(Enum1).min", Uint(256)),
-                ("type(Enum1).max", Uint(256)),
+                ("type(Enum1).min", Uint(8)),
+                ("type(Enum1).max", Uint(8)),
                 // function
                 ("this.run.address", Address),
                 ("this.run.selector", FixedBytes(4)),
@@ -1468,30 +802,34 @@ mod tests {
     /// invoking solc) and returns the resulting `DynSolType` of the last expression statement in
     /// the run() body.
     ///
-    /// Tests bypass `SessionSource::build` (which routes through foundry-compilers + solc) so that
-    /// inputs which are syntactically valid but semantically rejected by solc (e.g.
-    /// `abi.decode(bytes, (uint8[13]))` or `a[0:3]` on a memory array) can still exercise the
-    /// HIR-based type-inference engine.
+    /// Tests bypass `SessionSource::build` (which routes through foundry-compilers + solc) so the
+    /// Solar type table can be exercised directly without compiling each snippet through solc.
     fn get_type_ethabi(s: &mut TestSessionSource, input: &str, clear: bool) -> Option<DynSolType> {
         if clear {
             s.clear();
         }
 
-        // Always declare a sample enum so `Enum1` is available for `type(Enum1)` tests.
+        // Always declare sample types so `type(...)` tests have concrete definitions.
         *s = s.clone_with_new_line("enum Enum1 { A }".into()).unwrap().0;
+        *s = s.clone_with_new_line("contract C {}".into()).unwrap().0;
+        *s = s.clone_with_new_line("interface I {}".into()).unwrap().0;
 
         let input = format!("{};", input.trim_end().trim_end_matches(';'));
         let (new_source, _) = s.clone_with_new_line(input).unwrap();
         *s = new_source.clone();
 
         let src = new_source.to_repl_source();
-        let sess =
-            solar::interface::Session::builder().with_buffer_emitter(Default::default()).build();
+        let mut opts = solar::interface::config::Opts::default();
+        opts.unstable.typeck = true;
+        let sess = solar::interface::Session::builder()
+            .opts(opts)
+            .with_buffer_emitter(Default::default())
+            .build();
         let mut compiler = Compiler::new(sess);
 
         compiler.enter_mut(|c| -> Option<DynSolType> {
-            // Stage 1: parse + lower (mutable access required).
-            let lowered = {
+            // Stage 1: parse, lower, and analyze (mutable access required).
+            let analyzed = {
                 let mut pcx = c.parse();
                 let file = c
                     .sess()
@@ -1504,8 +842,9 @@ mod tests {
                 pcx.add_file(file);
                 pcx.parse();
                 matches!(c.lower_asts(), Ok(ControlFlow::Continue(())))
+                    && matches!(c.analysis(), Ok(ControlFlow::Continue(())))
             };
-            if !lowered {
+            if !analyzed {
                 return None;
             }
 
@@ -1522,7 +861,7 @@ mod tests {
                 StmtKind::Expr(e) => e,
                 _ => return None,
             };
-            expr_to_dyn(gcx, expr, true)
+            expr_to_dyn(gcx, expr)
         })
     }
 
@@ -1531,11 +870,15 @@ mod tests {
         T: AsRef<str> + std::fmt::Display + 'a,
         I: IntoIterator<Item = &'a (T, DynSolType)> + 'a,
     {
+        let mut failures = Vec::new();
         for (input, expected) in input {
             let input = input.as_ref();
             let ty = get_type_ethabi(s, input, true);
-            assert_eq!(ty.as_ref(), Some(expected), "\n{input}");
+            if ty.as_ref() != Some(expected) {
+                failures.push(format!("{input}: got {ty:?}, expected {expected:?}"));
+            }
         }
+        assert!(failures.is_empty(), "\n{}", failures.join("\n"));
     }
 
     fn init_tracing() {
