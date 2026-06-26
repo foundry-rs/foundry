@@ -25,10 +25,10 @@ pub(crate) use solver::{
 };
 #[cfg(test)]
 pub(crate) use solver::{
-    SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, expr_contains_hard_arith,
-    fallback_single_var_model, hard_arith_fallback_model, named_solver_command,
-    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
-    parse_model, product_monotonic_unsat, solver_commands_for_config, split_solver_command,
+    SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, fallback_single_var_model,
+    hard_arith_fallback_model, named_solver_command, normalize_bool_for_solver,
+    normalize_constraints_for_solver, normalize_expr_for_solver, parse_model,
+    product_monotonic_unsat, solver_commands_for_config, split_solver_command,
     validate_solver_model_output,
 };
 pub(crate) use state::*;
@@ -103,7 +103,6 @@ pub enum SymbolicError {
 }
 
 impl SymbolicError {
-    /// Implements the `stop_reason` symbolic runtime helper.
     pub(super) const fn stop_reason(&self) -> SymbolicStopReason {
         match self {
             Self::Unsupported(_)
@@ -126,7 +125,6 @@ impl SymbolicError {
 }
 
 impl fmt::Display for SymbolicRunResult {
-    /// Implements the `fmt` symbolic runtime helper.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Safe(stats) => write!(f, "safe after {} paths", stats.paths),
