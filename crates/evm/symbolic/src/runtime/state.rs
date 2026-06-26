@@ -94,7 +94,7 @@ impl PathState {
                 caller,
                 SymExpr::zero(),
                 false,
-                SymCalldata::new(Vec::new()),
+                SymCalldata::from_bytes(SymBytes::default()),
             ),
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
@@ -476,7 +476,7 @@ impl PathState {
         word: SymExpr,
         offset: SymExpr,
         size: usize,
-    ) -> Result<Vec<SymExpr>, SymbolicError> {
+    ) -> Result<SymBytes, SymbolicError> {
         self.world.extcode_bytes_word(executor, word, offset, size)
     }
 
@@ -1809,7 +1809,7 @@ impl SymbolicWorld {
     ) -> Result<SymExpr, SymbolicError> {
         if self.account_exists(executor, address)? {
             let code = self.extcode(executor, address)?;
-            Ok(keccak_word(code.read_bytes(0, code.len())))
+            Ok(keccak_word(code.read_byte_exprs(0, code.len())))
         } else {
             Ok(SymExpr::zero())
         }
@@ -1859,7 +1859,7 @@ impl SymbolicWorld {
             let hash = if self.destroyed_accounts.contains(address) {
                 SymExpr::zero()
             } else {
-                keccak_word(code.read_bytes(0, code.len()))
+                keccak_word(code.read_byte_exprs(0, code.len()))
             };
             result = SymExpr::ite(
                 SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address))),
@@ -1877,7 +1877,7 @@ impl SymbolicWorld {
         word: SymExpr,
         offset: SymExpr,
         size: usize,
-    ) -> Result<Vec<SymExpr>, SymbolicError> {
+    ) -> Result<SymBytes, SymbolicError> {
         if let Some(address) = self.resolve_address(&word) {
             return Ok(self.extcode(executor, address)?.read_bytes_offset(offset, size));
         }
@@ -1885,13 +1885,13 @@ impl SymbolicWorld {
         let expr = word;
         let representative = expr.representative_symbolic_address();
         let mut result =
-            self.extcode(executor, representative)?.read_bytes_offset(offset.clone(), size);
+            self.extcode(executor, representative)?.read_byte_exprs_offset(offset.clone(), size);
         let cached_codes = self.code_cache.iter().collect::<Vec<_>>();
         for (address, code) in cached_codes.into_iter().rev() {
             let bytes = if self.destroyed_accounts.contains(address) {
                 vec![SymExpr::zero(); size]
             } else {
-                code.read_bytes_offset(offset.clone(), size)
+                code.read_byte_exprs_offset(offset.clone(), size)
             };
             let condition =
                 SymBoolExpr::eq(expr.clone(), SymExpr::constant(address_word(*address)));
@@ -1900,7 +1900,7 @@ impl SymbolicWorld {
             }
         }
 
-        Ok(result)
+        Ok(SymBytes::exprs(result))
     }
 
     pub(crate) fn symbolic_call_targets<FEN: FoundryEvmNetwork>(

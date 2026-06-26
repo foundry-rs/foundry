@@ -87,7 +87,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
-        let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
+        let call_input = in_size.read_from_memory(&state.memory, in_offset.clone()).materialize();
         if call_input.iter().any(SymExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
@@ -849,17 +849,18 @@ impl SymbolicExecutor {
         }
 
         let call_input = in_size.read_from_memory(&state.memory, in_offset.clone());
+        let call_input_exprs = call_input.materialize();
         if !state.expected_calls.is_empty() {
             let concrete_value = state.constrained_word(&value);
-            if !self.observe_expected_call(state, to, concrete_value, &gas, &call_input)? {
+            if !self.observe_expected_call(state, to, concrete_value, &gas, &call_input_exprs)? {
                 return Ok(StepOutcome::Failure);
             }
         }
-        let code_address = self.function_mock_target(state, to, &call_input)?.unwrap_or(to);
+        let code_address = self.function_mock_target(state, to, &call_input_exprs)?.unwrap_or(to);
         if !state.call_mocks.is_empty() {
             let concrete_value = state.constrained_word(&value);
             if let Some(mock) =
-                self.take_call_mock(state, code_address, concrete_value, &call_input)?
+                self.take_call_mock(state, code_address, concrete_value, &call_input_exprs)?
             {
                 if !matches!(kind, CallKind::DelegateCall) {
                     let _ = state.prank_for_next_call();
@@ -891,7 +892,15 @@ impl SymbolicExecutor {
             let input = in_size.read_from_memory(&state.memory, in_offset);
             if precompile_number_for_spec(code_address, spec_id) == Some(10) {
                 return self.execute_kzg_precompile_call(
-                    executor, state, worklist, kind, to, value, out_offset, &out_size, input,
+                    executor,
+                    state,
+                    worklist,
+                    kind,
+                    to,
+                    value,
+                    out_offset,
+                    &out_size,
+                    input.materialize(),
                     input_len,
                 );
             }

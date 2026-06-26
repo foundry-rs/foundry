@@ -8,17 +8,18 @@ pub(crate) struct SymCalldata {
 }
 
 impl SymCalldata {
-    pub(crate) fn new(bytes: Vec<SymExpr>) -> Self {
-        Self::from_symbytes(SymBytes::exprs(bytes))
+    #[cfg(test)]
+    pub(crate) fn from_byte_exprs(bytes: Vec<SymExpr>) -> Self {
+        Self::from_bytes(SymBytes::exprs(bytes))
     }
 
-    pub(crate) fn from_symbytes(bytes: SymBytes) -> Self {
+    pub(crate) fn from_bytes(bytes: SymBytes) -> Self {
         let size = bytes.len();
         Self { size_word: SymExpr::constant(U256::from(size)), size, bytes }
     }
 
-    pub(crate) fn new_symbolic_size(bytes: Vec<SymExpr>, size_word: SymExpr) -> Self {
-        Self { size: bytes.len(), size_word, bytes: SymBytes::exprs(bytes) }
+    pub(crate) fn from_bytes_with_size(bytes: SymBytes, size_word: SymExpr) -> Self {
+        Self { size: bytes.len(), size_word, bytes }
     }
 
     pub(crate) fn size_word(&self) -> SymExpr {
@@ -57,13 +58,13 @@ impl SymCalldata {
         Ok(result)
     }
 
-    pub(crate) fn read_symbytes_offset(&self, offset: SymExpr, size: usize) -> SymBytes {
+    pub(crate) fn read_bytes_offset(&self, offset: SymExpr, size: usize) -> SymBytes {
         self.bytes.read_offset(offset, size)
     }
 }
 
 impl BoundedCopySize {
-    pub(crate) fn read_from_memory(&self, memory: &SymMemory, offset: SymExpr) -> Vec<SymExpr> {
+    pub(crate) fn read_from_memory(&self, memory: &SymMemory, offset: SymExpr) -> SymBytes {
         match self {
             Self::Concrete(size) => memory.read_bytes_offset(offset, *size),
             Self::Symbolic { size, max_size } => {
@@ -86,10 +87,10 @@ impl BoundedCopySize {
         }
     }
 
-    pub(crate) fn calldata(&self, input: Vec<SymExpr>) -> SymCalldata {
+    pub(crate) fn calldata(&self, input: SymBytes) -> SymCalldata {
         match self {
-            Self::Concrete(_) => SymCalldata::new(input),
-            Self::Symbolic { size, .. } => SymCalldata::new_symbolic_size(input, size.clone()),
+            Self::Concrete(_) => SymCalldata::from_bytes(input),
+            Self::Symbolic { size, .. } => SymCalldata::from_bytes_with_size(input, size.clone()),
         }
     }
 }

@@ -110,7 +110,7 @@ impl SymbolicCalldata {
     }
 
     pub(super) fn call_data(&self) -> SymCalldata {
-        SymCalldata::from_symbytes(self.bytes.clone())
+        SymCalldata::from_bytes(self.bytes.clone())
     }
 
     /// Returns symbolic calldata constraints.
@@ -655,7 +655,7 @@ impl SymbolicAbiValue {
             Self::Bool { word }
             | Self::Uint { word, .. }
             | Self::Int { word, .. }
-            | Self::Address { word } => word.clone().into_bytes(),
+            | Self::Address { word } => word.clone().into_byte_exprs(),
             Self::FixedBytes { bytes, .. } => {
                 let mut out = bytes.materialize();
                 out.resize(32, SymExpr::zero());
@@ -672,12 +672,12 @@ impl SymbolicAbiValue {
 
     pub(super) fn encode_dynamic_body(&self) -> Vec<SymExpr> {
         match self {
-            Self::Bytes { len, bytes } => encode_packed_symbytes_with_len(len.clone(), bytes),
+            Self::Bytes { len, bytes } => encode_packed_bytes_with_len(len.clone(), bytes),
             Self::String { bytes } => {
-                encode_packed_symbytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
+                encode_packed_bytes_with_len(SymExpr::constant(U256::from(bytes.len())), bytes)
             }
             Self::Array { elements } => {
-                let mut out = SymExpr::constant(U256::from(elements.len())).into_bytes();
+                let mut out = SymExpr::constant(U256::from(elements.len())).into_byte_exprs();
                 out.extend(encode_sequence(elements.iter()));
                 out
             }
@@ -763,7 +763,7 @@ pub(super) fn encode_sequence<'a>(
 
     for value in values {
         if value.is_dynamic() {
-            head.extend(SymExpr::constant(U256::from(head_size + tail.len())).into_bytes());
+            head.extend(SymExpr::constant(U256::from(head_size + tail.len())).into_byte_exprs());
             tail.extend(value.encode_dynamic_body());
         } else {
             head.extend(value.encode_static());
@@ -775,15 +775,15 @@ pub(super) fn encode_sequence<'a>(
 }
 
 #[cfg(test)]
-pub(super) fn encode_packed_bytes_with_len(len: SymExpr, bytes: &[SymExpr]) -> Vec<SymExpr> {
-    let mut out = len.into_bytes();
+pub(super) fn encode_packed_byte_exprs_with_len(len: SymExpr, bytes: &[SymExpr]) -> Vec<SymExpr> {
+    let mut out = len.into_byte_exprs();
     out.extend(bytes.iter().cloned());
     out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
     out
 }
 
-fn encode_packed_symbytes_with_len(len: SymExpr, bytes: &SymBytes) -> Vec<SymExpr> {
-    let mut out = len.into_bytes();
+fn encode_packed_bytes_with_len(len: SymExpr, bytes: &SymBytes) -> Vec<SymExpr> {
+    let mut out = len.into_byte_exprs();
     out.extend(bytes.materialize());
     out.resize(32 + bytes.len().next_multiple_of(32), SymExpr::zero());
     out

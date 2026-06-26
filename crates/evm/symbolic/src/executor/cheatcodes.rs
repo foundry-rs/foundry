@@ -167,7 +167,7 @@ impl SymbolicExecutor {
             state.address,
             SymExpr::zero(),
             false,
-            SymCalldata::new(Vec::new()),
+            SymCalldata::from_bytes(SymBytes::default()),
         );
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
@@ -571,7 +571,7 @@ impl SymbolicExecutor {
                 ));
             }
             expectRevert_2Call::SELECTOR => {
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     0,
@@ -605,7 +605,7 @@ impl SymbolicExecutor {
                 ));
             }
             expectRevert_5Call::SELECTOR => {
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     0,
@@ -637,7 +637,7 @@ impl SymbolicExecutor {
                 ));
             }
             expectRevert_8Call::SELECTOR => {
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     0,
@@ -677,7 +677,7 @@ impl SymbolicExecutor {
                 ));
             }
             expectRevert_11Call::SELECTOR => {
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     0,
@@ -805,7 +805,7 @@ impl SymbolicExecutor {
             }
             expectCall_0Call::SELECTOR => {
                 let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     1,
@@ -816,7 +816,7 @@ impl SymbolicExecutor {
             }
             expectCall_1Call::SELECTOR => {
                 let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     1,
@@ -843,7 +843,7 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.expectCall",
                 )?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     2,
@@ -868,7 +868,7 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.expectCall",
                 )?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     2,
@@ -897,7 +897,7 @@ impl SymbolicExecutor {
                 )?;
                 let gas =
                     read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     3,
@@ -924,7 +924,7 @@ impl SymbolicExecutor {
                 )?;
                 let gas =
                     read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     3,
@@ -953,7 +953,7 @@ impl SymbolicExecutor {
                 )?;
                 let min_gas =
                     read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     3,
@@ -980,7 +980,7 @@ impl SymbolicExecutor {
                 )?;
                 let min_gas =
                     read_abi_u64_arg(&state.memory, args_offset, 2, "symbolic vm.expectCall")?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     3,
@@ -1020,7 +1020,7 @@ impl SymbolicExecutor {
             }
             mockCall_0Call::SELECTOR => {
                 let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     1,
@@ -1044,7 +1044,7 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.mockCall",
                 )?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     2,
@@ -1104,7 +1104,7 @@ impl SymbolicExecutor {
                     (None, 1, 2)
                 };
                 let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     data_idx,
@@ -1122,7 +1122,7 @@ impl SymbolicExecutor {
             }
             mockCallRevert_0Call::SELECTOR => {
                 let callee = read_abi_word_arg(&state.memory, args_offset, 0)?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     1,
@@ -1146,7 +1146,7 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.mockCallRevert",
                 )?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     2,
@@ -1200,7 +1200,7 @@ impl SymbolicExecutor {
                     1,
                     "symbolic vm.mockFunction",
                 )?;
-                let data = read_abi_symbolic_dynamic_bytes_arg(
+                let data = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     2,
@@ -1475,14 +1475,14 @@ impl SymbolicExecutor {
             }
             etchCall::SELECTOR => {
                 let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-                let code = read_abi_symbolic_dynamic_bytes_arg(
+                let code = read_abi_symbolic_dynamic_byte_exprs_arg(
                     state,
                     args_offset,
                     1,
                     self.config.max_dynamic_length as usize,
                     "symbolic vm.etch",
                 )?;
-                state.world.install_code(target, SymCode::from_symbolic_bytes(code));
+                state.world.install_code(target, SymCode::from_byte_exprs(code));
                 return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getCodeCall::SELECTOR | getDeployedCodeCall::SELECTOR => {

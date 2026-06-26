@@ -435,11 +435,11 @@ impl SymExpr {
         Self::op(SymExprOp::And, self, Self::constant(U256::from(0xff)))
     }
 
-    pub(crate) fn into_bytes(self) -> Vec<Self> {
+    pub(crate) fn into_byte_exprs(self) -> Vec<Self> {
         SymBytes::word(self).materialize()
     }
 
-    pub(crate) fn into_symbytes(self) -> SymBytes {
+    pub(crate) fn into_bytes(self) -> SymBytes {
         SymBytes::word(self)
     }
 
