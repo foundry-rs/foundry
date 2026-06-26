@@ -1142,10 +1142,14 @@ impl SymExpr {
     }
 
     pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {
+        if matches!(
+            self.kind(),
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_)
+        ) {
+            return folder(self);
+        }
+
         let expr = match self.into_kind() {
-            SymExprKind::Const(value) => Self::constant(value),
-            SymExprKind::Var(name) => Self::var_symbol(name),
-            SymExprKind::GasLeft(id) => Self::gas_left(id),
             SymExprKind::Keccak { name, len, bytes } => Self::keccak_symbol(
                 name,
                 len.fold(folder),
@@ -1169,6 +1173,9 @@ impl SymExpr {
                 then_expr.fold(folder),
                 else_expr.fold(folder),
             ),
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => {
+                unreachable!("leaf expression returned before folding children")
+            }
         };
         folder(expr)
     }
@@ -1729,21 +1736,28 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {
+        if matches!(self.kind(), SymBoolExprKind::Const(_)) {
+            return folder(self);
+        }
+
         let expr = match self.into_kind() {
-            SymBoolExprKind::Const(value) => Self::constant(value),
             SymBoolExprKind::Not(value) => value.fold(folder).not(),
             SymBoolExprKind::And(values) => {
                 Self::and(values.iter().cloned().map(|value| value.fold(folder)).collect())
             }
             SymBoolExprKind::Eq(left, right) => Self::eq(left, right),
             SymBoolExprKind::Cmp(op, left, right) => Self::cmp(op, left, right),
+            SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding"),
         };
         folder(expr)
     }
 
     pub(crate) fn fold_exprs(self, folder: &mut impl FnMut(SymExpr) -> SymExpr) -> Self {
+        if matches!(self.kind(), SymBoolExprKind::Const(_)) {
+            return self;
+        }
+
         match self.into_kind() {
-            SymBoolExprKind::Const(value) => Self::constant(value),
             SymBoolExprKind::Not(value) => value.fold_exprs(folder).not(),
             SymBoolExprKind::And(values) => {
                 Self::and(values.iter().cloned().map(|value| value.fold_exprs(folder)).collect())
@@ -1752,6 +1766,7 @@ impl SymBoolExpr {
             SymBoolExprKind::Cmp(op, left, right) => {
                 Self::cmp(op, left.fold(folder), right.fold(folder))
             }
+            SymBoolExprKind::Const(_) => unreachable!("leaf boolean returned before folding exprs"),
         }
     }
 
