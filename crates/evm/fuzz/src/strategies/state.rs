@@ -223,6 +223,8 @@ pub struct FuzzDictionary {
     state_values: B256IndexSet,
     /// Addresses that already had their PUSH bytes collected.
     addresses: AddressIndexSet,
+    /// Code hashes that already had their PUSH bytes collected.
+    push_bytecode_hashes: B256IndexSet,
     /// Configuration for the dictionary.
     config: FuzzDictionaryConfig,
     /// Number of state values initially collected from db.
@@ -231,6 +233,9 @@ pub struct FuzzDictionary {
     /// Number of address values initially collected from db.
     /// Used to revert new collected addresses at the end of each run.
     db_addresses: usize,
+    /// Number of bytecode hashes initially collected from db.
+    /// Used to revert new collected bytecode hashes at the end of each run.
+    db_push_bytecode_hashes: usize,
     /// Typed runtime sample values persisted across invariant runs.
     /// Initially seeded with literal values collected from the source code.
     sample_values: HashMap<DynSolType, B256IndexSet>,
@@ -272,8 +277,10 @@ impl FuzzDictionary {
 
             state_values: Default::default(),
             addresses: Default::default(),
+            push_bytecode_hashes: Default::default(),
             db_state_values: Default::default(),
             db_addresses: Default::default(),
+            db_push_bytecode_hashes: Default::default(),
             sample_values: Default::default(),
             literal_values: Default::default(),
             persistent_values: Default::default(),
@@ -329,6 +336,7 @@ impl FuzzDictionary {
         // end of each run.
         self.db_state_values = self.state_values.len();
         self.db_addresses = self.addresses.len();
+        self.db_push_bytecode_hashes = self.push_bytecode_hashes.len();
     }
 
     /// Insert values collected from call result into fuzz dictionary.
@@ -466,17 +474,23 @@ impl FuzzDictionary {
     }
 
     /// Insert values from push bytes into fuzz dictionary.
-    /// Values are collected only once for a given address.
+    /// Values are collected only once for a given bytecode.
     /// If values are newly collected then they are removed at the end of current run.
     fn insert_push_bytes_values(&mut self, address: &Address, account_info: &AccountInfo) {
-        if self.config.include_push_bytes
-            && !self.addresses.contains(address)
-            && let Some(code) = &account_info.code
-        {
-            self.insert_address(*address);
-            if !self.values_full() {
-                self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
-            }
+        if !self.config.include_push_bytes || self.addresses.contains(address) {
+            return;
+        }
+
+        self.insert_address(*address);
+        if self.values_full() {
+            return;
+        }
+
+        let Some(code) = &account_info.code else {
+            return;
+        };
+        if self.push_bytecode_hashes.insert(account_info.code_hash) {
+            self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
         }
     }
 
@@ -689,6 +703,7 @@ impl FuzzDictionary {
     pub fn revert(&mut self) {
         self.state_values.truncate(self.db_state_values);
         self.addresses.truncate(self.db_addresses);
+        self.push_bytecode_hashes.truncate(self.db_push_bytecode_hashes);
     }
 
     pub fn log_stats(&self) {
@@ -713,6 +728,12 @@ impl FuzzDictionary {
 mod tests {
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
+    use revm::state::Bytecode;
+
+    fn account_with_code(raw: &'static [u8]) -> AccountInfo {
+        let code = Bytecode::new_raw(Bytes::from_static(raw));
+        AccountInfo { code_hash: code.hash_slow(), code: Some(code), ..Default::default() }
+    }
 
     #[test]
     fn log_decoding_preserves_anonymous_event_priority() {
@@ -759,5 +780,39 @@ mod tests {
         assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
         assert!(dictionary.state_values.contains(&B256::from(U256::from(2))));
         assert!(!dictionary.state_values.contains(&B256::from(U256::from(3))));
+    }
+
+    #[test]
+    fn duplicate_bytecode_push_bytes_are_collected_once() {
+        let mut dictionary = FuzzDictionary::default();
+        let account = account_with_code(&[0x60, 0x01]);
+
+        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x11), &account);
+        let hits_after_first_scan = dictionary.hits;
+
+        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x22), &account);
+
+        assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
+        assert_eq!(dictionary.addresses.len(), 2);
+        assert_eq!(dictionary.hits, hits_after_first_scan);
+    }
+
+    #[test]
+    fn revert_removes_runtime_bytecode_scan_cache() {
+        let mut dictionary = FuzzDictionary::default();
+        dictionary.db_state_values = dictionary.state_values.len();
+        dictionary.db_addresses = dictionary.addresses.len();
+        dictionary.db_push_bytecode_hashes = dictionary.push_bytecode_hashes.len();
+
+        let account = account_with_code(&[0x60, 0x01]);
+        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x11), &account);
+        assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
+
+        dictionary.revert();
+        assert_eq!(dictionary.push_bytecode_hashes.len(), 0);
+
+        dictionary.insert_push_bytes_values(&Address::repeat_byte(0x22), &account);
+        assert_eq!(dictionary.push_bytecode_hashes.len(), 1);
+        assert!(dictionary.state_values.contains(&B256::from(U256::from(1))));
     }
 }
