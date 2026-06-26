@@ -13,8 +13,8 @@ pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
 pub(crate) use opt::normalize_constraints_for_solver;
 use opt::{
-    constraint_cache_key, constraints_are_directly_unsat, sorted_bool_exprs_are_subset,
-    write_smt_assertions,
+    branch_condition_complement_cache_key, constraint_cache_key, constraints_are_directly_unsat,
+    sorted_bool_exprs_are_subset, write_smt_assertions,
 };
 #[cfg(test)]
 pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
@@ -415,6 +415,15 @@ impl SmtLibSubprocessSolver {
             trace!("is_sat: normalized unsat subset cache hit");
             self.cache_sat_result(cache_key, false);
             return Ok(false);
+        }
+        if defer_hard_arith_without_witness
+            && let Some(complement_key) = branch_condition_complement_cache_key(constraints)
+            && self.has_cached_unsat_subset(&complement_key)
+        {
+            self.sat_cache_hits += 1;
+            trace!("is_sat: branch complement unsat cache hit");
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
         }
 
         self.reserve_query()?;

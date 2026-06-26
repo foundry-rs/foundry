@@ -48,6 +48,17 @@ pub(super) fn constraint_cache_key(constraints: &[SymBoolExpr]) -> Vec<SymBoolEx
     key
 }
 
+pub(super) fn branch_condition_complement_cache_key(
+    constraints: &[SymBoolExpr],
+) -> Option<Vec<SymBoolExpr>> {
+    let (condition, base) = constraints.split_last()?;
+    let mut complement = Vec::with_capacity(constraints.len());
+    complement.extend(base.iter().cloned());
+    complement.push(condition.clone().not());
+    let normalized = normalize_constraints_for_solver(&complement);
+    Some(constraint_cache_key(&normalized))
+}
+
 /// Returns whether normalized conjunctive constraints contain a direct contradiction.
 pub(super) fn constraints_are_directly_unsat(constraints: &[SymBoolExpr]) -> bool {
     constraints.iter().any(|constraint| match constraint.kind() {

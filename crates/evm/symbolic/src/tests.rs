@@ -3352,6 +3352,27 @@ fn sat_cache_reuses_reversed_comparisons() {
 
 #[cfg(unix)]
 #[test]
+fn sat_cache_reuses_unsat_branch_complement() {
+    let marker = portfolio_test_marker("sat-cache-branch-complement");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = SymExpr::var("x");
+    let base = SymBoolExpr::cmp(SymBoolExprOp::Ult, x.clone(), SymExpr::constant(U256::from(10)));
+    let condition = SymBoolExpr::eq(x, SymExpr::constant(U256::from(1)));
+
+    assert!(!solver.is_sat_branch(&[base.clone(), condition.clone()]).unwrap());
+    assert!(solver.is_sat_branch(&[base, condition.not()]).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn sat_cache_does_not_cache_unknown_results() {
     let marker = portfolio_test_marker("sat-cache-unknown");
     let commands = vec![counted_solver_command(&marker, "unknown")];
