@@ -1505,10 +1505,9 @@ impl SymbolicExecutor {
                 let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
                 let nonce =
                     read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.setNonce")?;
-                if nonce > U256::from(u64::MAX) {
+                let Ok(nonce) = u64::try_from(nonce) else {
                     return Err(SymbolicError::Unsupported("symbolic vm.setNonce nonce"));
-                }
-                let nonce = nonce.to::<u64>();
+                };
                 if selector == setNonceCall::SELECTOR
                     && nonce < state.world.nonce(executor, target)?
                 {

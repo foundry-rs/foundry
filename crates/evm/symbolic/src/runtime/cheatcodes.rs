@@ -516,10 +516,7 @@ pub(crate) fn read_abi_u64_arg(
     reason: &'static str,
 ) -> Result<u64, SymbolicError> {
     let value = read_abi_concrete_word_arg(memory, args_offset, index, reason)?;
-    if value > U256::from(u64::MAX) {
-        return Err(SymbolicError::Unsupported(reason));
-    }
-    Ok(value.to())
+    u64::try_from(value).map_err(|_| SymbolicError::Unsupported(reason))
 }
 
 pub(crate) fn read_abi_u32_arg(
@@ -529,10 +526,7 @@ pub(crate) fn read_abi_u32_arg(
     reason: &'static str,
 ) -> Result<u32, SymbolicError> {
     let value = read_abi_concrete_word_arg(memory, args_offset, index, reason)?;
-    if value > U256::from(u32::MAX) {
-        return Err(SymbolicError::Unsupported(reason));
-    }
-    Ok(value.to())
+    u32::try_from(value).map_err(|_| SymbolicError::Unsupported(reason))
 }
 
 pub(crate) fn read_abi_bytes4_words_arg(

@@ -175,10 +175,10 @@ pub(crate) fn compute_create_address_word(
     let nonce_concrete = state.constrained_word(&nonce);
 
     if let (Some(deployer), Some(nonce)) = (deployer_concrete, nonce_concrete) {
-        if nonce > U256::from(u64::MAX) {
+        let Ok(nonce) = u64::try_from(nonce) else {
             return Err(SymbolicError::Unsupported("symbolic vm.computeCreateAddress nonce"));
-        }
-        return Ok(SymExpr::constant(address_word(deployer.create(nonce.to()))));
+        };
+        return Ok(SymExpr::constant(address_word(deployer.create(nonce))));
     }
 
     let deployer_identity = deployer_concrete

@@ -1664,7 +1664,7 @@ fn constrained_bytes_at(
 }
 
 fn constrained_byte(state: &PathState, byte: &SymExpr) -> Option<u8> {
-    state.constrained_word(byte).filter(|byte| *byte <= U256::from(u8::MAX)).map(|byte| byte.to())
+    state.constrained_word(byte).and_then(|byte| u8::try_from(byte).ok())
 }
 
 fn ensure_word_not_gasleft(word: &SymExpr) -> Result<(), SymbolicError> {
