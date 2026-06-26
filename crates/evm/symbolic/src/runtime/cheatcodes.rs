@@ -5,301 +5,260 @@ use foundry_common::wallet::private_key_from_u256;
 use super::*;
 
 /// Implements the `foundry_cheatcode_min_input_size` cheatcode runtime helper.
-pub(crate) fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Option<usize> {
-    if selector_in(
-        selector,
-        &[
-            recordLogsCall::SELECTOR,
-            recordCall::SELECTOR,
-            stopRecordCall::SELECTOR,
-            assumeNoRevert_0Call::SELECTOR,
-            getRecordedLogsCall::SELECTOR,
-            getRecordedLogsJsonCall::SELECTOR,
-            expectRevert_0Call::SELECTOR,
-            expectEmit_2Call::SELECTOR,
-            expectEmitAnonymous_2Call::SELECTOR,
-            clearMockedCallsCall::SELECTOR,
-            stopPrankCall::SELECTOR,
-            readCallersCall::SELECTOR,
-            getWalletsCall::SELECTOR,
-            snapshotCall::SELECTOR,
-            snapshotStateCall::SELECTOR,
-            deleteSnapshotsCall::SELECTOR,
-            deleteStateSnapshotsCall::SELECTOR,
-            activeForkCall::SELECTOR,
-            getChainIdCall::SELECTOR,
-            getBlobhashesCall::SELECTOR,
-            getBlobBaseFeeCall::SELECTOR,
-            getBlockNumberCall::SELECTOR,
-            getBlockTimestampCall::SELECTOR,
-            pauseGasMeteringCall::SELECTOR,
-            resumeGasMeteringCall::SELECTOR,
-            resetGasMeteringCall::SELECTOR,
-            lastCallGasCall::SELECTOR,
-            stopExpectSafeMemoryCall::SELECTOR,
-            stopSnapshotGas_0Call::SELECTOR,
-            getEvmVersionCall::SELECTOR,
-            getFoundryVersionCall::SELECTOR,
-            projectRootCall::SELECTOR,
-            unixTimeCall::SELECTOR,
-            noAccessListCall::SELECTOR,
-            randomUint_0Call::SELECTOR,
-            randomInt_0Call::SELECTOR,
-            randomAddressCall::SELECTOR,
-            randomBoolCall::SELECTOR,
-            randomBytes4Call::SELECTOR,
-            randomBytes8Call::SELECTOR,
-        ],
-    ) {
-        return Some(abi_static_input_size(0));
+pub(crate) const fn foundry_cheatcode_min_input_size(selector: [u8; 4]) -> Option<usize> {
+    match selector {
+        recordLogsCall::SELECTOR
+        | recordCall::SELECTOR
+        | stopRecordCall::SELECTOR
+        | assumeNoRevert_0Call::SELECTOR
+        | getRecordedLogsCall::SELECTOR
+        | getRecordedLogsJsonCall::SELECTOR
+        | expectRevert_0Call::SELECTOR
+        | expectEmit_2Call::SELECTOR
+        | expectEmitAnonymous_2Call::SELECTOR
+        | clearMockedCallsCall::SELECTOR
+        | stopPrankCall::SELECTOR
+        | readCallersCall::SELECTOR
+        | getWalletsCall::SELECTOR
+        | snapshotCall::SELECTOR
+        | snapshotStateCall::SELECTOR
+        | deleteSnapshotsCall::SELECTOR
+        | deleteStateSnapshotsCall::SELECTOR
+        | activeForkCall::SELECTOR
+        | getChainIdCall::SELECTOR
+        | getBlobhashesCall::SELECTOR
+        | getBlobBaseFeeCall::SELECTOR
+        | getBlockNumberCall::SELECTOR
+        | getBlockTimestampCall::SELECTOR
+        | pauseGasMeteringCall::SELECTOR
+        | resumeGasMeteringCall::SELECTOR
+        | resetGasMeteringCall::SELECTOR
+        | lastCallGasCall::SELECTOR
+        | stopExpectSafeMemoryCall::SELECTOR
+        | stopSnapshotGas_0Call::SELECTOR
+        | getEvmVersionCall::SELECTOR
+        | getFoundryVersionCall::SELECTOR
+        | projectRootCall::SELECTOR
+        | unixTimeCall::SELECTOR
+        | noAccessListCall::SELECTOR
+        | randomUint_0Call::SELECTOR
+        | randomInt_0Call::SELECTOR
+        | randomAddressCall::SELECTOR
+        | randomBoolCall::SELECTOR
+        | randomBytes4Call::SELECTOR
+        | randomBytes8Call::SELECTOR => Some(abi_static_input_size(0)),
+        assumeCall::SELECTOR
+        | skip_0Call::SELECTOR
+        | skip_1Call::SELECTOR
+        | assumeNoRevert_1Call::SELECTOR
+        | assumeNoRevert_2Call::SELECTOR
+        | accessesCall::SELECTOR
+        | expectRevert_1Call::SELECTOR
+        | expectRevert_3Call::SELECTOR
+        | expectRevert_6Call::SELECTOR
+        | expectPartialRevert_0Call::SELECTOR
+        | expectEmit_3Call::SELECTOR
+        | expectEmit_6Call::SELECTOR
+        | expectEmitAnonymous_3Call::SELECTOR
+        | prank_0Call::SELECTOR
+        | startPrank_0Call::SELECTOR
+        | addrCall::SELECTOR
+        | rememberKeyCall::SELECTOR
+        | toString_0Call::SELECTOR
+        | toString_1Call::SELECTOR
+        | toString_2Call::SELECTOR
+        | toString_3Call::SELECTOR
+        | toString_4Call::SELECTOR
+        | toString_5Call::SELECTOR
+        | parseBytesCall::SELECTOR
+        | parseAddressCall::SELECTOR
+        | parseUintCall::SELECTOR
+        | parseIntCall::SELECTOR
+        | parseBytes32Call::SELECTOR
+        | parseBoolCall::SELECTOR
+        | toLowercaseCall::SELECTOR
+        | toUppercaseCall::SELECTOR
+        | trimCall::SELECTOR
+        | toBase64_0Call::SELECTOR
+        | toBase64_1Call::SELECTOR
+        | toBase64URL_0Call::SELECTOR
+        | toBase64URL_1Call::SELECTOR
+        | breakpoint_0Call::SELECTOR
+        | setEvmVersionCall::SELECTOR
+        | sleepCall::SELECTOR
+        | accessListCall::SELECTOR
+        | getNonce_0Call::SELECTOR
+        | resetNonceCall::SELECTOR
+        | allowCheatcodesCall::SELECTOR
+        | makePersistent_0Call::SELECTOR
+        | makePersistent_3Call::SELECTOR
+        | revokePersistent_0Call::SELECTOR
+        | revokePersistent_1Call::SELECTOR
+        | isPersistentCall::SELECTOR
+        | selectForkCall::SELECTOR
+        | createFork_0Call::SELECTOR
+        | createSelectFork_0Call::SELECTOR
+        | rollFork_0Call::SELECTOR
+        | rollFork_1Call::SELECTOR
+        | revertToCall::SELECTOR
+        | revertToStateCall::SELECTOR
+        | revertToAndDeleteCall::SELECTOR
+        | revertToStateAndDeleteCall::SELECTOR
+        | deleteSnapshotCall::SELECTOR
+        | deleteStateSnapshotCall::SELECTOR
+        | warpCall::SELECTOR
+        | rollCall::SELECTOR
+        | prevrandao_0Call::SELECTOR
+        | prevrandao_1Call::SELECTOR
+        | feeCall::SELECTOR
+        | blobBaseFeeCall::SELECTOR
+        | chainIdCall::SELECTOR
+        | difficultyCall::SELECTOR
+        | coinbaseCall::SELECTOR
+        | txGasPriceCall::SELECTOR
+        | getLabelCall::SELECTOR
+        | snapshotGasLastCall_0Call::SELECTOR
+        | startSnapshotGas_0Call::SELECTOR
+        | stopSnapshotGas_1Call::SELECTOR
+        | coolCall::SELECTOR
+        | isContextCall::SELECTOR
+        | assertTrue_0Call::SELECTOR
+        | assertTrue_1Call::SELECTOR
+        | assertFalse_0Call::SELECTOR
+        | assertFalse_1Call::SELECTOR
+        | randomUint_2Call::SELECTOR
+        | randomInt_1Call::SELECTOR
+        | randomBytesCall::SELECTOR => Some(abi_static_input_size(1)),
+        expectRevert_4Call::SELECTOR
+        | expectRevert_7Call::SELECTOR
+        | expectRevert_9Call::SELECTOR
+        | expectPartialRevert_1Call::SELECTOR
+        | expectEmit_7Call::SELECTOR
+        | prank_1Call::SELECTOR
+        | prank_2Call::SELECTOR
+        | startPrank_1Call::SELECTOR
+        | startPrank_2Call::SELECTOR
+        | sign_1Call::SELECTOR
+        | signCompact_1Call::SELECTOR
+        | deriveKey_0Call::SELECTOR
+        | splitCall::SELECTOR
+        | indexOfCall::SELECTOR
+        | containsCall::SELECTOR
+        | breakpoint_1Call::SELECTOR
+        | expectSafeMemoryCall::SELECTOR
+        | expectSafeMemoryCallCall::SELECTOR
+        | loadCall::SELECTOR
+        | makePersistent_1Call::SELECTOR
+        | computeCreateAddressCall::SELECTOR
+        | computeCreate2Address_1Call::SELECTOR
+        | setBlockhashCall::SELECTOR
+        | dealCall::SELECTOR
+        | setNonceCall::SELECTOR
+        | setNonceUnsafeCall::SELECTOR
+        | createFork_1Call::SELECTOR
+        | createFork_2Call::SELECTOR
+        | createSelectFork_1Call::SELECTOR
+        | createSelectFork_2Call::SELECTOR
+        | rollFork_2Call::SELECTOR
+        | rollFork_3Call::SELECTOR
+        | labelCall::SELECTOR
+        | snapshotValue_0Call::SELECTOR
+        | snapshotGasLastCall_1Call::SELECTOR
+        | startSnapshotGas_1Call::SELECTOR
+        | stopSnapshotGas_2Call::SELECTOR
+        | warmSlotCall::SELECTOR
+        | coolSlotCall::SELECTOR
+        | assertEq_2Call::SELECTOR
+        | assertEq_3Call::SELECTOR
+        | assertEq_4Call::SELECTOR
+        | assertEq_5Call::SELECTOR
+        | assertEq_6Call::SELECTOR
+        | assertEq_7Call::SELECTOR
+        | assertEq_8Call::SELECTOR
+        | assertEq_9Call::SELECTOR
+        | assertEq_0Call::SELECTOR
+        | assertEq_1Call::SELECTOR
+        | assertNotEq_2Call::SELECTOR
+        | assertNotEq_3Call::SELECTOR
+        | assertNotEq_4Call::SELECTOR
+        | assertNotEq_5Call::SELECTOR
+        | assertNotEq_6Call::SELECTOR
+        | assertNotEq_7Call::SELECTOR
+        | assertNotEq_8Call::SELECTOR
+        | assertNotEq_9Call::SELECTOR
+        | assertNotEq_0Call::SELECTOR
+        | assertNotEq_1Call::SELECTOR
+        | assertLt_0Call::SELECTOR
+        | assertLt_1Call::SELECTOR
+        | assertLe_0Call::SELECTOR
+        | assertLe_1Call::SELECTOR
+        | assertGt_0Call::SELECTOR
+        | assertGt_1Call::SELECTOR
+        | assertGe_0Call::SELECTOR
+        | assertGe_1Call::SELECTOR
+        | assertLt_2Call::SELECTOR
+        | assertLt_3Call::SELECTOR
+        | assertGt_2Call::SELECTOR
+        | assertGt_3Call::SELECTOR
+        | assertLe_2Call::SELECTOR
+        | assertLe_3Call::SELECTOR
+        | assertGe_2Call::SELECTOR
+        | assertGe_3Call::SELECTOR
+        | assertEq_14Call::SELECTOR
+        | assertEq_15Call::SELECTOR
+        | assertEq_16Call::SELECTOR
+        | assertEq_17Call::SELECTOR
+        | assertEq_18Call::SELECTOR
+        | assertEq_19Call::SELECTOR
+        | assertEq_20Call::SELECTOR
+        | assertEq_21Call::SELECTOR
+        | assertEq_22Call::SELECTOR
+        | assertEq_23Call::SELECTOR
+        | assertEq_24Call::SELECTOR
+        | assertEq_25Call::SELECTOR
+        | assertEq_26Call::SELECTOR
+        | assertEq_27Call::SELECTOR
+        | assertNotEq_14Call::SELECTOR
+        | assertNotEq_15Call::SELECTOR
+        | assertNotEq_16Call::SELECTOR
+        | assertNotEq_17Call::SELECTOR
+        | assertNotEq_18Call::SELECTOR
+        | assertNotEq_19Call::SELECTOR
+        | assertNotEq_20Call::SELECTOR
+        | assertNotEq_21Call::SELECTOR
+        | assertNotEq_22Call::SELECTOR
+        | assertNotEq_23Call::SELECTOR
+        | assertNotEq_24Call::SELECTOR
+        | assertNotEq_25Call::SELECTOR
+        | assertNotEq_26Call::SELECTOR
+        | assertNotEq_27Call::SELECTOR
+        | randomUint_1Call::SELECTOR => Some(abi_static_input_size(2)),
+        expectRevert_10Call::SELECTOR
+        | deriveKey_1Call::SELECTOR
+        | deriveKey_2Call::SELECTOR
+        | rememberKeys_0Call::SELECTOR
+        | storeCall::SELECTOR
+        | makePersistent_2Call::SELECTOR
+        | snapshotValue_1Call::SELECTOR
+        | replaceCall::SELECTOR
+        | assertEqDecimal_0Call::SELECTOR
+        | assertEqDecimal_2Call::SELECTOR
+        | computeCreate2Address_0Call::SELECTOR
+        | bound_0Call::SELECTOR
+        | bound_1Call::SELECTOR => Some(abi_static_input_size(3)),
+        expectEmit_0Call::SELECTOR
+        | deriveKey_3Call::SELECTOR
+        | rememberKeys_1Call::SELECTOR
+        | assertEqDecimal_1Call::SELECTOR
+        | assertEqDecimal_3Call::SELECTOR => Some(abi_static_input_size(4)),
+        expectEmitAnonymous_0Call::SELECTOR
+        | expectEmit_1Call::SELECTOR
+        | expectEmit_4Call::SELECTOR => Some(abi_static_input_size(5)),
+        expectEmit_5Call::SELECTOR | expectEmitAnonymous_1Call::SELECTOR => {
+            Some(abi_static_input_size(6))
+        }
+        _ => None,
     }
-
-    if selector_in(
-        selector,
-        &[
-            assumeCall::SELECTOR,
-            skip_0Call::SELECTOR,
-            skip_1Call::SELECTOR,
-            assumeNoRevert_1Call::SELECTOR,
-            assumeNoRevert_2Call::SELECTOR,
-            accessesCall::SELECTOR,
-            expectRevert_1Call::SELECTOR,
-            expectRevert_3Call::SELECTOR,
-            expectRevert_6Call::SELECTOR,
-            expectPartialRevert_0Call::SELECTOR,
-            expectEmit_3Call::SELECTOR,
-            expectEmit_6Call::SELECTOR,
-            expectEmitAnonymous_3Call::SELECTOR,
-            prank_0Call::SELECTOR,
-            startPrank_0Call::SELECTOR,
-            addrCall::SELECTOR,
-            rememberKeyCall::SELECTOR,
-            toString_0Call::SELECTOR,
-            toString_1Call::SELECTOR,
-            toString_2Call::SELECTOR,
-            toString_3Call::SELECTOR,
-            toString_4Call::SELECTOR,
-            toString_5Call::SELECTOR,
-            parseBytesCall::SELECTOR,
-            parseAddressCall::SELECTOR,
-            parseUintCall::SELECTOR,
-            parseIntCall::SELECTOR,
-            parseBytes32Call::SELECTOR,
-            parseBoolCall::SELECTOR,
-            toLowercaseCall::SELECTOR,
-            toUppercaseCall::SELECTOR,
-            trimCall::SELECTOR,
-            toBase64_0Call::SELECTOR,
-            toBase64_1Call::SELECTOR,
-            toBase64URL_0Call::SELECTOR,
-            toBase64URL_1Call::SELECTOR,
-            breakpoint_0Call::SELECTOR,
-            setEvmVersionCall::SELECTOR,
-            sleepCall::SELECTOR,
-            accessListCall::SELECTOR,
-            getNonce_0Call::SELECTOR,
-            resetNonceCall::SELECTOR,
-            allowCheatcodesCall::SELECTOR,
-            makePersistent_0Call::SELECTOR,
-            makePersistent_3Call::SELECTOR,
-            revokePersistent_0Call::SELECTOR,
-            revokePersistent_1Call::SELECTOR,
-            isPersistentCall::SELECTOR,
-            selectForkCall::SELECTOR,
-            createFork_0Call::SELECTOR,
-            createSelectFork_0Call::SELECTOR,
-            rollFork_0Call::SELECTOR,
-            rollFork_1Call::SELECTOR,
-            revertToCall::SELECTOR,
-            revertToStateCall::SELECTOR,
-            revertToAndDeleteCall::SELECTOR,
-            revertToStateAndDeleteCall::SELECTOR,
-            deleteSnapshotCall::SELECTOR,
-            deleteStateSnapshotCall::SELECTOR,
-            warpCall::SELECTOR,
-            rollCall::SELECTOR,
-            prevrandao_0Call::SELECTOR,
-            prevrandao_1Call::SELECTOR,
-            feeCall::SELECTOR,
-            blobBaseFeeCall::SELECTOR,
-            chainIdCall::SELECTOR,
-            difficultyCall::SELECTOR,
-            coinbaseCall::SELECTOR,
-            txGasPriceCall::SELECTOR,
-            getLabelCall::SELECTOR,
-            snapshotGasLastCall_0Call::SELECTOR,
-            startSnapshotGas_0Call::SELECTOR,
-            stopSnapshotGas_1Call::SELECTOR,
-            coolCall::SELECTOR,
-            isContextCall::SELECTOR,
-            assertTrue_0Call::SELECTOR,
-            assertTrue_1Call::SELECTOR,
-            assertFalse_0Call::SELECTOR,
-            assertFalse_1Call::SELECTOR,
-            randomUint_2Call::SELECTOR,
-            randomInt_1Call::SELECTOR,
-            randomBytesCall::SELECTOR,
-        ],
-    ) {
-        return Some(abi_static_input_size(1));
-    }
-
-    if selector_in(
-        selector,
-        &[
-            expectRevert_4Call::SELECTOR,
-            expectRevert_7Call::SELECTOR,
-            expectRevert_9Call::SELECTOR,
-            expectPartialRevert_1Call::SELECTOR,
-            expectEmit_7Call::SELECTOR,
-            prank_1Call::SELECTOR,
-            prank_2Call::SELECTOR,
-            startPrank_1Call::SELECTOR,
-            startPrank_2Call::SELECTOR,
-            sign_1Call::SELECTOR,
-            signCompact_1Call::SELECTOR,
-            deriveKey_0Call::SELECTOR,
-            splitCall::SELECTOR,
-            indexOfCall::SELECTOR,
-            containsCall::SELECTOR,
-            breakpoint_1Call::SELECTOR,
-            expectSafeMemoryCall::SELECTOR,
-            expectSafeMemoryCallCall::SELECTOR,
-            loadCall::SELECTOR,
-            makePersistent_1Call::SELECTOR,
-            computeCreateAddressCall::SELECTOR,
-            computeCreate2Address_1Call::SELECTOR,
-            setBlockhashCall::SELECTOR,
-            dealCall::SELECTOR,
-            setNonceCall::SELECTOR,
-            setNonceUnsafeCall::SELECTOR,
-            createFork_1Call::SELECTOR,
-            createFork_2Call::SELECTOR,
-            createSelectFork_1Call::SELECTOR,
-            createSelectFork_2Call::SELECTOR,
-            rollFork_2Call::SELECTOR,
-            rollFork_3Call::SELECTOR,
-            labelCall::SELECTOR,
-            snapshotValue_0Call::SELECTOR,
-            snapshotGasLastCall_1Call::SELECTOR,
-            startSnapshotGas_1Call::SELECTOR,
-            stopSnapshotGas_2Call::SELECTOR,
-            warmSlotCall::SELECTOR,
-            coolSlotCall::SELECTOR,
-            assertEq_2Call::SELECTOR,
-            assertEq_3Call::SELECTOR,
-            assertEq_4Call::SELECTOR,
-            assertEq_5Call::SELECTOR,
-            assertEq_6Call::SELECTOR,
-            assertEq_7Call::SELECTOR,
-            assertEq_8Call::SELECTOR,
-            assertEq_9Call::SELECTOR,
-            assertEq_0Call::SELECTOR,
-            assertEq_1Call::SELECTOR,
-            assertNotEq_2Call::SELECTOR,
-            assertNotEq_3Call::SELECTOR,
-            assertNotEq_4Call::SELECTOR,
-            assertNotEq_5Call::SELECTOR,
-            assertNotEq_6Call::SELECTOR,
-            assertNotEq_7Call::SELECTOR,
-            assertNotEq_8Call::SELECTOR,
-            assertNotEq_9Call::SELECTOR,
-            assertNotEq_0Call::SELECTOR,
-            assertNotEq_1Call::SELECTOR,
-            assertLt_0Call::SELECTOR,
-            assertLt_1Call::SELECTOR,
-            assertLe_0Call::SELECTOR,
-            assertLe_1Call::SELECTOR,
-            assertGt_0Call::SELECTOR,
-            assertGt_1Call::SELECTOR,
-            assertGe_0Call::SELECTOR,
-            assertGe_1Call::SELECTOR,
-            assertLt_2Call::SELECTOR,
-            assertLt_3Call::SELECTOR,
-            assertGt_2Call::SELECTOR,
-            assertGt_3Call::SELECTOR,
-            assertLe_2Call::SELECTOR,
-            assertLe_3Call::SELECTOR,
-            assertGe_2Call::SELECTOR,
-            assertGe_3Call::SELECTOR,
-            assertEq_14Call::SELECTOR,
-            assertEq_15Call::SELECTOR,
-            assertEq_16Call::SELECTOR,
-            assertEq_17Call::SELECTOR,
-            assertEq_18Call::SELECTOR,
-            assertEq_19Call::SELECTOR,
-            assertEq_20Call::SELECTOR,
-            assertEq_21Call::SELECTOR,
-            assertEq_22Call::SELECTOR,
-            assertEq_23Call::SELECTOR,
-            assertEq_24Call::SELECTOR,
-            assertEq_25Call::SELECTOR,
-            assertEq_26Call::SELECTOR,
-            assertEq_27Call::SELECTOR,
-            assertNotEq_14Call::SELECTOR,
-            assertNotEq_15Call::SELECTOR,
-            assertNotEq_16Call::SELECTOR,
-            assertNotEq_17Call::SELECTOR,
-            assertNotEq_18Call::SELECTOR,
-            assertNotEq_19Call::SELECTOR,
-            assertNotEq_20Call::SELECTOR,
-            assertNotEq_21Call::SELECTOR,
-            assertNotEq_22Call::SELECTOR,
-            assertNotEq_23Call::SELECTOR,
-            assertNotEq_24Call::SELECTOR,
-            assertNotEq_25Call::SELECTOR,
-            assertNotEq_26Call::SELECTOR,
-            assertNotEq_27Call::SELECTOR,
-            randomUint_1Call::SELECTOR,
-        ],
-    ) {
-        return Some(abi_static_input_size(2));
-    }
-
-    if selector_in(
-        selector,
-        &[
-            expectRevert_10Call::SELECTOR,
-            deriveKey_1Call::SELECTOR,
-            deriveKey_2Call::SELECTOR,
-            rememberKeys_0Call::SELECTOR,
-            storeCall::SELECTOR,
-            makePersistent_2Call::SELECTOR,
-            snapshotValue_1Call::SELECTOR,
-            replaceCall::SELECTOR,
-            assertEqDecimal_0Call::SELECTOR,
-            assertEqDecimal_2Call::SELECTOR,
-            computeCreate2Address_0Call::SELECTOR,
-            bound_0Call::SELECTOR,
-            bound_1Call::SELECTOR,
-        ],
-    ) {
-        return Some(abi_static_input_size(3));
-    }
-
-    if selector_in(
-        selector,
-        &[
-            expectEmit_0Call::SELECTOR,
-            deriveKey_3Call::SELECTOR,
-            rememberKeys_1Call::SELECTOR,
-            assertEqDecimal_1Call::SELECTOR,
-            assertEqDecimal_3Call::SELECTOR,
-        ],
-    ) {
-        return Some(abi_static_input_size(4));
-    }
-    if selector_in(selector, &[expectEmitAnonymous_0Call::SELECTOR]) {
-        return Some(abi_static_input_size(5));
-    }
-    if selector_in(selector, &[expectEmit_1Call::SELECTOR, expectEmit_4Call::SELECTOR]) {
-        return Some(abi_static_input_size(5));
-    }
-    if selector_in(selector, &[expectEmit_5Call::SELECTOR, expectEmitAnonymous_1Call::SELECTOR]) {
-        return Some(abi_static_input_size(6));
-    }
-
-    None
 }
 
 /// Returns the `symbolic_vm_cheatcode_min_input_size` cheatcode runtime helper result.
