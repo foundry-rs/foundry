@@ -1254,14 +1254,14 @@ impl WorkerCorpus {
             let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
             match weighted_arg_mutation(test_runner.rng(), self.arg_mutation_distribution.as_ref())
             {
-                Some(true) => {
+                Some(true)
                     if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
                         && self.mutation_weights.mutation_weight_abi > 0
-                        && !function.inputs.is_empty()
-                    {
-                        self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
-                    }
+                        && !function.inputs.is_empty() =>
+                {
+                    self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
                 }
+                Some(true) => {}
                 Some(false)
                     if self.mutation_weights.mutation_weight_abi > 0
                         && !function.inputs.is_empty() =>
