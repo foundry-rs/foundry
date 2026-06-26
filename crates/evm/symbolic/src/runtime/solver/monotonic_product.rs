@@ -1,5 +1,8 @@
 use super::{normalize::mul_cannot_overflow_256, *};
 
+type LessThanFacts<'a> = HashSet<(&'a Expr, &'a Expr)>;
+type PositiveFacts<'a> = HashSet<&'a Expr>;
+
 /// Returns whether monotonic product facts make these constraints unsatisfiable.
 #[cfg(test)]
 pub(crate) fn product_monotonic_unsat(constraints: &[BoolExpr]) -> bool {
@@ -22,11 +25,10 @@ pub(crate) fn product_monotonic_unsat_normalized(constraints: &[BoolExpr]) -> bo
     })
 }
 
-/// Collects simple unsigned ordering facts from normalized constraints.
-pub(crate) fn collect_order_facts(
-    expr: &BoolExpr,
-    less_than: &mut HashSet<(Expr, Expr)>,
-    positive: &mut HashSet<Expr>,
+fn collect_order_facts<'a>(
+    expr: &'a BoolExpr,
+    less_than: &mut LessThanFacts<'a>,
+    positive: &mut PositiveFacts<'a>,
 ) {
     match expr.as_inner() {
         BoolExprInner::And(values) => {
@@ -35,15 +37,15 @@ pub(crate) fn collect_order_facts(
             }
         }
         BoolExprInner::Cmp(BoolExprOp::Ult, left, right) => {
-            less_than.insert((left.clone(), right.clone()));
+            less_than.insert((left, right));
             if left.as_const().is_some_and(|value| value.is_zero()) {
-                positive.insert(right.clone());
+                positive.insert(right);
             }
         }
         BoolExprInner::Cmp(BoolExprOp::Ugt, left, right) => {
-            less_than.insert((right.clone(), left.clone()));
+            less_than.insert((right, left));
             if right.as_const().is_some_and(|value| value.is_zero()) {
-                positive.insert(left.clone());
+                positive.insert(left);
             }
         }
         BoolExprInner::Const(_)
@@ -53,8 +55,7 @@ pub(crate) fn collect_order_facts(
     }
 }
 
-/// Extracts `!(a * b < c * d)` as product operands.
-pub(crate) fn product_less_than_negation(expr: &BoolExpr) -> Option<(&Expr, &Expr, &Expr, &Expr)> {
+fn product_less_than_negation(expr: &BoolExpr) -> Option<(&Expr, &Expr, &Expr, &Expr)> {
     let BoolExprInner::Not(value) = expr.as_inner() else { return None };
     let BoolExprInner::Cmp(BoolExprOp::Ult, left, right) = value.as_inner() else {
         return None;
@@ -64,14 +65,13 @@ pub(crate) fn product_less_than_negation(expr: &BoolExpr) -> Option<(&Expr, &Exp
     Some((left_a, left_b, right_a, right_b))
 }
 
-/// Returns whether known facts imply `left_a * left_b < right_a * right_b`.
-pub(crate) fn product_less_than_known(
-    left_a: &Expr,
-    left_b: &Expr,
-    right_a: &Expr,
-    right_b: &Expr,
-    less_than: &HashSet<(Expr, Expr)>,
-    positive: &HashSet<Expr>,
+fn product_less_than_known<'a>(
+    left_a: &'a Expr,
+    left_b: &'a Expr,
+    right_a: &'a Expr,
+    right_b: &'a Expr,
+    less_than: &LessThanFacts<'a>,
+    positive: &PositiveFacts<'a>,
 ) -> bool {
     product_less_than_known_ordered(left_a, left_b, right_a, right_b, less_than, positive)
         || product_less_than_known_ordered(left_b, left_a, right_a, right_b, less_than, positive)
@@ -79,25 +79,23 @@ pub(crate) fn product_less_than_known(
         || product_less_than_known_ordered(left_b, left_a, right_b, right_a, less_than, positive)
 }
 
-/// Checks the ordered monotonicity case `0 < a < c && 0 < b < d`.
-pub(crate) fn product_less_than_known_ordered(
-    left_a: &Expr,
-    left_b: &Expr,
-    right_a: &Expr,
-    right_b: &Expr,
-    less_than: &HashSet<(Expr, Expr)>,
-    positive: &HashSet<Expr>,
+fn product_less_than_known_ordered<'a>(
+    left_a: &'a Expr,
+    left_b: &'a Expr,
+    right_a: &'a Expr,
+    right_b: &'a Expr,
+    less_than: &LessThanFacts<'a>,
+    positive: &PositiveFacts<'a>,
 ) -> bool {
     positive.contains(left_a)
         && positive.contains(left_b)
-        && less_than.contains(&(left_a.clone(), right_a.clone()))
-        && less_than.contains(&(left_b.clone(), right_b.clone()))
+        && less_than.contains(&(left_a, right_a))
+        && less_than.contains(&(left_b, right_b))
         && mul_cannot_overflow_256(left_a, left_b)
         && mul_cannot_overflow_256(right_a, right_b)
 }
 
-/// Returns the operands for an unsigned multiplication expression.
-pub(crate) fn mul_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
+fn mul_operands(expr: &Expr) -> Option<(&Expr, &Expr)> {
     match expr.as_inner() {
         ExprInner::Op(ExprOp::Mul, left, right) => Some((left, right)),
         _ => None,
