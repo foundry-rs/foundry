@@ -350,7 +350,7 @@ impl SymMemory {
         if src.is_empty() {
             return Ok(());
         }
-        let size = size.into_expr();
+        let size = size.into_arc_expr();
         match dest {
             SymWord::Concrete(dest) if dest <= U256::from(usize::MAX) => {
                 let dest = dest.to::<usize>();
@@ -467,7 +467,7 @@ impl SymMemory {
         &self,
         dest: usize,
         idx: usize,
-        size: &Expr,
+        size: &Arc<Expr>,
         source: SymWord,
     ) -> SymWord {
         let existing = self.byte(dest);
@@ -674,14 +674,18 @@ impl SymMemory {
 /// Returns the `symbolic_copy_size_byte` symbolic memory helper result.
 pub(crate) fn symbolic_copy_size_byte(
     idx: usize,
-    size: &Expr,
+    size: &Arc<Expr>,
     source: SymWord,
     existing: SymWord,
 ) -> SymWord {
-    SymWord::from_expr(Expr::ite(
-        BoolExpr::cmp(BoolExprOp::Ult, Expr::Const(U256::from(idx)), size.clone()),
-        source.into_expr(),
-        existing.into_expr(),
+    SymWord::from_arc_expr(Expr::ite_arc(
+        BoolExpr::cmp_arc(
+            BoolExprOp::Ult,
+            Arc::new(Expr::Const(U256::from(idx))),
+            Arc::clone(size),
+        ),
+        source.into_arc_expr(),
+        existing.into_arc_expr(),
     ))
 }
 
