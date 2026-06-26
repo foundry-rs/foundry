@@ -385,6 +385,8 @@ pub struct InspectorStackInner {
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
+    /// Accounts that should retain the per-transaction creation marker in the current context.
+    pub locally_created_accounts: AddressHashSet,
     pub top_frame_journal: AddressMap<Account>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
@@ -992,6 +994,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
     fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
+        self.locally_created_accounts.clear();
+
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
@@ -1087,6 +1091,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             {
                 account.mark_created_locally();
             }
+        }
+        if self.locally_created_accounts.contains(&interpreter.input.target_address())
+            && let Some(account) =
+                ecx.journal_mut().evm_state_mut().get_mut(&interpreter.input.target_address())
+        {
+            account.mark_created_locally();
         }
 
         call_inspectors!(
@@ -1431,6 +1441,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
+        if self.in_inner_context
+            && outcome.result.result.is_ok()
+            && let Some(address) = outcome.address
+            && let Some(inner_context) = &mut self.inner_context_data
+        {
+            inner_context.locally_created_accounts.insert(address);
+        }
+        if outcome.result.result.is_ok()
+            && let Some(address) = outcome.address
+        {
+            self.locally_created_accounts.insert(address);
+        }
+
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journal().depth() == 1 {

@@ -975,6 +975,10 @@ forgetest_init!(setup_selfdestruct_deletes_same_tx_created_contracts, |prj, cmd|
 import {Test} from "forge-std/Test.sol";
 
 contract A {
+    function codeLength() public view returns (uint256) {
+        return address(this).code.length;
+    }
+
     function kill() public {
         selfdestruct(payable(address(0)));
     }
@@ -1010,6 +1014,10 @@ contract SetupSelfdestructTest is Test {
     function setUp() public {
         factory = new Factory{salt: keccak256(abi.encode("evil"))}();
         a = A(factory.helloA());
+
+        (bool success, bytes memory data) = address(a).staticcall(abi.encodeCall(A.codeLength, ()));
+        assertTrue(success);
+        assertEq(abi.decode(data, (uint256)), address(a).code.length);
 
         a.kill();
         factory.kill();
