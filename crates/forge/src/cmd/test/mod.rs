@@ -19,7 +19,6 @@ use crate::{
         identifier::SignaturesIdentifier,
     },
 };
-use alloy_chains::Chain;
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
@@ -1634,7 +1633,7 @@ impl TestArgs {
             return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
-        let remote_chain: Option<Chain> =
+        let remote_chain: Option<foundry_config::Chain> =
             if runner.fork.is_some() { runner.tx_env.chain_id().map(Into::into) } else { None };
         let known_contracts = runner.known_contracts.clone();
 
