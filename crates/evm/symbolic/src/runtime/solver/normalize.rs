@@ -181,6 +181,26 @@ fn normalize_expr_node_for_solver(expr: SymExpr) -> SymExpr {
     {
         return normalize_expr_for_solver(rebuilt);
     }
+    if let Some(rebuilt) = expr.rebuild_from_shifted_word_fragments()
+        && rebuilt != expr
+    {
+        return normalize_expr_for_solver(rebuilt);
+    }
+    if let Some(rebuilt) = expr.normalize_masked_shift_for_solver()
+        && rebuilt != expr
+    {
+        return normalize_expr_for_solver(rebuilt);
+    }
+    if let Some(rebuilt) = expr.normalize_masked_or_for_solver()
+        && rebuilt != expr
+    {
+        return normalize_expr_for_solver(rebuilt);
+    }
+    if let Some(rebuilt) = expr.normalize_shift_right_for_solver()
+        && rebuilt != expr
+    {
+        return normalize_expr_for_solver(rebuilt);
+    }
 
     match expr.kind() {
         SymExprKind::Op(op, left, right)
@@ -310,6 +330,161 @@ impl SymExpr {
         (shift == U256::from((31 - index) * 8)).then(|| source.clone())
     }
 
+    fn rebuild_from_shifted_word_fragments(&self) -> Option<Self> {
+        let mut terms = Vec::new();
+        self.push_or_terms(&mut terms);
+        if terms.len() != 2 {
+            return None;
+        }
+
+        let left_low = terms[0].low_word_fragment();
+        let right_low = terms[1].low_word_fragment();
+        let left_high = terms[0].shifted_high_word_fragment();
+        let right_high = terms[1].shifted_high_word_fragment();
+        match (left_low, right_low, left_high, right_high) {
+            (Some((low_source, low_bits)), None, None, Some((high_source, high_bits)))
+            | (None, Some((low_source, low_bits)), Some((high_source, high_bits)), None)
+                if low_source == high_source && low_bits == high_bits =>
+            {
+                Some(low_source)
+            }
+            _ => None,
+        }
+    }
+
+    fn low_word_fragment(&self) -> Option<(Self, usize)> {
+        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
+        if let Some(mask) = right.as_const() {
+            return mask_low_bits(mask).map(|bits| (left.clone(), bits));
+        }
+        let mask = left.as_const()?;
+        mask_low_bits(mask).map(|bits| (right.clone(), bits))
+    }
+
+    fn shifted_high_word_fragment(&self) -> Option<(Self, usize)> {
+        let SymExprKind::Op(SymExprOp::Shl, value, shift) = self.kind() else { return None };
+        let bits = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
+        if bits == 0 || bits >= 256 {
+            return None;
+        }
+
+        let (source, source_shift, width) = value.shifted_low_fragment_source()?;
+        (source_shift == bits && width == 256 - bits).then_some((source, bits))
+    }
+
+    fn shifted_low_fragment_source(&self) -> Option<(Self, usize, usize)> {
+        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
+        if let Some(mask) = right.as_const() {
+            return Self::shifted_low_fragment_source_with_mask(left, mask);
+        }
+        let mask = left.as_const()?;
+        Self::shifted_low_fragment_source_with_mask(right, mask)
+    }
+
+    fn shifted_low_fragment_source_with_mask(
+        value: &Self,
+        mask: U256,
+    ) -> Option<(Self, usize, usize)> {
+        let width = mask_low_bits(mask)?;
+        match value.kind() {
+            SymExprKind::Op(SymExprOp::Shr, source, shift) => {
+                let shift = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
+                Some((source.clone(), shift, width))
+            }
+            _ => Some((value.clone(), 0, width)),
+        }
+    }
+
+    fn normalize_masked_shift_for_solver(&self) -> Option<Self> {
+        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
+        let (value, mask) = if let Some(mask) = right.as_const() {
+            (left, mask)
+        } else {
+            (right, left.as_const()?)
+        };
+        let mask_bits = mask_low_bits(mask)?;
+        let SymExprKind::Op(SymExprOp::Shl, _, shift) = value.kind() else { return None };
+        let shift = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
+        (mask_bits <= shift).then(Self::zero)
+    }
+
+    fn normalize_masked_or_for_solver(&self) -> Option<Self> {
+        let SymExprKind::Op(SymExprOp::And, left, right) = self.kind() else { return None };
+        let (value, mask) = if let Some(mask) = right.as_const() {
+            (left, mask)
+        } else {
+            (right, left.as_const()?)
+        };
+        let SymExprKind::Op(SymExprOp::Or, or_left, or_right) = value.kind() else { return None };
+
+        let left = normalize_expr_for_solver(Self::op(
+            SymExprOp::And,
+            or_left.clone(),
+            Self::constant(mask),
+        ));
+        if left.as_const().is_some_and(|value| value.is_zero()) {
+            return Some(normalize_expr_for_solver(Self::op(
+                SymExprOp::And,
+                or_right.clone(),
+                Self::constant(mask),
+            )));
+        }
+
+        let right = normalize_expr_for_solver(Self::op(
+            SymExprOp::And,
+            or_right.clone(),
+            Self::constant(mask),
+        ));
+        if right.as_const().is_some_and(|value| value.is_zero()) {
+            return Some(left);
+        }
+
+        None
+    }
+
+    fn normalize_shift_right_for_solver(&self) -> Option<Self> {
+        let SymExprKind::Op(SymExprOp::Shr, value, shift) = self.kind() else { return None };
+        let shift = shift.as_const().and_then(|shift| usize::try_from(shift).ok())?;
+        if shift == 0 || shift >= 256 {
+            return None;
+        }
+        if value.unsigned_bits() <= shift {
+            return Some(Self::zero());
+        }
+
+        if let SymExprKind::Op(SymExprOp::Shl, inner, left_shift) = value.kind()
+            && left_shift.as_const() == Some(U256::from(shift))
+            && inner.unsigned_bits() <= 256 - shift
+        {
+            return Some(inner.clone());
+        }
+
+        let SymExprKind::Op(SymExprOp::Or, left, right) = value.kind() else { return None };
+        let left = normalize_expr_for_solver(Self::op(
+            SymExprOp::Shr,
+            left.clone(),
+            Self::constant(U256::from(shift)),
+        ));
+        if left.as_const().is_some_and(|value| value.is_zero()) {
+            return Some(normalize_expr_for_solver(Self::op(
+                SymExprOp::Shr,
+                right.clone(),
+                Self::constant(U256::from(shift)),
+            )));
+        }
+
+        let right = normalize_expr_for_solver(Self::op(
+            SymExprOp::Shr,
+            right.clone(),
+            Self::constant(U256::from(shift)),
+        ));
+        if right.as_const().is_some_and(|value| value.is_zero()) {
+            return Some(left);
+        }
+
+        None
+    }
+
     fn add_cannot_overflow_256(&self, right: &Self) -> bool {
         self.unsigned_bits().max(right.unsigned_bits()).saturating_add(1) <= 256
     }
@@ -348,6 +523,11 @@ impl SymExpr {
             _ => 256,
         }
     }
+}
+
+fn mask_low_bits(mask: U256) -> Option<usize> {
+    let bits = mask.bit_len();
+    (mask == mask_bits(U256::MAX, bits)).then_some(bits)
 }
 
 impl SymBoolExpr {

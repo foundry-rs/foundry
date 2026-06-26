@@ -2433,6 +2433,84 @@ fn solver_rebuilds_word_from_extracted_byte_terms() {
     assert_eq!(rebuilt, normalize_expr_for_solver(masked));
 }
 
+#[test]
+fn solver_rebuilds_word_from_shifted_fragments() {
+    let word = SymExpr::var("word");
+    let low_bits =
+        SymExpr::op(SymExprOp::And, word.clone(), SymExpr::constant(mask_bits(U256::MAX, 32)));
+    let high_bits = SymExpr::op(
+        SymExprOp::Shl,
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::op(SymExprOp::Shr, word.clone(), SymExpr::constant(U256::from(32))),
+            SymExpr::constant(mask_bits(U256::MAX, 224)),
+        ),
+        SymExpr::constant(U256::from(32)),
+    );
+    let rebuilt = normalize_expr_for_solver(SymExpr::op(SymExprOp::Or, low_bits, high_bits));
+
+    assert_eq!(rebuilt, word);
+}
+
+#[test]
+fn solver_simplifies_selector_prefixed_word_fragment() {
+    let x = SymExpr::var("calldata_0");
+    let y = SymExpr::var("calldata_1");
+    let low_32 = SymExpr::constant(mask_bits(U256::MAX, 32));
+    let low_224 = SymExpr::constant(mask_bits(U256::MAX, 224));
+    let selector = SymExpr::constant(U256::from(0x771602f7u64) << 224);
+
+    let first_word = SymExpr::op(
+        SymExprOp::Or,
+        selector,
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::op(SymExprOp::Shr, x.clone(), SymExpr::constant(U256::from(32))),
+            low_224.clone(),
+        ),
+    );
+    let second_word = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::op(SymExprOp::Shr, y.clone(), SymExpr::constant(U256::from(32))),
+            low_224.clone(),
+        ),
+        SymExpr::op(
+            SymExprOp::Shl,
+            SymExpr::op(SymExprOp::And, x.clone(), low_32.clone()),
+            SymExpr::constant(U256::from(224)),
+        ),
+    );
+    let rebuilt = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::op(SymExprOp::Shr, second_word.clone(), SymExpr::constant(U256::from(224))),
+            low_32,
+        ),
+        SymExpr::op(
+            SymExprOp::Shl,
+            SymExpr::op(SymExprOp::And, first_word, low_224),
+            SymExpr::constant(U256::from(32)),
+        ),
+    );
+
+    assert_eq!(normalize_expr_for_solver(rebuilt), x);
+
+    let rebuilt_next = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::op(SymExprOp::And, y.clone(), SymExpr::constant(mask_bits(U256::MAX, 32))),
+        SymExpr::op(
+            SymExprOp::Shl,
+            SymExpr::op(SymExprOp::And, second_word, SymExpr::constant(mask_bits(U256::MAX, 224))),
+            SymExpr::constant(U256::from(32)),
+        ),
+    );
+
+    assert_eq!(normalize_expr_for_solver(rebuilt_next), y);
+}
+
 fn checked_mul_guard_word(zero_operand: &SymExpr, expected: &SymExpr) -> SymExpr {
     let operand_is_zero = SymBoolExpr::eq(zero_operand.clone(), SymExpr::constant(U256::ZERO));
     let checked_product = SymExpr::ite(
