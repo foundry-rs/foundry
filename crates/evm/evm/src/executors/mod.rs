@@ -1328,7 +1328,6 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         mut logs,
         labels,
         traces,
-        collect_debug_bytecodes,
         line_coverage,
         edge_coverage,
         evm_cmp_values,
@@ -1336,11 +1335,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         chisel_state,
         reverter,
     } = inspector.collect();
-    let debug_bytecodes = if collect_debug_bytecodes {
-        collect_debug_bytecodes_for_traces(traces.as_ref(), db)
-    } else {
-        HashMap::default()
-    };
+    let debug_bytecodes = collect_debug_bytecodes(traces.as_ref(), db);
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -1380,7 +1375,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     })
 }
 
-fn collect_debug_bytecodes_for_traces(
+fn collect_debug_bytecodes(
     traces: Option<&SparsedTraceArena>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
 ) -> AddressHashMap<Bytes> {
