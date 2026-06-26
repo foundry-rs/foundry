@@ -34,7 +34,8 @@ use revm::{
     handler::FrameResult,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterResult, interpreter_types::Jumps, return_ok,
+        InstructionResult, Interpreter, InterpreterResult, bytecode::opcode as op,
+        interpreter_types::Jumps, return_ok,
     },
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
@@ -1064,8 +1065,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         if let Some(cheats) = self.cheatcodes.as_mut() {
             cheats.pc = interpreter.bytecode.pc();
             if cheats.has_step_hooks() {
-                crate::utils::cold_path();
-                cheats.step(interpreter, ecx);
+                let opcode = interpreter.bytecode.opcode();
+                if !cheats.has_recording_accesses_only_step_hook()
+                    || matches!(opcode, op::SLOAD | op::SSTORE)
+                {
+                    crate::utils::cold_path();
+                    cheats.step(interpreter, ecx);
+                }
             }
         }
     }

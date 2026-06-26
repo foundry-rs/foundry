@@ -1337,7 +1337,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || !self.allowed_mem_writes.is_empty()
             || self.mapping_slots.is_some()
             || self.gas_metering.recording
-            || !self.env_overrides.is_empty()
+            || self.has_active_env_overrides()
     }
 
     #[inline(always)]
@@ -1345,12 +1345,30 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.gas_metering.paused
             || self.gas_metering.touched
             || self.arbitrary_storage.is_some()
-            || !self.env_overrides.is_empty()
+            || self.has_active_env_overrides()
     }
 
     #[inline(always)]
     pub fn has_log_hooks(&self) -> bool {
         !self.expected_emits.is_empty() || self.recorded_logs.is_some()
+    }
+
+    #[inline(always)]
+    pub fn has_recording_accesses_only_step_hook(&self) -> bool {
+        self.recording_accesses
+            && self.broadcast.is_none()
+            && !self.gas_metering.paused
+            && !self.gas_metering.reset
+            && self.recorded_account_diffs_stack.is_none()
+            && self.allowed_mem_writes.is_empty()
+            && self.mapping_slots.is_none()
+            && !self.gas_metering.recording
+            && !self.has_active_env_overrides()
+    }
+
+    #[inline(always)]
+    fn has_active_env_overrides(&self) -> bool {
+        self.env_overrides.values().any(EnvOverrides::is_any_set)
     }
 
     /// Returns struct definitions from the analysis, if available.
@@ -3117,10 +3135,38 @@ mod tests {
         cheats.recording_accesses = true;
         assert!(cheats.has_step_hooks());
         assert!(!cheats.has_step_end_hooks());
+        assert!(cheats.has_recording_accesses_only_step_hook());
 
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
         assert!(!cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+    }
+
+    #[test]
+    fn mixed_step_hooks_disable_record_access_fast_path() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+        cheats.recording_accesses = true;
+
+        cheats.gas_metering.reset = true;
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+
+        cheats.gas_metering.reset = false;
+        cheats.env_overrides.insert(None, EnvOverrides { basefee: Some(1), ..Default::default() });
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+    }
+
+    #[test]
+    fn inactive_env_override_entries_do_not_enable_opcode_hooks() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+        cheats.env_overrides.insert(None, EnvOverrides::default());
+
+        assert!(!cheats.has_step_hooks());
+        assert!(!cheats.has_step_end_hooks());
+
+        cheats.env_overrides.get_mut(&None).unwrap().basefee = Some(1);
+        assert!(cheats.has_step_hooks());
         assert!(cheats.has_step_end_hooks());
     }
 
