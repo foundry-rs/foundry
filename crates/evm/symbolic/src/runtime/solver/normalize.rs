@@ -48,29 +48,33 @@ fn collect_normalized_conjunct(expr: SymBoolExpr, out: &mut Vec<SymBoolExpr>) {
 
 /// Normalizes one boolean expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_bool_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
+    expr.fold(&mut normalize_bool_node_for_solver)
+}
+
+fn normalize_bool_node_for_solver(expr: SymBoolExpr) -> SymBoolExpr {
     if let Some(normalized) = normalize_udiv_bool_for_solver(&expr) {
         return normalized;
     }
 
-    match expr.into_kind() {
-        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
-        SymBoolExprKind::Not(value) => normalize_bool_for_solver(value).not(),
-        SymBoolExprKind::And(values) => {
-            SymBoolExpr::and(values.iter().cloned().map(normalize_bool_for_solver).collect())
-        }
+    match expr.kind() {
+        SymBoolExprKind::Not(value) => value.clone().not(),
+        SymBoolExprKind::And(values) => SymBoolExpr::and(values.iter().cloned().collect()),
         SymBoolExprKind::Eq(left, right) => {
-            let normalized =
-                SymBoolExpr::eq(normalize_expr_for_solver(left), normalize_expr_for_solver(right));
+            let normalized = SymBoolExpr::eq(
+                normalize_expr_for_solver(left.clone()),
+                normalize_expr_for_solver(right.clone()),
+            );
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
         SymBoolExprKind::Cmp(op, left, right) => {
             let normalized = SymBoolExpr::cmp(
-                op,
-                normalize_expr_for_solver(left),
-                normalize_expr_for_solver(right),
+                *op,
+                normalize_expr_for_solver(left.clone()),
+                normalize_expr_for_solver(right.clone()),
             );
             normalize_udiv_bool_for_solver(&normalized).unwrap_or(normalized)
         }
+        SymBoolExprKind::Const(_) => expr,
     }
 }
 
@@ -168,86 +172,51 @@ impl ConstraintContext {
 
 /// Normalizes one word expression into an equivalent, solver-friendlier form.
 pub(crate) fn normalize_expr_for_solver(expr: SymExpr) -> SymExpr {
+    expr.fold(&mut normalize_expr_node_for_solver)
+}
+
+fn normalize_expr_node_for_solver(expr: SymExpr) -> SymExpr {
     if let Some(rebuilt) = rebuild_word_from_extracted_byte_terms(&expr)
         && rebuilt != expr
     {
         return normalize_expr_for_solver(rebuilt);
     }
 
-    if matches!(
-        expr.kind(),
-        SymExprKind::Const(_)
-            | SymExprKind::Var(_)
-            | SymExprKind::GasLeft(_)
-            | SymExprKind::Keccak { .. }
-            | SymExprKind::Hash { .. }
-    ) {
-        return expr;
-    }
-
-    match expr.into_kind() {
-        SymExprKind::Not(value) => SymExpr::not(normalize_expr_for_solver(value)),
-        SymExprKind::Op(op, left, right) => {
-            let left = normalize_expr_for_solver(left);
-            let right = normalize_expr_for_solver(right);
+    match expr.kind() {
+        SymExprKind::Op(op, left, right)
             if matches!(
                 op,
                 SymExprOp::Add | SymExprOp::Mul | SymExprOp::And | SymExprOp::Or | SymExprOp::Xor
-            ) && right < left
-            {
-                SymExpr::op(op, right, left)
-            } else {
-                SymExpr::op(op, left, right)
-            }
+            ) && right < left =>
+        {
+            SymExpr::op(*op, right.clone(), left.clone())
         }
-        SymExprKind::AddMod { left, right, modulus } => SymExpr::addmod(
-            normalize_expr_for_solver(left),
-            normalize_expr_for_solver(right),
-            normalize_expr_for_solver(modulus),
-        ),
-        SymExprKind::MulMod { left, right, modulus } => SymExpr::mulmod(
-            normalize_expr_for_solver(left),
-            normalize_expr_for_solver(right),
-            normalize_expr_for_solver(modulus),
-        ),
-        SymExprKind::Ite(cond, left, right) => normalize_ite_expr_for_solver(cond, left, right),
-        SymExprKind::Const(_)
-        | SymExprKind::Var(_)
-        | SymExprKind::GasLeft(_)
-        | SymExprKind::Keccak { .. }
-        | SymExprKind::Hash { .. } => unreachable!(),
+        SymExprKind::Ite(cond, left, right) => {
+            normalize_ite_expr_for_solver(cond.clone(), left.clone(), right.clone())
+        }
+        _ => expr,
     }
 }
 
-/// Normalizes a word-valued conditional expression.
-pub(crate) fn normalize_ite_expr_for_solver(
-    cond: SymBoolExpr,
-    left: SymExpr,
-    right: SymExpr,
-) -> SymExpr {
+fn normalize_ite_expr_for_solver(cond: SymBoolExpr, left: SymExpr, right: SymExpr) -> SymExpr {
     let cond = normalize_bool_for_solver(cond);
-    let left = normalize_expr_for_solver(left);
-    let right = normalize_expr_for_solver(right);
     if left == right {
         return left;
     }
     if let Some(condition) = guarded_self_div_word_condition(&cond, &left, &right) {
-        return word_from_bool_expr(condition);
+        return SymExpr::bool_word(condition);
     }
-    if left.as_const() == Some(U256::from(1)) && right.bool_from_word().as_ref() == Some(&cond) {
+    if left.as_const() == Some(U256::from(1))
+        && normalized_bool_word_condition(&right).as_ref() == Some(&cond)
+    {
         return right;
     }
     if right.as_const().is_some_and(|value| value.is_zero())
-        && left.bool_from_word().as_ref() == Some(&cond)
+        && normalized_bool_word_condition(&left).as_ref() == Some(&cond)
     {
         return left;
     }
     SymExpr::ite(cond, left, right)
-}
-
-/// Converts a boolean condition into its 0/1 word representation.
-fn word_from_bool_expr(condition: SymBoolExpr) -> SymExpr {
-    SymExpr::ite(condition, SymExpr::constant(U256::from(1)), SymExpr::constant(U256::ZERO))
 }
 
 /// Returns the boolean represented by `a == 0 ? 0 : a / a`.
@@ -342,13 +311,13 @@ pub(crate) fn extracted_unshifted_byte_source(term: &SymExpr, index: usize) -> O
     (shift == U256::from((31 - index) * 8)).then(|| source.clone())
 }
 
-/// Rewrites exact EVM unsigned-division zero/nonzero predicates without `bvudiv`.
+/// Rewrites EVM unsigned-division predicates without relying on SMT `bvudiv` by zero.
 pub(crate) fn normalize_udiv_bool_for_solver(expr: &SymBoolExpr) -> Option<SymBoolExpr> {
     match expr.kind() {
         SymBoolExprKind::Eq(left, right)
             if right.as_const().is_some_and(|value| value.is_zero()) =>
         {
-            left.bool_from_word().map(SymBoolExpr::not).or_else(|| {
+            normalized_bool_word_condition(left).map(SymBoolExpr::not).or_else(|| {
                 if left.word_bool_always_true() {
                     Some(SymBoolExpr::constant(false))
                 } else {
@@ -359,7 +328,7 @@ pub(crate) fn normalize_udiv_bool_for_solver(expr: &SymBoolExpr) -> Option<SymBo
         SymBoolExprKind::Eq(left, right)
             if left.as_const().is_some_and(|value| value.is_zero()) =>
         {
-            right.bool_from_word().map(SymBoolExpr::not).or_else(|| {
+            normalized_bool_word_condition(right).map(SymBoolExpr::not).or_else(|| {
                 if right.word_bool_always_true() {
                     Some(SymBoolExpr::constant(false))
                 } else {
@@ -368,10 +337,10 @@ pub(crate) fn normalize_udiv_bool_for_solver(expr: &SymBoolExpr) -> Option<SymBo
             })
         }
         SymBoolExprKind::Eq(left, right) if right.as_const() == Some(U256::from(1)) => {
-            left.bool_from_word()
+            normalized_bool_word_condition(left)
         }
         SymBoolExprKind::Eq(left, right) if left.as_const() == Some(U256::from(1)) => {
-            right.bool_from_word()
+            normalized_bool_word_condition(right)
         }
         SymBoolExprKind::Not(value) => match value.kind() {
             SymBoolExprKind::Cmp(op, left, right) => {
@@ -416,26 +385,6 @@ pub(crate) fn normalize_udiv_bool_for_solver(expr: &SymBoolExpr) -> Option<SymBo
 }
 
 impl SymExpr {
-    fn bool_from_word(&self) -> Option<SymBoolExpr> {
-        let expr = strip_low_byte_mask(self)?;
-        let SymExprKind::Ite(condition, then_expr, else_expr) = expr.kind() else {
-            return None;
-        };
-        match (then_expr.as_const(), else_expr.as_const()) {
-            (Some(then_value), Some(else_value))
-                if then_value == U256::from(1) && else_value.is_zero() =>
-            {
-                Some(normalize_bool_for_solver(condition.clone()))
-            }
-            (Some(then_value), Some(else_value))
-                if then_value.is_zero() && else_value == U256::from(1) =>
-            {
-                Some(normalize_bool_for_solver(condition.clone()).not())
-            }
-            _ => None,
-        }
-    }
-
     fn contains_udiv(&self) -> bool {
         self.visit(&mut |expr| {
             if matches!(expr.kind(), SymExprKind::Op(SymExprOp::UDiv, _, _)) {
@@ -453,20 +402,6 @@ impl SymExpr {
 
     fn word_bool_always_true(&self) -> bool {
         ConstraintContext::default().word_bool_always_true(self)
-    }
-
-    fn bool_term(&self) -> Option<&SymBoolExpr> {
-        let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() else {
-            return None;
-        };
-        match (then_expr.as_const(), else_expr.as_const()) {
-            (Some(then_value), Some(else_value))
-                if then_value == U256::from(1) && else_value.is_zero() =>
-            {
-                Some(condition)
-            }
-            _ => None,
-        }
     }
 
     pub(crate) fn mul_cannot_overflow_256(&self, right: &Self) -> bool {
@@ -499,6 +434,10 @@ impl SymExpr {
             _ => 256,
         }
     }
+}
+
+fn normalized_bool_word_condition(expr: &SymExpr) -> Option<SymBoolExpr> {
+    strip_low_byte_mask(expr)?.bool_word_condition().map(normalize_bool_for_solver)
 }
 
 impl SymBoolExpr {
@@ -573,10 +512,13 @@ impl ConstraintContext {
             return false;
         }
 
-        let bool_terms = terms.iter().filter_map(|term| term.bool_term()).collect::<Vec<_>>();
+        let bool_terms = terms
+            .iter()
+            .filter_map(|term| normalized_bool_word_condition(term))
+            .collect::<Vec<_>>();
         if bool_terms.iter().any(|term| {
-            let negated = (*term).clone().not();
-            bool_terms.iter().any(|other| **other == negated)
+            let negated = term.clone().not();
+            bool_terms.contains(&negated)
         }) {
             return true;
         }

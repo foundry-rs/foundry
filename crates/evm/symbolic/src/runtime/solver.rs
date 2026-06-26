@@ -621,12 +621,15 @@ fn sorted_bool_exprs_are_subset(subset: &[SymBoolExpr], superset: &[SymBoolExpr]
 
 /// Returns a conservative canonical boolean expression for cache-key equality.
 fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
-    match expr.into_kind() {
-        SymBoolExprKind::Const(value) => SymBoolExpr::constant(value),
-        SymBoolExprKind::Not(value) => cache_key_bool(value).not(),
+    expr.fold(&mut cache_key_bool_node)
+}
+
+fn cache_key_bool_node(expr: SymBoolExpr) -> SymBoolExpr {
+    match expr.kind() {
+        SymBoolExprKind::Not(value) => value.clone().not(),
         SymBoolExprKind::And(values) => {
             let mut conjuncts = Vec::new();
-            for value in values.iter().cloned().map(cache_key_bool) {
+            for value in values.iter().cloned() {
                 collect_cache_key_conjunct(value, &mut conjuncts);
             }
             conjuncts.sort();
@@ -634,13 +637,14 @@ fn cache_key_bool(expr: SymBoolExpr) -> SymBoolExpr {
             SymBoolExpr::and(conjuncts)
         }
         SymBoolExprKind::Eq(left, right) => {
-            let left = cache_key_expr(left);
-            let right = cache_key_expr(right);
+            let left = cache_key_expr(left.clone());
+            let right = cache_key_expr(right.clone());
             if left <= right { SymBoolExpr::eq(left, right) } else { SymBoolExpr::eq(right, left) }
         }
         SymBoolExprKind::Cmp(op, left, right) => {
-            cache_key_cmp(op, cache_key_expr(left), cache_key_expr(right))
+            cache_key_cmp(*op, cache_key_expr(left.clone()), cache_key_expr(right.clone()))
         }
+        SymBoolExprKind::Const(_) => expr,
     }
 }
 
@@ -671,56 +675,36 @@ fn cache_key_cmp(op: SymBoolExprOp, left: SymExpr, right: SymExpr) -> SymBoolExp
 
 /// Returns a conservative canonical word expression for cache-key equality.
 fn cache_key_expr(expr: SymExpr) -> SymExpr {
-    if matches!(expr.kind(), SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_))
-    {
-        return expr;
-    }
+    expr.fold(&mut cache_key_expr_node)
+}
 
-    match expr.into_kind() {
-        SymExprKind::Keccak { name, len, bytes } => SymExpr::keccak_symbol(
-            name,
-            cache_key_expr(len),
-            bytes.iter().cloned().map(cache_key_expr).collect(),
-        ),
-        SymExprKind::Hash { name, algorithm, bytes } => SymExpr::hash_symbol(
-            name,
-            algorithm,
-            bytes.iter().cloned().map(cache_key_expr).collect(),
-        ),
-        SymExprKind::Not(value) => SymExpr::not(cache_key_expr(value)),
+fn cache_key_expr_node(expr: SymExpr) -> SymExpr {
+    match expr.kind() {
         SymExprKind::Op(op, left, right) => {
-            let left = cache_key_expr(left);
-            let right = cache_key_expr(right);
-            if expr_op_is_commutative(op) && right < left {
-                SymExpr::op(op, right, left)
+            if expr_op_is_commutative(*op) && right < left {
+                SymExpr::op(*op, right.clone(), left.clone())
             } else {
-                SymExpr::op(op, left, right)
+                expr
             }
         }
         SymExprKind::AddMod { left, right, modulus } => {
-            let left = cache_key_expr(left);
-            let right = cache_key_expr(right);
-            let modulus = cache_key_expr(modulus);
             if right < left {
-                SymExpr::addmod(right, left, modulus)
+                SymExpr::addmod(right.clone(), left.clone(), modulus.clone())
             } else {
-                SymExpr::addmod(left, right, modulus)
+                expr
             }
         }
         SymExprKind::MulMod { left, right, modulus } => {
-            let left = cache_key_expr(left);
-            let right = cache_key_expr(right);
-            let modulus = cache_key_expr(modulus);
             if right < left {
-                SymExpr::mulmod(right, left, modulus)
+                SymExpr::mulmod(right.clone(), left.clone(), modulus.clone())
             } else {
-                SymExpr::mulmod(left, right, modulus)
+                expr
             }
         }
         SymExprKind::Ite(cond, left, right) => {
-            SymExpr::ite(cache_key_bool(cond), cache_key_expr(left), cache_key_expr(right))
+            SymExpr::ite(cache_key_bool(cond.clone()), left.clone(), right.clone())
         }
-        SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => unreachable!(),
+        _ => expr,
     }
 }
 

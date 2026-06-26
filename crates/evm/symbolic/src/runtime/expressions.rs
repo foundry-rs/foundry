@@ -676,13 +676,37 @@ impl SymExpr {
     }
 
     pub(crate) fn from_bool(value: SymBoolExpr) -> Self {
-        match value.into_kind() {
-            SymBoolExprKind::Const(value) => Self::constant(U256::from(value)),
-            value => Self::ite(
-                SymBoolExpr::from_kind(value),
-                Self::constant(U256::from(1)),
-                Self::constant(U256::ZERO),
-            ),
+        Self::bool_word(value)
+    }
+
+    pub(crate) fn bool_word(value: SymBoolExpr) -> Self {
+        Self::ite(value, Self::constant(U256::from(1)), Self::constant(U256::ZERO))
+    }
+
+    pub(crate) fn bool_word_condition(&self) -> Option<SymBoolExpr> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() else {
+            return None;
+        };
+        Self::bool_word_condition_from_parts(condition, then_expr, else_expr)
+    }
+
+    fn bool_word_condition_from_parts(
+        condition: &SymBoolExpr,
+        then_expr: &Self,
+        else_expr: &Self,
+    ) -> Option<SymBoolExpr> {
+        match (then_expr.as_const(), else_expr.as_const()) {
+            (Some(then_value), Some(else_value))
+                if then_value == U256::from(1) && else_value.is_zero() =>
+            {
+                Some(condition.clone())
+            }
+            (Some(then_value), Some(else_value))
+                if then_value.is_zero() && else_value == U256::from(1) =>
+            {
+                Some(condition.clone().not())
+            }
+            _ => None,
         }
     }
 
@@ -693,17 +717,17 @@ impl SymExpr {
     pub(crate) fn into_zero_bool(self) -> SymBoolExpr {
         match self.into_kind() {
             SymExprKind::Const(value) => SymBoolExpr::constant(value.is_zero()),
-            SymExprKind::Ite(cond, then_expr, else_expr)
-                if then_expr.as_const() == Some(U256::from(1))
-                    && else_expr.as_const() == Some(U256::ZERO) =>
-            {
-                cond.not()
-            }
-            SymExprKind::Ite(cond, then_expr, else_expr)
-                if then_expr.as_const() == Some(U256::ZERO)
-                    && else_expr.as_const() == Some(U256::from(1)) =>
-            {
-                cond
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                if let Some(condition) =
+                    Self::bool_word_condition_from_parts(&condition, &then_expr, &else_expr)
+                {
+                    condition.not()
+                } else {
+                    SymBoolExpr::eq(
+                        Self::from_kind(SymExprKind::Ite(condition, then_expr, else_expr)),
+                        Self::constant(U256::ZERO),
+                    )
+                }
             }
             expr => SymBoolExpr::eq(Self::from_kind(expr), Self::constant(U256::ZERO)),
         }
@@ -1111,6 +1135,38 @@ impl SymExpr {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {
+        let expr = match self.into_kind() {
+            SymExprKind::Const(value) => Self::constant(value),
+            SymExprKind::Var(name) => Self::var_symbol(name),
+            SymExprKind::GasLeft(id) => Self::gas_left(id),
+            SymExprKind::Keccak { name, len, bytes } => Self::keccak_symbol(
+                name,
+                len.fold(folder),
+                bytes.iter().cloned().map(|byte| byte.fold(folder)).collect(),
+            ),
+            SymExprKind::Hash { name, algorithm, bytes } => Self::hash_symbol(
+                name,
+                algorithm,
+                bytes.iter().cloned().map(|byte| byte.fold(folder)).collect(),
+            ),
+            SymExprKind::Not(value) => Self::not(value.fold(folder)),
+            SymExprKind::Op(op, left, right) => Self::op(op, left.fold(folder), right.fold(folder)),
+            SymExprKind::AddMod { left, right, modulus } => {
+                Self::addmod(left.fold(folder), right.fold(folder), modulus.fold(folder))
+            }
+            SymExprKind::MulMod { left, right, modulus } => {
+                Self::mulmod(left.fold(folder), right.fold(folder), modulus.fold(folder))
+            }
+            SymExprKind::Ite(condition, then_expr, else_expr) => Self::ite(
+                condition.fold_exprs(folder),
+                then_expr.fold(folder),
+                else_expr.fold(folder),
+            ),
+        };
+        folder(expr)
     }
 
     pub(crate) fn op(op: SymExprOp, left: Self, right: Self) -> Self {
@@ -1681,6 +1737,37 @@ impl SymBoolExpr {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    pub(crate) fn fold(self, folder: &mut impl FnMut(Self) -> Self) -> Self {
+        let expr = match self.into_kind() {
+            SymBoolExprKind::Const(value) => Self::constant(value),
+            SymBoolExprKind::Not(value) => {
+                Self::from_kind(SymBoolExprKind::Not(value.fold(folder)))
+            }
+            SymBoolExprKind::And(values) => Self::from_kind(SymBoolExprKind::And(
+                values.iter().cloned().map(|value| value.fold(folder)).collect::<Vec<_>>().into(),
+            )),
+            SymBoolExprKind::Eq(left, right) => Self::from_kind(SymBoolExprKind::Eq(left, right)),
+            SymBoolExprKind::Cmp(op, left, right) => {
+                Self::from_kind(SymBoolExprKind::Cmp(op, left, right))
+            }
+        };
+        folder(expr)
+    }
+
+    pub(crate) fn fold_exprs(self, folder: &mut impl FnMut(SymExpr) -> SymExpr) -> Self {
+        match self.into_kind() {
+            SymBoolExprKind::Const(value) => Self::constant(value),
+            SymBoolExprKind::Not(value) => value.fold_exprs(folder).not(),
+            SymBoolExprKind::And(values) => {
+                Self::and(values.iter().cloned().map(|value| value.fold_exprs(folder)).collect())
+            }
+            SymBoolExprKind::Eq(left, right) => Self::eq(left.fold(folder), right.fold(folder)),
+            SymBoolExprKind::Cmp(op, left, right) => {
+                Self::cmp(op, left.fold(folder), right.fold(folder))
+            }
+        }
     }
 
     pub(crate) fn eq(left: SymExpr, right: SymExpr) -> Self {
