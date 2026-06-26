@@ -1600,6 +1600,14 @@ contract SymbolicFuzzCorpusSeed {
 "#,
     );
 
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "testHybridFindsBug", "--threads", "1", "--fuzz-runs", "8"])
+        .assert_success();
+
+    cmd.forge_fuse()
+        .args(["test", "--symbolic", "--match-test", "testHybridFindsBug"])
+        .assert_success();
+
     let stdout = cmd
         .forge_fuse()
         .args([
