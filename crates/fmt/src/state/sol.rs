@@ -93,7 +93,7 @@ impl<'ast> State<'_, 'ast> {
         let cmnts = self
             .comments
             .iter()
-            .filter_map(|c| if c.pos() < span.lo() { Some(c.style) } else { None })
+            .filter_map(|c| (c.pos() < span.lo()).then_some(c.style))
             .collect::<Vec<_>>();
 
         if let Some(first) = cmnts.first()
@@ -364,7 +364,16 @@ impl<'ast> State<'_, 'ast> {
 
         self.print_word("{");
         self.end();
-        if !body.is_empty() {
+        if body.is_empty() {
+            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                self.s.offset(-self.ind);
+            } else if self.config.bracket_spacing {
+                self.nbsp();
+            };
+            self.end();
+        } else {
             // update block depth
             self.block_depth += 1;
 
@@ -405,13 +414,6 @@ impl<'ast> State<'_, 'ast> {
 
             // restore block depth
             self.block_depth -= 1;
-        } else {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                self.zerobreak();
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
-            self.end();
         }
         self.print_word("}");
 
@@ -697,16 +699,17 @@ impl<'ast> State<'_, 'ast> {
                 for cmnt in inner_cmnts.into_iter().rev() {
                     self.comments.push_front(cmnt);
                 }
-                let mut enabled = false;
-                if !self.handle_span(span, false) {
+                let enabled = if self.handle_span(span, false) {
+                    false
+                } else {
                     if !self.is_bol_or_only_ind() {
                         self.space();
                     }
                     self.ibox(0);
                     print_fn(self);
                     self.cursor.advance_to(span.hi(), true);
-                    enabled = true;
-                }
+                    true
+                };
                 // Print subsequent comments.
                 for cmnt in post_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
@@ -1021,6 +1024,9 @@ impl<'ast> State<'_, 'ast> {
 
             self.print_assign_rhs(init, pre_init_size, init_space_left, Some(&ty.kind), cache);
         } else {
+            if override_.is_some() {
+                self.end();
+            }
             self.end();
         }
         self.end();
@@ -1564,14 +1570,15 @@ impl<'ast> State<'_, 'ast> {
                 }
 
                 // Trailing comment handling.
-                let mut is_trailing = false;
-                if let Some(style) = self.print_comments(
+                let is_trailing = if let Some(style) = self.print_comments(
                     span.hi(),
                     CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 ) {
                     skip_break = true;
-                    is_trailing = style.is_trailing();
-                }
+                    style.is_trailing()
+                } else {
+                    false
+                };
 
                 // Adjust indentation and line breaks.
                 match (skip_break, end.is_some()) {
@@ -1712,11 +1719,11 @@ impl<'ast> State<'_, 'ast> {
                 self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
             }
 
-            if !chain_has_indent {
+            if chain_has_indent {
+                self.s.ibox(self.ind);
+            } else {
                 self.skip_index_break = true;
                 self.cbox(0);
-            } else {
-                self.s.ibox(self.ind);
             }
         }
 
@@ -1819,7 +1826,7 @@ impl<'ast> State<'_, 'ast> {
                 list_format
                     .break_cmnts()
                     .break_single(true)
-                    .without_ind(self.call_stack.has_chain_with_indent())
+                    .without_ind(self.call_stack.has_indented_parent_chain())
                     .with_delimiters(!self.call_with_opts_and_args),
             );
         } else if self.config.bracket_spacing {
@@ -2188,7 +2195,9 @@ impl<'ast> State<'_, 'ast> {
                 self.nbsp();
             }
 
-            if !args.is_empty() {
+            if args.is_empty() {
+                self.end();
+            } else {
                 self.print_word("returns ");
                 self.print_word("(");
                 self.zerobreak();
@@ -2204,8 +2213,6 @@ impl<'ast> State<'_, 'ast> {
                 );
                 self.print_word(")");
                 self.nbsp();
-            } else {
-                self.end();
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
@@ -2419,6 +2426,12 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
     ) -> Decision {
+        // Dangling-else guard runs before the cache check so an inlined parent can't
+        // coerce this `if` into dropping braces and rebinding its `else`.
+        if Self::then_block_can_capture_trailing_else(then, els_opt.is_some()) {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If a decision is already cached from a parent, use it directly.
         if let Some(cached_decision) = self.single_line_stmt {
             return Decision { outcome: cached_decision, is_cached: true };
@@ -2431,20 +2444,19 @@ impl<'ast> State<'_, 'ast> {
 
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
-            config::SingleLineBlockStyle::Preserve => {
-                if self.is_stmt_in_new_line(cond, then) || self.is_multiline_block_stmt(then, true)
-                {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Preserve
+                if self.is_stmt_in_new_line(cond, then)
+                    || self.is_multiline_block_stmt(then, true) =>
+            {
+                return Decision { outcome: false, is_cached: false };
             }
-            config::SingleLineBlockStyle::Single => {
-                if self.is_multiline_block_stmt(then, true) {
-                    return Decision { outcome: false, is_cached: false };
-                }
+            config::SingleLineBlockStyle::Single if self.is_multiline_block_stmt(then, true) => {
+                return Decision { outcome: false, is_cached: false };
             }
             config::SingleLineBlockStyle::Multi => {
                 return Decision { outcome: false, is_cached: false };
             }
+            _ => {}
         };
 
         // If no decision was made, estimate the length to be formatted.
@@ -2454,6 +2466,13 @@ impl<'ast> State<'_, 'ast> {
         }
 
         // If the parent would fit, check all of its children.
+        if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &then.kind {
+            let child_decision =
+                self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
+            if !child_decision.outcome {
+                return child_decision;
+            }
+        }
         if let Some(stmt) = els_opt {
             if let ast::StmtKind::If(child_cond, child_then, child_els_opt) = &stmt.kind {
                 return self.is_single_line_block(child_cond, child_then, child_els_opt.as_ref());
@@ -2516,6 +2535,23 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
+    /// Returns true if eliding the braces of `then` would expose an inner `if` to a
+    /// trailing `else` or change the AST shape on round-trip.
+    fn then_block_can_capture_trailing_else(
+        then: &'ast ast::Stmt<'ast>,
+        has_outer_else: bool,
+    ) -> bool {
+        let ast::StmtKind::Block(block) = &then.kind else { return false };
+        if block.stmts.len() != 1 {
+            return false;
+        }
+        match &block.stmts[0].kind {
+            ast::StmtKind::If(_, _, inner_else) => has_outer_else || inner_else.is_some(),
+            ast::StmtKind::While(..) | ast::StmtKind::For { .. } => has_outer_else,
+            _ => false,
+        }
+    }
+
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.
     fn is_multiline_block_stmt(
         &self,
@@ -2528,10 +2564,16 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
-    /// Checks if a block statement `{ ... }` contains more than one line of actual code.
+    /// Checks if a block statement `{ ... }` should be treated as multiline,
+    /// either because it spans multiple lines or contains multiple statements.
     fn is_multiline_block(&self, block: &'ast ast::Block<'ast>, empty_as_multiline: bool) -> bool {
         if block.stmts.is_empty() {
             return empty_as_multiline;
+        }
+        // A block with multiple statements should never be inlined, regardless of
+        // whether it was written on a single line in the source.
+        if block.stmts.len() > 1 {
+            return true;
         }
         if self.sm.is_multiline(block.span)
             && let Ok(snip) = self.sm.span_to_snippet(block.span)
@@ -2671,20 +2713,20 @@ enum MemberOrCallArgs {
 }
 
 impl MemberOrCallArgs {
-    fn size(&self) -> usize {
+    const fn size(&self) -> usize {
         match self {
             Self::CallArgs(size, ..) | Self::Member(size) => *size,
         }
     }
 
-    fn member_size(&self) -> usize {
+    const fn member_size(&self) -> usize {
         match self {
             Self::CallArgs(..) => 0,
             Self::Member(size) => *size,
         }
     }
 
-    fn has_comments(&self) -> bool {
+    const fn has_comments(&self) -> bool {
         matches!(self, Self::CallArgs(.., true))
     }
 }
@@ -2743,7 +2785,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
             let before_limit = self.attributes[a].span.lo();
             let inner_limit = self.attributes[a].span.hi();
             let after_limit =
-                if !is_last { self.attributes[a + 1].span.lo() } else { self.limit_pos };
+                if is_last { self.limit_pos } else { self.attributes[a + 1].span.lo() };
 
             let mut c = 0;
             while c < self.comments.len() {
@@ -2827,7 +2869,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 }
 
-fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
+const fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     match stmt {
         ast::StmtKind::Assembly { .. }
         | ast::StmtKind::Block { .. }
@@ -2872,7 +2914,7 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
     }
 }
 
-fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
@@ -2892,7 +2934,7 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     }
 }
 
-fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
 }
 
@@ -2900,7 +2942,7 @@ fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
 /// Used to determine if `.field` after such a call should avoid breaking.
 /// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
 /// E.g., `someFunc(a, b).field` → false (positional args)
-fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
     if let ast::ExprKind::Call(_, args) = expr_kind {
         matches!(args.kind, ast::CallArgsKind::Named(_))
     } else {

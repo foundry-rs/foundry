@@ -21,11 +21,11 @@ impl TomlFile {
         Ok(Self { doc, path })
     }
 
-    fn doc(&self) -> &toml_edit::DocumentMut {
+    const fn doc(&self) -> &toml_edit::DocumentMut {
         &self.doc
     }
 
-    fn doc_mut(&mut self) -> &mut toml_edit::DocumentMut {
+    const fn doc_mut(&mut self) -> &mut toml_edit::DocumentMut {
         &mut self.doc
     }
 

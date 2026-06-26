@@ -1,0 +1,72 @@
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         require(tx.origin == owner, "not owner");
+   │                 ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         if (tx.origin != owner) {
+   │             ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         assert(isOwner(tx.origin));
+   │                ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         while (tx.origin == owner) {
+   │                ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         for (; tx.origin == owner;) {
+   │                ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         } while (tx.origin == owner);
+   │                  ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         require(allowed[tx.origin], "not allowed");
+   │                 ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         require(allowed[tx.origin] == true, "not allowed");
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+
+warning[tx-origin]: `tx.origin` should not be used for authorization
+   ╭▸ ROOT/testdata/TxOrigin.sol:LL:CC
+   │
+LL │         require(tx.origin == owner ? true : false, "not owner");
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/tx-origin
+

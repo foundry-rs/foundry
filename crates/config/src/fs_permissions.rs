@@ -90,7 +90,7 @@ impl FsPermissions {
             }
         }
 
-        if max_path_len > 0 { Some(highest_permission) } else { None }
+        (max_path_len > 0).then_some(highest_permission)
     }
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries
@@ -112,12 +112,12 @@ impl FsPermissions {
     }
 
     /// Returns true if no permissions are configured
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.permissions.is_empty()
     }
 
     /// Returns the number of configured permissions
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.permissions.len()
     }
 }
@@ -158,7 +158,7 @@ impl PathPermission {
     }
 
     /// Returns true if the access is allowed
-    pub fn is_granted(&self, kind: FsAccessKind) -> bool {
+    pub const fn is_granted(&self, kind: FsAccessKind) -> bool {
         self.access.is_granted(kind)
     }
 }
@@ -197,7 +197,7 @@ pub enum FsAccessPermission {
 
 impl FsAccessPermission {
     /// Returns true if the access is allowed
-    pub fn is_granted(&self, kind: FsAccessKind) -> bool {
+    pub const fn is_granted(&self, kind: FsAccessKind) -> bool {
         match (self, kind) {
             (Self::ReadWrite, _) => true,
             (Self::Write, FsAccessKind::Write) => true,

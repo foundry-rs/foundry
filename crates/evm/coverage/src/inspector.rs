@@ -2,8 +2,6 @@ use crate::{HitMap, HitMaps};
 use alloy_primitives::B256;
 use revm::{
     Inspector,
-    context::ContextTr,
-    inspector::JournalExt,
     interpreter::{Interpreter, interpreter_types::Jumps},
 };
 use std::ptr::NonNull;
@@ -34,10 +32,7 @@ impl Default for LineCoverageCollector {
     }
 }
 
-impl<CTX> Inspector<CTX> for LineCoverageCollector
-where
-    CTX: ContextTr<Journal: JournalExt>,
-{
+impl<CTX> Inspector<CTX> for LineCoverageCollector {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         let map = self.get_or_insert_map(interpreter);
         // Reserve some space early to avoid reallocating too often.

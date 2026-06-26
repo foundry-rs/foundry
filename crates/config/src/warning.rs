@@ -64,6 +64,12 @@ pub enum Warning {
         /// The config file where the key was found
         source: String,
     },
+    /// The selected profile (via `FOUNDRY_PROFILE` or otherwise) does not exist in the config.
+    /// Falls back to the default profile.
+    UnknownProfile {
+        /// The selected profile that does not exist
+        profile: String,
+    },
 }
 
 impl fmt::Display for Warning {
@@ -115,6 +121,12 @@ impl fmt::Display for Warning {
                 write!(
                     f,
                     "Found unknown `{key}` config key in section `{section}` defined in {source}."
+                )
+            }
+            Self::UnknownProfile { profile } => {
+                write!(
+                    f,
+                    "Selected profile `{profile}` does not exist; falling back to the default profile."
                 )
             }
         }

@@ -24,46 +24,53 @@ pub struct RepoConfig {
     pub org: String,
     pub repo: String,
     pub rev: String,
+    /// Optional extra arguments appended to every benchmark command for this
+    /// repo (e.g. `--nmc BrokenTest` to skip a broken test contract).
+    pub extra_args: Option<String>,
 }
 
 impl FromStr for RepoConfig {
     type Err = eyre::Error;
 
+    /// Parse a repo spec of the form `org/repo[:rev][ <extra args...>]`.
+    ///
+    /// Anything after the first whitespace is treated as extra arguments
+    /// appended to every benchmark command for this repo.
     fn from_str(spec: &str) -> Result<Self> {
-        // Split by ':' first to separate repo path from optional rev
-        let parts: Vec<&str> = spec.splitn(2, ':').collect();
-        let repo_path = parts[0];
-        let custom_rev = parts.get(1).copied();
+        let spec = spec.trim();
+        // Anything after the first whitespace is per-repo extra args.
+        let (head, extra_args) = match spec.split_once(char::is_whitespace) {
+            Some((head, rest)) => (head, Some(rest.trim().to_string())),
+            None => (spec, None),
+        };
 
-        // Now split the repo path by '/'
-        let path_parts: Vec<&str> = repo_path.split('/').collect();
-        if path_parts.len() != 2 {
-            eyre::bail!("Invalid repo format '{}'. Expected 'org/repo' or 'org/repo:rev'", spec);
-        }
+        let (repo_path, custom_rev) = match head.split_once(':') {
+            Some((path, rev)) => (path, Some(rev)),
+            None => (head, None),
+        };
 
-        let org = path_parts[0];
-        let repo = path_parts[1];
+        let (org, repo) = repo_path.split_once('/').ok_or_else(|| {
+            eyre::eyre!("Invalid repo format '{spec}'. Expected 'org/repo' or 'org/repo:rev'")
+        })?;
 
-        // Try to find this repo in BENCHMARK_REPOS to get the full config
-        let existing_config = BENCHMARK_REPOS.iter().find(|r| r.org == org && r.repo == repo);
-
-        let config = if let Some(existing) = existing_config {
-            // Use existing config but allow custom rev to override
-            let mut config = existing.clone();
-            if let Some(rev) = custom_rev {
-                config.rev = rev.to_string();
-            }
-            config
-        } else {
-            // Create new config with custom rev or default
-            // Name should follow the format: org-repo (with hyphen)
-            Self {
+        // Inherit defaults from BENCHMARK_REPOS when available, otherwise build
+        // a fresh config. Custom rev / extra args always override.
+        let mut config = BENCHMARK_REPOS
+            .iter()
+            .find(|r| r.org == org && r.repo == repo)
+            .cloned()
+            .unwrap_or_else(|| Self {
                 name: format!("{org}-{repo}"),
                 org: org.to_string(),
                 repo: repo.to_string(),
-                rev: custom_rev.unwrap_or("main").to_string(),
-            }
-        };
+                rev: "main".to_string(),
+                extra_args: None,
+            });
+
+        if let Some(rev) = custom_rev {
+            config.rev = rev.to_string();
+        }
+        config.extra_args = extra_args;
 
         let _ = sh_println!("Parsed repo spec '{spec}' -> {config:?}");
         Ok(config)
@@ -78,12 +85,14 @@ pub fn default_benchmark_repos() -> Vec<RepoConfig> {
             org: "ithacaxyz".to_string(),
             repo: "account".to_string(),
             rev: "main".to_string(),
+            extra_args: None,
         },
         RepoConfig {
             name: "solady".to_string(),
             org: "Vectorized".to_string(),
             repo: "solady".to_string(),
             rev: "main".to_string(),
+            extra_args: None,
         },
     ]
 }
@@ -113,6 +122,8 @@ pub struct BenchmarkProject {
     pub name: String,
     pub temp_project: TempProject,
     pub root_path: PathBuf,
+    /// Optional extra arguments appended to every benchmark command.
+    pub extra_args: Option<String>,
 }
 
 impl BenchmarkProject {
@@ -159,7 +170,20 @@ impl BenchmarkProject {
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
-        Ok(Self { name: config.name.to_string(), root_path, temp_project })
+        Ok(Self {
+            name: config.name.clone(),
+            root_path,
+            temp_project,
+            extra_args: config.extra_args.clone(),
+        })
+    }
+
+    /// Append `self.extra_args` to a benchmark shell command, if any.
+    fn cmd(&self, base: &str) -> String {
+        match self.extra_args.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(extra) => format!("{base} {extra}"),
+            None => base.to_string(),
+        }
     }
 
     /// Install npm dependencies if package.json exists
@@ -175,13 +199,13 @@ impl BenchmarkProject {
                 .status()
                 .wrap_err("Failed to run npm install")?;
 
-            if !status.success() {
+            if status.success() {
+                sh_println!("  ✅ npm install completed successfully");
+            } else {
                 sh_println!(
                     "  ⚠️  Warning: npm install failed with exit code: {:?}",
                     status.code()
                 );
-            } else {
-                sh_println!("  ✅ npm install completed successfully");
             }
         }
         Ok(())
@@ -275,7 +299,7 @@ impl BenchmarkProject {
         output.results.into_iter().next().ok_or_else(|| eyre::eyre!("No results from hyperfine"))
     }
 
-    /// Benchmark forge test
+    /// Benchmark forge test without isolation.
     pub fn bench_forge_test(
         &self,
         version: &str,
@@ -286,7 +310,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_test",
             version,
-            "forge test",
+            &self.cmd("FOUNDRY_ISOLATE=false forge test"),
             runs,
             Some("forge build"),
             None,
@@ -305,7 +329,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_with_cache",
             version,
-            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
+            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false forge build"),
             runs,
             None,
             Some("forge build"),
@@ -325,7 +349,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_no_cache",
             version,
-            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
+            &self.cmd("FOUNDRY_LINT_LINT_ON_BUILD=false forge build"),
             runs,
             Some("forge clean"),
             None,
@@ -334,7 +358,7 @@ impl BenchmarkProject {
         )
     }
 
-    /// Benchmark forge fuzz tests
+    /// Benchmark forge fuzz tests without isolation.
     pub fn bench_forge_fuzz_test(
         &self,
         version: &str,
@@ -345,7 +369,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_fuzz_test",
             version,
-            r#"forge test --match-test "test[^(]*\([^)]+\)""#,
+            &self.cmd(r#"FOUNDRY_ISOLATE=false forge test --match-test "test[^(]*\([^)]+\)""#),
             runs,
             Some("forge build"),
             None,
@@ -366,7 +390,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_coverage",
             version,
-            "forge coverage --ir-minimum",
+            &self.cmd("forge coverage --ir-minimum"),
             runs,
             None,
             None,
@@ -386,7 +410,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_isolate_test",
             version,
-            "forge test --isolate",
+            &self.cmd("forge test --isolate"),
             runs,
             Some("forge build"),
             None,
@@ -420,9 +444,20 @@ impl BenchmarkProject {
     }
 }
 
-/// Switch to a specific foundry version
+/// The workspace root, embedded at compile time.
+/// `benches/` is one level below the workspace root.
+const WORKSPACE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+
+/// Switch to a specific foundry version.
+///
+/// The special keyword `local` builds and activates the current workspace via
+/// `foundryup --path <workspace>` instead of `foundryup --use`.
 #[allow(unused_must_use)]
 pub fn switch_foundry_version(version: &str) -> Result<()> {
+    if version == "local" {
+        return install_local_version();
+    }
+
     let output = Command::new("foundryup")
         .args(["--use", version])
         .output()
@@ -442,6 +477,27 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     }
 
     sh_println!("  Successfully switched to version: {version}");
+    Ok(())
+}
+
+/// Build and activate the local workspace via `foundryup --path`.
+/// Uses cargo's incremental compilation so re-runs are fast.
+#[allow(unused_must_use)]
+pub fn install_local_version() -> Result<()> {
+    let workspace =
+        std::fs::canonicalize(WORKSPACE_ROOT).wrap_err("Failed to resolve workspace root")?;
+    sh_println!("  Building local workspace at {}", workspace.display());
+
+    let status = Command::new("foundryup")
+        .args(["--path", workspace.to_str().unwrap()])
+        .status()
+        .wrap_err("Failed to run foundryup --path")?;
+
+    if !status.success() {
+        eyre::bail!("foundryup --path failed for local workspace");
+    }
+
+    sh_println!("  Successfully activated local build");
     Ok(())
 }
 

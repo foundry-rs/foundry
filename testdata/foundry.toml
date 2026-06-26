@@ -19,11 +19,11 @@ ignored_error_codes = [
 extra_output = ["storageLayout"]
 
 additional_compiler_profiles = [
-    # paris
+    # paris - EVM version paris for testing profile selection
     { name = "paris", evm_version = "paris" },
 ]
 compilation_restrictions = [
-    # paris
+    # paris - files in paris/ directory use paris EVM version
     { paths = "paris/**", evm_version = "paris" },
 ]
 
@@ -54,6 +54,7 @@ mainnet = "${RPC_MAINNET}"
 mainnet2 = "${RPC_MAINNET2}"
 sepolia = "${RPC_SEPOLIA}"
 optimism = "${RPC_OPTIMISM}"
+base = "${RPC_BASE}"
 arbitrum = "${RPC_ARBITRUM}"
 polygon = "${RPC_POLYGON}"
 bsc = "${RPC_BSC}"

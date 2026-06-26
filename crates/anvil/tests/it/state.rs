@@ -2,9 +2,12 @@
 
 use crate::abi::Greeter;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Bytes, U256, Uint, address, b256, utils::Unit};
+use alloy_primitives::{B256, Bytes, U256, Uint, address, b256, utils::Unit};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{
+    BlockId, TransactionRequest,
+    state::{AccountOverride, EvmOverrides, StateOverride},
+};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
 use foundry_test_utils::rpc::next_http_archive_rpc_url;
@@ -725,6 +728,7 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
                   "output": "0x608060405234801561000f575f5ffd5b506004361061003f575f3560e01c80633fb5c1cb146100435780638381f58a1461005f578063d09de08a1461007d575b5f5ffd5b61005d600480360381019061005891906100e4565b610087565b005b610067610090565b604051610074919061011e565b60405180910390f35b610085610095565b005b805f8190555050565b5f5481565b5f5f8154809291906100a690610164565b9190505550565b5f5ffd5b5f819050919050565b6100c3816100b1565b81146100cd575f5ffd5b50565b5f813590506100de816100ba565b92915050565b5f602082840312156100f9576100f86100ad565b5b5f610106848285016100d0565b91505092915050565b610118816100b1565b82525050565b5f6020820190506101315f83018461010f565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61016e826100b1565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101a05761019f610137565b5b60018201905091905056fea264697066735822122040b6a3cd3ec8f890002f39a8719ebee029ba9bac3d7fa9d581d4712cfe9ffec264736f6c634300081e0033",
                   "gas_used": 96345,
                   "gas_limit": 143385,
+                  "gas_refund_counter": 0,
                   "status": "Return",
                   "steps": [],
                   "decoded": null
@@ -805,4 +809,46 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
     // Verify contract code is preserved.
     let contract_code = provider.get_code_at(contract_addr).await.unwrap();
     assert!(!contract_code.is_empty());
+}
+
+// Ensures the BLOCKHASH opcode sees the real hashes of loaded blocks after
+// `anvil_loadState`. The EVM-level block hash cache used to stay empty after loading state,
+// so BLOCKHASH silently returned EmptyDB's placeholder hash for imported blocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn blockhash_opcode_consistent_after_load_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state_file = tmp.path().join("state.json");
+
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    api.mine_one().await;
+    api.mine_one().await;
+
+    let block1_hash = api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Number(1))
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .hash;
+
+    let state = api.serialized_state(false).await.unwrap();
+    foundry_common::fs::write_json_file(&state_file, &state).unwrap();
+
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
+
+    // Runtime code returning BLOCKHASH(1):
+    // PUSH1 1, BLOCKHASH, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN
+    let code = Bytes::from_str("0x60014060005260206000f3").unwrap();
+    let target = address!("00000000000000000000000000000000000b10c4");
+
+    let mut overrides = StateOverride::default();
+    overrides.insert(target, AccountOverride { code: Some(code), ..Default::default() });
+
+    let tx = TransactionRequest::default().with_to(target);
+    let res = api
+        .call(WithOtherFields::new(tx), None, EvmOverrides::new(Some(overrides), None))
+        .await
+        .unwrap();
+
+    assert_eq!(B256::from_slice(res.as_ref()), block1_hash);
 }

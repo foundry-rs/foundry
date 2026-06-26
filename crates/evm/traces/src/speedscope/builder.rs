@@ -15,8 +15,9 @@ pub fn build<'a>(
     arena: &CallTraceArena,
     test_name: &str,
     contract_name: &str,
+    isolate: bool,
 ) -> SpeedscopeFile<'a> {
-    let entries = folded_stack_trace::build_entries(arena);
+    let entries = folded_stack_trace::build_entries(arena, isolate);
     entries_to_speedscope(&entries, test_name, contract_name)
 }
 
@@ -44,7 +45,7 @@ fn entries_to_speedscope<'a>(
 
     for entry in entries {
         let stack = &entry.names;
-        let gas = entry.gas.max(0) as u64;
+        let gas = entry.gas;
 
         // Find common prefix length with current open stack.
         let common_len = open_stack
@@ -91,7 +92,7 @@ mod tests {
     #[test]
     fn test_empty_profile() {
         let arena = CallTraceArena::default();
-        let profile = build(&arena, "testExample", "TestContract");
+        let profile = build(&arena, "testExample", "TestContract", false);
         let json = serde_json::to_string(&profile).unwrap();
 
         assert!(

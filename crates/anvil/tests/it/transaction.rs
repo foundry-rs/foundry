@@ -3,8 +3,12 @@ use crate::{
     utils::{connect_pubsub, http_provider_with_signer},
 };
 use alloy_consensus::Transaction;
-use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
+use alloy_network::{
+    AnyRpcTransaction, EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse,
+};
+use alloy_primitives::{
+    Address, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
+};
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
@@ -18,7 +22,10 @@ use eyre::Ok;
 use foundry_evm::hardfork::EthereumHardfork;
 use futures::{FutureExt, StreamExt, future::join_all};
 use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
-use std::{str::FromStr, time::Duration};
+use std::{
+    str::FromStr,
+    time::{Duration, Instant},
+};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -190,6 +197,110 @@ async fn can_replace_transaction() {
         BlockTransactions::Hashes(vec![higher_priced_receipt.transaction_hash]),
         block.transactions
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_resend_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let tx = TransactionRequest::default()
+        .to(to)
+        .value(amount)
+        .from(from)
+        .nonce(nonce)
+        .gas_price(gas_price);
+
+    let tx = WithOtherFields::new(tx);
+    let original_pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+
+    let replacement_gas_price = gas_price + 1;
+    let replacement_gas_limit = 22_000;
+    let replacement_hash: TxHash = provider
+        .client()
+        .request(
+            "eth_resend",
+            (tx, Some(U256::from(replacement_gas_price)), Some(U64::from(replacement_gas_limit))),
+        )
+        .await
+        .unwrap();
+
+    assert_ne!(*original_pending_tx.tx_hash(), replacement_hash);
+
+    api.mine_one().await;
+
+    let block = provider.get_block(1.into()).await.unwrap().unwrap();
+    assert_eq!(BlockTransactions::Hashes(vec![replacement_hash]), block.transactions);
+
+    let replacement_tx: AnyRpcTransaction =
+        provider.get_transaction_by_hash(replacement_hash).await.unwrap().unwrap();
+    assert_eq!(replacement_tx.inner.tx_hash(), replacement_hash);
+    assert_eq!(replacement_tx.inner.gas_limit(), replacement_gas_limit);
+    assert_eq!(Transaction::max_fee_per_gas(&replacement_tx.inner), replacement_gas_price);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reject_invalid_resend_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
+
+    let missing_nonce_tx =
+        TransactionRequest::default().to(to).value(amount).from(from).gas_price(gas_price);
+    let missing_nonce_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (WithOtherFields::new(missing_nonce_tx), None::<U256>, None::<U64>))
+        .await;
+    assert!(missing_nonce_resend.unwrap_err().to_string().contains("missing transaction nonce"));
+
+    let tx = TransactionRequest::default()
+        .to(to)
+        .value(amount)
+        .from(from)
+        .nonce(nonce)
+        .gas_price(gas_price);
+
+    let not_in_pool_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (WithOtherFields::new(tx.clone()), None::<U256>, None::<U64>))
+        .await;
+    assert!(not_in_pool_resend.unwrap_err().to_string().contains("transaction not found"));
+
+    let mut tx = WithOtherFields::new(tx);
+    tx.set_gas_price(gas_price + 1);
+    let pending_tx = provider.send_transaction(tx.clone()).await.unwrap();
+
+    let underpriced_resend: Result<TxHash, _> = provider
+        .client()
+        .request("eth_resend", (tx, Some(U256::from(gas_price)), None::<U64>))
+        .await;
+    assert!(
+        underpriced_resend.unwrap_err().to_string().contains("replacement transaction underpriced")
+    );
+
+    api.mine_one().await;
+    pending_tx.get_receipt().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1050,6 +1161,8 @@ async fn test_tx_access_list() {
     let multicall = Multicall::deploy(provider.clone()).await.unwrap();
     let simple_storage = SimpleStorage::deploy(provider.clone(), "foo".to_string()).await.unwrap();
 
+    // Mirrors execution-apis `create-al-contract.io`:
+    // https://github.com/ethereum/execution-apis/blob/8d6b784cc57047ef10e4044ec2efc1c60950dd7f/tests/eth_createAccessList/create-al-contract.io
     // when calling `setValue` on SimpleStorage, both the `lastSender` and `_value` storages are
     // modified The `_value` is a `string`, so the storage slots here (small string) are `0x1`
     // and `keccak(0x1)`
@@ -1061,8 +1174,6 @@ async fn test_tx_access_list() {
         .with_input(set_value_calldata.to_owned());
     let set_value_tx = WithOtherFields::new(set_value_tx);
     let access_list = provider.create_access_list(&set_value_tx).await.unwrap();
-    // let set_value_tx = simple_storage.set_value("bar".to_string()).from(sender).tx;
-    // let access_list = client.create_access_list(&set_value_tx, None).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         AccessList::from(vec![AccessListItem {
@@ -1110,7 +1221,6 @@ async fn test_tx_access_list() {
     let access_list = provider.create_access_list(&subcall_tx).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
-        // H256::from_uint(&(1u64.into())),
         AccessList::from(vec![AccessListItem {
             address: *simple_storage.address(),
             storage_keys: vec![
@@ -1122,6 +1232,49 @@ async fn test_tx_access_list() {
                 .unwrap(),
             ],
         }]),
+    );
+
+    // Mirrors execution-apis `create-al-abi-revert.io`:
+    // https://github.com/ethereum/execution-apis/blob/8d6b784cc57047ef10e4044ec2efc1c60950dd7f/tests/eth_createAccessList/create-al-abi-revert.io
+    // eth_createAccessList should return a successful RPC result for reverted execution,
+    // preserving the generated access list and reporting the revert in the result object.
+    //
+    // Runtime:
+    //   60 00      PUSH1 0x00       ; calldata offset
+    //   35         CALLDATALOAD     ; read the 32-byte storage slot from calldata
+    //   54         SLOAD            ; access that slot so it appears in the access list
+    //   60 00      PUSH1 0x00       ; revert data offset
+    //   60 00      PUSH1 0x00       ; revert data length
+    //   fd         REVERT           ; fail after the storage read
+    let reverter_initcode =
+        Bytes::from(hex!("6009600c60003960096000f36000355460006000fd").to_vec());
+    let funded_sender = handle.dev_accounts().next().unwrap();
+    let deploy_reverter_tx =
+        TransactionRequest::default().from(funded_sender).with_deploy_code(reverter_initcode);
+    let reverter_receipt = provider
+        .send_transaction(WithOtherFields::new(deploy_reverter_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let reverter = reverter_receipt.contract_address.unwrap();
+
+    let slot =
+        FixedBytes::from_str("0x00000000000000000000000000000000000000000000000000000000000042ff")
+            .unwrap();
+    let reverter_call_tx = TransactionRequest::default()
+        .from(funded_sender)
+        .to(reverter)
+        .input(Bytes::from(slot.to_vec()).into());
+    let reverter_call_tx = WithOtherFields::new(reverter_call_tx);
+    let access_list = provider.create_access_list(&reverter_call_tx).await.unwrap();
+
+    assert_eq!(access_list.error.as_deref(), Some("execution reverted"));
+    assert!(access_list.gas_used > U256::ZERO);
+    assert_access_list_eq(
+        access_list.access_list,
+        AccessList::from(vec![AccessListItem { address: reverter, storage_keys: vec![slot] }]),
     );
 }
 
@@ -1509,4 +1662,148 @@ async fn can_get_tx_by_sender_and_nonce() {
     assert!(result.is_some());
     let found_tx = result.unwrap();
     assert_eq!(found_tx.inner.nonce(), 4);
+}
+
+// Instant-mine coalescing regression tests.
+
+/// Polls `eth_getTransactionReceipt` until a block number is available.
+async fn poll_receipt_block(client: &reqwest::Client, endpoint: &str, tx_hash: &str) -> u64 {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash],
+        });
+        let resp: serde_json::Value =
+            client.post(endpoint).json(&payload).send().await.unwrap().json().await.unwrap();
+        if let Some(receipt) = resp.get("result").and_then(|r| r.as_object())
+            && let Some(block_hex) = receipt.get("blockNumber").and_then(|b| b.as_str())
+        {
+            return u64::from_str_radix(block_hex.trim_start_matches("0x"), 16).unwrap();
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for receipt of {tx_hash}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Txs in one JSON-RPC batch POST must share a block.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_groups_json_rpc_batch_in_one_block() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from1 = accounts[1].address();
+    let from2 = accounts[2].address();
+    let to = accounts[0].address();
+
+    let batch = serde_json::json!([
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_sendTransaction",
+            "params": [{"from": from1, "to": to, "value": "0x1"}]
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "eth_sendTransaction",
+            "params": [{"from": from2, "to": to, "value": "0x1"}]
+        }
+    ]);
+
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value =
+        client.post(&endpoint).json(&batch).send().await.unwrap().json().await.unwrap();
+
+    let arr = resp.as_array().expect("expected JSON-RPC batch response");
+    assert_eq!(arr.len(), 2);
+    let hashes: Vec<String> = arr
+        .iter()
+        .map(|r| r.get("result").expect("expected result").as_str().unwrap().to_owned())
+        .collect();
+
+    let mut blocks = Vec::new();
+    for hash in &hashes {
+        let block = poll_receipt_block(&client, &endpoint, hash).await;
+        blocks.push(block);
+    }
+
+    assert_eq!(
+        blocks[0], blocks[1],
+        "batched eth_sendTransaction txs landed in different blocks ({blocks:?})"
+    );
+}
+
+/// Txs from in-process parallel HTTP requests must share a block.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_groups_in_process_parallel_http_in_one_block() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from1 = accounts[1].address();
+    let from2 = accounts[2].address();
+    let to = accounts[0].address();
+
+    let client = reqwest::Client::new();
+
+    let send = |from: Address, id: u64| {
+        let client = client.clone();
+        let endpoint = endpoint.clone();
+        async move {
+            let payload = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "eth_sendTransaction",
+                "params": [{"from": from, "to": to, "value": "0x1"}],
+            });
+            let resp: serde_json::Value =
+                client.post(&endpoint).json(&payload).send().await.unwrap().json().await.unwrap();
+            resp.get("result").unwrap().as_str().unwrap().to_owned()
+        }
+    };
+
+    let (h1, h2) = tokio::join!(send(from1, 1), send(from2, 2));
+
+    let b1 = poll_receipt_block(&client, &endpoint, &h1).await;
+    let b2 = poll_receipt_block(&client, &endpoint, &h2).await;
+
+    assert_eq!(b1, b2, "parallel-HTTP txs landed in different blocks (b1={b1}, b2={b2})");
+}
+
+/// Sends spaced beyond the coalescing window must still mine in separate blocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_does_not_group_sequential_sends_beyond_window() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from1 = accounts[1].address();
+    let from2 = accounts[2].address();
+    let to = accounts[0].address();
+    let client = reqwest::Client::new();
+
+    let send = |from: Address, id: u64| {
+        let client = client.clone();
+        let endpoint = endpoint.clone();
+        async move {
+            let payload = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "eth_sendTransaction",
+                "params": [{"from": from, "to": to, "value": "0x1"}],
+            });
+            let resp: serde_json::Value =
+                client.post(&endpoint).json(&payload).send().await.unwrap().json().await.unwrap();
+            resp.get("result").unwrap().as_str().unwrap().to_owned()
+        }
+    };
+
+    let h1 = send(from1, 1).await;
+    let b1 = poll_receipt_block(&client, &endpoint, &h1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let h2 = send(from2, 2).await;
+    let b2 = poll_receipt_block(&client, &endpoint, &h2).await;
+
+    assert_ne!(b1, b2, "sequential sends with delay coalesced into the same block ({b1})");
 }

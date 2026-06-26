@@ -1,11 +1,8 @@
 use crate::{init_tracing, rpc::rpc_endpoints};
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
-    artifacts::Contract,
-    cache::CompilerCache,
-    compilers::multi::MultiCompiler,
-    project_util::{TempProject, copy_dir},
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig, artifacts::Contract,
+    cache::CompilerCache, compilers::multi::MultiCompiler, project_util::TempProject,
     solc::SolcSettings,
 };
 use foundry_config::Config;
@@ -25,7 +22,7 @@ use std::{
     },
 };
 
-use crate::util::{SOLC_VERSION, pretty_err};
+use crate::util::{SOLC_VERSION, copy_dir_filtered, pretty_err};
 
 static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -44,9 +41,7 @@ pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
-    if !status.success() {
-        panic!("git clone failed: {status}");
-    }
+    assert!(status.success(), "git clone failed: {status}")
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -84,13 +79,13 @@ impl RemoteProject {
     }
 
     /// Whether to run `forge build`
-    pub fn set_build(mut self, run_build: bool) -> Self {
+    pub const fn set_build(mut self, run_build: bool) -> Self {
         self.run_build = run_build;
         self
     }
 
     /// Configures the project's pathstyle
-    pub fn path_style(mut self, path_style: PathStyle) -> Self {
+    pub const fn path_style(mut self, path_style: PathStyle) -> Self {
         self.path_style = path_style;
         self
     }
@@ -356,21 +351,19 @@ impl TestProject {
         config_paths_exist(&paths, self.inner.project().cached);
     }
 
-    /// Copies the project's root directory to the given target
+    /// Copies the project's root directory to the given target, excluding build artifacts.
     #[track_caller]
     pub fn copy_to(&self, target: impl AsRef<Path>) {
         let target = target.as_ref();
         pretty_err(target, fs::create_dir_all(target));
-        pretty_err(target, copy_dir(self.root(), target));
+        pretty_err(target, copy_dir_filtered(self.root(), target));
     }
 
     /// Creates a file with contents `contents` in the test project's directory. The
     /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
-        if !path.is_relative() {
-            panic!("create_file(): file path is absolute");
-        }
+        assert!(path.is_relative(), "create_file(): file path is absolute");
         let path = self.root().join(path);
         if let Some(parent) = path.parent() {
             pretty_err(parent, std::fs::create_dir_all(parent));
@@ -455,21 +448,50 @@ impl TestProject {
 
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> Command {
-        let mut cmd = Command::new(self.forge_path());
+        let mut cmd = Command::new(self.foundry_bin_path("forge"));
         cmd.current_dir(self.inner.root());
         // Disable color output for comparisons; can be overridden with `--color always`.
         cmd.env("NO_COLOR", "1");
         cmd
     }
 
-    pub(crate) fn forge_path(&self) -> PathBuf {
-        canonicalize(self.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)))
+    /// Returns the path to a sibling Foundry executable in the current test target directory.
+    pub fn foundry_bin_path(&self, name: &str) -> PathBuf {
+        canonicalize(self.exe_root.join(format!("../{name}{}", env::consts::EXE_SUFFIX)))
+    }
+
+    /// Returns the path to a sibling Foundry executable, building it when cargo did not.
+    pub fn ensure_foundry_bin(&self, name: &str) -> PathBuf {
+        let bin = self.foundry_bin_path(name);
+        if bin.exists() {
+            return bin;
+        }
+
+        let package = format!("{name}@{}", env!("CARGO_PKG_VERSION"));
+        let (target_dir, profile) = cargo_build_target_dir_and_profile(&self.exe_root);
+        let mut cmd = Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        cmd.args(["build", "-p", &package, "--bin", name, "--manifest-path"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
+            .arg("--target-dir")
+            .arg(target_dir);
+        if let Some(profile) = profile {
+            cmd.arg("--profile").arg(profile);
+        }
+
+        let output = cmd.output().expect("build Foundry sibling binary");
+        assert!(
+            output.status.success(),
+            "failed to build {name} for CLI test\nstdout:\n{}\nstderr:\n{}",
+            output.stdout_lossy(),
+            output.stderr_lossy(),
+        );
+
+        bin
     }
 
     /// Returns the path to the cast executable.
     pub fn cast_bin(&self) -> Command {
-        let cast = canonicalize(self.exe_root.join(format!("../cast{}", env::consts::EXE_SUFFIX)));
-        let mut cmd = Command::new(cast);
+        let mut cmd = Command::new(self.foundry_bin_path("cast"));
         // disable color output for comparisons
         cmd.env("NO_COLOR", "1");
         cmd
@@ -552,7 +574,7 @@ pub struct TestCommand {
 
 impl TestCommand {
     /// Returns a mutable reference to the underlying command.
-    pub fn cmd(&mut self) -> &mut Command {
+    pub const fn cmd(&mut self) -> &mut Command {
         &mut self.cmd
     }
 
@@ -775,7 +797,7 @@ impl TestCommand {
     }
 
     /// Does not apply [`snapbox`] redactions to the command output.
-    pub fn with_no_redact(&mut self) -> &mut Self {
+    pub const fn with_no_redact(&mut self) -> &mut Self {
         self.redact_output = false;
         self
     }
@@ -815,7 +837,7 @@ fn test_redactions() -> snapbox::Redactions {
     static REDACTIONS: LazyLock<snapbox::Redactions> = LazyLock::new(|| {
         make_redactions(&[
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
-            ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
+            ("[ELAPSED]", r"(finished )?in (\d+m )?\d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
             ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
             ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
@@ -831,11 +853,18 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
             ("[ESTIMATED_GAS_PRICE]", r"Estimated gas price:\s*(\d+(\.\d+)?)\s*gwei"),
+            ("[ESTIMATED_MAX_FEE_PER_GAS]", r"Estimated max fee per gas:\s*(\d+(\.\d+)?)\s*gwei"),
+            ("[ESTIMATED_BASE_FEE_PER_GAS]", r"Estimated base fee per gas:\s*(\d+(\.\d+)?)\s*gwei"),
+            (
+                "[ESTIMATED_PRIORITY_FEE_PER_GAS]",
+                r"Estimated max priority fee per gas:\s*(\d+(\.\d+)?)\s*gwei",
+            ),
             ("[ESTIMATED_TOTAL_GAS_USED]", r"Estimated total gas used for script: \d+"),
             (
                 "[ESTIMATED_AMOUNT_REQUIRED]",
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
+            ("[SEED]", r"Fuzz seed: 0x[0-9A-Fa-f]+"),
         ])
     });
     REDACTIONS.clone()
@@ -883,4 +912,16 @@ pub fn lossy_string(bytes: &[u8]) -> String {
 fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
     foundry_common::fs::canonicalize_path(path.as_ref())
         .unwrap_or_else(|_| path.as_ref().to_path_buf())
+}
+
+fn cargo_build_target_dir_and_profile(exe_root: &Path) -> (&Path, Option<&str>) {
+    let profile_dir = exe_root.parent().expect("test executable profile directory");
+    let target_dir = profile_dir.parent().expect("Cargo target directory");
+    let profile = match profile_dir.file_name().and_then(OsStr::to_str) {
+        // Cargo's dev profile writes to `debug`, so the default `cargo build` profile is correct.
+        Some("debug") => None,
+        Some(profile) => Some(profile),
+        None => panic!("test executable profile directory must be UTF-8"),
+    };
+    (target_dir, profile)
 }

@@ -45,7 +45,7 @@ impl FlattenArgs {
             Some(output) => {
                 fs::create_dir_all(output.parent().unwrap())?;
                 fs::write(&output, flattened)?;
-                sh_println!("Flattened file written at {}", output.display())?;
+                sh_status!("Flattened file written at {}", output.display())?;
             }
             None => sh_println!("{flattened}")?,
         };

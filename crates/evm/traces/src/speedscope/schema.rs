@@ -149,7 +149,7 @@ impl<'a> EventedProfile<'a> {
     }
 
     /// Sets the end value based on the final timestamp.
-    pub fn set_end_value(&mut self, end_value: u64) {
+    pub const fn set_end_value(&mut self, end_value: u64) {
         self.end_value = end_value;
     }
 }

@@ -1,0 +1,72 @@
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) public initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initializeV2(uint256 fee_) external reinitializer(2) {
+   │              ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) public initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) public initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initializeV2(uint256 fee_) external reinitializer(2) {
+   │              ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) public initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) external initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) public initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) public initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+

@@ -47,18 +47,17 @@ impl MappingSlots {
 /// Function to be used in Inspector::step to record mapping slots and keys
 #[cold]
 pub fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
+    #[allow(clippy::collapsible_match)]
     match interpreter.bytecode.opcode() {
-        opcode::KECCAK256 => {
-            if interpreter.stack.peek(1) == Ok(U256::from(0x40)) {
-                let address = interpreter.input.target_address;
-                let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();
-                let data = interpreter.memory.slice_len(offset, 0x40);
-                let low = B256::from_slice(&data[..0x20]);
-                let high = B256::from_slice(&data[0x20..]);
-                let result = keccak256(&*data);
+        opcode::KECCAK256 if interpreter.stack.peek(1) == Ok(U256::from(0x40)) => {
+            let address = interpreter.input.target_address;
+            let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();
+            let data = interpreter.memory.slice_len(offset, 0x40);
+            let low = B256::from_slice(&data[..0x20]);
+            let high = B256::from_slice(&data[0x20..]);
+            let result = keccak256(&*data);
 
-                mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
-            }
+            mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
         }
         opcode::SSTORE => {
             if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)

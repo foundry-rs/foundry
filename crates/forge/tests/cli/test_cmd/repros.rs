@@ -62,6 +62,9 @@ Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055Test
 Encountered a total of 3 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
@@ -116,6 +119,7 @@ Encountered 1 failing test in test/Issue3189.t.sol:Issue3189Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -167,6 +171,7 @@ Encountered 1 failing test in test/Issue3596.t.sol:Issue3596Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -253,18 +258,19 @@ contract Issue6170Test is Test {
 Compiler run successful!
 
 Ran 1 test for test/Issue6170.t.sol:Issue6170Test
-[FAIL: log != expected log] test() ([GAS])
+[FAIL: Values indexed topic count mismatch: expected 1, got 2] test() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/Issue6170.t.sol:Issue6170Test
-[FAIL: log != expected log] test() ([GAS])
+[FAIL: Values indexed topic count mismatch: expected 1, got 2] test() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -328,6 +334,7 @@ Encountered 2 failing tests in test/Issue6355.t.sol:Issue6355Test
 Encountered a total of 2 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
 });
@@ -781,6 +788,66 @@ ParserError: Source "Missing.sol" not found: File not found. Searched the follow
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/10463
+forgetest_init!(issue_10463, |prj, cmd| {
+    prj.add_test(
+        "Issue10463.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Issue10463Test is Test {
+    event Foo();
+
+    error CustomError(uint256 code);
+
+    function revertingBefore(bool shouldRevert) external {
+        if (shouldRevert) revert();
+        emit Foo();
+    }
+
+    function revertingWithReason() external pure {
+        revert("revert reason");
+    }
+
+    function revertingWithCustomError() external pure {
+        revert CustomError(42);
+    }
+
+    function testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingBefore(true);
+    }
+
+    function testExpectEmitPreservesRevertReason() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingWithReason();
+    }
+
+    function testExpectEmitPreservesCustomError() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingWithCustomError();
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/Issue10463.t.sol:Issue10463Test
+[FAIL: CustomError(42)] testExpectEmitPreservesCustomError() ([GAS])
+[FAIL: revert reason] testExpectEmitPreservesRevertReason() ([GAS])
+[FAIL: EvmError: Revert] testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() ([GAS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test gas underflow prevention on Cancun (no EIP-7702 gas floor)
 forgetest_init!(issue_12803_cancun, |prj, cmd| {
@@ -841,6 +908,36 @@ Ran 1 test for test/Issue12803.t.sol:Issue12803Test
     ]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/13766
+// vm.expectRevert(bytes("")) should not panic when actual revert has data
+forgetest_init!(issue_13766, |prj, cmd| {
+    prj.add_test(
+        "Issue13766.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Reverter {
+    error CustomError();
+    function revertWithData() public pure { revert CustomError(); }
+}
+
+contract Issue13766Test is Test {
+    function test_expectRevertEmptyBytes() public {
+        Reverter r = new Reverter();
+        vm.expectRevert(bytes(""));
+        r.revertWithData();
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: Error != expected error: CustomError() != EvmError: Revert] test_expectRevertEmptyBytes() ([GAS])
+...
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test multiple storage deletions (higher refund) don't cause underflow
 forgetest_init!(issue_12803_multiple_deletes, |prj, cmd| {
@@ -875,4 +972,121 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 ...
 "#
     ]]);
+});
+
+// Regression: `revertToState` / `revertToStateAndDelete` taken before any
+// `vm.blobhashes` override must exercise the `None` arm of
+// `sync_tx_after_env_override_restore` (pre_override_blob_hashes path).
+// The snapshot is taken while env_overrides.blob_hashes is None; after the
+// override is applied and reverted the hashes must return to empty.
+//
+// NOTE: Testing restoration of *non-empty* native blob hashes (EIP-4844 fork
+// mode where tx.blob_hashes is non-empty without a cheatcode) is not reachable
+// from Solidity.
+forgetest_init!(issue_blobhashes_pre_override_snapshot, |prj, cmd| {
+    prj.add_test(
+        "BlobhashesPreOverride.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract BlobhashesPreOverrideSnapshotTest is Test {
+    function test_blobhashes_none_arm_revertToState() public {
+        assertEq(vm.getBlobhashes().length, 0, "no hashes before override");
+
+        uint256 id = vm.snapshotState();
+
+        bytes32[] memory h = new bytes32[](2);
+        h[0] = bytes32(uint256(0xAABB));
+        h[1] = bytes32(uint256(0xCCDD));
+        vm.blobhashes(h);
+        assertEq(vm.getBlobhashes().length, 2, "override visible");
+
+        vm.revertToState(id);
+        assertEq(vm.getBlobhashes().length, 0, "None arm: hashes cleared after revert");
+    }
+
+    function test_blobhashes_none_arm_revertToStateAndDelete() public {
+        assertEq(vm.getBlobhashes().length, 0, "no hashes before override");
+
+        uint256 id = vm.snapshotState();
+
+        bytes32[] memory h = new bytes32[](1);
+        h[0] = bytes32(uint256(0xDEAD));
+        vm.blobhashes(h);
+        assertEq(vm.getBlobhashes().length, 1, "override visible");
+
+        vm.revertToStateAndDelete(id);
+        assertEq(vm.getBlobhashes().length, 0, "None arm: hashes cleared after revertAndDelete");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/BlobhashesPreOverride.t.sol:BlobhashesPreOverrideSnapshotTest
+[PASS] test_blobhashes_none_arm_revertToState() ([GAS])
+[PASS] test_blobhashes_none_arm_revertToStateAndDelete() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+// Regression: `revertToState` taken before `vm.txGasPrice` must restore the
+// configured pre override gas price, not zero.
+forgetest_init!(issue_txgasprice_pre_override_snapshot, |prj, cmd| {
+    prj.update_config(|config| {
+        config.gas_price = Some(10_000_000_000); // 10 gwei
+    });
+    prj.add_test(
+        "TxGasPricePreOverride.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract TxGasPricePreOverrideSnapshotTest is Test {
+    function test_pre_override_gas_price_restored_after_revert() public {
+        uint256 pre_override = tx.gasprice;
+        assertEq(pre_override, 10 gwei, "pre override should be 10 gwei from config");
+
+        uint256 id = vm.snapshotState();
+        vm.txGasPrice(222 gwei);
+        assertEq(tx.gasprice, 222 gwei, "override should be visible");
+
+        vm.revertToState(id);
+        assertEq(tx.gasprice, pre_override, "should restore pre override gas price after revert");
+    }
+
+    function test_pre_override_gas_price_restored_after_revertAndDelete() public {
+        uint256 pre_override = tx.gasprice;
+        assertEq(pre_override, 10 gwei, "pre override should be 10 gwei from config");
+
+        uint256 id = vm.snapshotState();
+        vm.txGasPrice(333 gwei);
+        assertEq(tx.gasprice, 333 gwei, "override should be visible");
+
+        vm.revertToStateAndDelete(id);
+        assertEq(tx.gasprice, pre_override, "should restore pre override gas price after revertAndDelete");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
+[PASS] test_pre_override_gas_price_restored_after_revert() ([GAS])
+[PASS] test_pre_override_gas_price_restored_after_revertAndDelete() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 });
