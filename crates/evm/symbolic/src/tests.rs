@@ -3484,7 +3484,7 @@ fn portfolio_scheduler_penalizes_invalid_models() {
         let constraints = vec![
             BoolExpr::eq(SymExpr::var("calldata_0"), SymExpr::constant(U256::from(1))),
             BoolExpr::eq(
-                SymExpr::var(format!("portfolio_query_{query}")),
+                SymExpr::var(&format!("portfolio_query_{query}")),
                 SymExpr::constant(U256::ZERO),
             ),
         ];

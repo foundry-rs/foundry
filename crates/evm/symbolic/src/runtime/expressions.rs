@@ -34,8 +34,8 @@ static SYMBOL_INTERNER: LazyLock<SymbolInterner> =
 pub(crate) struct Symbol(NonZeroU32);
 
 impl Symbol {
-    pub(crate) fn intern(name: impl AsRef<str>) -> Self {
-        SYMBOL_INTERNER.intern(name.as_ref())
+    pub(crate) fn intern(name: &str) -> Self {
+        SYMBOL_INTERNER.intern(name)
     }
 
     pub(crate) fn as_str(self) -> &'static str {
@@ -86,7 +86,8 @@ pub(crate) fn keccak_word_with_len(bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr
     }
 
     let exprs = bytes;
-    SymExpr::keccak(stable_symbol("keccak", format!("{len:?}:{exprs:?}")), len, exprs)
+    let name = stable_symbol("keccak", format!("{len:?}:{exprs:?}").as_bytes());
+    SymExpr::keccak(&name, len, exprs)
 }
 
 pub(crate) fn symbolic_hash_word_with_len(
@@ -95,11 +96,11 @@ pub(crate) fn symbolic_hash_word_with_len(
     len: SymExpr,
 ) -> SymExpr {
     let exprs = bytes;
-    let name = stable_symbol(algorithm, format!("{len:?}:{exprs:?}"));
+    let name = stable_symbol(algorithm, format!("{len:?}:{exprs:?}").as_bytes());
     let mut identity = Vec::with_capacity(exprs.len() + 1);
     identity.push(len);
     identity.extend(exprs);
-    SymExpr::hash(name, algorithm, identity)
+    SymExpr::hash(&name, algorithm, identity)
 }
 
 pub(crate) fn create2_address_word(
@@ -196,8 +197,8 @@ pub(crate) fn symbolic_create_address_word(
     creator_identity: String,
     nonce: SymExpr,
 ) -> SymExpr {
-    let word =
-        SymExpr::var(stable_symbol("create_address", format!("{creator_identity}:{nonce:?}")));
+    let name = stable_symbol("create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
+    let word = SymExpr::var(&name);
     state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(1) << 160));
     word
 }
@@ -208,10 +209,11 @@ pub(crate) fn symbolic_create2_address_word(
     salt: SymExpr,
     initcode_identity: String,
 ) -> SymExpr {
-    let word = SymExpr::var(stable_symbol(
+    let name = stable_symbol(
         "create2_address",
-        format!("{creator_identity}:{salt:?}:{initcode_identity}"),
-    ));
+        format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
+    );
+    let word = SymExpr::var(&name);
     state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(1) << 160));
     word
 }
@@ -891,17 +893,15 @@ impl SymExpr {
         Ok(value.to::<usize>())
     }
 
-    /// Returns whether this word depends on the opaque `GAS` / `gasleft()` value.
     pub(crate) fn contains_gasleft(&self) -> bool {
         expr_contains_gasleft(self)
     }
 
-    /// Returns whether this word is exactly the opaque `GAS` / `gasleft()` value.
     pub(crate) fn is_raw_gasleft(&self) -> bool {
         matches!(self.as_inner(), ExprInner::GasLeft(_))
     }
 
-    pub(crate) fn var(name: impl AsRef<str>) -> Self {
+    pub(crate) fn var(name: &str) -> Self {
         Self::var_symbol(Symbol::intern(name))
     }
 
@@ -913,7 +913,7 @@ impl SymExpr {
         Self::from_inner(ExprInner::GasLeft(id))
     }
 
-    pub(crate) fn keccak(name: impl AsRef<str>, len: Self, bytes: Vec<Self>) -> Self {
+    pub(crate) fn keccak(name: &str, len: Self, bytes: Vec<Self>) -> Self {
         Self::keccak_symbol(Symbol::intern(name), len, bytes)
     }
 
@@ -921,7 +921,7 @@ impl SymExpr {
         Self::from_inner(ExprInner::Keccak { name, len, bytes: bytes.into() })
     }
 
-    pub(crate) fn hash(name: impl AsRef<str>, algorithm: &'static str, bytes: Vec<Self>) -> Self {
+    pub(crate) fn hash(name: &str, algorithm: &'static str, bytes: Vec<Self>) -> Self {
         Self::hash_symbol(Symbol::intern(name), algorithm, bytes)
     }
 

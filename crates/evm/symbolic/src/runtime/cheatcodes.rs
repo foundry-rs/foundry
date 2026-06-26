@@ -327,8 +327,8 @@ pub(crate) fn abi_bytes_return_with_len(len: SymExpr, bytes: Vec<SymExpr>) -> Sy
     SymReturnData::from_symbolic_bytes(out)
 }
 
-pub(crate) fn abi_concrete_bytes_return(bytes: impl IntoIterator<Item = u8>) -> SymReturnData {
-    abi_bytes_return(bytes.into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect())
+pub(crate) fn abi_concrete_bytes_return(bytes: &[u8]) -> SymReturnData {
+    abi_bytes_return(bytes.iter().map(|byte| SymExpr::constant(U256::from(*byte))).collect())
 }
 
 pub(crate) fn abi_concrete_value_return(value: DynSolValue) -> SymReturnData {

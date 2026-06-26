@@ -365,7 +365,7 @@ impl SymbolicExecutor {
                         let calldatas = SymbolicCalldata::variants_with_prefix(
                             &target.function,
                             &self.config,
-                            prefix,
+                            &prefix,
                         )?;
                         for calldata in calldatas {
                             let step = SequenceStepTemplate {

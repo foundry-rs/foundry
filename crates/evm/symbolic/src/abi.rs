@@ -50,9 +50,8 @@ impl SymbolicCalldata {
     pub(super) fn variants_with_prefix(
         function: &Function,
         config: &SymbolicConfig,
-        prefix: impl AsRef<str>,
+        prefix: &str,
     ) -> Result<Vec<Self>, SymbolicError> {
-        let prefix = prefix.as_ref();
         let variant_limit = calldata_variant_limit(config);
         let mut variants = vec![(SymbolicAbiBuilder::new(config), Vec::new())];
         for (idx, input) in function.inputs.iter().enumerate() {
@@ -195,7 +194,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
     ) -> Result<SymbolicAbiValue, SymbolicError> {
         Ok(match ty {
             DynSolType::Bool => {
-                let word = self.fresh_word(name);
+                let word = self.fresh_word(&name);
                 self.constraints.push(BoolExpr::cmp_word_const(
                     BoolExprOp::Ult,
                     &word,
@@ -204,24 +203,24 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 SymbolicAbiValue::Bool { word }
             }
             DynSolType::Uint(bits) => {
-                let word = self.fresh_word(name);
+                let word = self.fresh_word(&name);
                 self.constrain_uint(&word, *bits);
                 SymbolicAbiValue::Uint { bits: *bits, word }
             }
             DynSolType::Int(bits) => {
-                let word = self.fresh_word(name);
+                let word = self.fresh_word(&name);
                 self.constrain_int(&word, *bits);
                 SymbolicAbiValue::Int { bits: *bits, word }
             }
             DynSolType::FixedBytes(size) => SymbolicAbiValue::FixedBytes {
                 bytes: (0..*size)
-                    .map(|idx| self.fresh_byte(format!("{name}_{idx}"), false))
+                    .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
                     .collect::<Vec<_>>()
                     .into(),
                 size: *size,
             },
             DynSolType::Address => {
-                let word = self.fresh_word(name);
+                let word = self.fresh_word(&name);
                 self.constrain_uint(&word, 160);
                 SymbolicAbiValue::Address { word }
             }
@@ -233,7 +232,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 SymbolicAbiValue::Bytes {
                     len: SymExpr::constant(U256::from(len)),
                     bytes: (0..len)
-                        .map(|idx| self.fresh_byte(format!("{name}_{idx}"), false))
+                        .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), false))
                         .collect::<Vec<_>>()
                         .into(),
                 }
@@ -242,7 +241,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 let len = self.next_dynamic_length(&name, &aliases, DynamicKind::String)?;
                 SymbolicAbiValue::String {
                     bytes: (0..len)
-                        .map(|idx| self.fresh_byte(format!("{name}_{idx}"), true))
+                        .map(|idx| self.fresh_byte(&format!("{name}_{idx}"), true))
                         .collect::<Vec<_>>()
                         .into(),
                 }
@@ -303,7 +302,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     let value = SymbolicAbiValue::Bytes {
                         len: SymExpr::constant(U256::from(len)),
                         bytes: (0..len as usize)
-                            .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), false))
+                            .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), false))
                             .collect::<Vec<_>>()
                             .into(),
                     };
@@ -321,7 +320,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                     let mut builder = builder.clone();
                     let value = SymbolicAbiValue::String {
                         bytes: (0..len as usize)
-                            .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), true))
+                            .map(|idx| builder.fresh_byte(&format!("{name}_{idx}"), true))
                             .collect::<Vec<_>>()
                             .into(),
                     };
@@ -432,11 +431,11 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(variants)
     }
 
-    pub(super) fn fresh_word(&self, name: String) -> SymExpr {
+    pub(super) fn fresh_word(&self, name: &str) -> SymExpr {
         SymExpr::var(name)
     }
 
-    pub(super) fn fresh_byte(&mut self, name: String, printable: bool) -> SymExpr {
+    pub(super) fn fresh_byte(&mut self, name: &str, printable: bool) -> SymExpr {
         let word = self.fresh_word(name);
         self.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(256)));
         if printable {

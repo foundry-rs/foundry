@@ -1528,7 +1528,7 @@ impl SymbolicExecutor {
                 let artifact =
                     read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.getCode")?;
                 let code = artifact_code(&artifact, selector == getDeployedCodeCall::SELECTOR)?;
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(code)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&code)));
             }
             dealCall::SELECTOR => {
                 let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
@@ -1846,7 +1846,7 @@ impl SymbolicExecutor {
                     .cloned()
                     .unwrap_or_else(|| format!("unlabeled:{account}"));
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    label.bytes(),
+                    label.as_bytes(),
                 )));
             }
             expectSafeMemoryCall::SELECTOR => {
@@ -1900,14 +1900,14 @@ impl SymbolicExecutor {
             }
             getFoundryVersionCall::SELECTOR => {
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    env!("CARGO_PKG_VERSION").bytes(),
+                    env!("CARGO_PKG_VERSION").as_bytes(),
                 )));
             }
             projectRootCall::SELECTOR => {
                 let root = std::env::current_dir()
                     .map_err(|_| SymbolicError::Unsupported("symbolic vm.projectRoot"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    root.display().to_string().bytes(),
+                    root.display().to_string().as_bytes(),
                 )));
             }
             unixTimeCall::SELECTOR => {
@@ -1934,7 +1934,7 @@ impl SymbolicExecutor {
                 let address =
                     read_abi_address_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    format!("{address:?}").bytes(),
+                    format!("{address:?}").as_bytes(),
                 )));
             }
             toString_1Call::SELECTOR => {
@@ -1945,7 +1945,7 @@ impl SymbolicExecutor {
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    format!("0x{}", hex::encode(bytes)).bytes(),
+                    format!("0x{}", hex::encode(bytes)).as_bytes(),
                 )));
             }
             toString_2Call::SELECTOR => {
@@ -1956,14 +1956,14 @@ impl SymbolicExecutor {
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    format!("0x{}", hex::encode(value.to_be_bytes::<32>())).bytes(),
+                    format!("0x{}", hex::encode(value.to_be_bytes::<32>())).as_bytes(),
                 )));
             }
             toString_3Call::SELECTOR => {
                 let value =
                     read_abi_bool_arg(&state.memory, args_offset, 0, "symbolic vm.toString")?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    if value { "true" } else { "false" }.bytes(),
+                    if value { "true" } else { "false" }.as_bytes(),
                 )));
             }
             toString_4Call::SELECTOR => {
@@ -1974,7 +1974,7 @@ impl SymbolicExecutor {
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    value.to_string().bytes(),
+                    value.to_string().as_bytes(),
                 )));
             }
             toString_5Call::SELECTOR => {
@@ -1985,15 +1985,14 @@ impl SymbolicExecutor {
                     "symbolic vm.toString",
                 )?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    I256::from_raw(value).to_string().bytes(),
+                    I256::from_raw(value).to_string().as_bytes(),
                 )));
             }
             parseBytesCall::SELECTOR => {
                 let value =
                     read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.parseBytes")?;
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    parse_env_bytes(&value)?,
-                )));
+                let bytes = parse_env_bytes(&value)?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&bytes)));
             }
             parseAddressCall::SELECTOR => {
                 let value =
@@ -2041,7 +2040,7 @@ impl SymbolicExecutor {
                     value.trim().to_string()
                 };
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    output.bytes(),
+                    output.as_bytes(),
                 )));
             }
             replaceCall::SELECTOR => {
@@ -2054,7 +2053,7 @@ impl SymbolicExecutor {
                 let output = dyn_string(&values[0])?
                     .replace(&dyn_string(&values[1])?, &dyn_string(&values[2])?);
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    output.bytes(),
+                    output.as_bytes(),
                 )));
             }
             splitCall::SELECTOR => {
@@ -2120,7 +2119,7 @@ impl SymbolicExecutor {
                     BASE64_STANDARD.encode(data)
                 };
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    encoded.bytes(),
+                    encoded.as_bytes(),
                 )));
             }
             bound_0Call::SELECTOR => {
@@ -2188,7 +2187,7 @@ impl SymbolicExecutor {
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    value.bytes(),
+                    value.as_bytes(),
                 )));
             }
             envBytes_0Call::SELECTOR => {
@@ -2196,9 +2195,8 @@ impl SymbolicExecutor {
                     read_abi_string_arg(&state.memory, args_offset, 0, "symbolic vm.envBytes")?;
                 let value = std::env::var(name)
                     .map_err(|_| SymbolicError::Unsupported("symbolic env var missing"))?;
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    parse_env_bytes(&value)?,
-                )));
+                let bytes = parse_env_bytes(&value)?;
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&bytes)));
             }
             envBool_1Call::SELECTOR
             | envUint_1Call::SELECTOR
@@ -2275,7 +2273,7 @@ impl SymbolicExecutor {
                 let name = dyn_string(&values[0])?;
                 let value = std::env::var(name).unwrap_or(dyn_string(&values[1])?);
                 return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
-                    value.bytes(),
+                    value.as_bytes(),
                 )));
             }
             envOr_6Call::SELECTOR => {
@@ -2290,7 +2288,7 @@ impl SymbolicExecutor {
                     Ok(value) => parse_env_bytes(&value)?,
                     Err(_) => dyn_bytes(&values[1])?,
                 };
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(value)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&value)));
             }
             envOr_7Call::SELECTOR
             | envOr_8Call::SELECTOR
@@ -2375,7 +2373,7 @@ impl SymbolicExecutor {
                     .map_err(|_| SymbolicError::Unsupported("symbolic ffi stdout"))?;
                 let trimmed = stdout.trim();
                 let bytes = hex::decode(trimmed).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
-                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(bytes)));
+                return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(&bytes)));
             }
             assertTrue_0Call::SELECTOR | assertTrue_1Call::SELECTOR => {
                 let condition = read_abi_word_arg(&state.memory, args_offset, 0)?.nonzero_bool();

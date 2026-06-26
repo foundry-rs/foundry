@@ -1037,9 +1037,8 @@ impl SolverRunSummary {
         self
     }
 
-    /// Attaches an additional diagnostic detail string to this summary.
-    fn with_detail(mut self, detail: impl Into<String>) -> Self {
-        self.detail = Some(detail.into());
+    fn with_detail(mut self, detail: String) -> Self {
+        self.detail = Some(detail);
         self
     }
 

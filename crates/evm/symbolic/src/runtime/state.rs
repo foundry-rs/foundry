@@ -490,7 +490,7 @@ impl PathState {
     pub(crate) fn fresh_word(&mut self, prefix: &'static str) -> SymExpr {
         let id = self.next_symbol;
         self.next_symbol += 1;
-        SymExpr::var(format!("{prefix}_{id}"))
+        SymExpr::var(&format!("{prefix}_{id}"))
     }
 
     pub(crate) fn fresh_gasleft(&mut self) -> SymExpr {
@@ -1138,7 +1138,8 @@ impl SymbolicWorld {
         concrete_key: Option<U256>,
     ) -> Result<SymExpr, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
-            return Ok(SymExpr::var(stable_symbol("storage", format!("{address:?}:{key:?}"))));
+            let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
+            return Ok(SymExpr::var(&name));
         }
         if let Some(key) = concrete_key {
             return executor
@@ -1156,7 +1157,8 @@ impl SymbolicWorld {
         } else if self.zero_init_symbolic_storage {
             Ok(SymExpr::zero())
         } else {
-            Ok(SymExpr::var(stable_symbol("storage", format!("{address:?}:{key:?}"))))
+            let name = stable_symbol("storage", format!("{address:?}:{key:?}").as_bytes());
+            Ok(SymExpr::var(&name))
         }
     }
 
