@@ -771,6 +771,17 @@ impl SymExpr {
         .is_break()
     }
 
+    pub(crate) fn contains_udiv(&self) -> bool {
+        self.visit(&mut |expr| {
+            if matches!(expr.kind(), SymExprKind::Op(SymExprOp::UDiv, _, _)) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .is_break()
+    }
+
     pub(crate) fn known_byte(&self, index: usize) -> Option<u8> {
         debug_assert!(index < 32);
         match self.kind() {
@@ -1594,6 +1605,13 @@ impl SymBoolExpr {
             } else {
                 ControlFlow::Continue(())
             }
+        })
+        .is_break()
+    }
+
+    pub(crate) fn contains_udiv(&self) -> bool {
+        self.visit_exprs(&mut |expr| {
+            if expr.contains_udiv() { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
         })
         .is_break()
     }

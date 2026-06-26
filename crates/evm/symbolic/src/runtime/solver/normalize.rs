@@ -385,17 +385,6 @@ pub(crate) fn normalize_udiv_bool_for_solver(expr: &SymBoolExpr) -> Option<SymBo
 }
 
 impl SymExpr {
-    fn contains_udiv(&self) -> bool {
-        self.visit(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::Op(SymExprOp::UDiv, _, _)) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
-    }
-
     fn add_cannot_overflow_256(&self, right: &Self) -> bool {
         self.unsigned_bits().max(right.unsigned_bits()).saturating_add(1) <= 256
     }
@@ -441,18 +430,6 @@ fn normalized_bool_word_condition(expr: &SymExpr) -> Option<SymBoolExpr> {
 }
 
 impl SymBoolExpr {
-    fn contains_udiv(&self) -> bool {
-        self.visit(&mut |expr| match expr.kind() {
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right)
-                if left.contains_udiv() || right.contains_udiv() =>
-            {
-                ControlFlow::Break(())
-            }
-            _ => ControlFlow::Continue(()),
-        })
-        .is_break()
-    }
-
     fn zero_check_operand(&self) -> Option<&SymExpr> {
         match self.kind() {
             SymBoolExprKind::Eq(left, right)
