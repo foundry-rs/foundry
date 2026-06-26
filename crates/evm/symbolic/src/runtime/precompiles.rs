@@ -195,7 +195,8 @@ pub(crate) fn symbolic_modexp_precompile(
     }
 
     let modulus_len = concrete_precompile_word_at(&input, 64)?;
-    let modulus_len = u256_to_usize(modulus_len)
+    let modulus_len = usize::try_from(modulus_len)
+        .ok()
         .ok_or(SymbolicError::Unsupported("symbolic modexp output length"))?;
     if modulus_len > 4096 {
         return Err(SymbolicError::Unsupported("symbolic modexp output length"));

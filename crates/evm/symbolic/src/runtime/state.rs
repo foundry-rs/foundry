@@ -173,7 +173,9 @@ impl PathState {
 
     pub(crate) fn upper_bound_usize(&self, word: &SymExpr) -> Option<usize> {
         self.constrained_usize(word).or_else(|| {
-            word.as_const().and_then(u256_to_usize).or_else(|| self.expr_upper_bound_usize(word))
+            word.as_const()
+                .and_then(|value| usize::try_from(value).ok())
+                .or_else(|| self.expr_upper_bound_usize(word))
         })
     }
 
@@ -183,7 +185,7 @@ impl PathState {
             self.constraints
                 .iter()
                 .find_map(|constraint| {
-                    bool_forces_expr_const_with_context(constraint, expr, &self.constraints)
+                    constraint.forces_expr_const_with_context(expr, &self.constraints)
                 })
                 .or_else(|| self.constrained_expr_value(expr))
         })
@@ -193,7 +195,7 @@ impl PathState {
         if let Some(value) = expr.eval_const() {
             return Some(value);
         }
-        if let Some(value) = expr_known_word(expr) {
+        if let Some(value) = expr.known_word() {
             return Some(value);
         }
 
@@ -203,7 +205,7 @@ impl PathState {
         for var in vars {
             let var_expr = SymExpr::var_symbol(var);
             let value = self.constraints.iter().find_map(|constraint| {
-                bool_forces_expr_const_with_context(constraint, &var_expr, &self.constraints)
+                constraint.forces_expr_const_with_context(&var_expr, &self.constraints)
             })?;
             model.insert(var, value);
         }
@@ -213,15 +215,15 @@ impl PathState {
 
     pub(crate) fn expr_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
         if let Some(value) = expr.eval_const() {
-            return u256_to_usize(value);
+            return usize::try_from(value).ok();
         }
-        if let Some(value) = expr_known_word(expr) {
-            return u256_to_usize(value);
+        if let Some(value) = expr.known_word() {
+            return usize::try_from(value).ok();
         }
 
         let constraint_bound = self.constraint_upper_bound_usize(expr);
         let structural_bound = match expr.as_inner() {
-            SymExprInner::Const(value) => u256_to_usize(*value),
+            SymExprInner::Const(value) => usize::try_from(*value).ok(),
             SymExprInner::Var(_)
             | SymExprInner::GasLeft(_)
             | SymExprInner::Keccak { .. }
@@ -230,7 +232,7 @@ impl PathState {
             SymExprInner::AddMod { modulus, .. } | SymExprInner::MulMod { modulus, .. } => {
                 match modulus.eval_const() {
                     Some(modulus) if modulus.is_zero() => Some(0),
-                    Some(modulus) => u256_to_usize(modulus - U256::from(1)),
+                    Some(modulus) => usize::try_from(modulus - U256::from(1)).ok(),
                     None => {
                         self.expr_upper_bound_usize(modulus).and_then(|bound| bound.checked_sub(1))
                     }
@@ -250,18 +252,18 @@ impl PathState {
                     let left = self.expr_upper_bound_usize(left)?;
                     match right.eval_const()? {
                         divisor if divisor.is_zero() => Some(0),
-                        divisor => Some(left / u256_to_usize(divisor)?),
+                        divisor => Some(left / usize::try_from(divisor).ok()?),
                     }
                 }
                 SymExprOp::URem => match right.eval_const() {
                     Some(divisor) if divisor.is_zero() => Some(0),
-                    Some(divisor) => u256_to_usize(divisor - U256::from(1)),
+                    Some(divisor) => usize::try_from(divisor - U256::from(1)).ok(),
                     None => self.expr_upper_bound_usize(left),
                 },
                 SymExprOp::And => right
                     .eval_const()
-                    .and_then(u256_to_usize)
-                    .or_else(|| left.eval_const().and_then(u256_to_usize))
+                    .and_then(|value| usize::try_from(value).ok())
+                    .or_else(|| left.eval_const().and_then(|value| usize::try_from(value).ok()))
                     .map(|mask| {
                         self.expr_upper_bound_usize(left)
                             .or_else(|| self.expr_upper_bound_usize(right))
@@ -269,7 +271,7 @@ impl PathState {
                     }),
                 SymExprOp::Shr => {
                     let left = self.expr_upper_bound_usize(left)?;
-                    let shift = u256_to_usize(right.eval_const()?)?;
+                    let shift = usize::try_from(right.eval_const()?).ok()?;
                     Some(if shift >= usize::BITS as usize { 0 } else { left >> shift })
                 }
                 SymExprOp::Sub
@@ -292,7 +294,7 @@ impl PathState {
     pub(crate) fn constraint_upper_bound_usize(&self, expr: &SymExpr) -> Option<usize> {
         let mut bound: Option<usize> = None;
         for constraint in &self.constraints {
-            if let Some(candidate) = bool_upper_bound_usize(constraint, expr) {
+            if let Some(candidate) = constraint.upper_bound_usize(expr) {
                 bound = Some(bound.map_or(candidate, |bound| bound.min(candidate)));
             }
         }
@@ -368,7 +370,7 @@ impl PathState {
                 ShiftKind::Shr => SymExpr::op(SymExprOp::Shr, value, shift),
                 ShiftKind::Sar => SymExpr::op(SymExprOp::Sar, value, shift),
             };
-            expr_known_word(&expr).map(SymExpr::constant).unwrap_or_else(|| expr)
+            expr.known_word().map(SymExpr::constant).unwrap_or(expr)
         };
         self.stack.push(result)?;
         Ok(StepOutcome::Continue)
@@ -1222,8 +1224,8 @@ impl SymbolicWorld {
         }
         let from_balance = self.balance_word_for_address(executor, from);
         let to_balance = self.balance_word_for_address(executor, to);
-        self.set_balance_word(from, sym_sub(from_balance, value.clone()));
-        self.set_balance_word(to, sym_add(to_balance, value));
+        self.set_balance_word(from, SymExpr::op(SymExprOp::Sub, from_balance, value.clone()));
+        self.set_balance_word(to, SymExpr::op(SymExprOp::Add, to_balance, value));
     }
 
     pub(crate) fn nonce<FEN: FoundryEvmNetwork>(
@@ -1289,7 +1291,10 @@ impl SymbolicWorld {
         let balance = self.balance_word_for_address(executor, address);
         if beneficiary != address && !balance.as_const().is_some_and(|value| value.is_zero()) {
             let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
-            self.set_balance_word(beneficiary, sym_add(beneficiary_balance, balance));
+            self.set_balance_word(
+                beneficiary,
+                SymExpr::op(SymExprOp::Add, beneficiary_balance, balance),
+            );
         }
         self.balances.insert(address, SymExpr::zero());
         self.code_cache.insert(address, SymCode::default());
@@ -1316,7 +1321,10 @@ impl SymbolicWorld {
             let beneficiary_balance = self.balance_word_for_address(executor, beneficiary);
             // Symbolic balances are treated as possibly non-zero, matching transfer's
             // account-existence approximation.
-            self.set_balance_word(beneficiary, sym_add(beneficiary_balance, balance));
+            self.set_balance_word(
+                beneficiary,
+                SymExpr::op(SymExprOp::Add, beneficiary_balance, balance),
+            );
             self.balances.insert(address, SymExpr::zero());
         }
     }

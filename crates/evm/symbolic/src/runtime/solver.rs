@@ -5,9 +5,9 @@ mod monotonic_product;
 mod normalize;
 
 use hard_arith_fallback::constraints_prefer_hard_arith_fallback_first;
-pub(crate) use hard_arith_fallback::hard_arith_fallback_model;
 #[cfg(test)]
-pub(crate) use hard_arith_fallback::{expr_contains_hard_arith, fallback_single_var_model};
+pub(crate) use hard_arith_fallback::fallback_single_var_model;
+pub(crate) use hard_arith_fallback::hard_arith_fallback_model;
 #[cfg(test)]
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::product_monotonic_unsat_normalized;
@@ -277,7 +277,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 
     fn model(&mut self, constraints: &[SymBoolExpr]) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
-        if constraints.iter().any(bool_contains_gasleft) {
+        if constraints.iter().any(SymBoolExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let smt_constraints = normalize_constraints_for_solver(constraints);
@@ -381,7 +381,7 @@ impl SmtLibSubprocessSolver {
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
         self.sat_queries += 1;
-        if constraints.iter().any(bool_contains_gasleft) {
+        if constraints.iter().any(SymBoolExpr::contains_gasleft) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
         let smt_constraints = normalize_constraints_for_solver(constraints);
@@ -1631,7 +1631,7 @@ pub(crate) fn parse_and_validate_model(
     if constraints.iter().all(|constraint| constraint.eval(&model).unwrap_or(false)) {
         Ok(model)
     } else {
-        let reason = if constraints.iter().any(bool_contains_keccak) {
+        let reason = if constraints.iter().any(SymBoolExpr::contains_keccak) {
             "solver model does not satisfy path constraints involving symbolic Keccak heuristic"
         } else {
             "solver model does not satisfy path constraints"

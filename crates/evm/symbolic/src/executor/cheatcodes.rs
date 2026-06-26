@@ -24,7 +24,7 @@ impl SymbolicExecutor {
             None => {}
         }
 
-        if bool_contains_gasleft(&pass) {
+        if pass.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
 
@@ -2756,7 +2756,8 @@ impl SymbolicExecutor {
                 0,
                 "symbolic svm.createBytes length",
             )?;
-            let len = u256_to_usize(len)
+            let len = usize::try_from(len)
+                .ok()
                 .filter(|len| *len <= self.config.max_calldata_bytes as usize)
                 .ok_or(SymbolicError::Unsupported("symbolic svm.createBytes length"))?;
             let bytes = (0..len).map(|_| state.fresh_bounded_uint(U256::from(8))).collect();
@@ -2789,7 +2790,8 @@ impl SymbolicExecutor {
                 0,
                 "symbolic svm.createString length",
             )?;
-            let len = u256_to_usize(len)
+            let len = usize::try_from(len)
+                .ok()
                 .filter(|len| *len <= self.config.max_calldata_bytes as usize)
                 .ok_or(SymbolicError::Unsupported("symbolic svm.createString length"))?;
             let bytes = (0..len)

@@ -13,7 +13,7 @@ fn empty_state() -> PathState {
 
 /// Regression coverage for `add_words`.
 fn add_words(left: SymExpr, right: SymExpr) -> SymExpr {
-    expr_add(left, right)
+    SymExpr::op(SymExprOp::Add, left, right)
 }
 
 /// Regression coverage for `precompile_address`.
@@ -341,7 +341,7 @@ fn selector_shift_simplifies_to_concrete_word() {
     );
     let selector_expr = SymExpr::op(SymExprOp::Shr, call_word, SymExpr::constant(U256::from(224)));
 
-    assert_eq!(expr_known_word(&selector_expr), Some(selector));
+    assert_eq!(selector_expr.known_word(), Some(selector));
 }
 
 #[test]
@@ -379,7 +379,7 @@ fn calldata_selector_load_simplifies_to_concrete_word() {
     let loaded = calldata.call_data().load_word(SymExpr::zero()).unwrap();
     let selector_expr = SymExpr::op(SymExprOp::Shr, loaded, SymExpr::constant(U256::from(224)));
 
-    assert_eq!(expr_known_word(&selector_expr), Some(selector));
+    assert_eq!(selector_expr.known_word(), Some(selector));
     assert_eq!(
         SymBoolExpr::eq(selector_expr, SymExpr::constant(selector)),
         SymBoolExpr::constant(true)
@@ -2597,14 +2597,12 @@ fn hard_arithmetic_detection_flags_symbolic_mul_div_and_mod() {
     let x = SymExpr::var("x");
     let y = SymExpr::var("y");
 
-    assert!(expr_contains_hard_arith(&SymExpr::op(SymExprOp::Mul, x.clone(), y.clone())));
-    assert!(expr_contains_hard_arith(&SymExpr::op(SymExprOp::UDiv, x.clone(), y.clone())));
-    assert!(expr_contains_hard_arith(&SymExpr::op(SymExprOp::URem, x.clone(), y)));
-    assert!(!expr_contains_hard_arith(&SymExpr::op(
-        SymExprOp::Mul,
-        x,
-        SymExpr::constant(U256::from(1))
-    )));
+    assert!(SymExpr::op(SymExprOp::Mul, x.clone(), y.clone()).contains_hard_arith());
+    assert!(SymExpr::op(SymExprOp::UDiv, x.clone(), y.clone()).contains_hard_arith());
+    assert!(SymExpr::op(SymExprOp::URem, x.clone(), y).contains_hard_arith());
+    assert!(
+        !SymExpr::op(SymExprOp::Mul, x, SymExpr::constant(U256::from(1))).contains_hard_arith()
+    );
 }
 
 #[test]

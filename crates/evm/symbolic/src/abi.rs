@@ -707,7 +707,8 @@ impl SymbolicAbiValue {
             Self::Address { word } => DynSolValue::Address(word_to_address(word.eval(model)?)),
             Self::Bytes { len, bytes } => {
                 let len = len.eval(model)?;
-                let len = u256_to_usize(len)
+                let len = usize::try_from(len)
+                    .ok()
                     .filter(|len| *len <= bytes.len())
                     .ok_or_else(|| SymbolicError::Solver("invalid symbolic bytes length".into()))?;
                 let mut bytes = bytes.eval(model)?;

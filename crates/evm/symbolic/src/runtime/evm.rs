@@ -149,82 +149,10 @@ pub(crate) fn byte_word_dynamic(index: SymExpr, word: SymExpr) -> SymExpr {
 /// Returns the byte extraction expression for a symbolic word.
 pub(crate) fn byte_expr(index: usize, expr: &SymExpr) -> SymExpr {
     debug_assert!(index < 32);
-    if let Some(byte) = expr_known_byte(expr, index) {
+    if let Some(byte) = expr.known_byte(index) {
         return SymExpr::constant(U256::from(byte));
     }
-    let shift = U256::from((31 - index) * 8);
-    SymExpr::op(
-        SymExprOp::And,
-        SymExpr::op(SymExprOp::Shr, expr.clone(), SymExpr::constant(shift)),
-        SymExpr::constant(U256::from(0xff)),
-    )
-}
-
-pub(crate) fn expr_known_byte(expr: &SymExpr, index: usize) -> Option<u8> {
-    debug_assert!(index < 32);
-    match expr.as_inner() {
-        SymExprInner::Const(value) => Some(value.to_be_bytes::<32>()[index]),
-        SymExprInner::Var(_)
-        | SymExprInner::GasLeft(_)
-        | SymExprInner::Keccak { .. }
-        | SymExprInner::Hash { .. } => None,
-        SymExprInner::Not(value) => expr_known_byte(value, index).map(|byte| !byte),
-        SymExprInner::Ite(_, then_expr, else_expr) => {
-            let then_byte = expr_known_byte(then_expr, index)?;
-            let else_byte = expr_known_byte(else_expr, index)?;
-            (then_byte == else_byte).then_some(then_byte)
-        }
-        SymExprInner::Op(op, left, right) => match op {
-            SymExprOp::And => match (expr_known_byte(left, index), expr_known_byte(right, index)) {
-                (Some(left), Some(right)) => Some(left & right),
-                (Some(0), _) | (_, Some(0)) => Some(0),
-                _ => None,
-            },
-            SymExprOp::Or => Some(expr_known_byte(left, index)? | expr_known_byte(right, index)?),
-            SymExprOp::Xor => Some(expr_known_byte(left, index)? ^ expr_known_byte(right, index)?),
-            SymExprOp::Shl => {
-                let shift = right.as_const()?;
-                if shift >= U256::from(256) {
-                    return Some(0);
-                }
-                let shift = usize::try_from(shift).expect("checked byte shift");
-                if shift % 8 != 0 {
-                    return None;
-                }
-                let source_index = index + shift / 8;
-                if source_index >= 32 { Some(0) } else { expr_known_byte(left, source_index) }
-            }
-            SymExprOp::Shr => {
-                let shift = right.as_const()?;
-                if shift >= U256::from(256) {
-                    return Some(0);
-                }
-                let shift = usize::try_from(shift).expect("checked byte shift");
-                if shift % 8 != 0 {
-                    return None;
-                }
-                let byte_shift = shift / 8;
-                if index < byte_shift { Some(0) } else { expr_known_byte(left, index - byte_shift) }
-            }
-            SymExprOp::Add
-            | SymExprOp::Sub
-            | SymExprOp::Mul
-            | SymExprOp::UDiv
-            | SymExprOp::URem
-            | SymExprOp::SDiv
-            | SymExprOp::SRem
-            | SymExprOp::Sar => None,
-        },
-        SymExprInner::AddMod { .. } | SymExprInner::MulMod { .. } => None,
-    }
-}
-
-pub(crate) fn expr_known_word(expr: &SymExpr) -> Option<U256> {
-    let mut bytes = [0u8; 32];
-    for (idx, byte) in bytes.iter_mut().enumerate() {
-        *byte = expr_known_byte(expr, idx)?;
-    }
-    Some(U256::from_be_bytes(bytes))
+    expr.extracted_byte(index)
 }
 
 pub(crate) fn sar(value: U256, shift: usize) -> U256 {

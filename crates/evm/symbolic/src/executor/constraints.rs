@@ -28,7 +28,7 @@ impl SymbolicExecutor {
             Some(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
             Some(false) => Ok(CheatcodeOutcome::AssumeRejected),
             None => {
-                if bool_contains_gasleft(&condition) {
+                if condition.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 state.constraints.push(condition);

@@ -1,90 +1,92 @@
 use super::*;
 
-pub(crate) fn bool_contains_hard_arith(expr: &SymBoolExpr) -> bool {
-    match expr.as_inner() {
-        SymBoolExprInner::Const(_) => false,
-        SymBoolExprInner::Not(value) => bool_contains_hard_arith(value),
-        SymBoolExprInner::And(values) => values.iter().any(bool_contains_hard_arith),
-        SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right) => {
-            expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
+impl SymBoolExpr {
+    pub(crate) fn contains_hard_arith(&self) -> bool {
+        match self.as_inner() {
+            SymBoolExprInner::Const(_) => false,
+            SymBoolExprInner::Not(value) => value.contains_hard_arith(),
+            SymBoolExprInner::And(values) => values.iter().any(Self::contains_hard_arith),
+            SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right) => {
+                left.contains_hard_arith() || right.contains_hard_arith()
+            }
         }
+    }
+
+    fn contains_symbolic_hash(&self) -> bool {
+        self.visit(&mut |expr| match expr.as_inner() {
+            SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right)
+                if left.contains_symbolic_hash() || right.contains_symbolic_hash() =>
+            {
+                ControlFlow::Break(())
+            }
+            _ => ControlFlow::Continue(()),
+        })
+        .is_break()
     }
 }
 
-pub(crate) fn expr_contains_hard_arith(expr: &SymExpr) -> bool {
-    match expr.as_inner() {
-        SymExprInner::Const(_)
-        | SymExprInner::Var(_)
-        | SymExprInner::GasLeft(_)
-        | SymExprInner::Keccak { .. }
-        | SymExprInner::Hash { .. } => false,
-        SymExprInner::Not(value) => expr_contains_hard_arith(value),
-        SymExprInner::Op(SymExprOp::Mul, left, right) => {
-            expr_contains_var(left) && expr_contains_var(right)
-        }
-        SymExprInner::Op(
-            SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
-            left,
-            right,
-        ) => expr_contains_var(left) || expr_contains_var(right),
-        SymExprInner::AddMod { left, right, modulus }
-        | SymExprInner::MulMod { left, right, modulus } => {
-            expr_contains_var(left) || expr_contains_var(right) || expr_contains_var(modulus)
-        }
-        SymExprInner::Op(_, left, right) => {
-            expr_contains_hard_arith(left) || expr_contains_hard_arith(right)
-        }
-        SymExprInner::Ite(cond, left, right) => {
-            bool_contains_hard_arith(cond)
-                || expr_contains_hard_arith(left)
-                || expr_contains_hard_arith(right)
+impl SymExpr {
+    pub(crate) fn contains_hard_arith(&self) -> bool {
+        match self.as_inner() {
+            SymExprInner::Const(_)
+            | SymExprInner::Var(_)
+            | SymExprInner::GasLeft(_)
+            | SymExprInner::Keccak { .. }
+            | SymExprInner::Hash { .. } => false,
+            SymExprInner::Not(value) => value.contains_hard_arith(),
+            SymExprInner::Op(SymExprOp::Mul, left, right) => {
+                left.contains_var() && right.contains_var()
+            }
+            SymExprInner::Op(
+                SymExprOp::UDiv | SymExprOp::URem | SymExprOp::SDiv | SymExprOp::SRem,
+                left,
+                right,
+            ) => left.contains_var() || right.contains_var(),
+            SymExprInner::AddMod { left, right, modulus }
+            | SymExprInner::MulMod { left, right, modulus } => {
+                left.contains_var() || right.contains_var() || modulus.contains_var()
+            }
+            SymExprInner::Op(_, left, right) => {
+                left.contains_hard_arith() || right.contains_hard_arith()
+            }
+            SymExprInner::Ite(cond, left, right) => {
+                cond.contains_hard_arith()
+                    || left.contains_hard_arith()
+                    || right.contains_hard_arith()
+            }
         }
     }
-}
 
-/// Returns whether the expression contains symbolic hash variables that local search should avoid.
-pub(crate) fn expr_contains_symbolic_hash(expr: &SymExpr) -> bool {
-    expr.visit(&mut |expr| {
-        if matches!(expr.as_inner(), SymExprInner::Hash { .. }) {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
-    })
-    .is_break()
-}
+    fn contains_symbolic_hash(&self) -> bool {
+        self.visit(&mut |expr| {
+            if matches!(expr.as_inner(), SymExprInner::Hash { .. }) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .is_break()
+    }
 
-/// Returns whether the boolean expression contains symbolic hash variables.
-pub(crate) fn bool_contains_symbolic_hash(expr: &SymBoolExpr) -> bool {
-    expr.visit(&mut |expr| match expr.as_inner() {
-        SymBoolExprInner::Eq(left, right) | SymBoolExprInner::Cmp(_, left, right)
-            if expr_contains_symbolic_hash(left) || expr_contains_symbolic_hash(right) =>
-        {
-            ControlFlow::Break(())
-        }
-        _ => ControlFlow::Continue(()),
-    })
-    .is_break()
-}
-
-pub(crate) fn expr_contains_var(expr: &SymExpr) -> bool {
-    expr.visit(&mut |expr| {
-        if matches!(
-            expr.as_inner(),
-            SymExprInner::Var(_) | SymExprInner::Keccak { .. } | SymExprInner::Hash { .. }
-        ) {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
-    })
-    .is_break()
+    fn contains_var(&self) -> bool {
+        self.visit(&mut |expr| {
+            if matches!(
+                expr.as_inner(),
+                SymExprInner::Var(_) | SymExprInner::Keccak { .. } | SymExprInner::Hash { .. }
+            ) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .is_break()
+    }
 }
 
 /// Returns whether local hard-arithmetic search should run before asking the solver.
 pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[SymBoolExpr]) -> bool {
-    if !constraints.iter().any(bool_contains_hard_arith)
-        || constraints.iter().any(bool_contains_symbolic_hash)
+    if !constraints.iter().any(SymBoolExpr::contains_hard_arith)
+        || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
     {
         return false;
     }
@@ -98,8 +100,8 @@ pub(crate) fn constraints_prefer_hard_arith_fallback_first(constraints: &[SymBoo
 }
 
 pub(crate) fn hard_arith_fallback_model(constraints: &[SymBoolExpr]) -> Option<SymbolicModel> {
-    if !constraints.iter().any(bool_contains_hard_arith)
-        || constraints.iter().any(bool_contains_symbolic_hash)
+    if !constraints.iter().any(SymBoolExpr::contains_hard_arith)
+        || constraints.iter().any(SymBoolExpr::contains_symbolic_hash)
     {
         return None;
     }

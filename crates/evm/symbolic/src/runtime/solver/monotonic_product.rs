@@ -1,4 +1,4 @@
-use super::{normalize::mul_cannot_overflow_256, *};
+use super::*;
 
 type LessThanFacts<'a> = HashSet<(&'a SymExpr, &'a SymExpr)>;
 type PositiveFacts<'a> = HashSet<&'a SymExpr>;
@@ -93,8 +93,8 @@ fn product_less_than_known_ordered<'a>(
         && positive.contains(left_b)
         && less_than.contains(&(left_a, right_a))
         && less_than.contains(&(left_b, right_b))
-        && mul_cannot_overflow_256(left_a, left_b)
-        && mul_cannot_overflow_256(right_a, right_b)
+        && left_a.mul_cannot_overflow_256(left_b)
+        && right_a.mul_cannot_overflow_256(right_b)
 }
 
 fn mul_operands(expr: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
