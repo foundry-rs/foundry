@@ -2,24 +2,24 @@ use super::*;
 
 impl SymBoolExpr {
     pub(crate) fn contains_hard_arith(&self) -> bool {
-        match self.kind() {
-            SymBoolExprKind::Const(_) => false,
-            SymBoolExprKind::Not(value) => value.contains_hard_arith(),
-            SymBoolExprKind::And(values) => values.iter().any(Self::contains_hard_arith),
-            SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
-                left.contains_hard_arith() || right.contains_hard_arith()
-            }
-        }
-    }
-
-    fn contains_symbolic_hash(&self) -> bool {
         self.visit(&mut |expr| match expr.kind() {
             SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right)
-                if left.contains_symbolic_hash() || right.contains_symbolic_hash() =>
+                if left.contains_hard_arith() || right.contains_hard_arith() =>
             {
                 ControlFlow::Break(())
             }
             _ => ControlFlow::Continue(()),
+        })
+        .is_break()
+    }
+
+    fn contains_symbolic_hash(&self) -> bool {
+        self.visit_exprs(&mut |expr| {
+            if matches!(expr.kind(), SymExprKind::Hash { .. }) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
         })
         .is_break()
     }
@@ -55,17 +55,6 @@ impl SymExpr {
                     || right.contains_hard_arith()
             }
         }
-    }
-
-    fn contains_symbolic_hash(&self) -> bool {
-        self.visit(&mut |expr| {
-            if matches!(expr.kind(), SymExprKind::Hash { .. }) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break()
     }
 
     fn contains_var(&self) -> bool {
