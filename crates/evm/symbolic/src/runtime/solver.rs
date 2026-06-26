@@ -675,9 +675,9 @@ fn cache_key_expr(expr: Expr) -> Expr {
         return expr;
     }
 
-    match expr.as_inner() {
+    match expr.into_inner() {
         ExprInner::Keccak(hash) => {
-            let (name, len, bytes) = hash.clone().into_parts();
+            let (name, len, bytes) = hash.into_parts();
             Expr::keccak_symbol(
                 name,
                 cache_key_expr(len),
@@ -685,21 +685,21 @@ fn cache_key_expr(expr: Expr) -> Expr {
             )
         }
         ExprInner::Hash(hash) => {
-            let (name, algorithm, bytes) = hash.clone().into_parts();
+            let (name, algorithm, bytes) = hash.into_parts();
             Expr::hash_symbol(name, algorithm, bytes.iter().cloned().map(cache_key_expr).collect())
         }
-        ExprInner::Not(value) => Expr::not(cache_key_expr(value.clone())),
+        ExprInner::Not(value) => Expr::not(cache_key_expr(value)),
         ExprInner::Op(op, left, right) => {
-            let left = cache_key_expr(left.clone());
-            let right = cache_key_expr(right.clone());
-            if expr_op_is_commutative(*op) && right < left {
-                Expr::op(*op, right, left)
+            let left = cache_key_expr(left);
+            let right = cache_key_expr(right);
+            if expr_op_is_commutative(op) && right < left {
+                Expr::op(op, right, left)
             } else {
-                Expr::op(*op, left, right)
+                Expr::op(op, left, right)
             }
         }
         ExprInner::AddMod(expr) => {
-            let (left, right, modulus) = expr.clone().into_parts();
+            let (left, right, modulus) = expr.into_parts();
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -710,7 +710,7 @@ fn cache_key_expr(expr: Expr) -> Expr {
             }
         }
         ExprInner::MulMod(expr) => {
-            let (left, right, modulus) = expr.clone().into_parts();
+            let (left, right, modulus) = expr.into_parts();
             let left = cache_key_expr(left);
             let right = cache_key_expr(right);
             let modulus = cache_key_expr(modulus);
@@ -720,11 +720,9 @@ fn cache_key_expr(expr: Expr) -> Expr {
                 Expr::mulmod(left, right, modulus)
             }
         }
-        ExprInner::Ite(cond, left, right) => Expr::ite(
-            cache_key_bool(cond.clone()),
-            cache_key_expr(left.clone()),
-            cache_key_expr(right.clone()),
-        ),
+        ExprInner::Ite(cond, left, right) => {
+            Expr::ite(cache_key_bool(cond), cache_key_expr(left), cache_key_expr(right))
+        }
         ExprInner::Const(_) | ExprInner::Var(_) | ExprInner::GasLeft(_) => unreachable!(),
     }
 }

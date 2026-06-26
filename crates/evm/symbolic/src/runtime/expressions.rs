@@ -1103,7 +1103,7 @@ impl Expr {
         }
     }
 
-    fn into_inner(self) -> ExprInner {
+    pub(super) fn into_inner(self) -> ExprInner {
         Arc::unwrap_or_clone(self.0)
     }
 

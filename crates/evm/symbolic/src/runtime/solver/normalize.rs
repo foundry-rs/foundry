@@ -179,21 +179,21 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
         return expr;
     }
 
-    match expr.as_inner() {
-        ExprInner::Not(value) => Expr::not(normalize_expr_for_solver(value.clone())),
+    match expr.into_inner() {
+        ExprInner::Not(value) => Expr::not(normalize_expr_for_solver(value)),
         ExprInner::Op(op, left, right) => {
-            let left = normalize_expr_for_solver(left.clone());
-            let right = normalize_expr_for_solver(right.clone());
-            if matches!(*op, ExprOp::Add | ExprOp::Mul | ExprOp::And | ExprOp::Or | ExprOp::Xor)
+            let left = normalize_expr_for_solver(left);
+            let right = normalize_expr_for_solver(right);
+            if matches!(op, ExprOp::Add | ExprOp::Mul | ExprOp::And | ExprOp::Or | ExprOp::Xor)
                 && right < left
             {
-                Expr::op(*op, right, left)
+                Expr::op(op, right, left)
             } else {
-                Expr::op(*op, left, right)
+                Expr::op(op, left, right)
             }
         }
         ExprInner::AddMod(expr) => {
-            let (left, right, modulus) = expr.clone().into_parts();
+            let (left, right, modulus) = expr.into_parts();
             Expr::addmod(
                 normalize_expr_for_solver(left),
                 normalize_expr_for_solver(right),
@@ -201,16 +201,14 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
             )
         }
         ExprInner::MulMod(expr) => {
-            let (left, right, modulus) = expr.clone().into_parts();
+            let (left, right, modulus) = expr.into_parts();
             Expr::mulmod(
                 normalize_expr_for_solver(left),
                 normalize_expr_for_solver(right),
                 normalize_expr_for_solver(modulus),
             )
         }
-        ExprInner::Ite(cond, left, right) => {
-            normalize_ite_expr_for_solver(cond.clone(), left.clone(), right.clone())
-        }
+        ExprInner::Ite(cond, left, right) => normalize_ite_expr_for_solver(cond, left, right),
         ExprInner::Const(_)
         | ExprInner::Var(_)
         | ExprInner::GasLeft(_)
