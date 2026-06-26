@@ -1,27 +1,19 @@
 use super::{abi::*, runtime::*, *};
 
-/// Regression coverage for `empty_state`.
 fn empty_state() -> PathState {
     PathState::new(
         Address::ZERO,
         Address::ZERO,
         U256::ZERO,
-        SymbolicCalldata {
-            size: 4,
-            bytes: vec![SymWord::zero(); 4],
-            inputs: Vec::new(),
-            constraints: Vec::new(),
-        },
+        SymbolicCalldata::from_raw(vec![SymExpr::zero(); 4], Vec::new(), Vec::new()),
         false,
     )
 }
 
-/// Regression coverage for `add_words`.
-fn add_words(left: SymWord, right: SymWord) -> SymWord {
-    SymWord::Expr(expr_add(left.into_expr(), right.into_expr()))
+fn add_words(left: SymExpr, right: SymExpr) -> SymExpr {
+    SymExpr::op(SymExprOp::Add, left, right)
 }
 
-/// Regression coverage for `precompile_address`.
 fn precompile_address(index: u8) -> Address {
     let mut bytes = [0u8; 20];
     bytes[19] = index;
@@ -29,7 +21,6 @@ fn precompile_address(index: u8) -> Address {
 }
 
 #[test]
-/// Regression coverage for `precompile_number_for_spec`.
 fn precompile_number_respects_active_spec() {
     for number in 1..=4 {
         assert_eq!(
@@ -54,7 +45,6 @@ fn precompile_number_respects_active_spec() {
 }
 
 #[test]
-/// Regression coverage for `pop_worklist` respecting configured exploration order.
 fn pop_worklist_respects_exploration_order() {
     let mut bfs_worklist = VecDeque::from([1, 2, 3]);
     assert_eq!(
@@ -78,7 +68,6 @@ fn pop_worklist_respects_exploration_order() {
 }
 
 #[test]
-/// Regression coverage for local batches respecting configured exploration order.
 fn local_batches_respect_exploration_order() {
     let mut bfs_batch = VecDeque::from([1, 2, 3]);
     let mut bfs_worklist = VecDeque::from([10]);
@@ -108,277 +97,274 @@ fn local_batches_respect_exploration_order() {
 }
 
 #[test]
-/// Regression coverage for `binary_helpers_use_evm_operand_order`.
 fn binary_helpers_use_evm_operand_order() {
     let mut state = empty_state();
-    state.stack.push(SymWord::Concrete(U256::from(2))).unwrap();
-    state.stack.push(SymWord::Concrete(U256::from(10))).unwrap();
+    state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
+    state.stack.push(SymExpr::constant(U256::from(10))).unwrap();
 
-    state.bin_word(|a, b| a.wrapping_sub(b), ExprOp::Sub).unwrap();
+    state.bin_word(SymExprOp::Sub).unwrap();
 
-    assert_eq!(state.stack.pop().unwrap(), SymWord::Concrete(U256::from(8)));
+    assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::from(8)));
 }
 
 #[test]
-/// Regression coverage for `comparison_helpers_use_evm_operand_order`.
 fn comparison_helpers_use_evm_operand_order() {
     let mut state = empty_state();
-    state.stack.push(SymWord::Concrete(U256::from(2))).unwrap();
-    state.stack.push(SymWord::Concrete(U256::from(10))).unwrap();
+    state.stack.push(SymExpr::constant(U256::from(2))).unwrap();
+    state.stack.push(SymExpr::constant(U256::from(10))).unwrap();
 
-    state.cmp_word(|a, b| a < b, BoolExprOp::Ult).unwrap();
+    state.cmp_word(SymBoolExprOp::Ult).unwrap();
 
-    assert_eq!(state.stack.pop().unwrap(), SymWord::Concrete(U256::ZERO));
+    assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::ZERO));
 }
 
 #[test]
-/// Regression coverage for `exp_helper_uses_evm_operand_order`.
 fn exp_helper_uses_evm_operand_order() {
     let mut state = empty_state();
-    state.stack.push(SymWord::Concrete(U256::ZERO)).unwrap();
-    state.stack.push(SymWord::Concrete(U256::from(0x100))).unwrap();
+    state.stack.push(SymExpr::constant(U256::ZERO)).unwrap();
+    state.stack.push(SymExpr::constant(U256::from(0x100))).unwrap();
 
     state.exp_word().unwrap();
 
-    assert_eq!(state.stack.pop().unwrap(), SymWord::Concrete(U256::from(1)));
+    assert_eq!(state.stack.pop().unwrap(), SymExpr::constant(U256::from(1)));
 }
 
 #[test]
-/// Regression coverage for `exp_helper_expands_symbolic_base_for_bounded_concrete_exponent`.
 fn exp_helper_expands_symbolic_base_for_bounded_concrete_exponent() {
     let mut state = empty_state();
-    state.stack.push(SymWord::Concrete(U256::from(16))).unwrap();
-    state.stack.push(SymWord::Expr(Expr::Var("base".to_string()))).unwrap();
+    state.stack.push(SymExpr::constant(U256::from(16))).unwrap();
+    state.stack.push(SymExpr::var("base")).unwrap();
 
     state.exp_word().unwrap();
 
     let result = state.stack.pop().unwrap();
     assert_eq!(
-        model_word(&result, &BTreeMap::from([("base".to_string(), U256::from(2))])).unwrap(),
+        result.eval_model(&BTreeMap::from([("base".to_string(), U256::from(2))])).unwrap(),
         U256::from(65536)
     );
 }
 
 #[test]
-/// Regression coverage for `exp_helper_expands_bounded_symbolic_exponent`.
 fn exp_helper_expands_bounded_symbolic_exponent() {
     let mut state = empty_state();
-    let exponent = SymWord::Expr(Expr::Var("exponent".to_string()));
-    state.constraints.push(BoolExpr::cmp(
-        BoolExprOp::Ule,
-        exponent.clone().into_expr(),
-        Expr::Const(U256::from(5)),
+    let exponent = SymExpr::var("exponent");
+    state.constraints.push(SymBoolExpr::cmp(
+        SymBoolExprOp::Ule,
+        exponent.clone(),
+        SymExpr::constant(U256::from(5)),
     ));
     state.stack.push(exponent).unwrap();
-    state.stack.push(SymWord::Concrete(U256::from(3))).unwrap();
+    state.stack.push(SymExpr::constant(U256::from(3))).unwrap();
 
     state.exp_word().unwrap();
 
     let result = state.stack.pop().unwrap();
     assert_eq!(
-        model_word(&result, &BTreeMap::from([("exponent".to_string(), U256::from(5))])).unwrap(),
+        result.eval_model(&BTreeMap::from([("exponent".to_string(), U256::from(5))])).unwrap(),
         U256::from(243)
     );
 }
 
 #[test]
-/// Regression coverage for `shift_helpers_accept_symbolic_amounts`.
 fn shift_helpers_accept_symbolic_amounts() {
     let mut shl = empty_state();
-    shl.stack.push(SymWord::Concrete(U256::from(1))).unwrap();
-    shl.stack.push(SymWord::Expr(Expr::Var("shift".to_string()))).unwrap();
+    shl.stack.push(SymExpr::constant(U256::from(1))).unwrap();
+    shl.stack.push(SymExpr::var("shift")).unwrap();
     shl.shift_word(ShiftKind::Shl).unwrap();
     let shifted = shl.stack.pop().unwrap();
 
     assert_eq!(
-        model_word(&shifted, &BTreeMap::from([("shift".to_string(), U256::from(5))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(5))])).unwrap(),
         U256::from(32)
     );
     assert_eq!(
-        model_word(&shifted, &BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
         U256::ZERO
     );
 
     let mut shr = empty_state();
-    shr.stack.push(SymWord::Concrete(U256::from(1) << 255)).unwrap();
-    shr.stack.push(SymWord::Expr(Expr::Var("shift".to_string()))).unwrap();
+    shr.stack.push(SymExpr::constant(U256::from(1) << 255)).unwrap();
+    shr.stack.push(SymExpr::var("shift")).unwrap();
     shr.shift_word(ShiftKind::Shr).unwrap();
     let shifted = shr.stack.pop().unwrap();
 
     assert_eq!(
-        model_word(&shifted, &BTreeMap::from([("shift".to_string(), U256::from(255))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(255))])).unwrap(),
         U256::from(1)
     );
     assert_eq!(
-        model_word(&shifted, &BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(256))])).unwrap(),
         U256::ZERO
     );
 
     let mut sar = empty_state();
-    sar.stack.push(SymWord::Concrete(U256::MAX)).unwrap();
-    sar.stack.push(SymWord::Expr(Expr::Var("shift".to_string()))).unwrap();
+    sar.stack.push(SymExpr::constant(U256::MAX)).unwrap();
+    sar.stack.push(SymExpr::var("shift")).unwrap();
     sar.shift_word(ShiftKind::Sar).unwrap();
     let shifted = sar.stack.pop().unwrap();
 
     assert_eq!(
-        model_word(&shifted, &BTreeMap::from([("shift".to_string(), U256::from(300))])).unwrap(),
+        shifted.eval_model(&BTreeMap::from([("shift".to_string(), U256::from(300))])).unwrap(),
         U256::MAX
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_division_guards_zero_divisor`.
 fn symbolic_division_guards_zero_divisor() {
     let mut state = empty_state();
-    state.stack.push(SymWord::Expr(Expr::Var("den".to_string()))).unwrap();
-    state.stack.push(SymWord::Expr(Expr::Var("num".to_string()))).unwrap();
+    state.stack.push(SymExpr::var("den")).unwrap();
+    state.stack.push(SymExpr::var("num")).unwrap();
 
-    state
-        .bin_word_div_zero_guard(|a, b| if b.is_zero() { U256::ZERO } else { a / b }, ExprOp::UDiv)
-        .unwrap();
+    state.bin_word_div_zero_guard(SymExprOp::UDiv).unwrap();
 
     assert_eq!(
         state.stack.pop().unwrap(),
-        SymWord::Expr(Expr::Ite(
-            Box::new(BoolExpr::eq(Expr::Var("den".to_string()), Expr::Const(U256::ZERO))),
-            Box::new(Expr::Const(U256::ZERO)),
-            Box::new(Expr::op(
-                ExprOp::UDiv,
-                Expr::Var("num".to_string()),
-                Expr::Var("den".to_string())
-            )),
-        ))
+        SymExpr::ite(
+            SymBoolExpr::eq(SymExpr::var("den"), SymExpr::constant(U256::ZERO)),
+            SymExpr::constant(U256::ZERO),
+            SymExpr::op(SymExprOp::UDiv, SymExpr::var("num"), SymExpr::var("den")),
+        )
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_byte_extracts_with_concrete_index`.
 fn symbolic_byte_extracts_with_concrete_index() {
     assert_eq!(
-        byte_word(U256::from(0), SymWord::Expr(Expr::Var("word".to_string()))),
-        SymWord::Expr(Expr::op(
-            ExprOp::And,
-            Expr::op(ExprOp::Shr, Expr::Var("word".to_string()), Expr::Const(U256::from(248))),
-            Expr::Const(U256::from(0xff))
-        ))
+        byte_word(U256::from(0), SymExpr::var("word")),
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::op(SymExprOp::Shr, SymExpr::var("word"), SymExpr::constant(U256::from(248))),
+            SymExpr::constant(U256::from(0xff))
+        )
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_byte_extracts_with_symbolic_index`.
 fn symbolic_byte_extracts_with_symbolic_index() {
     let word = U256::from_be_bytes(core::array::from_fn::<_, 32, _>(|idx| idx as u8));
-    let byte =
-        byte_word_dynamic(SymWord::Expr(Expr::Var("index".to_string())), SymWord::Concrete(word));
+    let byte = byte_word_dynamic(SymExpr::var("index"), SymExpr::constant(word));
 
     let in_range = BTreeMap::from([("index".to_string(), U256::from(9))]);
-    assert_eq!(model_word(&byte, &in_range).unwrap(), U256::from(9));
+    assert_eq!(byte.eval_model(&in_range).unwrap(), U256::from(9));
 
     let out_of_range = BTreeMap::from([("index".to_string(), U256::from(32))]);
-    assert_eq!(model_word(&byte, &out_of_range).unwrap(), U256::ZERO);
+    assert_eq!(byte.eval_model(&out_of_range).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `symbolic_signextend_accepts_symbolic_index`.
 fn symbolic_signextend_accepts_symbolic_index() {
-    let value = SymWord::Concrete(U256::from(0x80));
-    let extended = signextend_word_dynamic(SymWord::Expr(Expr::Var("index".to_string())), value);
+    let value = SymExpr::constant(U256::from(0x80));
+    let extended = signextend_word_dynamic(SymExpr::var("index"), value);
 
     let zero_index = BTreeMap::from([("index".to_string(), U256::ZERO)]);
-    assert_eq!(model_word(&extended, &zero_index).unwrap(), U256::MAX - U256::from(0x7f));
+    assert_eq!(extended.eval_model(&zero_index).unwrap(), U256::MAX - U256::from(0x7f));
 
     let one_index = BTreeMap::from([("index".to_string(), U256::from(1))]);
-    assert_eq!(model_word(&extended, &one_index).unwrap(), U256::from(0x80));
+    assert_eq!(extended.eval_model(&one_index).unwrap(), U256::from(0x80));
 }
 
 #[test]
-/// Regression coverage for `symbolic_byte_preserves_concrete_packed_selector_bytes`.
 fn symbolic_byte_preserves_concrete_packed_selector_bytes() {
     let selector = U256::from(0x12345678);
-    let packed = SymWord::Expr(Expr::op(
-        ExprOp::Or,
-        Expr::op(ExprOp::Shl, Expr::Const(selector), Expr::Const(U256::from(224))),
-        Expr::op(ExprOp::Shr, Expr::Var("arg".to_string()), Expr::Const(U256::from(32))),
-    ));
+    let packed = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::op(
+            SymExprOp::Shl,
+            SymExpr::constant(selector),
+            SymExpr::constant(U256::from(224)),
+        ),
+        SymExpr::op(SymExprOp::Shr, SymExpr::var("arg"), SymExpr::constant(U256::from(32))),
+    );
 
-    assert_eq!(byte_word(U256::from(0), packed.clone()), SymWord::Concrete(U256::from(0x12)));
-    assert_eq!(byte_word(U256::from(1), packed.clone()), SymWord::Concrete(U256::from(0x34)));
-    assert_eq!(byte_word(U256::from(2), packed.clone()), SymWord::Concrete(U256::from(0x56)));
-    assert_eq!(byte_word(U256::from(3), packed), SymWord::Concrete(U256::from(0x78)));
+    assert_eq!(byte_word(U256::from(0), packed.clone()), SymExpr::constant(U256::from(0x12)));
+    assert_eq!(byte_word(U256::from(1), packed.clone()), SymExpr::constant(U256::from(0x34)));
+    assert_eq!(byte_word(U256::from(2), packed.clone()), SymExpr::constant(U256::from(0x56)));
+    assert_eq!(byte_word(U256::from(3), packed), SymExpr::constant(U256::from(0x78)));
 }
 
 #[test]
-/// Regression coverage for `word_reassembly_preserves_split_symbolic_word`.
 fn word_reassembly_preserves_split_symbolic_word() {
     let original =
-        Expr::op(ExprOp::Add, Expr::Var("value".to_string()), Expr::Const(U256::from(1)));
-    let bytes = word_bytes(SymWord::Expr(original.clone()));
+        SymExpr::op(SymExprOp::Add, SymExpr::var("value"), SymExpr::constant(U256::from(1)));
+    let bytes = original.clone().into_bytes();
 
-    assert_eq!(word_from_bytes(bytes), SymWord::Expr(original));
+    assert_eq!(SymExpr::from_bytes(bytes), original);
 }
 
 #[test]
-/// Regression coverage for `symbolic_address_aliases_match_abi_encoded_address_words`.
 fn symbolic_address_aliases_match_abi_encoded_address_words() {
-    let source = Expr::Var("beneficiary".to_string());
-    let masked =
-        Expr::op(ExprOp::And, source.clone(), Expr::Const((U256::from(1) << 160) - U256::from(1)));
-    let mut encoded = vec![SymWord::zero(); 12];
-    encoded.extend((12..32).map(|idx| byte_word(U256::from(idx), SymWord::Expr(masked.clone()))));
-    let reassembled = word_from_bytes(encoded).into_expr();
-
-    assert!(address_expr_equivalent(&source, &reassembled));
-    assert_eq!(
-        symbolic_address_key(&SymWord::Expr(source)),
-        symbolic_address_key(&SymWord::Expr(reassembled))
+    let source = SymExpr::var("beneficiary");
+    let masked = SymExpr::op(
+        SymExprOp::And,
+        source.clone(),
+        SymExpr::constant((U256::from(1) << 160) - U256::from(1)),
     );
+    let mut encoded = vec![SymExpr::zero(); 12];
+    encoded.extend((12..32).map(|idx| byte_word(U256::from(idx), masked.clone())));
+    let reassembled = SymExpr::from_bytes(encoded);
+
+    assert!(source.symbolic_address_equivalent(&reassembled));
+    assert_eq!(source.symbolic_address_key(), reassembled.symbolic_address_key());
 }
 
 #[test]
-/// Regression coverage for `selector_shift_simplifies_to_concrete_word`.
 fn selector_shift_simplifies_to_concrete_word() {
     let selector = U256::from(0x12345678);
-    let call_word = Expr::op(
-        ExprOp::Or,
-        Expr::op(ExprOp::Shl, Expr::Const(selector), Expr::Const(U256::from(224))),
-        Expr::op(ExprOp::Shr, Expr::Var("arg".to_string()), Expr::Const(U256::from(32))),
+    let call_word = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::op(
+            SymExprOp::Shl,
+            SymExpr::constant(selector),
+            SymExpr::constant(U256::from(224)),
+        ),
+        SymExpr::op(SymExprOp::Shr, SymExpr::var("arg"), SymExpr::constant(U256::from(32))),
     );
-    let selector_expr = Expr::op(ExprOp::Shr, call_word, Expr::Const(U256::from(224)));
+    let selector_expr = SymExpr::op(SymExprOp::Shr, call_word, SymExpr::constant(U256::from(224)));
 
-    assert_eq!(expr_known_word(&selector_expr), Some(selector));
+    assert_eq!(selector_expr.known_word(), Some(selector));
 }
 
 #[test]
-/// Regression coverage for `selector_equality_folds_known_word_expressions`.
 fn selector_equality_folds_known_word_expressions() {
     let selector = U256::from(0x12345678u32);
     let other = U256::from(0x9a8325a0u32);
-    let call_word = Expr::op(
-        ExprOp::Or,
-        Expr::op(ExprOp::Shl, Expr::Const(selector), Expr::Const(U256::from(224))),
-        Expr::op(ExprOp::Shr, Expr::Var("arg".to_string()), Expr::Const(U256::from(32))),
+    let call_word = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::op(
+            SymExprOp::Shl,
+            SymExpr::constant(selector),
+            SymExpr::constant(U256::from(224)),
+        ),
+        SymExpr::op(SymExprOp::Shr, SymExpr::var("arg"), SymExpr::constant(U256::from(32))),
     );
-    let selector_expr = Expr::op(ExprOp::Shr, call_word, Expr::Const(U256::from(224)));
+    let selector_expr = SymExpr::op(SymExprOp::Shr, call_word, SymExpr::constant(U256::from(224)));
 
-    assert_eq!(BoolExpr::eq(selector_expr.clone(), Expr::Const(selector)), BoolExpr::Const(true));
-    assert_eq!(BoolExpr::eq(selector_expr, Expr::Const(other)), BoolExpr::Const(false));
+    assert_eq!(
+        SymBoolExpr::eq(selector_expr.clone(), SymExpr::constant(selector)),
+        SymBoolExpr::constant(true)
+    );
+    assert_eq!(
+        SymBoolExpr::eq(selector_expr, SymExpr::constant(other)),
+        SymBoolExpr::constant(false)
+    );
 }
 
 #[test]
-/// Regression coverage for `calldata_selector_load_simplifies_to_concrete_word`.
 fn calldata_selector_load_simplifies_to_concrete_word() {
     let function = Function::parse("check(bytes32)").unwrap();
     let calldata = SymbolicCalldata::new(&function, &SymbolicConfig::default()).unwrap();
     let selector = U256::from_be_slice(function.selector().as_slice());
-    let loaded = calldata.call_data().load_word(SymWord::zero()).unwrap();
-    let selector_expr = Expr::op(ExprOp::Shr, loaded.into_expr(), Expr::Const(U256::from(224)));
+    let loaded = calldata.call_data().load_word(SymExpr::zero()).unwrap();
+    let selector_expr = SymExpr::op(SymExprOp::Shr, loaded, SymExpr::constant(U256::from(224)));
 
-    assert_eq!(expr_known_word(&selector_expr), Some(selector));
-    assert_eq!(BoolExpr::eq(selector_expr, Expr::Const(selector)), BoolExpr::Const(true));
+    assert_eq!(selector_expr.known_word(), Some(selector));
+    assert_eq!(
+        SymBoolExpr::eq(selector_expr, SymExpr::constant(selector)),
+        SymBoolExpr::constant(true)
+    );
 }
 
 #[test]
-/// Regression coverage for `artifact_json_fallback_paths`.
 fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
     assert_eq!(
         artifact_json_fallback_paths("src/01_NomadZeroRoot.sol:NomadLike"),
@@ -395,16 +381,15 @@ fn artifact_json_fallback_paths_uses_foundry_artifact_basename() {
 }
 
 #[test]
-/// Regression coverage for `dynamic_calldata_encodes_bounded_bytes`.
 fn dynamic_calldata_encodes_bounded_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
     let calldata = SymbolicCalldata::new(&function, &config).unwrap();
 
-    assert_eq!(calldata.size, 100);
-    assert_eq!(calldata.load(4).unwrap(), SymWord::Concrete(U256::from(32)));
-    assert_eq!(calldata.load(36).unwrap(), SymWord::Concrete(U256::from(3)));
-    assert_eq!(calldata.byte(71), SymWord::zero());
+    assert_eq!(calldata.len(), 100);
+    assert_eq!(calldata.load(4).unwrap(), SymExpr::constant(U256::from(32)));
+    assert_eq!(calldata.load(36).unwrap(), SymExpr::constant(U256::from(3)));
+    assert_eq!(calldata.byte(71), SymExpr::zero());
 
     let model = BTreeMap::from([
         ("calldata_0_0".to_string(), U256::from(1)),
@@ -415,51 +400,48 @@ fn dynamic_calldata_encodes_bounded_bytes() {
 }
 
 #[test]
-/// Regression coverage for `calldata_load_accepts_symbolic_offsets`.
 fn calldata_load_accepts_symbolic_offsets() {
     let calldata =
-        SymCalldata::new((0u8..40).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
-    let loaded = calldata.load_word(SymWord::Expr(Expr::Var("offset".to_string()))).unwrap();
-    let expected = word_from_bytes((1u8..33).map(|idx| SymWord::Concrete(U256::from(idx + 1))));
+        SymCalldata::new((0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
+    let loaded = calldata.load_word(SymExpr::var("offset")).unwrap();
+    let expected = SymExpr::from_bytes((1u8..33).map(|idx| SymExpr::constant(U256::from(idx + 1))));
 
     assert_eq!(
-        model_word(&loaded, &BTreeMap::from([("offset".to_string(), U256::from(1))])).unwrap(),
-        model_word(&expected, &BTreeMap::new()).unwrap()
+        loaded.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(1))])).unwrap(),
+        expected.eval_model(&BTreeMap::new()).unwrap()
     );
     assert_eq!(
-        model_word(&loaded, &BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
+        loaded.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
         U256::ZERO
     );
 }
 
 #[test]
-/// Regression coverage for `calldata_preserves_symbolic_size_for_call_frames`.
 fn calldata_preserves_symbolic_size_for_call_frames() {
     let mut memory = SymMemory::default();
     memory.copy_symbolic(
         0,
         vec![
-            SymWord::Concrete(U256::from(0xaa)),
-            SymWord::Concrete(U256::from(0xbb)),
-            SymWord::Concrete(U256::from(0xcc)),
-            SymWord::Concrete(U256::from(0xdd)),
+            SymExpr::constant(U256::from(0xaa)),
+            SymExpr::constant(U256::from(0xbb)),
+            SymExpr::constant(U256::from(0xcc)),
+            SymExpr::constant(U256::from(0xdd)),
         ],
     );
-    let size = SymWord::Expr(Expr::Var("size".to_string()));
+    let size = SymExpr::var("size");
     let bounded_size = BoundedCopySize::Symbolic { size, max_size: 4 };
-    let input = call_input_from_memory(&memory, SymWord::Concrete(U256::ZERO), &bounded_size);
-    let calldata = calldata_from_call_input(input, &bounded_size);
+    let input = bounded_size.read_from_memory(&memory, SymExpr::constant(U256::ZERO));
+    let calldata = bounded_size.calldata(input);
     let model = BTreeMap::from([("size".to_string(), U256::from(2))]);
 
-    assert_eq!(model_word(&calldata.size_word, &model).unwrap(), U256::from(2));
-    assert_eq!(model_word(&calldata.byte(0), &model).unwrap(), U256::from(0xaa));
-    assert_eq!(model_word(&calldata.byte(1), &model).unwrap(), U256::from(0xbb));
-    assert_eq!(model_word(&calldata.byte(2), &model).unwrap(), U256::ZERO);
-    assert_eq!(model_word(&calldata.byte(3), &model).unwrap(), U256::ZERO);
+    assert_eq!(calldata.size_word().eval_model(&model).unwrap(), U256::from(2));
+    assert_eq!(calldata.byte(0).eval_model(&model).unwrap(), U256::from(0xaa));
+    assert_eq!(calldata.byte(1).eval_model(&model).unwrap(), U256::from(0xbb));
+    assert_eq!(calldata.byte(2).eval_model(&model).unwrap(), U256::ZERO);
+    assert_eq!(calldata.byte(3).eval_model(&model).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `memory_copies_unaligned_symbolic_calldata_bytes`.
 fn memory_copies_unaligned_symbolic_calldata_bytes() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![3], ..Default::default() };
@@ -476,130 +458,162 @@ fn memory_copies_unaligned_symbolic_calldata_bytes() {
     ]);
     let mut expected = [0u8; 32];
     expected[1..4].copy_from_slice(&[1, 2, 3]);
-    assert_eq!(model_word(&word, &model).unwrap(), U256::from_be_bytes(expected));
+    assert_eq!(word.eval_model(&model).unwrap(), U256::from_be_bytes(expected));
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_calldata_offset`.
 fn memory_copies_symbolic_calldata_offset() {
     let calldata =
-        SymCalldata::new((0u8..40).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
+        SymCalldata::new((0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
     let mut memory = SymMemory::default();
 
-    memory
-        .copy_calldata_offset(0, SymWord::Expr(Expr::Var("offset".to_string())), 2, &calldata)
-        .unwrap();
+    memory.copy_calldata_offset(0, SymExpr::var("offset"), 2, &calldata).unwrap();
     let word = memory.load_word(0).unwrap();
 
     let mut expected = [0u8; 32];
     expected[..2].copy_from_slice(&[4, 5]);
     assert_eq!(
-        model_word(&word, &BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
         U256::from_be_bytes(expected)
     );
     assert_eq!(
-        model_word(&word, &BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
         U256::ZERO
     );
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_calldata_size_with_guarded_tail`.
 fn memory_copies_symbolic_calldata_size_with_guarded_tail() {
     let calldata =
-        SymCalldata::new((0u8..8).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
+        SymCalldata::new((0u8..8).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
     let mut memory = SymMemory::default();
-    memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
 
     memory
         .copy_calldata_symbolic_size(
-            SymWord::Concrete(U256::ZERO),
-            SymWord::Concrete(U256::ZERO),
-            SymWord::Expr(Expr::Var("size".to_string())),
+            SymExpr::constant(U256::ZERO),
+            SymExpr::constant(U256::ZERO),
+            SymExpr::var("size"),
             4,
             &calldata,
         )
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_bytecode_size_with_guarded_tail`.
 fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
     let mut memory = SymMemory::default();
-    memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
     memory.copy_symbolic_size(
         0,
-        SymWord::Expr(Expr::Var("size".to_string())),
-        (0u8..4).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect(),
+        SymExpr::var("size"),
+        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
     );
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
-/// Regression coverage for `memory_reads_symbolic_size_with_zero_guarded_tail`.
+fn memory_copies_folded_symbolic_size_prefix_only() {
+    let mut memory = SymMemory::default();
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
+    memory.copy_symbolic_size(
+        0,
+        SymExpr::constant(U256::from(2)),
+        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
+    );
+
+    assert_eq!(
+        memory.read_bytes(0, 4).eval_model(&BTreeMap::new()).unwrap(),
+        vec![1, 2, 0xaa, 0xaa]
+    );
+}
+
+#[test]
+fn memory_skips_folded_zero_symbolic_size_copy() {
+    let mut memory = SymMemory::default();
+    memory.copy_symbolic_size(
+        0,
+        SymExpr::zero(),
+        (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
+    );
+
+    assert_eq!(memory.size_word(), SymExpr::zero());
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&BTreeMap::new()).unwrap(), vec![0, 0, 0, 0]);
+}
+
+#[test]
 fn memory_reads_symbolic_size_with_zero_guarded_tail() {
     let mut memory = SymMemory::default();
-    memory.store_bytes(32, (0u8..4).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
+    memory.store_bytes(32, (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
+
+    let bytes =
+        memory.read_bytes_symbolic_size(SymExpr::constant(U256::from(32)), SymExpr::var("size"), 4);
+
+    let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
+    assert_eq!(bytes.eval_model(&size_two).unwrap(), vec![1, 2, 0, 0]);
+
+    let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
+    assert_eq!(bytes.eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
+}
+
+#[test]
+fn memory_reads_folded_symbolic_size_prefix_only() {
+    let mut memory = SymMemory::default();
+    memory.store_bytes(32, (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
 
     let bytes = memory.read_bytes_symbolic_size(
-        SymWord::Concrete(U256::from(32)),
-        SymWord::Expr(Expr::Var("size".to_string())),
+        SymExpr::constant(U256::from(32)),
+        SymExpr::constant(U256::from(2)),
         4,
     );
 
-    let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(model_bytes(&bytes, &size_two).unwrap(), vec![1, 2, 0, 0]);
-
-    let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&bytes, &size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(bytes.eval_model(&BTreeMap::new()).unwrap(), vec![1, 2, 0, 0]);
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_memory_size_with_guarded_tail`.
 fn memory_copies_symbolic_memory_size_with_guarded_tail() {
     let mut memory = SymMemory::default();
-    memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
-    memory.store_bytes(32, (0u8..4).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
+    memory.store_bytes(32, (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
 
     memory
         .copy_memory_symbolic_size(
-            SymWord::Concrete(U256::ZERO),
-            SymWord::Concrete(U256::from(32)),
-            SymWord::Expr(Expr::Var("size".to_string())),
+            SymExpr::constant(U256::ZERO),
+            SymExpr::constant(U256::from(32)),
+            SymExpr::var("size"),
             4,
         )
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_size_to_symbolic_dest`.
 fn memory_copies_symbolic_size_to_symbolic_dest() {
     let mut memory = SymMemory::default();
-    memory.store_bytes(0x80, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
-    memory.store_bytes(0x20, (0u8..4).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect());
+    memory.store_bytes(0x80, vec![SymExpr::constant(U256::from(0xaa)); 4]);
+    memory.store_bytes(0x20, (0u8..4).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect());
 
     memory
         .copy_memory_symbolic_size(
-            SymWord::Expr(Expr::Var("dest".to_string())),
-            SymWord::Concrete(U256::from(0x20)),
-            SymWord::Expr(Expr::Var("size".to_string())),
+            SymExpr::var("dest"),
+            SymExpr::constant(U256::from(0x20)),
+            SymExpr::var("size"),
             4,
         )
         .unwrap();
@@ -608,329 +622,290 @@ fn memory_copies_symbolic_size_to_symbolic_dest() {
         ("dest".to_string(), U256::from(0x80)),
         ("size".to_string(), U256::from(2)),
     ]);
-    assert_eq!(model_bytes(&memory.read_bytes(0x80, 4), &model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 }
 
 #[test]
-/// Regression coverage for `memory_copies_symbolic_returndata_size_with_guarded_tail`.
 fn memory_copies_symbolic_returndata_size_with_guarded_tail() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
-    memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
 
     memory
         .copy_return_data_symbolic_size(
-            SymWord::Concrete(U256::ZERO),
-            SymWord::Concrete(U256::ZERO),
-            SymWord::Expr(Expr::Var("size".to_string())),
+            SymExpr::constant(U256::ZERO),
+            SymExpr::constant(U256::ZERO),
+            SymExpr::var("size"),
             4,
             &return_data,
         )
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
-/// Regression coverage for `returndata_reads_symbolic_offset`.
 fn returndata_reads_symbolic_offset() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
-    let bytes = return_data.read_bytes_offset(SymWord::Expr(Expr::Var("offset".to_string())), 2);
+    let bytes = return_data.read_bytes_offset(SymExpr::var("offset"), 2);
 
     let offset_one = BTreeMap::from([("offset".to_string(), U256::from(1))]);
-    assert_eq!(model_bytes(&bytes, &offset_one).unwrap(), vec![2, 3]);
+    assert_eq!(bytes.eval_model(&offset_one).unwrap(), vec![2, 3]);
 
     let offset_four = BTreeMap::from([("offset".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&bytes, &offset_four).unwrap(), vec![0, 0]);
+    assert_eq!(bytes.eval_model(&offset_four).unwrap(), vec![0, 0]);
 }
 
 #[test]
-/// Regression coverage for `memory_return_data_accepts_symbolic_size`.
 fn memory_return_data_accepts_symbolic_size() {
     let mut memory = SymMemory::default();
     memory.store_bytes(
         0,
-        vec![1, 2, 3, 4].into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect(),
+        vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
     );
 
     let return_data = memory
-        .return_data_symbolic_size(
-            SymWord::Concrete(U256::ZERO),
-            SymWord::Expr(Expr::Var("len".to_string())),
-            4,
-        )
+        .return_data_symbolic_size(SymExpr::constant(U256::ZERO), SymExpr::var("len"), 4)
         .unwrap();
 
     let len_two = BTreeMap::from([("len".to_string(), U256::from(2))]);
-    assert_eq!(model_word(&return_data.len_word(), &len_two).unwrap(), U256::from(2));
-    assert_eq!(model_word(&return_data.byte(0), &len_two).unwrap(), U256::from(1));
-    assert_eq!(model_word(&return_data.byte(2), &len_two).unwrap(), U256::ZERO);
+    assert_eq!(return_data.len_word().eval_model(&len_two).unwrap(), U256::from(2));
+    assert_eq!(return_data.byte(0).eval_model(&len_two).unwrap(), U256::from(1));
+    assert_eq!(return_data.byte(2).eval_model(&len_two).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `call_output_preserves_memory_beyond_symbolic_returndata_size`.
 fn call_output_preserves_memory_beyond_symbolic_returndata_size() {
     let return_data = SymReturnData::from_symbolic_bytes_with_len(
-        vec![1, 2, 3, 4].into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect(),
-        SymWord::Expr(Expr::Var("len".to_string())),
+        vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
+        SymExpr::var("len"),
     );
     let mut memory = SymMemory::default();
-    memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
 
     memory
         .copy_call_output_offset(
-            SymWord::Concrete(U256::ZERO),
+            SymExpr::constant(U256::ZERO),
             &BoundedCopySize::Concrete(4),
             &return_data,
         )
         .unwrap();
 
     let len_two = BTreeMap::from([("len".to_string(), U256::from(2))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &len_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&len_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let len_four = BTreeMap::from([("len".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &len_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&len_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
-/// Regression coverage for `nested_dynamic_calldata_uses_preorder_lengths`.
 fn nested_dynamic_calldata_uses_preorder_lengths() {
     let function = Function::parse("check((uint256[],bytes))").unwrap();
     let config = SymbolicConfig { array_lengths: vec![2, 3], ..Default::default() };
     let calldata = SymbolicCalldata::new(&function, &config).unwrap();
 
-    assert_eq!(calldata.load(4).unwrap(), SymWord::Concrete(U256::from(32)));
-    assert_eq!(calldata.load(36).unwrap(), SymWord::Concrete(U256::from(64)));
-    assert_eq!(calldata.load(68).unwrap(), SymWord::Concrete(U256::from(160)));
-    assert_eq!(calldata.load(100).unwrap(), SymWord::Concrete(U256::from(2)));
-    assert_eq!(calldata.load(196).unwrap(), SymWord::Concrete(U256::from(3)));
+    assert_eq!(calldata.load(4).unwrap(), SymExpr::constant(U256::from(32)));
+    assert_eq!(calldata.load(36).unwrap(), SymExpr::constant(U256::from(64)));
+    assert_eq!(calldata.load(68).unwrap(), SymExpr::constant(U256::from(160)));
+    assert_eq!(calldata.load(100).unwrap(), SymExpr::constant(U256::from(2)));
+    assert_eq!(calldata.load(196).unwrap(), SymExpr::constant(U256::from(3)));
 }
 
 #[test]
-/// Regression coverage for `memory_round_trips_symbolic_words_as_bytes`.
 fn memory_round_trips_symbolic_words_as_bytes() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::Var("word".to_string()));
+    let value = SymExpr::var("word");
 
     memory.store_word(7, value.clone());
 
     let model = BTreeMap::from([("word".to_string(), U256::from(0x1234))]);
     assert_eq!(
-        model_word(&memory.load_word(7).unwrap(), &model).unwrap(),
-        model_word(&value, &model).unwrap()
+        memory.load_word(7).unwrap().eval_model(&model).unwrap(),
+        value.eval_model(&model).unwrap()
     );
 }
 
 #[test]
-/// Regression coverage for `memory_load_accepts_symbolic_offsets`.
 fn memory_load_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::Var("word".to_string()));
+    let value = SymExpr::var("word");
 
     memory.store_word(7, value);
-    let loaded = memory.load_word_offset(SymWord::Expr(Expr::Var("offset".to_string()))).unwrap();
+    let loaded = memory.load_word_offset(SymExpr::var("offset")).unwrap();
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 
     let out_of_range = BTreeMap::from([
         ("offset".to_string(), U256::from(39)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &out_of_range).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&out_of_range).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `memory_store_word_accepts_symbolic_offsets`.
 fn memory_store_word_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::Var("word".to_string()));
+    let value = SymExpr::var("word");
 
-    memory.store_word_offset(SymWord::Expr(Expr::Var("offset".to_string())), value);
+    memory.store_word_offset(SymExpr::var("offset"), value);
     let loaded = memory.load_word(7).unwrap();
 
     let matching = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &matching).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&matching).unwrap(), U256::from(0x1234));
 
     let non_matching = BTreeMap::from([
         ("offset".to_string(), U256::from(100)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &non_matching).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&non_matching).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `memory_size_tracks_concrete_and_symbolic_extents`.
 fn memory_size_tracks_concrete_and_symbolic_extents() {
     let mut memory = SymMemory::default();
 
-    memory.store_word(7, SymWord::Concrete(U256::from(0x55)));
-    assert_eq!(memory.size_word(), SymWord::Concrete(U256::from(64)));
+    memory.store_word(7, SymExpr::constant(U256::from(0x55)));
+    assert_eq!(memory.size_word(), SymExpr::constant(U256::from(64)));
 
-    memory.store_word_offset(
-        SymWord::Expr(Expr::Var("offset".to_string())),
-        SymWord::Expr(Expr::Var("word".to_string())),
-    );
+    memory.store_word_offset(SymExpr::var("offset"), SymExpr::var("word"));
     let size = memory.size_word();
 
     let below_concrete = BTreeMap::from([
         ("offset".to_string(), U256::from(9)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&size, &below_concrete).unwrap(), U256::from(64));
+    assert_eq!(size.eval_model(&below_concrete).unwrap(), U256::from(64));
 
     let above_concrete = BTreeMap::from([
         ("offset".to_string(), U256::from(70)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&size, &above_concrete).unwrap(), U256::from(128));
+    assert_eq!(size.eval_model(&above_concrete).unwrap(), U256::from(128));
 }
 
 #[test]
-/// Regression coverage for `memory_concrete_write_overrides_older_symbolic_write`.
 fn memory_concrete_write_overrides_older_symbolic_write() {
     let mut memory = SymMemory::default();
 
-    memory.store_word_offset(
-        SymWord::Expr(Expr::Var("offset".to_string())),
-        SymWord::Expr(Expr::Var("word".to_string())),
-    );
-    memory.store_word(7, SymWord::Concrete(U256::from(0x55)));
+    memory.store_word_offset(SymExpr::var("offset"), SymExpr::var("word"));
+    memory.store_word(7, SymExpr::constant(U256::from(0x55)));
     let loaded = memory.load_word(7).unwrap();
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x55));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x55));
 }
 
 #[test]
-/// Regression coverage for `memory_dynamic_read_respects_concrete_overwrite_epoch`.
 fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
     let mut memory = SymMemory::default();
 
-    memory.store_byte_offset(
-        SymWord::Expr(Expr::Var("write_offset".to_string())),
-        SymWord::Expr(Expr::Var("byte".to_string())),
-    );
-    memory.store_byte(5, SymWord::Concrete(U256::from(0x55)));
-    let loaded = memory.byte_dynamic_with_delta(Expr::Var("read_offset".to_string()), 0);
+    memory.store_byte_offset(SymExpr::var("write_offset"), SymExpr::var("byte"));
+    memory.store_byte(5, SymExpr::constant(U256::from(0x55)));
+    let loaded = memory.byte_dynamic_with_delta(&SymExpr::var("read_offset"), 0);
 
     let model = BTreeMap::from([
         ("write_offset".to_string(), U256::from(5)),
         ("read_offset".to_string(), U256::from(5)),
         ("byte".to_string(), U256::from(0xab)),
     ]);
-    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x55));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x55));
 }
 
 #[test]
-/// Regression coverage for `memory_store_byte_accepts_symbolic_offsets`.
 fn memory_store_byte_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
 
-    memory.store_byte_offset(
-        SymWord::Expr(Expr::Var("offset".to_string())),
-        SymWord::Expr(Expr::Var("byte".to_string())),
-    );
+    memory.store_byte_offset(SymExpr::var("offset"), SymExpr::var("byte"));
     let loaded = memory.byte(0x80);
 
     let matching = BTreeMap::from([
         ("offset".to_string(), U256::from(0x80)),
         ("byte".to_string(), U256::from(0xab)),
     ]);
-    assert_eq!(model_word(&loaded, &matching).unwrap(), U256::from(0xab));
+    assert_eq!(loaded.eval_model(&matching).unwrap(), U256::from(0xab));
 
     let non_matching = BTreeMap::from([
         ("offset".to_string(), U256::from(0x81)),
         ("byte".to_string(), U256::from(0xab)),
     ]);
-    assert_eq!(model_word(&loaded, &non_matching).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&non_matching).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `memory_read_bytes_accepts_symbolic_offsets`.
 fn memory_read_bytes_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::Var("word".to_string()));
+    let value = SymExpr::var("word");
 
     memory.store_word(7, value);
-    let loaded = word_from_bytes(
-        memory.read_bytes_offset(SymWord::Expr(Expr::Var("offset".to_string())), 32),
-    );
+    let loaded = SymExpr::from_bytes(memory.read_bytes_offset(SymExpr::var("offset"), 32));
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 
     let out_of_range = BTreeMap::from([
         ("offset".to_string(), U256::from(39)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &out_of_range).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&out_of_range).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `memory_return_data_accepts_symbolic_offsets`.
 fn memory_return_data_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::Var("word".to_string()));
+    let value = SymExpr::var("word");
 
     memory.store_word(7, value);
-    let return_data =
-        memory.return_data(SymWord::Expr(Expr::Var("offset".to_string())), 32).unwrap();
+    let return_data = memory.return_data(SymExpr::var("offset"), 32).unwrap();
     let loaded = return_data.load_word(0).unwrap();
 
     let model = BTreeMap::from([
         ("offset".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 }
 
 #[test]
-/// Regression coverage for `memory_copy_accepts_symbolic_source_offsets`.
 fn memory_copy_accepts_symbolic_source_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::Var("word".to_string()));
+    let value = SymExpr::var("word");
 
     memory.store_word(7, value);
-    memory.copy_memory_offset(64, SymWord::Expr(Expr::Var("src".to_string())), 32).unwrap();
+    memory.copy_memory_offset(64, SymExpr::var("src"), 32).unwrap();
     let loaded = memory.load_word(64).unwrap();
 
     let model = BTreeMap::from([
         ("src".to_string(), U256::from(7)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 }
 
 #[test]
-/// Regression coverage for `memory_copy_accepts_symbolic_destination_offsets`.
 fn memory_copy_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
-    let value = SymWord::Expr(Expr::Var("word".to_string()));
+    let value = SymExpr::var("word");
 
     memory.store_word(7, value);
     memory
-        .copy_memory_to_offset(
-            SymWord::Expr(Expr::Var("dest".to_string())),
-            SymWord::Concrete(U256::from(7)),
-            32,
-        )
+        .copy_memory_to_offset(SymExpr::var("dest"), SymExpr::constant(U256::from(7)), 32)
         .unwrap();
     let loaded = memory.load_word(64).unwrap();
 
@@ -938,29 +913,22 @@ fn memory_copy_accepts_symbolic_destination_offsets() {
         ("dest".to_string(), U256::from(64)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &matching).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&matching).unwrap(), U256::from(0x1234));
 
     let non_matching = BTreeMap::from([
         ("dest".to_string(), U256::from(96)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &non_matching).unwrap(), U256::ZERO);
+    assert_eq!(loaded.eval_model(&non_matching).unwrap(), U256::ZERO);
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_destination_offsets`.
 fn memory_call_output_accepts_symbolic_destination_offsets() {
     let mut memory = SymMemory::default();
-    let return_data = SymReturnData::from_symbolic_bytes(word_bytes(SymWord::Expr(Expr::Var(
-        "word".to_string(),
-    ))));
+    let return_data = SymReturnData::from_symbolic_bytes(SymExpr::var("word").into_bytes());
 
     memory
-        .copy_call_output_offset(
-            SymWord::Expr(Expr::Var("dest".to_string())),
-            &BoundedCopySize::Concrete(32),
-            &return_data,
-        )
+        .copy_call_output_offset(SymExpr::var("dest"), &BoundedCopySize::Concrete(32), &return_data)
         .unwrap();
     let loaded = memory.load_word(64).unwrap();
 
@@ -968,48 +936,40 @@ fn memory_call_output_accepts_symbolic_destination_offsets() {
         ("dest".to_string(), U256::from(64)),
         ("word".to_string(), U256::from(0x1234)),
     ]);
-    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x1234));
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_size_with_guarded_tail`.
 fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
-    memory.store_bytes(0, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
+    memory.store_bytes(0, vec![SymExpr::constant(U256::from(0xaa)); 4]);
 
     memory
         .copy_call_output_offset(
-            SymWord::Concrete(U256::ZERO),
-            &BoundedCopySize::Symbolic {
-                size: SymWord::Expr(Expr::Var("size".to_string())),
-                max_size: 4,
-            },
+            SymExpr::constant(U256::ZERO),
+            &BoundedCopySize::Symbolic { size: SymExpr::var("size"), max_size: 4 },
             &return_data,
         )
         .unwrap();
 
     let size_two = BTreeMap::from([("size".to_string(), U256::from(2))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_two).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 
     let size_four = BTreeMap::from([("size".to_string(), U256::from(4))]);
-    assert_eq!(model_bytes(&memory.read_bytes(0, 4), &size_four).unwrap(), vec![1, 2, 3, 4]);
+    assert_eq!(memory.read_bytes(0, 4).eval_model(&size_four).unwrap(), vec![1, 2, 3, 4]);
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_destination_and_size`.
 fn memory_call_output_accepts_symbolic_destination_and_size() {
     let return_data = SymReturnData::from_concrete_bytes(vec![1, 2, 3, 4]);
     let mut memory = SymMemory::default();
-    memory.store_bytes(0x80, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
+    memory.store_bytes(0x80, vec![SymExpr::constant(U256::from(0xaa)); 4]);
 
     memory
         .copy_call_output_offset(
-            SymWord::Expr(Expr::Var("dest".to_string())),
-            &BoundedCopySize::Symbolic {
-                size: SymWord::Expr(Expr::Var("size".to_string())),
-                max_size: 4,
-            },
+            SymExpr::var("dest"),
+            &BoundedCopySize::Symbolic { size: SymExpr::var("size"), max_size: 4 },
             &return_data,
         )
         .unwrap();
@@ -1018,36 +978,30 @@ fn memory_call_output_accepts_symbolic_destination_and_size() {
         ("dest".to_string(), U256::from(0x80)),
         ("size".to_string(), U256::from(2)),
     ]);
-    assert_eq!(model_bytes(&memory.read_bytes(0x80, 4), &model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 }
 
 #[test]
-/// Regression coverage for `memory_call_output_accepts_symbolic_destination_and_return_len`.
 fn memory_call_output_accepts_symbolic_destination_and_return_len() {
     let return_data = SymReturnData::from_symbolic_bytes_with_len(
-        vec![1, 2, 3, 4].into_iter().map(|byte| SymWord::Concrete(U256::from(byte))).collect(),
-        SymWord::Expr(Expr::Var("len".to_string())),
+        vec![1, 2, 3, 4].into_iter().map(|byte| SymExpr::constant(U256::from(byte))).collect(),
+        SymExpr::var("len"),
     );
     let mut memory = SymMemory::default();
-    memory.store_bytes(0x80, vec![SymWord::Concrete(U256::from(0xaa)); 4]);
+    memory.store_bytes(0x80, vec![SymExpr::constant(U256::from(0xaa)); 4]);
 
     memory
-        .copy_call_output_offset(
-            SymWord::Expr(Expr::Var("dest".to_string())),
-            &BoundedCopySize::Concrete(4),
-            &return_data,
-        )
+        .copy_call_output_offset(SymExpr::var("dest"), &BoundedCopySize::Concrete(4), &return_data)
         .unwrap();
 
     let model = BTreeMap::from([
         ("dest".to_string(), U256::from(0x80)),
         ("len".to_string(), U256::from(2)),
     ]);
-    assert_eq!(model_bytes(&memory.read_bytes(0x80, 4), &model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
+    assert_eq!(memory.read_bytes(0x80, 4).eval_model(&model).unwrap(), vec![1, 2, 0xaa, 0xaa]);
 }
 
 #[test]
-/// Regression coverage for `create_address_helpers_match_alloy_primitives`.
 fn create_address_helpers_match_alloy_primitives() {
     let creator = Address::from([0x11; 20]);
     let initcode = vec![opcode::PUSH1, 0x00, opcode::PUSH1, 0x00, opcode::RETURN];
@@ -1061,17 +1015,16 @@ fn create_address_helpers_match_alloy_primitives() {
 }
 
 #[test]
-/// Regression coverage for `compute_create2_cheatcode_helper_matches_create2_terms`.
 fn compute_create2_cheatcode_helper_matches_create2_terms() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let salt = SymWord::Expr(Expr::Var("salt".to_string()));
+    let salt = SymExpr::var("salt");
     let initcode = vec![opcode::STOP];
-    let initcode_hash = SymWord::Concrete(U256::from_be_bytes(keccak256(&initcode).0));
+    let initcode_hash = SymExpr::constant(U256::from_be_bytes(keccak256(&initcode).0));
 
     let cheatcode_word = compute_create2_address_word(
         &mut state,
-        SymWord::Concrete(address_word(creator)),
+        SymExpr::constant(address_word(creator)),
         salt.clone(),
         initcode_hash,
     )
@@ -1083,62 +1036,57 @@ fn compute_create2_cheatcode_helper_matches_create2_terms() {
 }
 
 #[test]
-/// Regression coverage for `compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash`.
 fn compute_create2_cheatcode_helper_accepts_symbolic_init_code_hash() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let salt = SymWord::Expr(Expr::Var("salt".to_string()));
-    let initcode_hash = SymWord::Expr(Expr::Var("initcode_hash".to_string()));
+    let salt = SymExpr::var("salt");
+    let initcode_hash = SymExpr::var("initcode_hash");
 
     let first = compute_create2_address_word(
         &mut state,
-        SymWord::Concrete(address_word(creator)),
+        SymExpr::constant(address_word(creator)),
         salt.clone(),
         initcode_hash.clone(),
     )
     .unwrap();
     let second = compute_create2_address_word(
         &mut state,
-        SymWord::Concrete(address_word(creator)),
+        SymExpr::constant(address_word(creator)),
         salt,
         initcode_hash,
     )
     .unwrap();
 
     assert_eq!(first, second);
-    assert!(
-        matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create2_address_"))
-    );
+    assert!(first.var_name().is_some_and(|name| name.starts_with("create2_address_")));
 }
 
 #[test]
-/// Regression coverage for `compute_create_cheatcode_helper_accepts_symbolic_nonce`.
 fn compute_create_cheatcode_helper_accepts_symbolic_nonce() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let nonce = SymWord::Expr(Expr::Var("nonce".to_string()));
+    let nonce = SymExpr::var("nonce");
 
     let first = compute_create_address_word(
         &mut state,
-        SymWord::Concrete(address_word(creator)),
+        SymExpr::constant(address_word(creator)),
         nonce.clone(),
     )
     .unwrap();
     let second =
-        compute_create_address_word(&mut state, SymWord::Concrete(address_word(creator)), nonce)
+        compute_create_address_word(&mut state, SymExpr::constant(address_word(creator)), nonce)
             .unwrap();
 
     assert_eq!(first, second);
-    assert!(matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create_address_")));
+    assert!(first.var_name().is_some_and(|name| name.starts_with("create_address_")));
 }
 
 #[test]
-/// Regression coverage for `compute_create_cheatcode_helper_accepts_symbolic_deployer`.
 fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let deployer = SymWord::Expr(Expr::Var("deployer".to_string()));
-    let nonce = SymWord::Expr(Expr::Var("nonce".to_string()));
+    let deployer = SymExpr::var("deployer");
+    let nonce = SymExpr::var("nonce");
 
     let first = compute_create_address_word(&mut state, deployer.clone(), nonce.clone())
         .expect("symbolic deployer is supported");
@@ -1146,17 +1094,16 @@ fn compute_create_cheatcode_helper_accepts_symbolic_deployer() {
         .expect("symbolic deployer is supported");
 
     assert_eq!(first, second);
-    assert!(matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create_address_")));
+    assert!(first.var_name().is_some_and(|name| name.starts_with("create_address_")));
 }
 
 #[test]
-/// Regression coverage for `compute_create2_cheatcode_helper_accepts_symbolic_deployer`.
 fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let deployer = SymWord::Expr(Expr::Var("deployer".to_string()));
-    let salt = SymWord::Expr(Expr::Var("salt".to_string()));
-    let initcode_hash = SymWord::Expr(Expr::Var("initcode_hash".to_string()));
+    let deployer = SymExpr::var("deployer");
+    let salt = SymExpr::var("salt");
+    let initcode_hash = SymExpr::var("initcode_hash");
 
     let first = compute_create2_address_word(
         &mut state,
@@ -1169,22 +1116,19 @@ fn compute_create2_cheatcode_helper_accepts_symbolic_deployer() {
         .expect("symbolic deployer is supported");
 
     assert_eq!(first, second);
-    assert!(
-        matches!(first, SymWord::Expr(Expr::Var(name)) if name.starts_with("create2_address_"))
-    );
+    assert!(first.var_name().is_some_and(|name| name.starts_with("create2_address_")));
 }
 
 #[test]
-/// Regression coverage for `recorded_logs_return_data_matches_abi_encoding`.
 fn recorded_logs_return_data_matches_abi_encoding() {
     let emitter = Address::from([0x33; 20]);
     let topic = B256::from([0x11; 32]);
-    let log = SymbolicLog {
-        topics: vec![SymWord::Concrete(U256::from_be_bytes(topic.0))],
-        data_len: SymWord::Concrete(U256::from(2)),
-        data: vec![SymWord::Concrete(U256::from(0x22)), SymWord::Concrete(U256::from(0x33))],
+    let log = SymbolicLog::new(
+        vec![SymExpr::constant(U256::from_be_bytes(topic.0))],
+        SymExpr::constant(U256::from(2)),
+        vec![SymExpr::constant(U256::from(0x22)), SymExpr::constant(U256::from(0x33))],
         emitter,
-    };
+    );
 
     let encoded =
         recorded_logs_return_data(vec![log]).read_concrete("recorded log return data").unwrap();
@@ -1199,28 +1143,24 @@ fn recorded_logs_return_data_matches_abi_encoding() {
 }
 
 #[test]
-/// Regression coverage for `recorded_logs_json_return_data_accepts_symbolic_topics_and_data`.
 fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
     let emitter = Address::from([0x33; 20]);
-    let log = SymbolicLog {
-        topics: vec![SymWord::Expr(Expr::Var("topic".to_string()))],
-        data_len: SymWord::Concrete(U256::from(2)),
-        data: vec![
-            SymWord::Concrete(U256::from(0x12)),
-            SymWord::Expr(Expr::Var("byte".to_string())),
-        ],
+    let log = SymbolicLog::new(
+        vec![SymExpr::var("topic")],
+        SymExpr::constant(U256::from(2)),
+        vec![SymExpr::constant(U256::from(0x12)), SymExpr::var("byte")],
         emitter,
-    };
+    );
 
     let return_data = recorded_logs_json_return_data(vec![log]).unwrap();
-    let encoded = model_bytes(
-        &(0..return_data.len).map(|idx| return_data.byte(idx)).collect::<Vec<_>>(),
-        &BTreeMap::from([
+    let encoded = (0..return_data.len())
+        .map(|idx| return_data.byte(idx))
+        .collect::<Vec<_>>()
+        .eval_model(&BTreeMap::from([
             ("topic".to_string(), U256::from(0xabcd)),
             ("byte".to_string(), U256::from(0xef)),
-        ]),
-    )
-    .unwrap();
+        ]))
+        .unwrap();
     let decoded = DynSolType::String.abi_decode(&encoded).unwrap();
     let DynSolValue::String(json) = decoded else { panic!("expected string return") };
 
@@ -1231,35 +1171,33 @@ fn recorded_logs_json_return_data_accepts_symbolic_topics_and_data() {
 }
 
 #[test]
-/// Regression coverage for `abi_bytes_encoding_accepts_symbolic_length`.
 fn abi_bytes_encoding_accepts_symbolic_length() {
     let encoded = encode_packed_bytes_with_len(
-        SymWord::Expr(Expr::Var("len".to_string())),
+        SymExpr::var("len"),
         &[
-            SymWord::Concrete(U256::from(0x22)),
-            SymWord::Concrete(U256::from(0x33)),
-            SymWord::Concrete(U256::from(0x44)),
+            SymExpr::constant(U256::from(0x22)),
+            SymExpr::constant(U256::from(0x33)),
+            SymExpr::constant(U256::from(0x44)),
         ],
     );
-    let length = word_from_bytes(encoded[..32].iter().cloned());
+    let length = SymExpr::from_bytes(encoded[..32].iter().cloned());
 
     assert_eq!(
-        model_word(&length, &BTreeMap::from([("len".to_string(), U256::from(2))])).unwrap(),
+        length.eval_model(&BTreeMap::from([("len".to_string(), U256::from(2))])).unwrap(),
         U256::from(2)
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_resolves_symbolic_create2_address_aliases`.
 fn symbolic_world_resolves_symbolic_create2_address_aliases() {
     let mut world = SymbolicWorld::default();
-    let word = SymWord::Expr(Expr::Var("create2_address".to_string()));
+    let word = SymExpr::var("create2_address");
     let address = world.symbolic_address_slot(word.clone());
-    let masked = SymWord::Expr(Expr::op(
-        ExprOp::And,
-        word.clone().into_expr(),
-        Expr::Const((U256::from(1) << 160) - U256::from(1)),
-    ));
+    let masked = SymExpr::op(
+        SymExprOp::And,
+        word.clone(),
+        SymExpr::constant((U256::from(1) << 160) - U256::from(1)),
+    );
 
     assert_eq!(world.resolve_address(&word), Some(address));
     assert_eq!(world.resolve_address(&masked), Some(address));
@@ -1268,39 +1206,34 @@ fn symbolic_world_resolves_symbolic_create2_address_aliases() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_create2_accepts_symbolic_salt`.
 fn symbolic_create2_accepts_symbolic_salt() {
     let creator = Address::from([0x11; 20]);
     let mut state = PathState::empty(creator, Address::from([0xaa; 20]), false);
-    let salt = SymWord::Expr(Expr::Var("salt".to_string()));
+    let salt = SymExpr::var("salt");
     let initcode = SymCode::concrete(vec![opcode::STOP]);
 
     let (word, address) = create2_address_word(&mut state, creator, salt, &initcode).unwrap();
 
-    assert!(matches!(word, SymWord::Expr(_)));
+    assert!(word.as_const().is_none());
     assert_eq!(state.world.resolve_address(&word), Some(address));
     assert_eq!(state.constraints.len(), 1);
     assert_ne!(address, Address::ZERO);
 }
 
 #[test]
-/// Regression coverage for `symbolic_return_data_can_be_installed_as_runtime_code`.
 fn symbolic_return_data_can_be_installed_as_runtime_code() {
-    let data = SymReturnData::from_symbolic_bytes(vec![SymWord::Expr(Expr::Var(
-        "runtime_byte".to_string(),
-    ))]);
+    let data = SymReturnData::from_symbolic_bytes(vec![SymExpr::var("runtime_byte")]);
 
     let code = data.to_code().unwrap();
 
-    assert_eq!(code.read_bytes(0, 1), vec![SymWord::Expr(Expr::Var("runtime_byte".to_string()))]);
+    assert_eq!(code.read_bytes(0, 1), vec![SymExpr::var("runtime_byte")]);
 }
 
 #[test]
-/// Regression coverage for `symbolic_runtime_size_is_not_installed_as_concrete_code`.
 fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
     let data = SymReturnData::from_symbolic_bytes_with_len(
-        vec![SymWord::Concrete(U256::from(opcode::STOP))],
-        SymWord::Expr(Expr::Var("runtime_len".to_string())),
+        vec![SymExpr::constant(U256::from(opcode::STOP))],
+        SymExpr::var("runtime_len"),
     );
 
     assert!(matches!(
@@ -1310,7 +1243,6 @@ fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_tracks_created_code_and_nonce_overlay`.
 fn symbolic_world_tracks_created_code_and_nonce_overlay() {
     let created = Address::from([0x22; 20]);
     let mut world = SymbolicWorld::default();
@@ -1318,68 +1250,54 @@ fn symbolic_world_tracks_created_code_and_nonce_overlay() {
     world.install_code(created, SymCode::concrete(vec![opcode::STOP]));
     world.set_nonce(created, 1);
 
-    assert_eq!(world.code_cache.get(&created), Some(&SymCode::concrete(vec![opcode::STOP])));
-    assert_eq!(world.nonces.get(&created), Some(&1));
+    assert_eq!(world.cached_code(created), Some(&SymCode::concrete(vec![opcode::STOP])));
+    assert_eq!(world.cached_nonce(created), Some(1));
 }
 
 #[test]
-/// Regression coverage for `symbolic_codecopy_preserves_symbolic_constructor_bytes`.
 fn symbolic_codecopy_preserves_symbolic_constructor_bytes() {
     let mut memory = SymMemory::default();
-    let initcode = SymCode {
-        bytes: vec![
-            SymWord::Concrete(U256::from(opcode::STOP)),
-            SymWord::Expr(Expr::Var("constructor_arg_byte".to_string())),
-        ],
-    };
+    let initcode = SymCode::from_symbolic_bytes(vec![
+        SymExpr::constant(U256::from(opcode::STOP)),
+        SymExpr::var("constructor_arg_byte"),
+    ]);
 
     memory.copy_symbolic(0, initcode.read_bytes(0, 2));
 
-    assert_eq!(memory.byte(0), SymWord::Concrete(U256::from(opcode::STOP)));
-    assert_eq!(memory.byte(1), SymWord::Expr(Expr::Var("constructor_arg_byte".to_string())));
+    assert_eq!(memory.byte(0), SymExpr::constant(U256::from(opcode::STOP)));
+    assert_eq!(memory.byte(1), SymExpr::var("constructor_arg_byte"));
 }
 
 #[test]
-/// Regression coverage for `symbolic_codecopy_accepts_symbolic_offsets`.
 fn symbolic_codecopy_accepts_symbolic_offsets() {
-    let code =
-        SymCode { bytes: (0u8..40).map(|idx| SymWord::Concrete(U256::from(idx + 1))).collect() };
+    let code = SymCode::from_symbolic_bytes(
+        (0u8..40).map(|idx| SymExpr::constant(U256::from(idx + 1))).collect(),
+    );
     let mut memory = SymMemory::default();
 
-    memory.copy_symbolic(
-        0,
-        code.read_bytes_offset(SymWord::Expr(Expr::Var("offset".to_string())), 2),
-    );
+    memory.copy_symbolic(0, code.read_bytes_offset(SymExpr::var("offset"), 2));
     let word = memory.load_word(0).unwrap();
 
     let mut expected = [0u8; 32];
     expected[..2].copy_from_slice(&[4, 5]);
     assert_eq!(
-        model_word(&word, &BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(3))])).unwrap(),
         U256::from_be_bytes(expected)
     );
     assert_eq!(
-        model_word(&word, &BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
+        word.eval_model(&BTreeMap::from([("offset".to_string(), U256::from(40))])).unwrap(),
         U256::ZERO
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_initcode_accepts_symbolic_memory_offsets`.
 fn symbolic_initcode_accepts_symbolic_memory_offsets() {
     let mut memory = SymMemory::default();
 
-    memory.copy_symbolic(
-        7,
-        vec![
-            SymWord::Concrete(U256::from(opcode::STOP)),
-            SymWord::Expr(Expr::Var("arg".to_string())),
-        ],
-    );
-    let initcode =
-        SymCode::from_memory_offset(&memory, SymWord::Expr(Expr::Var("offset".to_string())), 2);
-    let word = word_from_bytes(
-        initcode.read_bytes(0, 2).into_iter().chain(std::iter::repeat_with(SymWord::zero).take(30)),
+    memory.copy_symbolic(7, vec![SymExpr::constant(U256::from(opcode::STOP)), SymExpr::var("arg")]);
+    let initcode = SymCode::from_memory_offset(&memory, SymExpr::var("offset"), 2);
+    let word = SymExpr::from_bytes(
+        initcode.read_bytes(0, 2).into_iter().chain(std::iter::repeat_with(SymExpr::zero).take(30)),
     );
 
     let mut expected = [0u8; 32];
@@ -1389,66 +1307,65 @@ fn symbolic_initcode_accepts_symbolic_memory_offsets() {
         ("offset".to_string(), U256::from(7)),
         ("arg".to_string(), U256::from(0x2a)),
     ]);
-    assert_eq!(model_word(&word, &model).unwrap(), U256::from_be_bytes(expected));
+    assert_eq!(word.eval_model(&model).unwrap(), U256::from_be_bytes(expected));
 }
 
 #[test]
-/// Regression coverage for `path_state_extracts_constrained_symbolic_usize`.
 fn path_state_extracts_constrained_symbolic_usize() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let offset = SymWord::Expr(Expr::Var("offset".to_string()));
+    let offset = SymExpr::var("offset");
 
-    state.constraints.push(BoolExpr::eq(offset.clone().into_expr(), Expr::Const(U256::from(7))));
+    state.constraints.push(SymBoolExpr::eq(offset.clone(), SymExpr::constant(U256::from(7))));
 
     assert_eq!(state.constrained_usize(&offset), Some(7));
 }
 
 #[test]
-/// Regression coverage for `path_state_extracts_symbolic_usize_upper_bound`.
 fn path_state_extracts_symbolic_usize_upper_bound() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let size = SymWord::Expr(Expr::Var("size".to_string()));
+    let size = SymExpr::var("size");
 
-    state.constraints.push(BoolExpr::cmp(
-        BoolExprOp::Ult,
-        size.clone().into_expr(),
-        Expr::Const(U256::from(5)),
+    state.constraints.push(SymBoolExpr::cmp(
+        SymBoolExprOp::Ult,
+        size.clone(),
+        SymExpr::constant(U256::from(5)),
     ));
 
     assert_eq!(state.upper_bound_usize(&size), Some(4));
 }
 
 #[test]
-/// Regression coverage for `path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word`.
 fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let offset = SymWord::Expr(Expr::Var("offset".to_string()));
-    let offset_expr = offset.clone().into_expr();
-    let mask = Expr::Const(U256::from(0xffff));
+    let offset = SymExpr::var("offset");
+    let offset_expr = offset.clone();
+    let mask = SymExpr::constant(U256::from(0xffff));
 
-    state.constraints.push(BoolExpr::eq(
-        Expr::op(ExprOp::And, offset_expr.clone(), mask.clone()),
+    state.constraints.push(SymBoolExpr::eq(
+        SymExpr::op(SymExprOp::And, offset_expr.clone(), mask.clone()),
         offset_expr.clone(),
     ));
-    let condition =
-        BoolExpr::eq(Expr::Const(U256::from(0x80)), Expr::op(ExprOp::And, mask, offset_expr));
-    let bool_byte = Expr::op(
-        ExprOp::And,
-        Expr::op(
-            ExprOp::Shr,
-            Expr::Ite(
-                Box::new(condition),
-                Box::new(Expr::Const(U256::from(1))),
-                Box::new(Expr::Const(U256::ZERO)),
+    let condition = SymBoolExpr::eq(
+        SymExpr::constant(U256::from(0x80)),
+        SymExpr::op(SymExprOp::And, mask, offset_expr),
+    );
+    let bool_byte = SymExpr::op(
+        SymExprOp::And,
+        SymExpr::op(
+            SymExprOp::Shr,
+            SymExpr::ite(
+                condition,
+                SymExpr::constant(U256::from(1)),
+                SymExpr::constant(U256::ZERO),
             ),
-            Expr::Const(U256::ZERO),
+            SymExpr::constant(U256::ZERO),
         ),
-        Expr::Const(U256::from(0xff)),
+        SymExpr::constant(U256::from(0xff)),
     );
     state.constraints.push(
-        BoolExpr::eq(
-            Expr::op(ExprOp::Or, Expr::Const(U256::ZERO), bool_byte),
-            Expr::Const(U256::ZERO),
+        SymBoolExpr::eq(
+            SymExpr::op(SymExprOp::Or, SymExpr::constant(U256::ZERO), bool_byte),
+            SymExpr::constant(U256::ZERO),
         )
         .not(),
     );
@@ -1457,122 +1374,100 @@ fn path_state_extracts_constrained_symbolic_usize_from_encoded_bool_word() {
 }
 
 #[test]
-/// Regression coverage for `path_state_evaluates_compound_constrained_symbolic_word`.
 fn path_state_evaluates_compound_constrained_symbolic_word() {
     let mut state = PathState::empty(Address::ZERO, Address::ZERO, false);
-    let value = SymWord::Expr(Expr::Var("value".to_string()));
-    state
-        .constraints
-        .push(BoolExpr::eq(value.clone().into_expr(), Expr::Const(U256::from(0xbeef))));
+    let value = SymExpr::var("value");
+    state.constraints.push(SymBoolExpr::eq(value.clone(), SymExpr::constant(U256::from(0xbeef))));
 
-    let encoded_word = SymWord::Expr(Expr::op(
-        ExprOp::Or,
-        Expr::Const(U256::ZERO),
-        Expr::op(ExprOp::And, value.into_expr(), Expr::Const(U256::from(u64::MAX))),
-    ));
+    let encoded_word = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::constant(U256::ZERO),
+        SymExpr::op(SymExprOp::And, value, SymExpr::constant(U256::from(u64::MAX))),
+    );
 
     assert_eq!(state.constrained_word(&encoded_word), Some(U256::from(0xbeef)));
 }
 
 #[test]
-/// Regression coverage for `symbolic_push_data_reconstructs_symbolic_word`.
 fn symbolic_push_data_reconstructs_symbolic_word() {
-    let code = SymCode {
-        bytes: vec![
-            SymWord::Concrete(U256::from(opcode::PUSH2)),
-            SymWord::Expr(Expr::Var("immutable_hi".to_string())),
-            SymWord::Expr(Expr::Var("immutable_lo".to_string())),
-        ],
-    };
+    let code = SymCode::from_symbolic_bytes(vec![
+        SymExpr::constant(U256::from(opcode::PUSH2)),
+        SymExpr::var("immutable_hi"),
+        SymExpr::var("immutable_lo"),
+    ]);
 
-    let word = word_from_bytes(
-        std::iter::repeat_with(SymWord::zero).take(30).chain(code.read_bytes(1, 2)),
+    let word = SymExpr::from_bytes(
+        std::iter::repeat_with(SymExpr::zero).take(30).chain(code.read_bytes(1, 2)),
     );
 
-    assert!(matches!(word, SymWord::Expr(_)));
+    assert!(word.as_const().is_none());
 }
 
 #[test]
-/// Regression coverage for `abi_bytes_return_encodes_symbolic_bytes`.
 fn abi_bytes_return_encodes_symbolic_bytes() {
     let ret = abi_bytes_return(vec![
-        SymWord::Expr(Expr::Var("calldata_byte_0".to_string())),
-        SymWord::Concrete(U256::from(0x42)),
+        SymExpr::var("calldata_byte_0"),
+        SymExpr::constant(U256::from(0x42)),
     ]);
 
     assert_eq!(
-        word_from_bytes((0..32).map(|idx| ret.byte(idx))),
-        SymWord::Concrete(U256::from(32))
+        SymExpr::from_bytes((0..32).map(|idx| ret.byte(idx))),
+        SymExpr::constant(U256::from(32))
     );
     assert_eq!(
-        word_from_bytes((32..64).map(|idx| ret.byte(idx))),
-        SymWord::Concrete(U256::from(2))
+        SymExpr::from_bytes((32..64).map(|idx| ret.byte(idx))),
+        SymExpr::constant(U256::from(2))
     );
-    assert_eq!(ret.byte(64), SymWord::Expr(Expr::Var("calldata_byte_0".to_string())));
-    assert_eq!(ret.byte(65), SymWord::Concrete(U256::from(0x42)));
+    assert_eq!(ret.byte(64), SymExpr::var("calldata_byte_0"));
+    assert_eq!(ret.byte(65), SymExpr::constant(U256::from(0x42)));
 }
 
 #[test]
-/// Regression coverage for `abi_bytes_return_can_encode_symbolic_length`.
 fn abi_bytes_return_can_encode_symbolic_length() {
     let ret = abi_bytes_return_with_len(
-        SymWord::Expr(Expr::Var("len".to_string())),
-        vec![
-            SymWord::Expr(Expr::Var("byte_0".to_string())),
-            SymWord::Expr(Expr::Var("byte_1".to_string())),
-        ],
+        SymExpr::var("len"),
+        vec![SymExpr::var("byte_0"), SymExpr::var("byte_1")],
     );
 
     assert_eq!(
-        word_from_bytes((0..32).map(|idx| ret.byte(idx))),
-        SymWord::Concrete(U256::from(32))
+        SymExpr::from_bytes((0..32).map(|idx| ret.byte(idx))),
+        SymExpr::constant(U256::from(32))
     );
-    assert_eq!(
-        word_from_bytes((32..64).map(|idx| ret.byte(idx))),
-        SymWord::Expr(Expr::Var("len".to_string()))
-    );
-    assert_eq!(ret.byte(64), SymWord::Expr(Expr::Var("byte_0".to_string())));
-    assert_eq!(ret.byte(65), SymWord::Expr(Expr::Var("byte_1".to_string())));
+    assert_eq!(SymExpr::from_bytes((32..64).map(|idx| ret.byte(idx))), SymExpr::var("len"));
+    assert_eq!(ret.byte(64), SymExpr::var("byte_0"));
+    assert_eq!(ret.byte(65), SymExpr::var("byte_1"));
 }
 
 #[test]
-/// Regression coverage for `symbolic_keccak_is_deterministic_for_same_symbolic_bytes`.
 fn symbolic_keccak_is_deterministic_for_same_symbolic_bytes() {
-    let bytes = word_bytes(SymWord::Expr(Expr::Var("slot_key".to_string())));
+    let bytes = SymExpr::var("slot_key").into_bytes();
 
     let first = keccak_word(bytes.clone());
     let second = keccak_word(bytes);
 
     assert_eq!(first, second);
-    assert!(matches!(first, SymWord::Expr(Expr::Keccak { .. })));
+    assert!(first.is_keccak());
 }
 
 #[test]
-/// Regression coverage for `symbolic_keccak_tracks_symbolic_length`.
 fn symbolic_keccak_tracks_symbolic_length() {
-    let bytes = vec![
-        SymWord::Expr(Expr::Var("byte_0".to_string())),
-        SymWord::Expr(Expr::Var("byte_1".to_string())),
-        SymWord::zero(),
-    ];
-    let len = SymWord::Expr(Expr::Var("len".to_string()));
+    let bytes = vec![SymExpr::var("byte_0"), SymExpr::var("byte_1"), SymExpr::zero()];
+    let len = SymExpr::var("len");
 
     let word = keccak_word_with_len(bytes, len);
 
-    let SymWord::Expr(Expr::Keccak { len, bytes, .. }) = word else {
-        panic!("expected symbolic keccak term");
-    };
-    assert_eq!(*len, Expr::Var("len".to_string()));
-    assert_eq!(bytes.len(), 3);
+    let (hash_len, hash_bytes_len) =
+        word.keccak_len_and_byte_count().expect("expected symbolic keccak term");
+    assert_eq!(hash_len, &SymExpr::var("len"));
+    assert_eq!(hash_bytes_len, 3);
 }
 
 #[test]
-/// Regression coverage for `model_word_computes_symbolic_keccak_from_model`.
-fn model_word_computes_symbolic_keccak_from_model() {
+fn sym_expr_eval_computes_symbolic_keccak_from_model() {
     let owner = Address::from([0x11; 20]);
     let slot = U256::from(1);
-    let mut bytes = word_bytes(SymWord::Expr(Expr::Var("owner".to_string())));
-    bytes.extend(word_bytes(SymWord::Concrete(slot)));
+    let mut bytes = SymExpr::var("owner").into_bytes();
+    bytes.extend(SymExpr::constant(slot).into_bytes());
     let word = keccak_word(bytes);
 
     let mut input = Vec::new();
@@ -1581,18 +1476,14 @@ fn model_word_computes_symbolic_keccak_from_model() {
     let expected = U256::from_be_bytes(keccak256(input).0);
     let model = BTreeMap::from([("owner".to_string(), address_word(owner))]);
 
-    assert_eq!(model_word(&word, &model).unwrap(), expected);
+    assert_eq!(word.eval_model(&model).unwrap(), expected);
 }
 
 #[test]
-/// Regression coverage for `symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input`.
 fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
-    let input = vec![
-        SymWord::Expr(Expr::Var("input_0".to_string())),
-        SymWord::Expr(Expr::Var("input_1".to_string())),
-    ];
+    let input = vec![SymExpr::var("input_0"), SymExpr::var("input_1")];
 
-    let input_len = SymWord::Concrete(U256::from(input.len()));
+    let input_len = SymExpr::constant(U256::from(input.len()));
     let sha = execute_symbolic_precompile(
         precompile_address(2),
         input.clone(),
@@ -1609,12 +1500,12 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     )
     .unwrap()
     .unwrap();
-    let sha_word = word_from_bytes((0..32).map(|idx| sha.byte(idx)));
-    let sha_again_word = word_from_bytes((0..32).map(|idx| sha_again.byte(idx)));
+    let sha_word = SymExpr::from_bytes((0..32).map(|idx| sha.byte(idx)));
+    let sha_again_word = SymExpr::from_bytes((0..32).map(|idx| sha_again.byte(idx)));
 
-    assert_eq!(sha.len, 32);
+    assert_eq!(sha.len(), 32);
     assert_eq!(sha_word, sha_again_word);
-    assert!(matches!(sha_word, SymWord::Expr(Expr::Hash { algorithm: "sha256", .. })));
+    assert_eq!(sha_word.hash_algorithm(), Some("sha256"));
 
     let ecrecover = execute_symbolic_precompile(
         precompile_address(1),
@@ -1633,9 +1524,9 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(ecrecover.len, 32);
+    assert_eq!(ecrecover.len(), 32);
     for idx in 0..12 {
-        assert_eq!(ecrecover.byte(idx), SymWord::zero());
+        assert_eq!(ecrecover.byte(idx), SymExpr::zero());
     }
     for idx in 0..32 {
         assert_eq!(ecrecover.byte(idx), ecrecover_again.byte(idx));
@@ -1654,9 +1545,9 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
             .unwrap()
             .unwrap();
 
-    assert_eq!(ripemd.len, 32);
+    assert_eq!(ripemd.len(), 32);
     for idx in 0..12 {
-        assert_eq!(ripemd.byte(idx), SymWord::zero());
+        assert_eq!(ripemd.byte(idx), SymExpr::zero());
     }
     for idx in 0..32 {
         assert_eq!(ripemd.byte(idx), ripemd_again.byte(idx));
@@ -1664,15 +1555,14 @@ fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
 }
 
 #[test]
-/// Regression coverage for `identity_precompile_preserves_symbolic_input_len`.
 fn identity_precompile_preserves_symbolic_input_len() {
     let input = vec![
-        SymWord::Concrete(U256::from(1)),
-        SymWord::Concrete(U256::from(2)),
-        SymWord::Concrete(U256::from(3)),
-        SymWord::Concrete(U256::from(4)),
+        SymExpr::constant(U256::from(1)),
+        SymExpr::constant(U256::from(2)),
+        SymExpr::constant(U256::from(3)),
+        SymExpr::constant(U256::from(4)),
     ];
-    let input_len = SymWord::Expr(Expr::Var("size".to_string()));
+    let input_len = SymExpr::var("size");
     let return_data = execute_symbolic_precompile(
         precompile_address(4),
         input,
@@ -1682,27 +1572,26 @@ fn identity_precompile_preserves_symbolic_input_len() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(return_data.len, 4);
+    assert_eq!(return_data.len(), 4);
     assert_eq!(return_data.len_word(), input_len);
-    assert_eq!(return_data.byte(0), SymWord::Concrete(U256::from(1)));
-    assert_eq!(return_data.byte(3), SymWord::Concrete(U256::from(4)));
+    assert_eq!(return_data.byte(0), SymExpr::constant(U256::from(1)));
+    assert_eq!(return_data.byte(3), SymExpr::constant(U256::from(4)));
 }
 
 #[test]
-/// Regression coverage for `advanced_precompiles_accept_symbolic_payloads`.
 fn advanced_precompiles_accept_symbolic_payloads() {
-    let mut modexp_input = vec![SymWord::zero(); 99];
-    modexp_input[31] = SymWord::Concrete(U256::from(1));
-    modexp_input[63] = SymWord::Concrete(U256::from(1));
-    modexp_input[95] = SymWord::Concrete(U256::from(1));
-    modexp_input[96] = SymWord::Expr(Expr::Var("base".to_string()));
-    modexp_input[97] = SymWord::Concrete(U256::from(5));
-    modexp_input[98] = SymWord::Concrete(U256::from(13));
+    let mut modexp_input = vec![SymExpr::zero(); 99];
+    modexp_input[31] = SymExpr::constant(U256::from(1));
+    modexp_input[63] = SymExpr::constant(U256::from(1));
+    modexp_input[95] = SymExpr::constant(U256::from(1));
+    modexp_input[96] = SymExpr::var("base");
+    modexp_input[97] = SymExpr::constant(U256::from(5));
+    modexp_input[98] = SymExpr::constant(U256::from(13));
 
     let modexp = execute_symbolic_precompile(
         precompile_address(5),
         modexp_input.clone(),
-        SymWord::Concrete(U256::from(modexp_input.len())),
+        SymExpr::constant(U256::from(modexp_input.len())),
         SpecId::CANCUN,
     )
     .unwrap()
@@ -1710,35 +1599,34 @@ fn advanced_precompiles_accept_symbolic_payloads() {
     let modexp_again = execute_symbolic_precompile(
         precompile_address(5),
         modexp_input.clone(),
-        SymWord::Concrete(U256::from(modexp_input.len())),
+        SymExpr::constant(U256::from(modexp_input.len())),
         SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
-    assert_eq!(modexp.len, 1);
+    assert_eq!(modexp.len(), 1);
     assert_eq!(modexp.byte(0), modexp_again.byte(0));
 
-    let mut blake_input = vec![SymWord::Expr(Expr::Var("blake_input".to_string())); 213];
-    blake_input[212] = SymWord::zero();
+    let mut blake_input = vec![SymExpr::var("blake_input"); 213];
+    blake_input[212] = SymExpr::zero();
     let blake = execute_symbolic_precompile(
         precompile_address(9),
         blake_input,
-        SymWord::Concrete(U256::from(213)),
+        SymExpr::constant(U256::from(213)),
         SpecId::CANCUN,
     )
     .unwrap()
     .unwrap();
-    assert_eq!(blake.len, 64);
+    assert_eq!(blake.len(), 64);
 }
 
 #[test]
-/// Regression coverage for `validity_sensitive_symbolic_precompiles_report_incomplete`.
 fn validity_sensitive_symbolic_precompiles_report_incomplete() {
-    let bn_input = vec![SymWord::Expr(Expr::Var("point".to_string())); 128];
+    let bn_input = vec![SymExpr::var("point"); 128];
     let err = execute_symbolic_precompile(
         precompile_address(6),
         bn_input,
-        SymWord::Concrete(U256::from(128)),
+        SymExpr::constant(U256::from(128)),
         SpecId::CANCUN,
     )
     .unwrap_err();
@@ -1747,11 +1635,11 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
         SymbolicError::Unsupported("symbolic bn254 precompile validity not modeled")
     ));
 
-    let blake_input = vec![SymWord::Expr(Expr::Var("blake_input".to_string())); 213];
+    let blake_input = vec![SymExpr::var("blake_input"); 213];
     let err = execute_symbolic_precompile(
         precompile_address(9),
         blake_input,
-        SymWord::Concrete(U256::from(213)),
+        SymExpr::constant(U256::from(213)),
         SpecId::CANCUN,
     )
     .unwrap_err();
@@ -1762,91 +1650,82 @@ fn validity_sensitive_symbolic_precompiles_report_incomplete() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_read_after_write_accepts_symbolic_keys`.
 fn symbolic_storage_read_after_write_accepts_symbolic_keys() {
     let address = Address::from([0x11; 20]);
-    let key = SymWord::Expr(Expr::Var("slot".to_string()));
-    let value = SymWord::Expr(Expr::Var("value".to_string()));
+    let key = SymExpr::var("slot");
+    let value = SymExpr::var("value");
     let writes = vec![StorageWrite::new(address, key.clone(), value.clone())];
 
-    assert_eq!(read_storage_writes(&writes, address, key, SymWord::zero()), value);
+    assert_eq!(StorageWrite::select_from(&writes, address, key, SymExpr::zero()), value);
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_uses_conditional_value_for_maybe_equal_key`.
 fn symbolic_storage_uses_conditional_value_for_maybe_equal_key() {
     let address = Address::from([0x11; 20]);
-    let write_key = SymWord::Expr(Expr::Var("write_slot".to_string()));
-    let read_key = SymWord::Expr(Expr::Var("read_slot".to_string()));
-    let value = SymWord::Expr(Expr::Var("value".to_string()));
+    let write_key = SymExpr::var("write_slot");
+    let read_key = SymExpr::var("read_slot");
+    let value = SymExpr::var("value");
     let writes = vec![StorageWrite::new(address, write_key.clone(), value.clone())];
 
     assert_eq!(
-        read_storage_writes(&writes, address, read_key.clone(), SymWord::zero()),
-        SymWord::Expr(Expr::Ite(
-            Box::new(BoolExpr::eq(read_key.into_expr(), write_key.into_expr())),
-            Box::new(value.into_expr()),
-            Box::new(Expr::Const(U256::ZERO)),
-        ))
+        StorageWrite::select_from(&writes, address, read_key.clone(), SymExpr::zero()),
+        SymExpr::ite(SymBoolExpr::eq(read_key, write_key), value, SymExpr::constant(U256::ZERO),)
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_key_equality_decomposes_keccak_offsets`.
 fn symbolic_storage_key_equality_decomposes_keccak_offsets() {
-    let owner = SymWord::Expr(Expr::Var("owner".to_string()));
-    let base = keccak_word(word_bytes(owner));
-    let left = add_words(base.clone(), SymWord::Expr(Expr::Var("left_index".to_string())));
-    let right = add_words(base, SymWord::Expr(Expr::Var("right_index".to_string())));
+    let owner = SymExpr::var("owner");
+    let base = keccak_word(owner.into_bytes());
+    let left = add_words(base.clone(), SymExpr::var("left_index"));
+    let right = add_words(base, SymExpr::var("right_index"));
 
     assert_eq!(
-        storage_key_eq(left, right),
-        BoolExpr::eq(Expr::Var("left_index".to_string()), Expr::Var("right_index".to_string()))
+        left.storage_key_eq(&right),
+        SymBoolExpr::eq(SymExpr::var("left_index"), SymExpr::var("right_index"))
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_key_equality_expands_distinct_keccak_bases`.
 fn symbolic_storage_key_equality_expands_distinct_keccak_bases() {
-    let left_base = keccak_word(vec![SymWord::Expr(Expr::Var("left_owner".to_string()))]);
-    let right_base = keccak_word(vec![SymWord::Expr(Expr::Var("right_owner".to_string()))]);
-    let index = SymWord::Expr(Expr::Var("index".to_string()));
+    let left_base = keccak_word(vec![SymExpr::var("left_owner")]);
+    let right_base = keccak_word(vec![SymExpr::var("right_owner")]);
+    let index = SymExpr::var("index");
 
-    let condition =
-        storage_key_eq(add_words(left_base, index.clone()), add_words(right_base, index));
+    let left = add_words(left_base, index.clone());
+    let right = add_words(right_base, index);
+    let condition = left.storage_key_eq(&right);
+
+    assert_eq!(condition, SymBoolExpr::eq(SymExpr::var("left_owner"), SymExpr::var("right_owner")));
+}
+
+#[test]
+fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
+    let owner = SymExpr::var("owner");
+    let layout_key = add_words(keccak_word(owner.into_bytes()), SymExpr::constant(U256::ZERO));
 
     assert_eq!(
-        condition,
-        BoolExpr::eq(Expr::Var("left_owner".to_string()), Expr::Var("right_owner".to_string()))
+        layout_key.storage_key_eq(&SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::constant(false)
     );
 }
 
 #[test]
-/// Regression coverage for `symbolic_storage_key_equality_rejects_concrete_plain_slot_alias`.
-fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
-    let owner = SymWord::Expr(Expr::Var("owner".to_string()));
-    let layout_key = add_words(keccak_word(word_bytes(owner)), SymWord::Concrete(U256::ZERO));
-
-    assert_eq!(storage_key_eq(layout_key, SymWord::Concrete(U256::ZERO)), BoolExpr::Const(false));
-}
-
-#[test]
-/// Regression coverage for `nested_mapping_key_does_not_alias_plain_mapping_key_under_model`.
 fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
-    let owner = SymWord::Expr(Expr::Var("owner".to_string()));
-    let spender = SymWord::Expr(Expr::Var("spender".to_string()));
-    let recipient = SymWord::Expr(Expr::Var("recipient".to_string()));
+    let owner = SymExpr::var("owner");
+    let spender = SymExpr::var("spender");
+    let recipient = SymExpr::var("recipient");
 
-    let mut balance_key_bytes = word_bytes(recipient);
-    balance_key_bytes.extend(word_bytes(SymWord::Concrete(U256::ZERO)));
+    let mut balance_key_bytes = recipient.into_bytes();
+    balance_key_bytes.extend(SymExpr::constant(U256::ZERO).into_bytes());
     let balance_key = keccak_word(balance_key_bytes);
 
-    let mut inner_key_bytes = word_bytes(owner);
-    inner_key_bytes.extend(word_bytes(SymWord::Concrete(U256::from(1))));
+    let mut inner_key_bytes = owner.into_bytes();
+    inner_key_bytes.extend(SymExpr::constant(U256::from(1)).into_bytes());
     let inner_key = keccak_word(inner_key_bytes);
 
-    let mut allowance_key_bytes = word_bytes(spender);
-    allowance_key_bytes.extend(word_bytes(inner_key));
+    let mut allowance_key_bytes = spender.into_bytes();
+    allowance_key_bytes.extend(inner_key.into_bytes());
     let allowance_key = keccak_word(allowance_key_bytes);
 
     let same_address = precompile_address(0x60);
@@ -1855,29 +1734,27 @@ fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
         ("spender".to_string(), address_word(same_address)),
         ("recipient".to_string(), address_word(same_address)),
     ]);
-    let condition = storage_key_eq(balance_key, allowance_key);
+    let condition = balance_key.storage_key_eq(&allowance_key);
 
-    assert_eq!(condition, BoolExpr::Const(false));
-    assert!(!eval_bool_expr(&condition, &model).unwrap());
+    assert_eq!(condition, SymBoolExpr::constant(false));
+    assert!(!condition.eval_model(&model).unwrap());
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_snapshot_restores_overlay_state`.
 fn symbolic_world_snapshot_restores_overlay_state() {
     let address = Address::from([0x11; 20]);
     let mut world = SymbolicWorld::default();
-    world.sstore(address, SymWord::Concrete(U256::from(1)), SymWord::Concrete(U256::from(2)));
+    world.sstore(address, SymExpr::constant(U256::from(1)), SymExpr::constant(U256::from(2)));
 
     let snapshot = world.snapshot_state();
-    world.sstore(address, SymWord::Concrete(U256::from(1)), SymWord::Concrete(U256::from(3)));
+    world.sstore(address, SymExpr::constant(U256::from(1)), SymExpr::constant(U256::from(3)));
 
     assert!(world.restore_snapshot(snapshot));
-    assert_eq!(world.storage.len(), 1);
-    assert_eq!(world.storage[0].value, SymWord::Concrete(U256::from(2)));
+    assert_eq!(world.storage_len(), 1);
+    assert_eq!(world.storage_value(0), Some(&SymExpr::constant(U256::from(2))));
 }
 
 #[test]
-/// Regression coverage for `symbolic_world_tracks_current_transaction_created_accounts`.
 fn symbolic_world_tracks_current_transaction_created_accounts() {
     let first = Address::from([0x11; 20]);
     let second = Address::from([0x22; 20]);
@@ -1899,7 +1776,6 @@ fn symbolic_world_tracks_current_transaction_created_accounts() {
 }
 
 #[test]
-/// Regression coverage for `extra_dynamic_lengths_are_rejected`.
 fn extra_dynamic_lengths_are_rejected() {
     let function = Function::parse("check(bytes)").unwrap();
     let config = SymbolicConfig { array_lengths: vec![1, 2], ..Default::default() };
@@ -1910,7 +1786,6 @@ fn extra_dynamic_lengths_are_rejected() {
 }
 
 #[test]
-/// Regression coverage for `positional_dynamic_lengths_allow_shorter_expanded_variants`.
 fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
     let function = Function::parse("check(bytes[])").unwrap();
     let config = SymbolicConfig {
@@ -1924,7 +1799,7 @@ fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
     assert_eq!(variants.len(), 2);
     let element_counts = variants
         .iter()
-        .map(|calldata| match &calldata.inputs[0].value {
+        .map(|calldata| match calldata.inputs()[0].value() {
             SymbolicAbiValue::Array { elements } => elements.len(),
             value => panic!("expected array input, got {value:?}"),
         })
@@ -1933,7 +1808,6 @@ fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
 }
 
 #[test]
-/// Regression coverage for `extra_dynamic_lengths_are_rejected_after_expansion`.
 fn extra_dynamic_lengths_are_rejected_after_expansion() {
     let function = Function::parse("check(bytes[])").unwrap();
     let config = SymbolicConfig {
@@ -1948,7 +1822,6 @@ fn extra_dynamic_lengths_are_rejected_after_expansion() {
 }
 
 #[test]
-/// Regression coverage for `calldata_variant_expansion_respects_path_width`.
 fn calldata_variant_expansion_respects_path_width() {
     let function = Function::parse("check(bytes[])").unwrap();
     let config = SymbolicConfig {
@@ -1964,31 +1837,25 @@ fn calldata_variant_expansion_respects_path_width() {
 }
 
 #[test]
-/// Regression coverage for `symbolic_signextend_uses_sign_bit_ite`.
 fn symbolic_signextend_uses_sign_bit_ite() {
     assert_eq!(
-        signextend_word(U256::ZERO, SymWord::Expr(Expr::Var("word".to_string()))),
-        SymWord::Expr(Expr::Ite(
-            Box::new(BoolExpr::eq(
-                Expr::op(ExprOp::And, Expr::Var("word".to_string()), Expr::Const(U256::from(0x80))),
-                Expr::Const(U256::ZERO)
-            )),
-            Box::new(Expr::op(
-                ExprOp::And,
-                Expr::Var("word".to_string()),
-                Expr::Const(U256::from(0x7f))
-            )),
-            Box::new(Expr::op(
-                ExprOp::Or,
-                Expr::Var("word".to_string()),
-                Expr::Const(!U256::from(0x7f))
-            )),
-        ))
+        signextend_word(U256::ZERO, SymExpr::var("word")),
+        SymExpr::ite(
+            SymBoolExpr::eq(
+                SymExpr::op(
+                    SymExprOp::And,
+                    SymExpr::var("word"),
+                    SymExpr::constant(U256::from(0x80))
+                ),
+                SymExpr::constant(U256::ZERO),
+            ),
+            SymExpr::op(SymExprOp::And, SymExpr::var("word"), SymExpr::constant(U256::from(0x7f))),
+            SymExpr::op(SymExprOp::Or, SymExpr::var("word"), SymExpr::constant(!U256::from(0x7f))),
+        )
     );
 }
 
 #[test]
-/// Regression coverage for `parse_smt_hex_model_values`.
 fn parse_smt_hex_model_values() {
     let output = "\
 sat
@@ -2000,11 +1867,10 @@ sat
 
     let model = parse_model(output).unwrap();
 
-    assert_eq!(model.get("calldata_0"), Some(&U256::from(42)));
+    assert_eq!(model.get(&Symbol::intern("calldata_0")), Some(&U256::from(42)));
 }
 
 #[test]
-/// Regression coverage for `parse_smt_binary_model_values`.
 fn parse_smt_binary_model_values() {
     let output = "\
 sat
@@ -2016,11 +1882,10 @@ sat
 
     let model = parse_model(output).unwrap();
 
-    assert_eq!(model.get("calldata_0"), Some(&U256::from(42)));
+    assert_eq!(model.get(&Symbol::intern("calldata_0")), Some(&U256::from(42)));
 }
 
 #[test]
-/// Regression coverage for `parse_model_rejects_oversized_bitvector_literals`.
 fn parse_model_rejects_oversized_bitvector_literals() {
     let output =
         format!("sat\n((define-fun calldata_0 () (_ BitVec 257) #b{}))\n", "1".repeat(257));
@@ -2031,7 +1896,6 @@ fn parse_model_rejects_oversized_bitvector_literals() {
 }
 
 #[test]
-/// Regression coverage for `validate_solver_model_output_rejects_unsatisfied_models`.
 fn validate_solver_model_output_rejects_unsatisfied_models() {
     let output = "\
 sat
@@ -2041,7 +1905,7 @@ sat
 )
 ";
     let constraints =
-        vec![BoolExpr::eq(Expr::Var("calldata_0".to_string()), Expr::Const(U256::from(1)))];
+        vec![SymBoolExpr::eq(SymExpr::var("calldata_0"), SymExpr::constant(U256::from(1)))];
 
     let err = validate_solver_model_output(output, &constraints).unwrap_err();
 
@@ -2049,164 +1913,197 @@ sat
 }
 
 #[test]
-/// Regression coverage for `fallback_model_finds_wrapping_arithmetic_riddle_candidate`.
 fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
-    let var = Expr::Var("calldata_0".to_string());
+    let var = SymExpr::var("calldata_0");
     let msg_sender = U256::from_str_radix("1804c8ab1f12e6bbf3894d4083f33e07309d1f38", 16).unwrap();
     let constraints = vec![
-        BoolExpr::cmp(
-            BoolExprOp::Ult,
-            Expr::op(ExprOp::Mul, var.clone(), var.clone()),
-            Expr::Const(msg_sender),
+        SymBoolExpr::cmp(
+            SymBoolExprOp::Ult,
+            SymExpr::op(SymExprOp::Mul, var.clone(), var.clone()),
+            SymExpr::constant(msg_sender),
         ),
-        BoolExpr::cmp(BoolExprOp::Ugt, var.clone(), Expr::Const(msg_sender)),
-        BoolExpr::eq(
-            Expr::op(ExprOp::And, var.clone(), Expr::Const(U256::from(0x800))),
-            Expr::Const(U256::ZERO),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, var.clone(), SymExpr::constant(msg_sender)),
+        SymBoolExpr::eq(
+            SymExpr::op(SymExprOp::And, var.clone(), SymExpr::constant(U256::from(0x800))),
+            SymExpr::constant(U256::ZERO),
         )
         .not(),
-        BoolExpr::eq(
-            Expr::op(ExprOp::And, var, Expr::Const(U256::from(0x10000))),
-            Expr::Const(U256::ZERO),
+        SymBoolExpr::eq(
+            SymExpr::op(SymExprOp::And, var, SymExpr::constant(U256::from(0x10000))),
+            SymExpr::constant(U256::ZERO),
         ),
     ];
 
     let model = fallback_single_var_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
-/// Regression coverage for exact arithmetic expression simplification.
 fn expression_op_simplifies_exact_arithmetic_identities() {
-    let x = Expr::Var("x".to_string());
+    let x = SymExpr::var("x");
 
-    assert_eq!(Expr::op(ExprOp::Mul, x.clone(), Expr::Const(U256::ZERO)), Expr::Const(U256::ZERO));
-    assert_eq!(Expr::op(ExprOp::Mul, Expr::Const(U256::from(1)), x.clone()), x);
     assert_eq!(
-        Expr::op(ExprOp::UDiv, Expr::Var("x".to_string()), Expr::Const(U256::from(1))),
-        Expr::Var("x".to_string())
+        SymExpr::op(SymExprOp::Mul, x.clone(), SymExpr::constant(U256::ZERO)),
+        SymExpr::constant(U256::ZERO)
+    );
+    assert_eq!(SymExpr::op(SymExprOp::Mul, SymExpr::constant(U256::from(1)), x.clone()), x);
+    assert_eq!(
+        SymExpr::op(SymExprOp::UDiv, SymExpr::var("x"), SymExpr::constant(U256::from(1))),
+        SymExpr::var("x")
     );
     assert_eq!(
-        Expr::op(ExprOp::URem, Expr::Var("x".to_string()), Expr::Const(U256::from(1))),
-        Expr::Const(U256::ZERO)
+        SymExpr::op(SymExprOp::URem, SymExpr::var("x"), SymExpr::constant(U256::from(1))),
+        SymExpr::constant(U256::ZERO)
     );
     assert_eq!(
-        Expr::op(ExprOp::Sub, Expr::Var("x".to_string()), Expr::Var("x".to_string())),
-        Expr::Const(U256::ZERO)
+        SymExpr::op(SymExprOp::Sub, SymExpr::var("x"), SymExpr::var("x")),
+        SymExpr::constant(U256::ZERO)
     );
     assert_eq!(
-        Expr::op(ExprOp::And, Expr::Var("x".to_string()), Expr::Const(U256::MAX)),
-        Expr::Var("x".to_string())
+        SymExpr::op(SymExprOp::And, SymExpr::var("x"), SymExpr::constant(U256::MAX)),
+        SymExpr::var("x")
     );
-    assert_eq!(Expr::op(ExprOp::And, x.clone(), x.clone()), x);
+    assert_eq!(SymExpr::op(SymExprOp::And, x.clone(), x.clone()), x);
     assert_eq!(
-        Expr::op(
-            ExprOp::And,
-            Expr::op(
-                ExprOp::And,
-                Expr::Var("x".to_string()),
-                Expr::Const((U256::from(1) << 160) - U256::from(1))
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::op(
+                SymExprOp::And,
+                SymExpr::var("x"),
+                SymExpr::constant((U256::from(1) << 160) - U256::from(1))
             ),
-            Expr::Const((U256::from(1) << 160) - U256::from(1))
+            SymExpr::constant((U256::from(1) << 160) - U256::from(1))
         ),
-        Expr::op(
-            ExprOp::And,
-            Expr::Var("x".to_string()),
-            Expr::Const((U256::from(1) << 160) - U256::from(1))
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::var("x"),
+            SymExpr::constant((U256::from(1) << 160) - U256::from(1))
         )
     );
     assert_eq!(
-        Expr::op(ExprOp::Mul, Expr::Const(U256::from(6)), Expr::Const(U256::from(7))),
-        Expr::Const(U256::from(42))
+        SymExpr::op(
+            SymExprOp::Mul,
+            SymExpr::constant(U256::from(6)),
+            SymExpr::constant(U256::from(7))
+        ),
+        SymExpr::constant(U256::from(42))
     );
 }
 
 #[test]
-/// Regression coverage for reflexive comparison simplification.
+fn bool_word_equality_simplifies_to_condition() {
+    let condition = SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::var("x"), SymExpr::var("y"));
+    let word = SymExpr::from_bool(condition.clone());
+
+    assert_eq!(SymBoolExpr::eq(word.clone(), SymExpr::constant(U256::from(1))), condition);
+    assert_eq!(SymBoolExpr::eq(SymExpr::constant(U256::from(1)), word.clone()), condition);
+    assert_eq!(SymBoolExpr::eq(word.clone(), SymExpr::constant(U256::ZERO)), condition.not());
+    assert_eq!(
+        SymBoolExpr::eq(word, SymExpr::constant(U256::from(2))),
+        SymBoolExpr::constant(false)
+    );
+}
+
+#[test]
+fn inverted_bool_word_equality_simplifies_to_condition() {
+    let condition = SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::var("x"), SymExpr::var("y"));
+    let word = SymExpr::ite(
+        condition.clone(),
+        SymExpr::constant(U256::ZERO),
+        SymExpr::constant(U256::from(1)),
+    );
+
+    assert_eq!(
+        SymBoolExpr::eq(word.clone(), SymExpr::constant(U256::from(1))),
+        condition.clone().not()
+    );
+    assert_eq!(SymBoolExpr::eq(word, SymExpr::constant(U256::ZERO)), condition);
+}
+
+#[test]
 fn bool_comparison_folds_reflexive_operands() {
-    let x = || Expr::Var("x".to_string());
+    let x = || SymExpr::var("x");
 
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ult, x(), x()), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ugt, x(), x()), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, x(), x()), BoolExpr::Const(true));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, x(), x()), BoolExpr::Const(true));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Slt, x(), x()), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Sgt, x(), x()), BoolExpr::Const(false));
+    assert_eq!(SymBoolExpr::cmp(SymBoolExprOp::Ult, x(), x()), SymBoolExpr::constant(false));
+    assert_eq!(SymBoolExpr::cmp(SymBoolExprOp::Ugt, x(), x()), SymBoolExpr::constant(false));
+    assert_eq!(SymBoolExpr::cmp(SymBoolExprOp::Ule, x(), x()), SymBoolExpr::constant(true));
+    assert_eq!(SymBoolExpr::cmp(SymBoolExprOp::Uge, x(), x()), SymBoolExpr::constant(true));
+    assert_eq!(SymBoolExpr::cmp(SymBoolExprOp::Slt, x(), x()), SymBoolExpr::constant(false));
+    assert_eq!(SymBoolExpr::cmp(SymBoolExprOp::Sgt, x(), x()), SymBoolExpr::constant(false));
 }
 
 #[test]
-/// Regression coverage for unsigned min/max comparison simplification.
 fn bool_comparison_folds_unsigned_boundaries() {
-    let x = || Expr::Var("x".to_string());
+    let x = || SymExpr::var("x");
 
     assert_eq!(
-        BoolExpr::cmp(BoolExprOp::Ugt, Expr::Const(U256::ZERO), x()),
-        BoolExpr::Const(false)
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, SymExpr::constant(U256::ZERO), x()),
+        SymBoolExpr::constant(false)
     );
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, Expr::Const(U256::ZERO), x()), BoolExpr::Const(true));
     assert_eq!(
-        BoolExpr::cmp(BoolExprOp::Ult, x(), Expr::Const(U256::ZERO)),
-        BoolExpr::Const(false)
+        SymBoolExpr::cmp(SymBoolExprOp::Ule, SymExpr::constant(U256::ZERO), x()),
+        SymBoolExpr::constant(true)
     );
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, x(), Expr::Const(U256::ZERO)), BoolExpr::Const(true));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ult, Expr::Const(U256::MAX), x()), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Uge, Expr::Const(U256::MAX), x()), BoolExpr::Const(true));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ugt, x(), Expr::Const(U256::MAX)), BoolExpr::Const(false));
-    assert_eq!(BoolExpr::cmp(BoolExprOp::Ule, x(), Expr::Const(U256::MAX)), BoolExpr::Const(true));
+    assert_eq!(
+        SymBoolExpr::cmp(SymBoolExprOp::Ult, x(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::constant(false)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(SymBoolExprOp::Uge, x(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::constant(true)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(SymBoolExprOp::Ult, SymExpr::constant(U256::MAX), x()),
+        SymBoolExpr::constant(false)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(SymBoolExprOp::Uge, SymExpr::constant(U256::MAX), x()),
+        SymBoolExpr::constant(true)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, x(), SymExpr::constant(U256::MAX)),
+        SymBoolExpr::constant(false)
+    );
+    assert_eq!(
+        SymBoolExpr::cmp(SymBoolExprOp::Ule, x(), SymExpr::constant(U256::MAX)),
+        SymBoolExpr::constant(true)
+    );
 }
 
 #[test]
-/// Regression coverage for exact `ADDMOD`/`MULMOD` edge-case semantics.
 fn exact_modular_arithmetic_handles_zero_modulus_and_wide_intermediates() {
-    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::ZERO), U256::ZERO);
-    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::ZERO), U256::ZERO);
+    assert_eq!(U256::MAX.add_mod(U256::from(2), U256::ZERO), U256::ZERO);
+    assert_eq!(U256::MAX.mul_mod(U256::MAX, U256::ZERO), U256::ZERO);
 
-    assert_eq!(addmod_word(U256::MAX, U256::from(2), U256::MAX), U256::from(2));
-    assert_eq!(mulmod_word(U256::MAX, U256::MAX, U256::MAX), U256::ZERO);
+    assert_eq!(U256::MAX.add_mod(U256::from(2), U256::MAX), U256::from(2));
+    assert_eq!(U256::MAX.mul_mod(U256::MAX, U256::MAX), U256::ZERO);
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
     assert_eq!(
-        eval_expr(
-            &Expr::addmod(
-                Expr::Var("a".to_string()),
-                Expr::Const(U256::from(2)),
-                Expr::Const(U256::MAX)
-            ),
-            &model,
+        SymExpr::addmod(
+            SymExpr::var("a"),
+            SymExpr::constant(U256::from(2)),
+            SymExpr::constant(U256::MAX)
         )
+        .eval_model(&model)
         .unwrap(),
         U256::from(2)
     );
     assert_eq!(
-        eval_expr(
-            &Expr::mulmod(
-                Expr::Var("a".to_string()),
-                Expr::Var("a".to_string()),
-                Expr::Const(U256::MAX)
-            ),
-            &model,
-        )
-        .unwrap(),
+        SymExpr::mulmod(SymExpr::var("a"), SymExpr::var("a"), SymExpr::constant(U256::MAX))
+            .eval_model(&model)
+            .unwrap(),
         U256::ZERO
     );
 }
 
 #[test]
-/// Regression coverage for exact modular arithmetic SMT emission widening intermediates.
 fn exact_modular_arithmetic_smt_widens_before_modulo() {
-    let addmod = Expr::addmod(
-        Expr::Var("a".to_string()),
-        Expr::Const(U256::from(2)),
-        Expr::Var("m".to_string()),
-    )
-    .smt();
-    let mulmod = Expr::mulmod(
-        Expr::Var("a".to_string()),
-        Expr::Var("b".to_string()),
-        Expr::Var("m".to_string()),
-    )
-    .smt();
+    let addmod =
+        SymExpr::addmod(SymExpr::var("a"), SymExpr::constant(U256::from(2)), SymExpr::var("m"))
+            .smt();
+    let mulmod = SymExpr::mulmod(SymExpr::var("a"), SymExpr::var("b"), SymExpr::var("m")).smt();
 
     assert!(addmod.contains("((_ zero_extend 256) a)"));
     assert!(addmod.contains("bvadd"));
@@ -2217,15 +2114,14 @@ fn exact_modular_arithmetic_smt_widens_before_modulo() {
 }
 
 #[test]
-/// Regression coverage for rejecting old wrapping-intermediate false witnesses.
 fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
-    let constraints = vec![BoolExpr::eq(
-        Expr::addmod(
-            Expr::Var("a".to_string()),
-            Expr::Const(U256::from(2)),
-            Expr::Const(U256::MAX),
+    let constraints = vec![SymBoolExpr::eq(
+        SymExpr::addmod(
+            SymExpr::var("a"),
+            SymExpr::constant(U256::from(2)),
+            SymExpr::constant(U256::MAX),
         ),
-        Expr::Const(U256::from(1)),
+        SymExpr::constant(U256::from(1)),
     )];
     let output = format!("sat\n((define-fun a () (_ BitVec 256) #x{}))\n", "f".repeat(64));
 
@@ -2235,12 +2131,11 @@ fn exact_addmod_model_validation_rejects_wrapping_false_pass() {
 }
 
 #[test]
-/// Regression coverage for exact unsigned-division zero predicate normalization.
 fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
-    let numerator = Expr::Var("numerator".to_string());
-    let denominator = Expr::Var("denominator".to_string());
-    let div = Expr::op(ExprOp::UDiv, numerator, denominator);
-    let original = BoolExpr::eq(div, Expr::Const(U256::ZERO));
+    let numerator = SymExpr::var("numerator");
+    let denominator = SymExpr::var("denominator");
+    let div = SymExpr::op(SymExprOp::UDiv, numerator, denominator);
+    let original = SymBoolExpr::eq(div, SymExpr::constant(U256::ZERO));
     let normalized = normalize_bool_for_solver(original.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
@@ -2256,20 +2151,19 @@ fn solver_normalizes_udiv_zero_predicates_without_bvudiv() {
         let model =
             BTreeMap::from([("numerator".to_string(), num), ("denominator".to_string(), den)]);
         assert_eq!(
-            eval_bool_expr(&original, &model).unwrap(),
-            eval_bool_expr(&normalized, &model).unwrap(),
+            original.eval_model(&model).unwrap(),
+            normalized.eval_model(&model).unwrap(),
             "num={num} den={den}"
         );
     }
 }
 
 #[test]
-/// Regression coverage for exact unsigned-division nonzero predicate normalization.
 fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
-    let numerator = Expr::Var("numerator".to_string());
-    let denominator = Expr::Var("denominator".to_string());
-    let div = Expr::op(ExprOp::UDiv, numerator, denominator);
-    let original = BoolExpr::cmp(BoolExprOp::Ugt, div, Expr::Const(U256::ZERO));
+    let numerator = SymExpr::var("numerator");
+    let denominator = SymExpr::var("denominator");
+    let div = SymExpr::op(SymExprOp::UDiv, numerator, denominator);
+    let original = SymBoolExpr::cmp(SymBoolExprOp::Ugt, div, SymExpr::constant(U256::ZERO));
     let normalized = normalize_bool_for_solver(original.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
@@ -2285,24 +2179,23 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
         let model =
             BTreeMap::from([("numerator".to_string(), num), ("denominator".to_string(), den)]);
         assert_eq!(
-            eval_bool_expr(&original, &model).unwrap(),
-            eval_bool_expr(&normalized, &model).unwrap(),
+            original.eval_model(&model).unwrap(),
+            normalized.eval_model(&model).unwrap(),
             "num={num} den={den}"
         );
     }
 }
 
 #[test]
-/// Regression coverage for normalized constraint batches being compact and order-stable.
 fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
-    let a = BoolExpr::cmp(BoolExprOp::Ult, x.clone(), Expr::Const(U256::from(10)));
-    let b = BoolExpr::eq(y.clone(), Expr::Const(U256::from(3)));
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
+    let a = SymBoolExpr::cmp(SymBoolExprOp::Ult, x.clone(), SymExpr::constant(U256::from(10)));
+    let b = SymBoolExpr::eq(y.clone(), SymExpr::constant(U256::from(3)));
     let grouped = vec![
-        BoolExpr::And(vec![b.clone(), BoolExpr::Const(true), a.clone()]),
+        SymBoolExpr::raw_and(vec![b.clone(), SymBoolExpr::constant(true), a.clone()]),
         a.clone(),
-        BoolExpr::And(vec![b.clone()]),
+        SymBoolExpr::raw_and(vec![b.clone()]),
     ];
 
     let normalized = normalize_constraints_for_solver(&grouped);
@@ -2310,21 +2203,21 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     assert_eq!(normalized, vec![b, a]);
 
     let unsat = normalize_constraints_for_solver(&[
-        BoolExpr::eq(x, y),
-        BoolExpr::Const(false),
-        BoolExpr::Const(true),
+        SymBoolExpr::eq(x, y),
+        SymBoolExpr::constant(false),
+        SymBoolExpr::constant(true),
     ]);
-    assert_eq!(unsat, vec![BoolExpr::Const(false)]);
+    assert_eq!(unsat, vec![SymBoolExpr::constant(false)]);
 }
 
 #[test]
-/// Regression coverage for ERC4626-style share predicates losing `bvudiv` before SMT.
 fn solver_normalizes_erc4626_style_share_zero_predicate() {
-    let assets = Expr::Var("assets".to_string());
-    let supply = Expr::Var("supply".to_string());
-    let total_assets = Expr::Var("total_assets".to_string());
-    let shares = Expr::op(ExprOp::UDiv, Expr::op(ExprOp::Mul, assets, supply), total_assets);
-    let constraints = vec![BoolExpr::eq(shares, Expr::Const(U256::ZERO))];
+    let assets = SymExpr::var("assets");
+    let supply = SymExpr::var("supply");
+    let total_assets = SymExpr::var("total_assets");
+    let shares =
+        SymExpr::op(SymExprOp::UDiv, SymExpr::op(SymExprOp::Mul, assets, supply), total_assets);
+    let constraints = vec![SymBoolExpr::eq(shares, SymExpr::constant(U256::ZERO))];
     let normalized = normalize_constraints_for_solver(&constraints);
 
     assert_eq!(normalized.len(), 1);
@@ -2333,301 +2226,287 @@ fn solver_normalizes_erc4626_style_share_zero_predicate() {
 }
 
 #[test]
-/// Regression coverage for rebuilding OR-ed extracted bytes before SMT emission.
 fn solver_rebuilds_word_from_extracted_byte_terms() {
     let masked =
-        Expr::op(ExprOp::And, Expr::Var("word".to_string()), Expr::Const(U256::from(u64::MAX)));
-    let rebuilt = normalize_expr_for_solver(
-        word_from_bytes(word_bytes(SymWord::Expr(masked.clone()))).into_expr(),
-    );
+        SymExpr::op(SymExprOp::And, SymExpr::var("word"), SymExpr::constant(U256::from(u64::MAX)));
+    let rebuilt = normalize_expr_for_solver(SymExpr::from_bytes(masked.clone().into_bytes()));
 
     assert_eq!(rebuilt, normalize_expr_for_solver(masked));
 }
 
-fn checked_mul_guard_word(zero_operand: &Expr, expected: &Expr) -> Expr {
-    let operand_is_zero = BoolExpr::eq(zero_operand.clone(), Expr::Const(U256::ZERO));
-    let checked_product = Expr::Ite(
-        Box::new(operand_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(
-            ExprOp::UDiv,
-            Expr::op(ExprOp::Mul, zero_operand.clone(), expected.clone()),
+fn checked_mul_guard_word(zero_operand: &SymExpr, expected: &SymExpr) -> SymExpr {
+    let operand_is_zero = SymBoolExpr::eq(zero_operand.clone(), SymExpr::constant(U256::ZERO));
+    let checked_product = SymExpr::ite(
+        operand_is_zero.clone(),
+        SymExpr::constant(U256::ZERO),
+        SymExpr::op(
+            SymExprOp::UDiv,
+            SymExpr::op(SymExprOp::Mul, zero_operand.clone(), expected.clone()),
             zero_operand.clone(),
-        )),
+        ),
     );
 
-    Expr::op(
-        ExprOp::Or,
-        SymWord::from_bool(operand_is_zero).into_expr(),
-        SymWord::from_bool(BoolExpr::eq(checked_product, expected.clone())).into_expr(),
+    SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::from_bool(operand_is_zero),
+        SymExpr::from_bool(SymBoolExpr::eq(checked_product, expected.clone())),
     )
 }
 
 #[test]
-/// Regression coverage for Solidity checked-mul guard tautology normalization.
 fn solver_normalizes_checked_mul_guard_for_bounded_operands() {
-    let a = Expr::op(ExprOp::And, Expr::Var("a".to_string()), Expr::Const(U256::from(u64::MAX)));
-    let b = Expr::op(ExprOp::And, Expr::Var("b".to_string()), Expr::Const(U256::from(u64::MAX)));
+    let a = SymExpr::op(SymExprOp::And, SymExpr::var("a"), SymExpr::constant(U256::from(u64::MAX)));
+    let b = SymExpr::op(SymExprOp::And, SymExpr::var("b"), SymExpr::constant(U256::from(u64::MAX)));
     let guard = checked_mul_guard_word(&a, &b);
 
     assert_eq!(
-        normalize_bool_for_solver(BoolExpr::eq(guard, Expr::Const(U256::ZERO))),
-        BoolExpr::Const(false)
+        normalize_bool_for_solver(SymBoolExpr::eq(guard, SymExpr::constant(U256::ZERO))),
+        SymBoolExpr::constant(false)
     );
 }
 
 #[test]
-/// Regression coverage for path-bounded Solidity checked-mul guard tautology normalization.
 fn solver_normalizes_checked_mul_guard_from_path_upper_bound() {
-    let a = Expr::Var("a".to_string());
-    let factor = Expr::Const(U256::from(1_000_000_000_000_000_000u128));
-    let guard_is_false = BoolExpr::eq(checked_mul_guard_word(&a, &factor), Expr::Const(U256::ZERO));
+    let a = SymExpr::var("a");
+    let factor = SymExpr::constant(U256::from(1_000_000_000_000_000_000u128));
+    let guard_is_false =
+        SymBoolExpr::eq(checked_mul_guard_word(&a, &factor), SymExpr::constant(U256::ZERO));
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ule, a, Expr::Const(U256::from(1000))),
+        SymBoolExpr::cmp(SymBoolExprOp::Ule, a, SymExpr::constant(U256::from(1000))),
         guard_is_false.clone(),
     ];
     let normalized = normalize_constraints_for_solver(&constraints);
 
-    assert_eq!(normalized, vec![BoolExpr::Const(false)]);
+    assert_eq!(normalized, vec![SymBoolExpr::constant(false)]);
 
     for value in [U256::ZERO, U256::from(1), U256::from(1000)] {
         let model = BTreeMap::from([("a".to_string(), value)]);
-        assert!(!eval_bool_expr(&guard_is_false, &model).unwrap());
+        assert!(!guard_is_false.eval_model(&model).unwrap());
     }
 }
 
 #[test]
-/// Regression coverage for guarded self-division boolean tautology normalization.
 fn solver_normalizes_guarded_self_division_guard() {
-    let a = Expr::Var("a".to_string());
-    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_quotient = Expr::Ite(
-        Box::new(a_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
+    let a = SymExpr::var("a");
+    let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
+    let checked_quotient = SymExpr::ite(
+        a_is_zero.clone(),
+        SymExpr::constant(U256::ZERO),
+        SymExpr::op(SymExprOp::UDiv, a.clone(), a),
     );
-    let guard = Expr::op(
-        ExprOp::Or,
-        SymWord::from_bool(a_is_zero).into_expr(),
-        SymWord::from_bool(BoolExpr::eq(checked_quotient, Expr::Const(U256::from(1)))).into_expr(),
+    let guard = SymExpr::op(
+        SymExprOp::Or,
+        SymExpr::from_bool(a_is_zero),
+        SymExpr::from_bool(SymBoolExpr::eq(checked_quotient, SymExpr::constant(U256::from(1)))),
     );
-    let original = BoolExpr::eq(guard, Expr::Const(U256::ZERO));
+    let original = SymBoolExpr::eq(guard, SymExpr::constant(U256::ZERO));
     let normalized = normalize_bool_for_solver(original.clone());
 
-    assert_eq!(normalized, BoolExpr::Const(false));
+    assert_eq!(normalized, SymBoolExpr::constant(false));
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
-        assert!(!eval_bool_expr(&original, &model).unwrap());
+        assert!(!original.eval_model(&model).unwrap());
     }
 }
 
 #[test]
-/// Regression coverage for guarded self-division word normalization.
 fn solver_normalizes_guarded_self_division_word() {
-    let a = Expr::Var("a".to_string());
-    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_quotient = Expr::Ite(
-        Box::new(a_is_zero.clone()),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
+    let a = SymExpr::var("a");
+    let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
+    let checked_quotient = SymExpr::ite(
+        a_is_zero.clone(),
+        SymExpr::constant(U256::ZERO),
+        SymExpr::op(SymExprOp::UDiv, a.clone(), a),
     );
     let normalized = normalize_expr_for_solver(checked_quotient.clone());
 
     assert!(!normalized.smt().contains("bvudiv"));
     assert_eq!(
         normalized,
-        Expr::Ite(
-            Box::new(a_is_zero.not()),
-            Box::new(Expr::Const(U256::from(1))),
-            Box::new(Expr::Const(U256::ZERO)),
+        SymExpr::ite(
+            a_is_zero.not(),
+            SymExpr::constant(U256::from(1)),
+            SymExpr::constant(U256::ZERO)
         )
     );
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
         assert_eq!(
-            eval_expr(&checked_quotient, &model).unwrap(),
-            eval_expr(&normalized, &model).unwrap()
+            checked_quotient.eval_model(&model).unwrap(),
+            normalized.eval_model(&model).unwrap()
         );
     }
 }
 
 #[test]
-/// Regression coverage for preserving mirrored zero-guarded self-division semantics.
 fn solver_does_not_invert_guarded_zero_self_division() {
-    let a = Expr::Var("a".to_string());
-    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let mirrored = Expr::Ite(
-        Box::new(a_is_zero),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
-        Box::new(Expr::Const(U256::ZERO)),
+    let a = SymExpr::var("a");
+    let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
+    let mirrored = SymExpr::ite(
+        a_is_zero,
+        SymExpr::op(SymExprOp::UDiv, a.clone(), a),
+        SymExpr::constant(U256::ZERO),
     );
     let normalized = normalize_expr_for_solver(mirrored.clone());
 
     for value in [U256::ZERO, U256::from(1), U256::from(2), U256::MAX] {
         let model = BTreeMap::from([("a".to_string(), value)]);
-        assert_eq!(eval_expr(&mirrored, &model).unwrap(), eval_expr(&normalized, &model).unwrap());
+        assert_eq!(mirrored.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
     }
 }
 
 #[test]
-/// Regression coverage for guarded self-division overflow-guard normalization.
 fn solver_normalizes_guarded_self_division_add_overflow_guard() {
-    let a = Expr::Var("a".to_string());
-    let a_is_zero = BoolExpr::eq(a.clone(), Expr::Const(U256::ZERO));
-    let checked_quotient = Expr::Ite(
-        Box::new(a_is_zero),
-        Box::new(Expr::Const(U256::ZERO)),
-        Box::new(Expr::op(ExprOp::UDiv, a.clone(), a)),
+    let a = SymExpr::var("a");
+    let a_is_zero = SymBoolExpr::eq(a.clone(), SymExpr::constant(U256::ZERO));
+    let checked_quotient = SymExpr::ite(
+        a_is_zero,
+        SymExpr::constant(U256::ZERO),
+        SymExpr::op(SymExprOp::UDiv, a.clone(), a),
     );
 
     assert_eq!(
-        normalize_bool_for_solver(BoolExpr::cmp(
-            BoolExprOp::Ugt,
+        normalize_bool_for_solver(SymBoolExpr::cmp(
+            SymBoolExprOp::Ugt,
             checked_quotient.clone(),
-            Expr::op(ExprOp::Add, Expr::Const(U256::from(1)), checked_quotient),
+            SymExpr::op(SymExprOp::Add, SymExpr::constant(U256::from(1)), checked_quotient),
         )),
-        BoolExpr::Const(false)
+        SymBoolExpr::constant(false)
     );
 }
 
 #[test]
-/// Regression coverage for checked-mul guards proven by normalized path bounds.
 fn solver_normalizes_checked_mul_guard_with_context_bound() {
-    let a = Expr::Var("a".to_string());
-    let scale = Expr::Const(U256::from(1_000_000_000_000_000_000u128));
+    let a = SymExpr::var("a");
+    let scale = SymExpr::constant(U256::from(1_000_000_000_000_000_000u128));
     let guard = checked_mul_guard_word(&a, &scale);
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, a.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, a, Expr::Const(U256::from(1000))).not(),
-        BoolExpr::eq(guard, Expr::Const(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, a.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, a, SymExpr::constant(U256::from(1000))).not(),
+        SymBoolExpr::eq(guard, SymExpr::constant(U256::ZERO)),
     ];
 
-    assert_eq!(normalize_constraints_for_solver(&constraints), vec![BoolExpr::Const(false)]);
+    assert_eq!(normalize_constraints_for_solver(&constraints), vec![SymBoolExpr::constant(false)]);
 }
 
 #[test]
-/// Regression coverage for preserving checked-mul guards without a useful path bound.
 fn solver_does_not_context_normalize_checked_mul_guard_without_tight_bound() {
-    let a = Expr::Var("a".to_string());
-    let scale = Expr::Const(U256::from(1_000_000_000_000_000_000u128));
-    let guard_is_zero = BoolExpr::eq(checked_mul_guard_word(&a, &scale), Expr::Const(U256::ZERO));
+    let a = SymExpr::var("a");
+    let scale = SymExpr::constant(U256::from(1_000_000_000_000_000_000u128));
+    let guard_is_zero =
+        SymBoolExpr::eq(checked_mul_guard_word(&a, &scale), SymExpr::constant(U256::ZERO));
 
     assert_ne!(
         normalize_constraints_for_solver(std::slice::from_ref(&guard_is_zero)),
-        vec![BoolExpr::Const(false)]
+        vec![SymBoolExpr::constant(false)]
     );
     assert_ne!(
         normalize_constraints_for_solver(&[
-            BoolExpr::cmp(BoolExprOp::Ule, a, Expr::Const(U256::MAX)),
+            SymBoolExpr::cmp(SymBoolExprOp::Ule, a, SymExpr::constant(U256::MAX)),
             guard_is_zero.clone(),
         ]),
-        vec![BoolExpr::Const(false)]
+        vec![SymBoolExpr::constant(false)]
     );
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
-    assert!(eval_bool_expr(&guard_is_zero, &model).unwrap());
+    assert!(guard_is_zero.eval_model(&model).unwrap());
 }
 
 #[test]
-/// Regression coverage for preserving unbounded checked-mul overflow guards.
 fn solver_does_not_normalize_unbounded_checked_mul_guard_to_tautology() {
-    let a = Expr::Var("a".to_string());
-    let b = Expr::Var("b".to_string());
-    let original = BoolExpr::eq(checked_mul_guard_word(&a, &b), Expr::Const(U256::ZERO));
+    let a = SymExpr::var("a");
+    let b = SymExpr::var("b");
+    let original = SymBoolExpr::eq(checked_mul_guard_word(&a, &b), SymExpr::constant(U256::ZERO));
     let normalized = normalize_bool_for_solver(original.clone());
 
-    assert_ne!(normalized, BoolExpr::Const(false));
+    assert_ne!(normalized, SymBoolExpr::constant(false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(2))]);
-    assert!(eval_bool_expr(&original, &model).unwrap());
-    assert_eq!(
-        eval_bool_expr(&original, &model).unwrap(),
-        eval_bool_expr(&normalized, &model).unwrap()
-    );
+    assert!(original.eval_model(&model).unwrap());
+    assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
 }
 
 #[test]
-/// Regression coverage for preserving path-bounded checked-mul guards with loose bounds.
 fn solver_does_not_normalize_checked_mul_guard_when_path_bound_can_overflow() {
-    let a = Expr::Var("a".to_string());
-    let factor = Expr::Const(U256::from(2));
-    let original = BoolExpr::eq(checked_mul_guard_word(&a, &factor), Expr::Const(U256::ZERO));
+    let a = SymExpr::var("a");
+    let factor = SymExpr::constant(U256::from(2));
+    let original =
+        SymBoolExpr::eq(checked_mul_guard_word(&a, &factor), SymExpr::constant(U256::ZERO));
     let normalized = normalize_constraints_for_solver(&[
-        BoolExpr::cmp(BoolExprOp::Ule, a, Expr::Const(U256::MAX)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ule, a, SymExpr::constant(U256::MAX)),
         original.clone(),
     ]);
 
-    assert!(!matches!(normalized.as_slice(), [BoolExpr::Const(false)]));
+    assert!(!matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX)]);
-    assert!(eval_bool_expr(&original, &model).unwrap());
-    assert!(normalized.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(original.eval_model(&model).unwrap());
+    assert!(normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
-/// Regression coverage for checked-add overflow guards over bounded expressions.
 fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
-    let a = Expr::op(ExprOp::And, Expr::Var("a".to_string()), Expr::Const(U256::from(u64::MAX)));
-    let b = Expr::op(
-        ExprOp::UDiv,
-        Expr::op(
-            ExprOp::Mul,
-            Expr::op(ExprOp::And, Expr::Var("b".to_string()), Expr::Const(U256::from(u64::MAX))),
+    let a = SymExpr::op(SymExprOp::And, SymExpr::var("a"), SymExpr::constant(U256::from(u64::MAX)));
+    let b = SymExpr::op(
+        SymExprOp::UDiv,
+        SymExpr::op(
+            SymExprOp::Mul,
+            SymExpr::op(SymExprOp::And, SymExpr::var("b"), SymExpr::constant(U256::from(u64::MAX))),
             a.clone(),
         ),
-        Expr::op(ExprOp::And, Expr::Var("denominator".to_string()), Expr::Const(U256::MAX >> 64)),
+        SymExpr::op(
+            SymExprOp::And,
+            SymExpr::var("denominator"),
+            SymExpr::constant(U256::MAX >> 64),
+        ),
     );
 
     assert_eq!(
-        normalize_bool_for_solver(BoolExpr::cmp(
-            BoolExprOp::Ugt,
+        normalize_bool_for_solver(SymBoolExpr::cmp(
+            SymBoolExprOp::Ugt,
             a.clone(),
-            Expr::op(ExprOp::Add, a, b),
+            SymExpr::op(SymExprOp::Add, a, b),
         )),
-        BoolExpr::Const(false)
+        SymBoolExpr::constant(false)
     );
 }
 
 #[test]
-/// Regression coverage for preserving unbounded checked-add overflow guards.
 fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
-    let a = Expr::Var("a".to_string());
-    let b = Expr::Var("b".to_string());
-    let original = BoolExpr::cmp(BoolExprOp::Ugt, a.clone(), Expr::op(ExprOp::Add, a, b));
+    let a = SymExpr::var("a");
+    let b = SymExpr::var("b");
+    let original =
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, a.clone(), SymExpr::op(SymExprOp::Add, a, b));
     let normalized = normalize_bool_for_solver(original.clone());
 
-    assert_ne!(normalized, BoolExpr::Const(false));
+    assert_ne!(normalized, SymBoolExpr::constant(false));
 
     let model = BTreeMap::from([("a".to_string(), U256::MAX), ("b".to_string(), U256::from(1))]);
-    assert!(eval_bool_expr(&original, &model).unwrap());
-    assert_eq!(
-        eval_bool_expr(&original, &model).unwrap(),
-        eval_bool_expr(&normalized, &model).unwrap()
-    );
+    assert!(original.eval_model(&model).unwrap());
+    assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
 }
 
 #[test]
-/// Regression coverage for monotonic product contradictions over bounded operands.
 fn solver_detects_monotonic_product_contradiction() {
     let ink =
-        Expr::op(ExprOp::And, Expr::Var("ink".to_string()), Expr::Const(U256::from(u64::MAX)));
+        SymExpr::op(SymExprOp::And, SymExpr::var("ink"), SymExpr::constant(U256::from(u64::MAX)));
     let art =
-        Expr::op(ExprOp::And, Expr::Var("art".to_string()), Expr::Const(U256::from(u64::MAX)));
+        SymExpr::op(SymExprOp::And, SymExpr::var("art"), SymExpr::constant(U256::from(u64::MAX)));
     let spot =
-        Expr::op(ExprOp::And, Expr::Var("spot".to_string()), Expr::Const(U256::from(u64::MAX)));
+        SymExpr::op(SymExprOp::And, SymExpr::var("spot"), SymExpr::constant(U256::from(u64::MAX)));
     let rate =
-        Expr::op(ExprOp::And, Expr::Var("rate".to_string()), Expr::Const(U256::from(u64::MAX)));
+        SymExpr::op(SymExprOp::And, SymExpr::var("rate"), SymExpr::constant(U256::from(u64::MAX)));
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, ink.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, art.clone(), ink.clone()),
-        BoolExpr::cmp(BoolExprOp::Ugt, spot.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, rate.clone(), spot.clone()),
-        BoolExpr::cmp(
-            BoolExprOp::Ult,
-            Expr::op(ExprOp::Mul, ink, spot),
-            Expr::op(ExprOp::Mul, art, rate),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, ink.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, art.clone(), ink.clone()),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, spot.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, rate.clone(), spot.clone()),
+        SymBoolExpr::cmp(
+            SymBoolExprOp::Ult,
+            SymExpr::op(SymExprOp::Mul, ink, spot),
+            SymExpr::op(SymExprOp::Mul, art, rate),
         )
         .not(),
     ];
@@ -2636,21 +2515,20 @@ fn solver_detects_monotonic_product_contradiction() {
 }
 
 #[test]
-/// Regression coverage for preserving satisfiable wrapping product inequalities.
 fn solver_does_not_prune_wrapping_product_inequality() {
-    let ink = Expr::Var("ink".to_string());
-    let art = Expr::Var("art".to_string());
-    let spot = Expr::Var("spot".to_string());
-    let rate = Expr::Var("rate".to_string());
+    let ink = SymExpr::var("ink");
+    let art = SymExpr::var("art");
+    let spot = SymExpr::var("spot");
+    let rate = SymExpr::var("rate");
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, ink.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, art.clone(), ink.clone()),
-        BoolExpr::cmp(BoolExprOp::Ugt, spot.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, rate.clone(), spot.clone()),
-        BoolExpr::cmp(
-            BoolExprOp::Ult,
-            Expr::op(ExprOp::Mul, ink, spot),
-            Expr::op(ExprOp::Mul, art, rate),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, ink.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, art.clone(), ink.clone()),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, spot.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, rate.clone(), spot.clone()),
+        SymBoolExpr::cmp(
+            SymBoolExprOp::Ult,
+            SymExpr::op(SymExprOp::Mul, ink, spot),
+            SymExpr::op(SymExprOp::Mul, art, rate),
         )
         .not(),
     ];
@@ -2663,117 +2541,120 @@ fn solver_does_not_prune_wrapping_product_inequality() {
         ("art".to_string(), U256::MAX - U256::from(1)),
         ("rate".to_string(), U256::MAX - U256::from(1)),
     ]);
-    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
-/// Regression coverage for detecting hard nonlinear arithmetic.
 fn hard_arithmetic_detection_flags_symbolic_mul_div_and_mod() {
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
 
-    assert!(expr_contains_hard_arith(&Expr::op(ExprOp::Mul, x.clone(), y.clone())));
-    assert!(expr_contains_hard_arith(&Expr::op(ExprOp::UDiv, x.clone(), y.clone())));
-    assert!(expr_contains_hard_arith(&Expr::op(ExprOp::URem, x.clone(), y)));
-    assert!(!expr_contains_hard_arith(&Expr::op(ExprOp::Mul, x, Expr::Const(U256::from(1)))));
+    assert!(SymExpr::op(SymExprOp::Mul, x.clone(), y.clone()).contains_hard_arith());
+    assert!(SymExpr::op(SymExprOp::UDiv, x.clone(), y.clone()).contains_hard_arith());
+    assert!(SymExpr::op(SymExprOp::URem, x.clone(), y).contains_hard_arith());
+    assert!(
+        !SymExpr::op(SymExprOp::Mul, x, SymExpr::constant(U256::from(1))).contains_hard_arith()
+    );
 }
 
 #[test]
-/// Regression coverage for multi-variable hard arithmetic witness search.
 fn hard_arithmetic_fallback_finds_multi_variable_candidate() {
-    let first = Expr::Var("first".to_string());
-    let donation = Expr::Var("donation".to_string());
-    let second = Expr::Var("second".to_string());
-    let denominator = Expr::op(ExprOp::Add, first.clone(), donation.clone());
-    let shares =
-        Expr::op(ExprOp::UDiv, Expr::op(ExprOp::Mul, second.clone(), first.clone()), denominator);
+    let first = SymExpr::var("first");
+    let donation = SymExpr::var("donation");
+    let second = SymExpr::var("second");
+    let denominator = SymExpr::op(SymExprOp::Add, first.clone(), donation.clone());
+    let shares = SymExpr::op(
+        SymExprOp::UDiv,
+        SymExpr::op(SymExprOp::Mul, second.clone(), first.clone()),
+        denominator,
+    );
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, first, Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, donation, Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, second, Expr::Const(U256::ZERO)),
-        BoolExpr::eq(shares, Expr::Const(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, first, SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, donation, SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, second, SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::eq(shares, SymExpr::constant(U256::ZERO)),
     ];
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
-/// Regression coverage for MiniVat-style wrapping product witness search.
 fn hard_arithmetic_fallback_finds_wrapping_product_inequality_candidate() {
-    let ink = Expr::Var("ink".to_string());
-    let art = Expr::Var("art".to_string());
-    let spot = Expr::Var("spot".to_string());
-    let rate = Expr::Var("rate".to_string());
+    let ink = SymExpr::var("ink");
+    let art = SymExpr::var("art");
+    let spot = SymExpr::var("spot");
+    let rate = SymExpr::var("rate");
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, ink.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, art.clone(), ink.clone()),
-        BoolExpr::cmp(BoolExprOp::Ugt, spot.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, rate.clone(), spot.clone()),
-        BoolExpr::cmp(
-            BoolExprOp::Ult,
-            Expr::op(ExprOp::Mul, ink, spot),
-            Expr::op(ExprOp::Mul, art, rate),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, ink.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, art.clone(), ink.clone()),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, spot.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, rate.clone(), spot.clone()),
+        SymBoolExpr::cmp(
+            SymBoolExprOp::Ult,
+            SymExpr::op(SymExprOp::Mul, ink, spot),
+            SymExpr::op(SymExprOp::Mul, art, rate),
         )
         .not(),
     ];
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
-/// Regression coverage for solver-hard exact `MULMOD` witness search.
 fn hard_arithmetic_fallback_finds_exact_mulmod_wide_intermediate_candidate() {
-    let a = Expr::Var("a".to_string());
+    let a = SymExpr::var("a");
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, a.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::eq(Expr::mulmod(a.clone(), a, Expr::Const(U256::MAX)), Expr::Const(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, a.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::eq(
+            SymExpr::mulmod(a.clone(), a, SymExpr::constant(U256::MAX)),
+            SymExpr::constant(U256::ZERO),
+        ),
     ];
 
     let model = hard_arith_fallback_model(&constraints).unwrap();
 
-    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
-    assert_eq!(model.get("a"), Some(&U256::MAX));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+    assert_eq!(model.get(&Symbol::intern("a")), Some(&U256::MAX));
 }
 
 #[test]
-/// Regression coverage for rejecting partial hard-arithmetic fallback models.
 fn hard_arithmetic_fallback_rejects_unvalidated_partial_model() {
-    let a = Expr::Var("a".to_string());
-    let b = Expr::Var("b".to_string());
-    let c = Expr::Var("c".to_string());
-    let d = Expr::Var("d".to_string());
-    let e = Expr::Var("e".to_string());
-    let f = Expr::Var("f".to_string());
+    let a = SymExpr::var("a");
+    let b = SymExpr::var("b");
+    let c = SymExpr::var("c");
+    let d = SymExpr::var("d");
+    let e = SymExpr::var("e");
+    let f = SymExpr::var("f");
     let constraints = vec![
-        BoolExpr::eq(Expr::op(ExprOp::Mul, a, b), Expr::Const(U256::from(1))),
-        BoolExpr::eq(c, Expr::Const(U256::from(3))),
-        BoolExpr::eq(d, Expr::Const(U256::from(4))),
-        BoolExpr::eq(e, Expr::Const(U256::from(5))),
-        BoolExpr::eq(f, Expr::Const(U256::from(6))),
+        SymBoolExpr::eq(SymExpr::op(SymExprOp::Mul, a, b), SymExpr::constant(U256::from(1))),
+        SymBoolExpr::eq(c, SymExpr::constant(U256::from(3))),
+        SymBoolExpr::eq(d, SymExpr::constant(U256::from(4))),
+        SymBoolExpr::eq(e, SymExpr::constant(U256::from(5))),
+        SymBoolExpr::eq(f, SymExpr::constant(U256::from(6))),
     ];
 
     let Some(model) = hard_arith_fallback_model(&constraints) else { return };
 
-    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
 }
 
 #[test]
-/// Regression coverage for local hard arithmetic search avoiding unsupported hash symbols.
 fn hard_arithmetic_fallback_skips_symbolic_hashes() {
-    let x = Expr::Var("x".to_string());
-    let hash = Expr::Hash { name: "hash".to_string(), algorithm: "sha256", bytes: vec![x.clone()] };
-    let constraints =
-        vec![BoolExpr::eq(Expr::op(ExprOp::Mul, x, hash), Expr::Const(U256::from(1)))];
+    let x = SymExpr::var("x");
+    let hash = SymExpr::hash_symbol(Symbol::intern("hash"), "sha256", vec![x.clone()]);
+    let constraints = vec![SymBoolExpr::eq(
+        SymExpr::op(SymExprOp::Mul, x, hash),
+        SymExpr::constant(U256::from(1)),
+    )];
 
     assert!(hard_arith_fallback_model(&constraints).is_none());
 }
 
 #[test]
-/// Regression coverage for `concrete_dynamic_array_return_uses_raw_abi_encoding`.
 fn concrete_dynamic_array_return_uses_raw_abi_encoding() {
     let return_data = abi_concrete_value_return(DynSolValue::Array(vec![
         DynSolValue::Uint(U256::from(1), 256),
@@ -2792,7 +2673,6 @@ fn concrete_dynamic_array_return_uses_raw_abi_encoding() {
 }
 
 #[test]
-/// Regression coverage for `query_limit_is_enforced_before_spawning_solver`.
 fn query_limit_is_enforced_before_spawning_solver() {
     let mut solver = SmtLibSubprocessSolver::new(
         Ok(vec![SolverCommand::new(vec!["missing-z3".to_string()], false).unwrap()]),
@@ -2808,7 +2688,6 @@ fn query_limit_is_enforced_before_spawning_solver() {
 }
 
 #[test]
-/// Regression coverage for `known_solver_names_resolve_to_smtlib_commands`.
 fn known_solver_names_resolve_to_smtlib_commands() {
     for solver in BUILTIN_SYMBOLIC_SOLVERS {
         assert!(symbolic_solver_is_builtin(solver));
@@ -2825,9 +2704,9 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "yices-smt2");
-    assert_eq!(command.args, vec!["--bvconst-in-decimal"]);
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "yices-smt2");
+    assert_eq!(command.args(), &["--bvconst-in-decimal".to_string()]);
+    assert!(!command.smt_timeout());
 
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "cvc5-int".to_string(),
@@ -2836,9 +2715,9 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "cvc5");
-    assert!(command.args.contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "cvc5");
+    assert!(command.args().contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
+    assert!(!command.smt_timeout());
 
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "bitwuzla-abs".to_string(),
@@ -2847,13 +2726,12 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "bitwuzla");
-    assert_eq!(command.args, vec!["--produce-models", "--abstraction"]);
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "bitwuzla");
+    assert_eq!(command.args(), &["--produce-models".to_string(), "--abstraction".to_string()]);
+    assert!(!command.smt_timeout());
 }
 
 #[test]
-/// Regression coverage for `solver_command_overrides_solver_name`.
 fn solver_command_overrides_solver_name() {
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "z3".to_string(),
@@ -2865,13 +2743,12 @@ fn solver_command_overrides_solver_name() {
     let command = &commands[0];
 
     assert_eq!(commands.len(), 1);
-    assert_eq!(command.program, "custom-solver");
-    assert_eq!(command.args, vec!["--flag", "two words"]);
-    assert!(!command.smt_timeout);
+    assert_eq!(command.program(), "custom-solver");
+    assert_eq!(command.args(), &["--flag".to_string(), "two words".to_string()]);
+    assert!(!command.smt_timeout());
 }
 
 #[test]
-/// Regression coverage for `split_solver_command_preserves_empty_quoted_args`.
 fn split_solver_command_preserves_empty_quoted_args() {
     let parts = split_solver_command(r#"custom-solver "" arg ''"#).unwrap();
 
@@ -2879,7 +2756,6 @@ fn split_solver_command_preserves_empty_quoted_args() {
 }
 
 #[test]
-/// Regression coverage for `split_solver_command_rejects_unterminated_double_quote`.
 fn split_solver_command_rejects_unterminated_double_quote() {
     let err = split_solver_command(r#"z3 "unterm"#).unwrap_err();
 
@@ -2891,7 +2767,6 @@ fn split_solver_command_rejects_unterminated_double_quote() {
 }
 
 #[test]
-/// Regression coverage for `split_solver_command_rejects_unterminated_single_quote`.
 fn split_solver_command_rejects_unterminated_single_quote() {
     let err = split_solver_command("z3 'unterm").unwrap_err();
 
@@ -2903,7 +2778,6 @@ fn split_solver_command_rejects_unterminated_single_quote() {
 }
 
 #[test]
-/// Regression coverage for `custom_solver_names_remain_z3_compatible`.
 fn custom_solver_names_remain_z3_compatible() {
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "/opt/solvers/z3-nightly".to_string(),
@@ -2912,13 +2786,12 @@ fn custom_solver_names_remain_z3_compatible() {
     .unwrap();
     let command = &commands[0];
 
-    assert_eq!(command.program, "/opt/solvers/z3-nightly");
-    assert_eq!(command.args, vec!["-in", "-smt2"]);
-    assert!(command.smt_timeout);
+    assert_eq!(command.program(), "/opt/solvers/z3-nightly");
+    assert_eq!(command.args(), &["-in".to_string(), "-smt2".to_string()]);
+    assert!(command.smt_timeout());
 }
 
 #[test]
-/// Regression coverage for `solver_portfolio_resolves_parallel_commands`.
 fn solver_portfolio_resolves_parallel_commands() {
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "z3".to_string(),
@@ -2933,18 +2806,17 @@ fn solver_portfolio_resolves_parallel_commands() {
     .unwrap();
 
     assert_eq!(commands.len(), 3);
-    assert_eq!(commands[0].program, "z3");
-    assert_eq!(commands[0].args, vec!["-in", "-smt2"]);
-    assert!(commands[0].smt_timeout);
-    assert_eq!(commands[1].program, "cvc5");
-    assert!(commands[1].args.contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
-    assert_eq!(commands[2].program, "custom-wrapper");
-    assert_eq!(commands[2].args, vec!["--stdin"]);
-    assert!(!commands[2].smt_timeout);
+    assert_eq!(commands[0].program(), "z3");
+    assert_eq!(commands[0].args(), &["-in".to_string(), "-smt2".to_string()]);
+    assert!(commands[0].smt_timeout());
+    assert_eq!(commands[1].program(), "cvc5");
+    assert!(commands[1].args().contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
+    assert_eq!(commands[2].program(), "custom-wrapper");
+    assert_eq!(commands[2].args(), &["--stdin".to_string()]);
+    assert!(!commands[2].smt_timeout());
 }
 
 #[test]
-/// Regression coverage for `solver_portfolio_availability_warning_reports_missing_entries`.
 fn solver_portfolio_availability_warning_reports_missing_entries() {
     let warning = symbolic_solver_portfolio_availability_warning(&SymbolicConfig {
         solver_portfolio: vec!["foundry-missing-symbolic-solver".to_string()],
@@ -3004,22 +2876,21 @@ fn counted_solver_invocations(marker: &Path) -> usize {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for hard-arithmetic `is_sat` fallback before SMT.
 fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
     let marker = portfolio_test_marker("hard-arith-is-sat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, x.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, y.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::eq(Expr::op(ExprOp::Mul, x, y), Expr::Const(U256::from(4))),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, x.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, y.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::eq(SymExpr::op(SymExprOp::Mul, x, y), SymExpr::constant(U256::from(4))),
     ];
     let normalized = normalize_constraints_for_solver(&constraints);
     let model = hard_arith_fallback_model(&normalized).unwrap();
 
-    assert!(normalized.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap()));
+    assert!(normalized.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
     assert!(solver.is_sat(&constraints).unwrap());
     assert!(solver.is_sat(&constraints).unwrap());
 
@@ -3035,21 +2906,20 @@ fn is_sat_uses_validated_hard_arithmetic_fallback_before_solver() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for validated hard-arithmetic model results populating caches.
 fn model_uses_validated_hard_arithmetic_fallback_cache() {
     let marker = portfolio_test_marker("hard-arith-model-cache");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
     let constraints = vec![
-        BoolExpr::cmp(BoolExprOp::Ugt, x.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::cmp(BoolExprOp::Ugt, y.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::eq(Expr::op(ExprOp::Mul, x, y), Expr::Const(U256::from(4))),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, x.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::cmp(SymBoolExprOp::Ugt, y.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::eq(SymExpr::op(SymExprOp::Mul, x, y), SymExpr::constant(U256::from(4))),
     ];
 
     let first = solver.model(&constraints).unwrap();
-    assert!(constraints.iter().all(|constraint| eval_bool_expr(constraint, &first).unwrap()));
+    assert!(constraints.iter().all(|constraint| constraint.eval_model(&first).unwrap()));
     let second = solver.model(&constraints).unwrap();
     assert_eq!(first, second);
     assert!(solver.is_sat(&constraints).unwrap());
@@ -3067,16 +2937,15 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for hard-arithmetic `is_sat` preserving solver `unsat`.
 fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
     let marker = portfolio_test_marker("hard-arith-is-sat-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
     let constraints = vec![
-        BoolExpr::eq(x.clone(), Expr::Const(U256::ZERO)),
-        BoolExpr::eq(Expr::op(ExprOp::Mul, x, y), Expr::Const(U256::from(1))),
+        SymBoolExpr::eq(x.clone(), SymExpr::constant(U256::ZERO)),
+        SymBoolExpr::eq(SymExpr::op(SymExprOp::Mul, x, y), SymExpr::constant(U256::from(1))),
     ];
     let normalized = normalize_constraints_for_solver(&constraints);
 
@@ -3094,21 +2963,20 @@ fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for normalized satisfiability query cache hits.
 fn sat_cache_reuses_normalized_is_sat_results() {
     let marker = portfolio_test_marker("sat-cache");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
     let constraints = vec![
-        BoolExpr::Const(true),
-        BoolExpr::eq(x.clone(), Expr::Const(U256::from(1))),
-        BoolExpr::eq(y.clone(), Expr::Const(U256::from(2))),
+        SymBoolExpr::constant(true),
+        SymBoolExpr::eq(x.clone(), SymExpr::constant(U256::from(1))),
+        SymBoolExpr::eq(y.clone(), SymExpr::constant(U256::from(2))),
     ];
     let reordered_constraints = vec![
-        BoolExpr::eq(y, Expr::Const(U256::from(2))),
-        BoolExpr::eq(x, Expr::Const(U256::from(1))),
+        SymBoolExpr::eq(y, SymExpr::constant(U256::from(2))),
+        SymBoolExpr::eq(x, SymExpr::constant(U256::from(1))),
     ];
 
     assert!(solver.is_sat(&constraints).unwrap());
@@ -3125,22 +2993,24 @@ fn sat_cache_reuses_normalized_is_sat_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for nested canonical satisfiability query cache keys.
 fn sat_cache_reuses_nested_commutative_results() {
     let marker = portfolio_test_marker("sat-cache-canonical");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
-    let constraints = vec![BoolExpr::and(vec![
-        BoolExpr::eq(Expr::op(ExprOp::Add, x.clone(), y.clone()), Expr::Const(U256::from(3))),
-        BoolExpr::eq(x.clone(), Expr::Const(U256::from(1))),
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
+    let constraints = vec![SymBoolExpr::and(vec![
+        SymBoolExpr::eq(
+            SymExpr::op(SymExprOp::Add, x.clone(), y.clone()),
+            SymExpr::constant(U256::from(3)),
+        ),
+        SymBoolExpr::eq(x.clone(), SymExpr::constant(U256::from(1))),
     ])];
-    let reordered_constraints = vec![BoolExpr::and(vec![
-        BoolExpr::eq(Expr::Const(U256::from(1)), x),
-        BoolExpr::eq(
-            Expr::Const(U256::from(3)),
-            Expr::op(ExprOp::Add, y, Expr::Var("x".to_string())),
+    let reordered_constraints = vec![SymBoolExpr::and(vec![
+        SymBoolExpr::eq(SymExpr::constant(U256::from(1)), x),
+        SymBoolExpr::eq(
+            SymExpr::constant(U256::from(3)),
+            SymExpr::op(SymExprOp::Add, y, SymExpr::var("x")),
         ),
     ])];
 
@@ -3157,13 +3027,12 @@ fn sat_cache_reuses_nested_commutative_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for duplicate conjuncts sharing satisfiability cache keys.
 fn sat_cache_deduplicates_repeated_constraints() {
     let marker = portfolio_test_marker("sat-cache-dedup");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = Expr::Var("x".to_string());
-    let constraint = BoolExpr::eq(x, Expr::Const(U256::from(1)));
+    let x = SymExpr::var("x");
+    let constraint = SymBoolExpr::eq(x, SymExpr::constant(U256::from(1)));
     let duplicated = vec![constraint.clone(), constraint.clone()];
     let deduplicated = vec![constraint];
 
@@ -3180,14 +3049,13 @@ fn sat_cache_deduplicates_repeated_constraints() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for nested duplicate conjuncts sharing satisfiability cache keys.
 fn sat_cache_deduplicates_nested_repeated_constraints() {
     let marker = portfolio_test_marker("sat-cache-nested-dedup");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = Expr::Var("x".to_string());
-    let constraint = BoolExpr::eq(x, Expr::Const(U256::from(1)));
-    let duplicated = vec![BoolExpr::And(vec![constraint.clone(), constraint.clone()])];
+    let x = SymExpr::var("x");
+    let constraint = SymBoolExpr::eq(x, SymExpr::constant(U256::from(1)));
+    let duplicated = vec![SymBoolExpr::raw_and(vec![constraint.clone(), constraint.clone()])];
     let deduplicated = vec![constraint];
 
     assert!(solver.is_sat(&duplicated).unwrap());
@@ -3203,18 +3071,20 @@ fn sat_cache_deduplicates_nested_repeated_constraints() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for grouped conjunctions sharing satisfiability cache keys.
 fn sat_cache_flattens_grouped_conjunction_keys() {
     let marker = portfolio_test_marker("sat-cache-and-flatten");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
-    let z = Expr::Var("z".to_string());
-    let a = BoolExpr::eq(x, Expr::Const(U256::from(1)));
-    let b = BoolExpr::eq(y, Expr::Const(U256::from(2)));
-    let c = BoolExpr::eq(z, Expr::Const(U256::from(3)));
-    let grouped = vec![BoolExpr::And(vec![BoolExpr::And(vec![b.clone(), c.clone()]), a.clone()])];
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
+    let z = SymExpr::var("z");
+    let a = SymBoolExpr::eq(x, SymExpr::constant(U256::from(1)));
+    let b = SymBoolExpr::eq(y, SymExpr::constant(U256::from(2)));
+    let c = SymBoolExpr::eq(z, SymExpr::constant(U256::from(3)));
+    let grouped = vec![SymBoolExpr::raw_and(vec![
+        SymBoolExpr::raw_and(vec![b.clone(), c.clone()]),
+        a.clone(),
+    ])];
     let split = vec![c, a, b];
 
     assert!(solver.is_sat(&grouped).unwrap());
@@ -3230,20 +3100,19 @@ fn sat_cache_flattens_grouped_conjunction_keys() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for comparison-direction canonical satisfiability cache keys.
 fn sat_cache_reuses_reversed_comparisons() {
     let marker = portfolio_test_marker("sat-cache-reversed-cmp");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
 
-    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Ugt, x.clone(), y.clone())]).unwrap());
-    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Ult, y.clone(), x.clone())]).unwrap());
-    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Uge, x.clone(), y.clone())]).unwrap());
-    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Ule, y.clone(), x.clone())]).unwrap());
-    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Sgt, x.clone(), y.clone())]).unwrap());
-    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Slt, y, x)]).unwrap());
+    assert!(solver.is_sat(&[SymBoolExpr::cmp(SymBoolExprOp::Ugt, x.clone(), y.clone())]).unwrap());
+    assert!(solver.is_sat(&[SymBoolExpr::cmp(SymBoolExprOp::Ult, y.clone(), x.clone())]).unwrap());
+    assert!(solver.is_sat(&[SymBoolExpr::cmp(SymBoolExprOp::Uge, x.clone(), y.clone())]).unwrap());
+    assert!(solver.is_sat(&[SymBoolExpr::cmp(SymBoolExprOp::Ule, y.clone(), x.clone())]).unwrap());
+    assert!(solver.is_sat(&[SymBoolExpr::cmp(SymBoolExprOp::Sgt, x.clone(), y.clone())]).unwrap());
+    assert!(solver.is_sat(&[SymBoolExpr::cmp(SymBoolExprOp::Slt, y, x)]).unwrap());
 
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 3);
@@ -3255,12 +3124,11 @@ fn sat_cache_reuses_reversed_comparisons() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for leaving unknown satisfiability results uncached.
 fn sat_cache_does_not_cache_unknown_results() {
     let marker = portfolio_test_marker("sat-cache-unknown");
     let commands = vec![counted_solver_command(&marker, "unknown")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 4, false);
-    let constraints = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
+    let constraints = vec![SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)))];
 
     assert!(matches!(solver.is_sat(&constraints), Err(SymbolicError::SolverUnknown)));
     assert!(matches!(solver.is_sat(&constraints), Err(SymbolicError::SolverUnknown)));
@@ -3275,7 +3143,6 @@ fn sat_cache_does_not_cache_unknown_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for normalized solver model cache hits.
 fn model_cache_reuses_normalized_model_results() {
     let marker = portfolio_test_marker("model-cache");
     let model_output = "sat\n\
@@ -3285,20 +3152,23 @@ fn model_cache_reuses_normalized_model_results() {
         #x0000000000000000000000000000000000000000000000000000000000000002))";
     let commands = vec![counted_solver_command(&marker, model_output)];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x = Expr::Var("x".to_string());
-    let y = Expr::Var("y".to_string());
+    let x = SymExpr::var("x");
+    let y = SymExpr::var("y");
     let constraints = vec![
-        BoolExpr::Const(true),
-        BoolExpr::eq(x.clone(), Expr::Const(U256::from(1))),
-        BoolExpr::eq(y.clone(), Expr::Const(U256::from(2))),
+        SymBoolExpr::constant(true),
+        SymBoolExpr::eq(x.clone(), SymExpr::constant(U256::from(1))),
+        SymBoolExpr::eq(y.clone(), SymExpr::constant(U256::from(2))),
     ];
     let reordered_constraints = vec![
-        BoolExpr::eq(y, Expr::Const(U256::from(2))),
-        BoolExpr::eq(x, Expr::Const(U256::from(1))),
+        SymBoolExpr::eq(y, SymExpr::constant(U256::from(2))),
+        SymBoolExpr::eq(x, SymExpr::constant(U256::from(1))),
     ];
 
-    assert_eq!(solver.model(&constraints).unwrap().get("x"), Some(&U256::from(1)));
-    assert_eq!(solver.model(&reordered_constraints).unwrap().get("y"), Some(&U256::from(2)));
+    assert_eq!(solver.model(&constraints).unwrap().get(&Symbol::intern("x")), Some(&U256::from(1)));
+    assert_eq!(
+        solver.model(&reordered_constraints).unwrap().get(&Symbol::intern("y")),
+        Some(&U256::from(2))
+    );
 
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
@@ -3311,7 +3181,6 @@ fn model_cache_reuses_normalized_model_results() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for model queries populating the satisfiability cache.
 fn model_query_populates_sat_cache() {
     let marker = portfolio_test_marker("model-cache-sat");
     let model_output = "sat\n\
@@ -3319,9 +3188,9 @@ fn model_query_populates_sat_cache() {
         #x0000000000000000000000000000000000000000000000000000000000000001))";
     let commands = vec![counted_solver_command(&marker, model_output)];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let constraints = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
+    let constraints = vec![SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)))];
 
-    assert_eq!(solver.model(&constraints).unwrap().get("x"), Some(&U256::from(1)));
+    assert_eq!(solver.model(&constraints).unwrap().get(&Symbol::intern("x")), Some(&U256::from(1)));
     assert!(solver.is_sat(&constraints).unwrap());
 
     let stats = solver.stats();
@@ -3335,10 +3204,9 @@ fn model_query_populates_sat_cache() {
 }
 
 #[test]
-/// Regression coverage for direct contradictions avoiding SMT calls.
 fn direct_contradiction_is_sat_short_circuits_locally() {
     let mut solver = SmtLibSubprocessSolver::new(Ok(Vec::new()), None, 1, false);
-    let constraint = BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)));
+    let constraint = SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)));
     let constraints = vec![constraint.clone(), constraint.not()];
 
     assert!(!solver.is_sat(&constraints).unwrap());
@@ -3351,13 +3219,12 @@ fn direct_contradiction_is_sat_short_circuits_locally() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for reusing cached unsat subsets without another SMT query.
 fn is_sat_reuses_cached_unsat_subset() {
     let marker = portfolio_test_marker("unsat-subset-cache");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x_eq_one = BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)));
-    let y_eq_two = BoolExpr::eq(Expr::Var("y".to_string()), Expr::Const(U256::from(2)));
+    let x_eq_one = SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)));
+    let y_eq_two = SymBoolExpr::eq(SymExpr::var("y"), SymExpr::constant(U256::from(2)));
 
     assert!(!solver.is_sat(std::slice::from_ref(&x_eq_one)).unwrap());
     assert!(!solver.is_sat(&[x_eq_one, y_eq_two]).unwrap());
@@ -3373,13 +3240,12 @@ fn is_sat_reuses_cached_unsat_subset() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for not generalizing cached sat subsets to stricter constraints.
 fn is_sat_does_not_reuse_cached_sat_subset() {
     let marker = portfolio_test_marker("sat-subset-cache");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let x_eq_one = BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)));
-    let y_eq_two = BoolExpr::eq(Expr::Var("y".to_string()), Expr::Const(U256::from(2)));
+    let x_eq_one = SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)));
+    let y_eq_two = SymBoolExpr::eq(SymExpr::var("y"), SymExpr::constant(U256::from(2)));
 
     assert!(solver.is_sat(std::slice::from_ref(&x_eq_one)).unwrap());
     assert!(matches!(
@@ -3398,12 +3264,11 @@ fn is_sat_does_not_reuse_cached_sat_subset() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for satisfiability cache unsat results short-circuiting model queries.
 fn model_short_circuits_when_sat_cache_proved_unsat() {
     let marker = portfolio_test_marker("model-cache-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
-    let constraints = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
+    let constraints = vec![SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)))];
 
     assert!(!solver.is_sat(&constraints).unwrap());
     assert!(
@@ -3422,7 +3287,6 @@ fn model_short_circuits_when_sat_cache_proved_unsat() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for `portfolio_sat_beats_early_unsat`.
 fn portfolio_sat_beats_early_unsat() {
     let commands = vec![
         SolverCommand::new(
@@ -3452,7 +3316,6 @@ fn portfolio_sat_beats_early_unsat() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for adaptive portfolio scheduling promoting recent winners.
 fn portfolio_scheduler_promotes_recent_sat_winner() {
     let marker = portfolio_test_marker("adaptive-slow-leader");
     let marker_arg = marker.display().to_string();
@@ -3481,8 +3344,8 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
     ];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, false);
 
-    let first = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
-    let second = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(2)))];
+    let first = vec![SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)))];
+    let second = vec![SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(2)))];
 
     assert!(solver.is_sat(&first).unwrap());
     assert!(marker.exists());
@@ -3494,7 +3357,6 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for adaptive portfolio scheduling promoting unsat winners.
 fn portfolio_scheduler_promotes_recent_unsat_winner() {
     let commands = vec![
         SolverCommand::new(
@@ -3520,8 +3382,8 @@ fn portfolio_scheduler_promotes_recent_unsat_winner() {
 
     solver.capture_diagnostics();
 
-    let first = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
-    let second = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(2)))];
+    let first = vec![SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(1)))];
+    let second = vec![SymBoolExpr::eq(SymExpr::var("x"), SymExpr::constant(U256::from(2)))];
 
     assert!(!solver.is_sat(&first).unwrap());
     assert!(!solver.is_sat(&second).unwrap());
@@ -3535,7 +3397,6 @@ fn portfolio_scheduler_promotes_recent_unsat_winner() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for adaptive portfolio scheduling penalizing invalid models.
 fn portfolio_scheduler_penalizes_invalid_models() {
     let marker = portfolio_test_marker("adaptive-invalid-model");
     let marker_arg = marker.display().to_string();
@@ -3567,10 +3428,16 @@ fn portfolio_scheduler_penalizes_invalid_models() {
 
     for query in 0..=PORTFOLIO_SCHEDULER_HISTORY {
         let constraints = vec![
-            BoolExpr::eq(Expr::Var("calldata_0".to_string()), Expr::Const(U256::from(1))),
-            BoolExpr::eq(Expr::Var(format!("portfolio_query_{query}")), Expr::Const(U256::ZERO)),
+            SymBoolExpr::eq(SymExpr::var("calldata_0"), SymExpr::constant(U256::from(1))),
+            SymBoolExpr::eq(
+                SymExpr::var(&format!("portfolio_query_{query}")),
+                SymExpr::constant(U256::ZERO),
+            ),
         ];
-        assert_eq!(solver.model(&constraints).unwrap().get("calldata_0"), Some(&U256::from(1)));
+        assert_eq!(
+            solver.model(&constraints).unwrap().get(&Symbol::intern("calldata_0")),
+            Some(&U256::from(1))
+        );
         if query == 0 {
             assert!(marker.exists());
             let _ = std::fs::remove_file(&marker);
@@ -3582,7 +3449,6 @@ fn portfolio_scheduler_penalizes_invalid_models() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for `run_solver_commands` staged portfolio launching.
 fn portfolio_winner_skips_delayed_solver() {
     let marker = portfolio_test_marker("delayed-solver");
     let marker_arg = marker.display().to_string();
@@ -3616,7 +3482,6 @@ fn portfolio_winner_skips_delayed_solver() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for delayed solvers still rescuing unresolved queries.
 fn portfolio_delayed_solver_can_rescue_stalled_leader() {
     let commands = vec![
         SolverCommand::new(
@@ -3647,7 +3512,6 @@ fn portfolio_delayed_solver_can_rescue_stalled_leader() {
 
 #[cfg(unix)]
 #[test]
-/// Regression coverage for deferring SMT and portfolio diagnostics during progress rendering.
 fn solver_capture_diagnostics_buffers_dump_smt_output() {
     let commands = vec![
         SolverCommand::new(
@@ -3684,7 +3548,6 @@ fn solver_capture_diagnostics_buffers_dump_smt_output() {
 }
 
 #[test]
-/// Regression coverage for `PortfolioDiagnostics::record`.
 fn portfolio_diagnostics_counts_staged_outcomes() {
     let summaries = vec![
         SolverRunSummary::new(
@@ -3719,28 +3582,37 @@ fn portfolio_diagnostics_counts_staged_outcomes() {
 
     diagnostics.record(&summaries);
 
-    assert_eq!(diagnostics.queries, 1);
-    assert_eq!(diagnostics.solver_runs, 4);
-    assert_eq!(diagnostics.rescue_runs, 3);
-    assert_eq!(diagnostics.not_started, 1);
-    assert_eq!(diagnostics.cancelled_after_winner, 1);
-    assert_eq!(diagnostics.invalid_models, 1);
-    assert_eq!(diagnostics.solver_errors, 1);
-    assert_eq!(diagnostics.non_primary_wins, 0);
-    assert_eq!(diagnostics.rescue_wins, 0);
-    assert_eq!(diagnostics.winner_counts.get("primary"), Some(&1));
-    assert_eq!(diagnostics.launch_counts.get("primary"), Some(&1));
-    assert_eq!(diagnostics.launch_counts.get("secondary"), None);
-    assert_eq!(diagnostics.launch_counts.get("rescue"), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::SatValid), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::NotStarted), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::Cancelled), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::SatInvalid), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::Error), Some(&1));
+    assert_eq!(
+        diagnostics.to_string(),
+        "\
+--- symbolic solver portfolio summary ---
+queries: 1
+solver runs: 4
+rescue solver runs: 3
+not-started solver runs: 1
+non-primary wins: 0
+rescue wins: 0
+cancelled after winner: 1
+invalid models: 1
+solver errors: 1
+winner counts:
+  primary: 1
+launch counts:
+  bad: 1
+  missing: 1
+  primary: 1
+  rescue: 1
+outcome counts:
+  cancelled: 1
+  error: 1
+  not-started: 1
+  sat-invalid: 1
+  sat-valid: 1
+"
+    );
 }
 
 #[test]
-/// Regression coverage for `assertion_revert_classifies_assert_panic_only`.
 fn assertion_revert_classifies_assert_panic_only() {
     let mut assert_payload = PANIC_SELECTOR.to_vec();
     assert_payload.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
@@ -3753,18 +3625,15 @@ fn assertion_revert_classifies_assert_panic_only() {
 }
 
 #[test]
-/// Regression coverage for `assertion_revert_ignores_plain_require_reverts`.
 fn assertion_revert_ignores_plain_require_reverts() {
     assert!(!is_assertion_revert(&error_payload("hit")));
 }
 
 #[test]
-/// Regression coverage for `assertion_revert_accepts_forge_assertion_reverts`.
 fn assertion_revert_accepts_forge_assertion_reverts() {
     assert!(is_assertion_revert(&error_payload("assertion failed: expected 1 to equal 2")));
 }
 
-/// Regression coverage for `error_payload`.
 fn error_payload(message: &str) -> Vec<u8> {
     let mut payload = ERROR_SELECTOR.to_vec();
     payload.extend_from_slice(&U256::from(32).to_be_bytes::<32>());
