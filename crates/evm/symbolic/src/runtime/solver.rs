@@ -518,19 +518,29 @@ impl SmtLibSubprocessSolver {
 
     /// Caches a definitive normalized satisfiability result if the cache has room.
     fn cache_sat_result(&mut self, key: Vec<SymBoolExpr>, result: bool) {
-        if let Some(cached) = self.sat_cache.get_mut(&key) {
-            *cached = result;
-        } else if self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
-            self.sat_cache.insert(key, result);
+        let has_capacity = self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES;
+        match self.sat_cache.entry(key) {
+            alloy_primitives::map::Entry::Occupied(mut entry) => {
+                entry.insert(result);
+            }
+            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
+                entry.insert(result);
+            }
+            alloy_primitives::map::Entry::Vacant(_) => {}
         }
     }
 
     /// Caches a validated normalized model result if the cache has room.
     fn cache_model_result(&mut self, key: Vec<SymBoolExpr>, model: SymbolicModel) {
-        if let Some(cached) = self.model_cache.get_mut(&key) {
-            *cached = model;
-        } else if self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES {
-            self.model_cache.insert(key, model);
+        let has_capacity = self.model_cache.len() < SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES;
+        match self.model_cache.entry(key) {
+            alloy_primitives::map::Entry::Occupied(mut entry) => {
+                entry.insert(model);
+            }
+            alloy_primitives::map::Entry::Vacant(entry) if has_capacity => {
+                entry.insert(model);
+            }
+            alloy_primitives::map::Entry::Vacant(_) => {}
         }
     }
 
