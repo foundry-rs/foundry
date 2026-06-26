@@ -76,9 +76,9 @@ pub(crate) fn execute_symbolic_precompile(
 ) -> Result<Option<SymReturnData>, SymbolicError> {
     if input.iter().all(|byte| byte.as_const().is_some())
         && let Some(input_len) = input_len.as_const()
-        && input_len <= U256::from(input.len())
+        && let Ok(input_len) = usize::try_from(input_len)
+        && input_len <= input.len()
     {
-        let input_len = input_len.to::<usize>();
         let input = concrete_bytes(&input[..input_len], "symbolic precompile input")?;
         return execute_precompile(address, &input, spec_id);
     }

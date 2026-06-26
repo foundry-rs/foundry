@@ -74,9 +74,9 @@ pub(crate) fn keccak_word(bytes: Vec<SymExpr>) -> SymExpr {
 pub(crate) fn keccak_word_with_len(bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr {
     if bytes.iter().all(|byte| byte.as_const().is_some())
         && let Some(len) = len.as_const()
-        && len <= U256::from(bytes.len())
+        && let Ok(len) = usize::try_from(len)
+        && len <= bytes.len()
     {
-        let len = len.to::<usize>();
         let bytes = bytes
             .into_iter()
             .take(len)
@@ -832,14 +832,19 @@ impl SymExpr {
             }
             SymExprInner::Keccak { len, bytes, .. } => {
                 let len = len.eval(model)?;
-                if len > U256::from(bytes.len()) {
+                let Ok(len) = usize::try_from(len) else {
+                    return Err(SymbolicError::Solver(
+                        "solver model uses an invalid keccak length".to_string(),
+                    ));
+                };
+                if len > bytes.len() {
                     return Err(SymbolicError::Solver(
                         "solver model uses an invalid keccak length".to_string(),
                     ));
                 }
 
-                let mut input = Vec::with_capacity(len.to::<usize>());
-                for byte in bytes.iter().take(len.to::<usize>()) {
+                let mut input = Vec::with_capacity(len);
+                for byte in bytes.iter().take(len) {
                     input.push((byte.eval(model)? & U256::from(0xff)).to::<u8>());
                 }
 
@@ -906,10 +911,7 @@ impl SymExpr {
 
     pub(crate) fn into_usize(self, reason: &'static str) -> Result<usize, SymbolicError> {
         let value = self.into_concrete(reason)?;
-        if value > U256::from(usize::MAX) {
-            return Err(SymbolicError::Unsupported(reason));
-        }
-        Ok(value.to::<usize>())
+        usize::try_from(value).map_err(|_| SymbolicError::Unsupported(reason))
     }
 
     pub(crate) fn contains_gasleft(&self) -> bool {
@@ -1303,21 +1305,21 @@ impl SymExprOp {
                 if right >= U256::from(256) {
                     U256::ZERO
                 } else {
-                    left << right.to::<usize>()
+                    left << usize::try_from(right).expect("checked word shift")
                 }
             }
             Self::Shr => {
                 if right >= U256::from(256) {
                     U256::ZERO
                 } else {
-                    left >> right.to::<usize>()
+                    left >> usize::try_from(right).expect("checked word shift")
                 }
             }
             Self::Sar => {
                 if right >= U256::from(256) {
                     sar(left, 256)
                 } else {
-                    sar(left, right.to::<usize>())
+                    sar(left, usize::try_from(right).expect("checked word shift"))
                 }
             }
         }
@@ -1711,7 +1713,7 @@ impl SymBoolExprOp {
 }
 
 pub(crate) fn u256_to_usize(value: U256) -> Option<usize> {
-    if value > U256::from(usize::MAX) { None } else { Some(value.to::<usize>()) }
+    usize::try_from(value).ok()
 }
 
 pub(crate) fn bool_upper_bound_usize(condition: &SymBoolExpr, expr: &SymExpr) -> Option<usize> {

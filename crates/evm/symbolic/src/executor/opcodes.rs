@@ -760,8 +760,8 @@ impl SymbolicExecutor {
     ) -> StepOutcome {
         if state.call_depth == 0
             && let Some(offset) = offset.as_const()
-            && offset <= U256::from(usize::MAX)
-            && let Ok(data) = state.memory.read_concrete(offset.to::<usize>(), size)
+            && let Ok(offset) = usize::try_from(offset)
+            && let Ok(data) = state.memory.read_concrete(offset, size)
             && is_assertion_revert(&data)
         {
             StepOutcome::Failure

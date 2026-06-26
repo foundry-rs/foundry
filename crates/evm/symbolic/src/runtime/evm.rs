@@ -65,7 +65,7 @@ pub(crate) fn signextend(byte_index: U256, value: U256) -> U256 {
     if byte_index >= U256::from(32) {
         return value;
     }
-    let bit_index = byte_index.to::<usize>() * 8 + 7;
+    let bit_index = usize::try_from(byte_index).expect("checked byte index") * 8 + 7;
     let sign_bit = U256::from(1) << bit_index;
     let mask = sign_bit - U256::from(1);
     if value & sign_bit == U256::ZERO { value & mask } else { value | !mask }
@@ -78,7 +78,7 @@ pub(crate) fn signextend_word(byte_index: U256, value: SymExpr) -> SymExpr {
     if let Some(value) = value.as_const() {
         return SymExpr::constant(signextend(byte_index, value));
     }
-    let bit_index = byte_index.to::<usize>() * 8 + 7;
+    let bit_index = usize::try_from(byte_index).expect("checked byte index") * 8 + 7;
     let sign_bit = U256::from(1) << bit_index;
     let mask = sign_bit - U256::from(1);
     SymExpr::ite(
@@ -111,7 +111,7 @@ pub(crate) fn byte_word(index: U256, word: SymExpr) -> SymExpr {
     if index >= U256::from(32) {
         return SymExpr::zero();
     }
-    let index = index.to::<usize>();
+    let index = usize::try_from(index).expect("checked byte index");
     if let Some(word) = word.as_const() {
         SymExpr::constant(U256::from(word.to_be_bytes::<32>()[index]))
     } else {
@@ -187,7 +187,7 @@ pub(crate) fn expr_known_byte(expr: &SymExpr, index: usize) -> Option<u8> {
                 if shift >= U256::from(256) {
                     return Some(0);
                 }
-                let shift = shift.to::<usize>();
+                let shift = usize::try_from(shift).expect("checked byte shift");
                 if shift % 8 != 0 {
                     return None;
                 }
@@ -199,7 +199,7 @@ pub(crate) fn expr_known_byte(expr: &SymExpr, index: usize) -> Option<u8> {
                 if shift >= U256::from(256) {
                     return Some(0);
                 }
-                let shift = shift.to::<usize>();
+                let shift = usize::try_from(shift).expect("checked byte shift");
                 if shift % 8 != 0 {
                     return None;
                 }
@@ -295,8 +295,7 @@ pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
 }
 
 pub(crate) fn abi_word_usize(word: &[u8]) -> Option<usize> {
-    let value = abi_word(word)?;
-    if value > U256::from(usize::MAX) { None } else { Some(value.to::<usize>()) }
+    usize::try_from(abi_word(word)?).ok()
 }
 
 pub(crate) const fn abi_word(word: &[u8]) -> Option<U256> {

@@ -319,7 +319,7 @@ pub(crate) fn extracted_shifted_byte_term(term: &SymExpr) -> Option<(SymExpr, us
     match term.as_inner() {
         SymExprInner::Op(SymExprOp::Shl, byte, shift) => {
             let shift = shift.as_const()?;
-            let shift = shift.to::<usize>();
+            let shift = usize::try_from(shift).expect("checked byte shift");
             if shift % 8 != 0 || shift > 248 {
                 return None;
             }

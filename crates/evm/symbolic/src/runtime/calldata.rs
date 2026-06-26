@@ -26,10 +26,10 @@ impl SymCalldata {
 
     pub(crate) fn load_word(&self, offset: SymExpr) -> Result<SymExpr, SymbolicError> {
         if let Some(offset) = offset.as_const() {
-            if offset > U256::from(usize::MAX) {
+            let Ok(offset) = usize::try_from(offset) else {
                 return Ok(SymExpr::zero());
-            }
-            self.load(offset.to::<usize>())
+            };
+            self.load(offset)
         } else {
             self.load_dynamic(&offset)
         }

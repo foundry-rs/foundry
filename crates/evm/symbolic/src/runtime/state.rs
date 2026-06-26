@@ -168,7 +168,7 @@ impl PathState {
 
     pub(crate) fn constrained_usize(&self, word: &SymExpr) -> Option<usize> {
         let value = self.constrained_word(word)?;
-        (value <= U256::from(usize::MAX)).then(|| value.to::<usize>())
+        usize::try_from(value).ok()
     }
 
     pub(crate) fn upper_bound_usize(&self, word: &SymExpr) -> Option<usize> {
@@ -354,7 +354,7 @@ impl PathState {
                     U256::ZERO
                 }
             } else {
-                let shift = shift.to::<usize>();
+                let shift = usize::try_from(shift).expect("checked word shift");
                 match kind {
                     ShiftKind::Shl => value << shift,
                     ShiftKind::Shr => value >> shift,
@@ -381,7 +381,10 @@ impl PathState {
             if let Some(base_value) = base.as_const() {
                 SymExpr::constant(pow_mod(base_value, exponent))
             } else if exponent <= U256::from(SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT) {
-                exp_expr_for_concrete_exponent(base, exponent.to::<usize>())
+                exp_expr_for_concrete_exponent(
+                    base,
+                    usize::try_from(exponent).expect("checked symbolic exponent"),
+                )
             } else {
                 return Err(SymbolicError::Unsupported("symbolic EXP base"));
             }
@@ -481,8 +484,11 @@ impl PathState {
     pub(crate) fn fresh_bounded_uint(&mut self, bits: U256) -> SymExpr {
         let value = self.fresh_word("symbolic");
         if bits < U256::from(256) {
-            let upper =
-                if bits.is_zero() { U256::ZERO } else { U256::from(1) << bits.to::<usize>() };
+            let upper = if bits.is_zero() {
+                U256::ZERO
+            } else {
+                U256::from(1) << usize::try_from(bits).expect("checked bit width")
+            };
             self.constraints.push(SymBoolExpr::cmp_word_const(SymBoolExprOp::Ult, &value, upper));
         }
         value
@@ -493,7 +499,8 @@ impl PathState {
         if bits.is_zero() {
             self.constraints.push(SymBoolExpr::eq_word_const(&value, U256::ZERO));
         } else if bits < U256::from(256) {
-            let magnitude = U256::from(1) << (bits.to::<usize>() - 1);
+            let magnitude =
+                U256::from(1) << (usize::try_from(bits).expect("checked bit width") - 1);
             self.constraints.push(SymBoolExpr::or(vec![
                 SymBoolExpr::cmp_word_const(SymBoolExprOp::Ult, &value, magnitude),
                 SymBoolExpr::cmp_word_const(
@@ -1660,7 +1667,8 @@ impl SymbolicBlock {
         }
 
         let mut result = SymExpr::constant(U256::ZERO);
-        let max_distance = current.min(U256::from(256)).to::<usize>();
+        let max_distance =
+            usize::try_from(current.min(U256::from(256))).expect("checked blockhash distance");
         for distance in (1..=max_distance).rev() {
             let candidate = current - U256::from(distance);
             let hash = self.block_hash(executor, candidate)?;

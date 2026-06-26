@@ -142,7 +142,7 @@ pub(crate) fn expr_byte_term(expr: &SymExpr, index: usize) -> Option<SymExpr> {
                 if shift >= U256::from(256) {
                     return Some(SymExpr::constant(U256::ZERO));
                 }
-                let shift = shift.to::<usize>();
+                let shift = usize::try_from(shift).expect("checked byte shift");
                 if shift % 8 != 0 {
                     return None;
                 }
@@ -158,7 +158,7 @@ pub(crate) fn expr_byte_term(expr: &SymExpr, index: usize) -> Option<SymExpr> {
                 if shift >= U256::from(256) {
                     return Some(SymExpr::constant(U256::ZERO));
                 }
-                let shift = shift.to::<usize>();
+                let shift = usize::try_from(shift).expect("checked byte shift");
                 if shift % 8 != 0 {
                     return None;
                 }
