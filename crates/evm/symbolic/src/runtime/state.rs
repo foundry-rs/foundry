@@ -1283,7 +1283,7 @@ impl StorageWrite {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct SymbolicWorldSnapshot {
+struct SymbolicWorldSnapshot {
     storage: Vec<StorageWrite>,
     transient_storage: Vec<StorageWrite>,
     current_transaction_created_accounts: HashSet<Address>,
