@@ -26,7 +26,7 @@ pub(crate) enum SolverConfigError {
     UnterminatedQuote(char),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum SolverOutcome {
     Cancelled,
     Error,
@@ -1047,9 +1047,9 @@ pub struct PortfolioDiagnostics {
     pub(crate) cancelled_after_winner: usize,
     pub(crate) invalid_models: usize,
     pub(crate) solver_errors: usize,
-    pub(crate) winner_counts: BTreeMap<String, usize>,
-    pub(crate) launch_counts: BTreeMap<String, usize>,
-    pub(crate) outcome_counts: BTreeMap<SolverOutcome, usize>,
+    pub(crate) winner_counts: HashMap<String, usize>,
+    pub(crate) launch_counts: HashMap<String, usize>,
+    pub(crate) outcome_counts: HashMap<SolverOutcome, usize>,
 }
 
 impl PortfolioDiagnostics {
@@ -1133,25 +1133,34 @@ impl fmt::Display for PortfolioDiagnostics {
         writeln!(f, "solver errors: {}", self.solver_errors)?;
         if !self.winner_counts.is_empty() {
             writeln!(f, "winner counts:")?;
-            for (solver, count) in &self.winner_counts {
+            let mut counts = self.winner_counts.iter().collect::<Vec<_>>();
+            counts.sort_by_key(|(solver, _)| *solver);
+            for (solver, count) in counts {
                 writeln!(f, "  {solver}: {count}")?;
             }
         }
         if !self.launch_counts.is_empty() {
             writeln!(f, "launch counts:")?;
-            for (solver, count) in &self.launch_counts {
+            let mut counts = self.launch_counts.iter().collect::<Vec<_>>();
+            counts.sort_by_key(|(solver, _)| *solver);
+            for (solver, count) in counts {
                 writeln!(f, "  {solver}: {count}")?;
             }
         }
         writeln!(f, "outcome counts:")?;
-        for (outcome, count) in &self.outcome_counts {
+        let mut counts = self.outcome_counts.iter().collect::<Vec<_>>();
+        counts.sort_by_key(|(outcome, _)| **outcome);
+        for (outcome, count) in counts {
             writeln!(f, "  {outcome}: {count}")?;
         }
         Ok(())
     }
 }
 
-fn merge_counts<K: Ord + Clone>(base: &mut BTreeMap<K, usize>, other: &BTreeMap<K, usize>) {
+fn merge_counts<K: Eq + std::hash::Hash + Clone>(
+    base: &mut HashMap<K, usize>,
+    other: &HashMap<K, usize>,
+) {
     for (key, count) in other {
         *base.entry(key.clone()).or_default() += count;
     }
