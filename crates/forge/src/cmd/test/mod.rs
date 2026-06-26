@@ -1804,7 +1804,7 @@ impl TestArgs {
                         TraceKind::Deployment => false,
                     };
 
-                    if should_include {
+                    if show_traces && should_include {
                         decode_trace_arena(arena, &decoder).await;
 
                         if let Some(trace_depth) = self.trace_depth {
