@@ -219,7 +219,7 @@ impl SymbolicExecutor {
         let mut candidates = candidates.into_iter().collect::<Vec<_>>();
         candidates.sort_unstable();
         for candidate in candidates {
-            let eq = BoolExpr::eq(value.clone().into_expr(), Expr::Const(candidate));
+            let eq = BoolExpr::eq_word_const(value, candidate);
             let (eq_constraints, eq_sat) = self.constraints_with_condition(state, eq.clone())?;
             let (neq_constraints, neq_sat) = self.constraints_with_condition(state, eq.not())?;
 
@@ -1694,11 +1694,7 @@ fn kzg_versioned_hash_mismatch_condition(input: &[SymWord], expected_hash: &[u8;
 }
 
 fn word_eq_condition(word: &SymWord, value: usize) -> BoolExpr {
-    let value = U256::from(value);
-    match word {
-        SymWord::Concrete(word) => BoolExpr::Const(*word == value),
-        SymWord::Expr(word) => BoolExpr::eq(word.as_ref().clone(), Expr::Const(value)),
-    }
+    BoolExpr::eq_word_const(word, U256::from(value))
 }
 
 fn word_ne_condition(word: &SymWord, value: usize) -> BoolExpr {

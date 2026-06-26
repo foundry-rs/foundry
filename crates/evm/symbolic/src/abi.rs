@@ -205,10 +205,10 @@ impl<'a> SymbolicAbiBuilder<'a> {
         Ok(match ty {
             DynSolType::Bool => {
                 let word = self.fresh_word(name);
-                self.constraints.push(BoolExpr::cmp(
+                self.constraints.push(BoolExpr::cmp_word_const(
                     BoolExprOp::Ult,
-                    word.clone().into_expr(),
-                    Expr::Const(U256::from(2)),
+                    &word,
+                    U256::from(2),
                 ));
                 SymbolicAbiValue::Bool { word }
             }
@@ -452,21 +452,17 @@ impl<'a> SymbolicAbiBuilder<'a> {
     /// Implements the `fresh_byte` symbolic ABI helper.
     pub(super) fn fresh_byte(&mut self, name: String, printable: bool) -> SymWord {
         let word = self.fresh_word(name);
-        self.constraints.push(BoolExpr::cmp(
-            BoolExprOp::Ult,
-            word.clone().into_expr(),
-            Expr::Const(U256::from(256)),
-        ));
+        self.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(256)));
         if printable {
-            self.constraints.push(BoolExpr::cmp(
+            self.constraints.push(BoolExpr::cmp_word_const(
                 BoolExprOp::Uge,
-                word.clone().into_expr(),
-                Expr::Const(U256::from(0x20)),
+                &word,
+                U256::from(0x20),
             ));
-            self.constraints.push(BoolExpr::cmp(
+            self.constraints.push(BoolExpr::cmp_word_const(
                 BoolExprOp::Ule,
-                word.clone().into_expr(),
-                Expr::Const(U256::from(0x7e)),
+                &word,
+                U256::from(0x7e),
             ));
         }
         word
@@ -529,10 +525,10 @@ impl<'a> SymbolicAbiBuilder<'a> {
     /// Implements the `constrain_uint` symbolic ABI helper.
     pub(super) fn constrain_uint(&mut self, word: &SymWord, bits: usize) {
         if bits < 256 {
-            self.constraints.push(BoolExpr::cmp(
+            self.constraints.push(BoolExpr::cmp_word_const(
                 BoolExprOp::Ult,
-                word.clone().into_expr(),
-                Expr::Const(U256::from(1) << bits),
+                word,
+                U256::from(1) << bits,
             ));
         }
     }
@@ -541,8 +537,8 @@ impl<'a> SymbolicAbiBuilder<'a> {
     pub(super) fn constrain_int(&mut self, word: &SymWord, bits: usize) {
         if bits < 256 {
             let byte_index = U256::from(bits / 8 - 1);
-            self.constraints.push(BoolExpr::eq(
-                word.clone().into_expr(),
+            self.constraints.push(BoolExpr::eq_word_expr(
+                word,
                 signextend_word(byte_index, word.clone()).into_expr(),
             ));
         }

@@ -514,11 +514,7 @@ impl PathState {
         if bits < U256::from(256) {
             let upper =
                 if bits.is_zero() { U256::ZERO } else { U256::from(1) << bits.to::<usize>() };
-            self.constraints.push(BoolExpr::cmp(
-                BoolExprOp::Ult,
-                value.clone().into_expr(),
-                Expr::Const(upper),
-            ));
+            self.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &value, upper));
         }
         value
     }
@@ -527,15 +523,15 @@ impl PathState {
     pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymWord {
         let value = self.fresh_word("symbolic");
         if bits.is_zero() {
-            self.constraints.push(BoolExpr::eq(value.clone().into_expr(), Expr::Const(U256::ZERO)));
+            self.constraints.push(BoolExpr::eq_word_const(&value, U256::ZERO));
         } else if bits < U256::from(256) {
             let magnitude = U256::from(1) << (bits.to::<usize>() - 1);
             self.constraints.push(BoolExpr::or(vec![
-                BoolExpr::cmp(BoolExprOp::Ult, value.clone().into_expr(), Expr::Const(magnitude)),
-                BoolExpr::cmp(
+                BoolExpr::cmp_word_const(BoolExprOp::Ult, &value, magnitude),
+                BoolExpr::cmp_word_const(
                     BoolExprOp::Uge,
-                    value.clone().into_expr(),
-                    Expr::Const(U256::ZERO.wrapping_sub(magnitude)),
+                    &value,
+                    U256::ZERO.wrapping_sub(magnitude),
                 ),
             ]));
         }

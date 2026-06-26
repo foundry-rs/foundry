@@ -2503,14 +2503,14 @@ impl SymbolicExecutor {
             let min = state.memory.load_word(in_offset + 4)?;
             let max = state.memory.load_word(in_offset + 36)?;
             let value = state.fresh_word("vmRandomUintRange");
-            state.constraints.push(BoolExpr::cmp(
+            state.constraints.push(BoolExpr::cmp_word_expr(
                 BoolExprOp::Uge,
-                value.clone().into_expr(),
+                &value,
                 min.into_expr(),
             ));
-            state.constraints.push(BoolExpr::cmp(
+            state.constraints.push(BoolExpr::cmp_word_expr(
                 BoolExprOp::Ule,
-                value.clone().into_expr(),
+                &value,
                 max.into_expr(),
             ));
             return Ok(CheatcodeOutcome::Continue(vec![value]));
@@ -2652,15 +2652,15 @@ impl SymbolicExecutor {
             let bytes = (0..len)
                 .map(|_| {
                     let byte = state.fresh_bounded_uint(U256::from(8));
-                    state.constraints.push(BoolExpr::cmp(
+                    state.constraints.push(BoolExpr::cmp_word_const(
                         BoolExprOp::Uge,
-                        byte.clone().into_expr(),
-                        Expr::Const(U256::from(0x20)),
+                        &byte,
+                        U256::from(0x20),
                     ));
-                    state.constraints.push(BoolExpr::cmp(
+                    state.constraints.push(BoolExpr::cmp_word_const(
                         BoolExprOp::Ule,
-                        byte.clone().into_expr(),
-                        Expr::Const(U256::from(0x7e)),
+                        &byte,
+                        U256::from(0x7e),
                     ));
                     byte
                 })
@@ -2680,15 +2680,15 @@ impl SymbolicExecutor {
             let bytes = (0..len)
                 .map(|_| {
                     let byte = state.fresh_bounded_uint(U256::from(8));
-                    state.constraints.push(BoolExpr::cmp(
+                    state.constraints.push(BoolExpr::cmp_word_const(
                         BoolExprOp::Uge,
-                        byte.clone().into_expr(),
-                        Expr::Const(U256::from(0x20)),
+                        &byte,
+                        U256::from(0x20),
                     ));
-                    state.constraints.push(BoolExpr::cmp(
+                    state.constraints.push(BoolExpr::cmp_word_const(
                         BoolExprOp::Ule,
-                        byte.clone().into_expr(),
-                        Expr::Const(U256::from(0x7e)),
+                        &byte,
+                        U256::from(0x7e),
                     ));
                     byte
                 })

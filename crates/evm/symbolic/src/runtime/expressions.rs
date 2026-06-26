@@ -210,11 +210,7 @@ pub(crate) fn symbolic_create_address_word(
         "create_address",
         format!("{creator_identity}:{nonce:?}"),
     )));
-    state.constraints.push(BoolExpr::cmp(
-        BoolExprOp::Ult,
-        word.clone().into_expr(),
-        Expr::Const(U256::from(1) << 160),
-    ));
+    state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(1) << 160));
     word
 }
 
@@ -229,11 +225,7 @@ pub(crate) fn symbolic_create2_address_word(
         "create2_address",
         format!("{creator_identity}:{salt:?}:{initcode_identity}"),
     )));
-    state.constraints.push(BoolExpr::cmp(
-        BoolExprOp::Ult,
-        word.clone().into_expr(),
-        Expr::Const(U256::from(1) << 160),
-    ));
+    state.constraints.push(BoolExpr::cmp_word_const(BoolExprOp::Ult, &word, U256::from(1) << 160));
     word
 }
 
@@ -898,16 +890,21 @@ pub(crate) fn eval_bool_expr(
         BoolExpr::Cmp(op, left, right) => {
             let left = eval_expr(left, model)?;
             let right = eval_expr(right, model)?;
-            match op {
-                BoolExprOp::Ult => left < right,
-                BoolExprOp::Ugt => left > right,
-                BoolExprOp::Ule => left <= right,
-                BoolExprOp::Uge => left >= right,
-                BoolExprOp::Slt => slt(left, right),
-                BoolExprOp::Sgt => slt(right, left),
-            }
+            eval_bool_cmp(*op, left, right)
         }
     })
+}
+
+/// Returns the concrete comparison result for a boolean expression.
+pub(crate) fn eval_bool_cmp(op: BoolExprOp, left: U256, right: U256) -> bool {
+    match op {
+        BoolExprOp::Ult => left < right,
+        BoolExprOp::Ugt => left > right,
+        BoolExprOp::Ule => left <= right,
+        BoolExprOp::Uge => left >= right,
+        BoolExprOp::Slt => slt(left, right),
+        BoolExprOp::Sgt => slt(right, left),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1552,6 +1549,67 @@ impl BoolExpr {
         }
     }
 
+    /// Builds equality from shared expressions.
+    pub(crate) fn eq_arc(left: Arc<Expr>, right: Arc<Expr>) -> Self {
+        if left == right {
+            return Self::Const(true);
+        }
+        match (left.as_ref(), right.as_ref()) {
+            (Expr::Const(left), Expr::Const(right)) => return Self::Const(left == right),
+            (left, Expr::Const(right)) => {
+                if let Some(left) = expr_known_word(left) {
+                    return Self::Const(left == *right);
+                }
+            }
+            (Expr::Const(left), right) => {
+                if let Some(right) = expr_known_word(right) {
+                    return Self::Const(*left == right);
+                }
+            }
+            (Expr::Keccak(left), Expr::Keccak(right)) if left.bytes.len() == right.bytes.len() => {
+                let mut conditions = vec![Self::eq((*left.len).clone(), (*right.len).clone())];
+                conditions.extend(
+                    left.bytes
+                        .iter()
+                        .cloned()
+                        .zip(right.bytes.iter().cloned())
+                        .map(|(left, right)| Self::eq(left, right)),
+                );
+                return Self::and(conditions);
+            }
+            (Expr::Hash(left), Expr::Hash(right))
+                if left.algorithm == right.algorithm && left.bytes.len() == right.bytes.len() =>
+            {
+                return Self::and(
+                    left.bytes
+                        .iter()
+                        .cloned()
+                        .zip(right.bytes.iter().cloned())
+                        .map(|(left, right)| Self::eq(left, right))
+                        .collect(),
+                );
+            }
+            _ => {}
+        }
+        Self::Eq(left, right)
+    }
+
+    /// Builds equality between a symbolic word and a concrete value.
+    pub(crate) fn eq_word_const(word: &SymWord, value: U256) -> Self {
+        match word {
+            SymWord::Concrete(word) => Self::Const(*word == value),
+            SymWord::Expr(word) => Self::eq_arc(Arc::clone(word), Arc::new(Expr::Const(value))),
+        }
+    }
+
+    /// Builds equality between a symbolic word and an owned expression.
+    pub(crate) fn eq_word_expr(word: &SymWord, expr: Expr) -> Self {
+        match word {
+            SymWord::Concrete(word) => Self::eq(Expr::Const(*word), expr),
+            SymWord::Expr(word) => Self::eq_arc(Arc::clone(word), Arc::new(expr)),
+        }
+    }
+
     /// Implements the `and` symbolic expression helper.
     pub(crate) fn and(values: Vec<Self>) -> Self {
         let mut out = Vec::new();
@@ -1597,14 +1655,7 @@ impl BoolExpr {
             return Self::Const(matches!(op, BoolExprOp::Ule | BoolExprOp::Uge));
         }
         if let (Expr::Const(left), Expr::Const(right)) = (&left, &right) {
-            return Self::Const(match op {
-                BoolExprOp::Ult => left < right,
-                BoolExprOp::Ugt => left > right,
-                BoolExprOp::Ule => left <= right,
-                BoolExprOp::Uge => left >= right,
-                BoolExprOp::Slt => slt(*left, *right),
-                BoolExprOp::Sgt => slt(*right, *left),
-            });
+            return Self::Const(eval_bool_cmp(op, *left, *right));
         }
         match (op, &left, &right) {
             (BoolExprOp::Ugt, Expr::Const(value), _) if value.is_zero() => {
@@ -1634,6 +1685,62 @@ impl BoolExpr {
             _ => {}
         }
         Self::Cmp(op, Arc::new(left), Arc::new(right))
+    }
+
+    /// Builds comparison from shared expressions.
+    pub(crate) fn cmp_arc(op: BoolExprOp, left: Arc<Expr>, right: Arc<Expr>) -> Self {
+        if left == right {
+            return Self::Const(matches!(op, BoolExprOp::Ule | BoolExprOp::Uge));
+        }
+        if let (Expr::Const(left), Expr::Const(right)) = (left.as_ref(), right.as_ref()) {
+            return Self::Const(eval_bool_cmp(op, *left, *right));
+        }
+        match (op, left.as_ref(), right.as_ref()) {
+            (BoolExprOp::Ugt, Expr::Const(value), _) if value.is_zero() => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Ule, Expr::Const(value), _) if value.is_zero() => {
+                return Self::Const(true);
+            }
+            (BoolExprOp::Ult, _, Expr::Const(value)) if value.is_zero() => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Uge, _, Expr::Const(value)) if value.is_zero() => {
+                return Self::Const(true);
+            }
+            (BoolExprOp::Ult, Expr::Const(value), _) if *value == U256::MAX => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Uge, Expr::Const(value), _) if *value == U256::MAX => {
+                return Self::Const(true);
+            }
+            (BoolExprOp::Ugt, _, Expr::Const(value)) if *value == U256::MAX => {
+                return Self::Const(false);
+            }
+            (BoolExprOp::Ule, _, Expr::Const(value)) if *value == U256::MAX => {
+                return Self::Const(true);
+            }
+            _ => {}
+        }
+        Self::Cmp(op, left, right)
+    }
+
+    /// Builds comparison between a symbolic word and a concrete value.
+    pub(crate) fn cmp_word_const(op: BoolExprOp, word: &SymWord, value: U256) -> Self {
+        match word {
+            SymWord::Concrete(word) => Self::Const(eval_bool_cmp(op, *word, value)),
+            SymWord::Expr(word) => {
+                Self::cmp_arc(op, Arc::clone(word), Arc::new(Expr::Const(value)))
+            }
+        }
+    }
+
+    /// Builds comparison between a symbolic word and an owned expression.
+    pub(crate) fn cmp_word_expr(op: BoolExprOp, word: &SymWord, expr: Expr) -> Self {
+        match word {
+            SymWord::Concrete(word) => Self::cmp(op, Expr::Const(*word), expr),
+            SymWord::Expr(word) => Self::cmp_arc(op, Arc::clone(word), Arc::new(expr)),
+        }
     }
 
     /// Implements the `not` symbolic expression helper.
