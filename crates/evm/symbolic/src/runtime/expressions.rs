@@ -1340,30 +1340,6 @@ impl SymExpr {
         }
     }
 
-    pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit(&mut |expr| {
-            match expr.kind() {
-                SymExprKind::Var(var) => {
-                    vars.insert(*var);
-                }
-                SymExprKind::Keccak { name, .. } => {
-                    vars.insert(*name);
-                }
-                SymExprKind::Hash { name, .. } => {
-                    vars.insert(*name);
-                }
-                SymExprKind::Const(_)
-                | SymExprKind::GasLeft(_)
-                | SymExprKind::Not(_)
-                | SymExprKind::Op(_, _, _)
-                | SymExprKind::AddMod { .. }
-                | SymExprKind::MulMod { .. }
-                | SymExprKind::Ite(_, _, _) => {}
-            }
-            ControlFlow::<()>::Continue(())
-        });
-    }
-
     #[cfg(test)]
     pub(crate) fn smt(&self) -> String {
         let mut smt = String::new();
@@ -1959,13 +1935,14 @@ impl SymBoolExpr {
     }
 
     pub(crate) fn collect_vars(&self, vars: &mut SymbolicVars) {
-        let _ = self.visit(&mut |expr| {
+        let _ = self.visit_exprs(&mut |expr| {
             match expr.kind() {
-                SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
-                    left.collect_vars(vars);
-                    right.collect_vars(vars);
+                SymExprKind::Var(var)
+                | SymExprKind::Keccak { name: var, .. }
+                | SymExprKind::Hash { name: var, .. } => {
+                    vars.insert(*var);
                 }
-                SymBoolExprKind::Const(_) | SymBoolExprKind::Not(_) | SymBoolExprKind::And(_) => {}
+                _ => {}
             }
             ControlFlow::<()>::Continue(())
         });

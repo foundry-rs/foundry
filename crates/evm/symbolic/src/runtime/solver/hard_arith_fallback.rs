@@ -279,51 +279,12 @@ pub(crate) fn fallback_partial_model_satisfies_known_constraints(
 
 /// Collects variables that local hard-arithmetic search can assign directly.
 pub(crate) fn collect_bool_fallback_vars(expr: &SymBoolExpr, vars: &mut SymbolicVars) {
-    match expr.kind() {
-        SymBoolExprKind::Const(_) => {}
-        SymBoolExprKind::Not(value) => collect_bool_fallback_vars(value, vars),
-        SymBoolExprKind::And(values) => {
-            for value in values.iter() {
-                collect_bool_fallback_vars(value, vars);
-            }
-        }
-        SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-        }
-    }
-}
-
-/// Collects assignable variables from an expression, recursing into recomputable hashes.
-pub(crate) fn collect_expr_fallback_vars(expr: &SymExpr, vars: &mut SymbolicVars) {
-    match expr.kind() {
-        SymExprKind::Const(_) | SymExprKind::GasLeft(_) | SymExprKind::Hash { .. } => {}
-        SymExprKind::Var(var) => {
+    let _ = expr.visit_exprs(&mut |expr| {
+        if let SymExprKind::Var(var) = expr.kind() {
             vars.insert(*var);
         }
-        SymExprKind::Keccak { len, bytes, .. } => {
-            collect_expr_fallback_vars(len, vars);
-            for byte in bytes.iter() {
-                collect_expr_fallback_vars(byte, vars);
-            }
-        }
-        SymExprKind::Not(value) => collect_expr_fallback_vars(value, vars),
-        SymExprKind::Op(_, left, right) => {
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-        }
-        SymExprKind::AddMod { left, right, modulus }
-        | SymExprKind::MulMod { left, right, modulus } => {
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-            collect_expr_fallback_vars(modulus, vars);
-        }
-        SymExprKind::Ite(cond, left, right) => {
-            collect_bool_fallback_vars(cond, vars);
-            collect_expr_fallback_vars(left, vars);
-            collect_expr_fallback_vars(right, vars);
-        }
-    }
+        ControlFlow::<()>::Continue(())
+    });
 }
 
 #[cfg(test)]
@@ -392,47 +353,12 @@ pub(crate) fn push_fallback_candidate(
 }
 
 pub(crate) fn collect_bool_constants(expr: &SymBoolExpr, constants: &mut HashSet<U256>) {
-    match expr.kind() {
-        SymBoolExprKind::Const(_) => {}
-        SymBoolExprKind::Not(value) => collect_bool_constants(value, constants),
-        SymBoolExprKind::And(values) => {
-            for value in values.iter() {
-                collect_bool_constants(value, constants);
-            }
-        }
-        SymBoolExprKind::Eq(left, right) | SymBoolExprKind::Cmp(_, left, right) => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-    }
-}
-
-pub(crate) fn collect_expr_constants(expr: &SymExpr, constants: &mut HashSet<U256>) {
-    match expr.kind() {
-        SymExprKind::Const(value) => {
+    let _ = expr.visit_exprs(&mut |expr| {
+        if let SymExprKind::Const(value) = expr.kind() {
             constants.insert(*value);
         }
-        SymExprKind::Var(_)
-        | SymExprKind::GasLeft(_)
-        | SymExprKind::Keccak { .. }
-        | SymExprKind::Hash { .. } => {}
-        SymExprKind::Not(value) => collect_expr_constants(value, constants),
-        SymExprKind::Op(_, left, right) => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-        SymExprKind::AddMod { left, right, modulus }
-        | SymExprKind::MulMod { left, right, modulus } => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-            collect_expr_constants(modulus, constants);
-        }
-        SymExprKind::Ite(cond, left, right) => {
-            collect_bool_constants(cond, constants);
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-    }
+        ControlFlow::<()>::Continue(())
+    });
 }
 
 #[derive(Clone, Copy, Debug, Default)]
