@@ -1532,11 +1532,12 @@ forgetest_init!(symbolic_seed_corpus_persists_non_failing_fuzz_input, |prj, cmd|
         "SymbolicFuzzCorpusSeed.t.sol",
         r#"
 contract SymbolicFuzzCorpusSeed {
-    uint256 constant MAGIC = 0xdeadbeef;
-
-    function testAcceptsMostValues(uint256 key) public pure {
-        if (key != MAGIC) return;
-        assert(key == MAGIC);
+    function testHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y != 0) return;
+        assert(y == 0);
     }
 }
 "#,
@@ -1546,7 +1547,7 @@ contract SymbolicFuzzCorpusSeed {
         .args([
             "test",
             "--match-test",
-            "testAcceptsMostValues",
+            "testHybridFindsBug",
             "--symbolic-seed-corpus",
             "--fuzz-corpus-dir",
             "fuzz_corpus",
@@ -1557,7 +1558,7 @@ contract SymbolicFuzzCorpusSeed {
         .root()
         .join("fuzz_corpus")
         .join("SymbolicFuzzCorpusSeed")
-        .join("testAcceptsMostValues")
+        .join("testHybridFindsBug")
         .join("worker0")
         .join("corpus");
     let mut entries = std::fs::read_dir(&corpus_dir)
@@ -1565,15 +1566,18 @@ contract SymbolicFuzzCorpusSeed {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     entries.sort_by_key(|entry| entry.path());
-    let expected_selector = &keccak256(b"testAcceptsMostValues(uint256)")[..4];
-    let expected_args = format!("{:064x}", 0xdeadbeefu64);
+    let expected_selector = &keccak256(b"testHybridFindsBug(uint256,uint256)")[..4];
+    let expected_x = "6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db6db7";
+    let expected_y = format!("{:064x}", 0);
+    let expected_x_decimal =
+        "49625181101706940895816136432294817651401421999560241731196107431962769845687";
     let mut found_symbolic_seed = false;
     for entry in &entries {
         let corpus: Value = serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
         assert_eq!(corpus.as_array().unwrap().len(), 1);
         let calldata = corpus[0]["calldata"].as_str().expect("seed calldata");
         assert_eq!(&hex::decode(&calldata[2..10]).unwrap(), expected_selector);
-        if calldata[10..] == expected_args {
+        if calldata[10..74] == *expected_x && calldata[74..138] == expected_y {
             found_symbolic_seed = true;
         } else {
             std::fs::remove_file(entry.path()).unwrap();
@@ -1585,12 +1589,12 @@ contract SymbolicFuzzCorpusSeed {
         "SymbolicFuzzCorpusSeed.t.sol",
         r#"
 contract SymbolicFuzzCorpusSeed {
-    uint256 constant MAGIC = 0xdeadbeef;
-
-    function testAcceptsMostValues(uint256 key) public pure {
-        require(key != MAGIC, "seed replayed");
-        if (key != MAGIC) return;
-        assert(key == MAGIC);
+    function testHybridFindsBug(uint256 x, uint256 y) public pure {
+        unchecked {
+            if (x * 7 != 1) return;
+        }
+        if (y == 0) return;
+        assert(false);
     }
 }
 "#,
@@ -1601,9 +1605,11 @@ contract SymbolicFuzzCorpusSeed {
         .args([
             "test",
             "--match-test",
-            "testAcceptsMostValues",
+            "testHybridFindsBug",
             "--fuzz-corpus-dir",
             "fuzz_corpus",
+            "--threads",
+            "1",
             "--fuzz-corpus-random-sequence-weight",
             "0",
             "--fuzz-mutation-weight-splice",
@@ -1617,18 +1623,17 @@ contract SymbolicFuzzCorpusSeed {
             "--fuzz-mutation-weight-suffix",
             "0",
             "--fuzz-mutation-weight-abi",
-            "0",
+            "1",
             "--fuzz-mutation-weight-cmp",
-            "1",
+            "0",
             "--fuzz-runs",
-            "1",
+            "8",
         ])
         .assert_failure()
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("seed replayed"), "{stdout}");
-    assert!(stdout.contains("3735928559"), "{stdout}");
+    assert!(stdout.contains(expected_x_decimal), "{stdout}");
 });
 
 forgetest_init!(symbolic_seed_corpus_is_best_effort_for_symbolic_incomplete, |prj, cmd| {
